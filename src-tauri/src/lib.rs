@@ -1,6 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
-use chrono;
+use chrono::Utc;
 use rusqlite::{params, Connection, Result};
 use std::sync::Mutex;
 use tauri::Manager;
@@ -16,6 +16,12 @@ struct Db {
 struct Module {
     id: String,
     name: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct GetContentResponse {
+    state: Vec<u8>,
+    updates: Vec<Vec<u8>>,
 }
 
 fn db_err(error: impl std::fmt::Display) -> String {
@@ -102,6 +108,44 @@ fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
     Ok(modules)
 }
 
+#[tauri::command]
+fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetContentResponse> {
+    let conn = db.conn.lock().map_err(db_err)?;
+
+    let state = conn
+        .query_one(
+            "select state from contents where module_id = ?1",
+            params![&module_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .map_err(db_err)?;
+
+    let mut stmt = conn
+        .prepare("select bytes from contents_updates where module_id = ?1")
+        .map_err(db_err)?;
+
+    let updates = stmt
+        .query_map(params![module_id], |row| row.get(0))
+        .map_err(db_err)?
+        .collect::<Result<Vec<Vec<u8>>>>()
+        .map_err(db_err)?;
+
+    Ok(GetContentResponse { state, updates })
+}
+
+#[tauri::command]
+fn add_update(db: tauri::State<Db>, module_id: String, bytes: Vec<u8>) -> CommandResult<()> {
+    let conn = db.conn.lock().map_err(db_err)?;
+
+    conn.execute(
+        "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
+        params![module_id, bytes, Utc::now().timestamp_millis()],
+    )
+    .map_err(db_err)?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -111,7 +155,12 @@ pub fn run() {
             app.manage(db);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![create_module, modules])
+        .invoke_handler(tauri::generate_handler![
+            create_module,
+            modules,
+            get_content,
+            add_update,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
