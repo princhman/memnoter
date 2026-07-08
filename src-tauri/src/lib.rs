@@ -2,81 +2,82 @@
 
 use chrono;
 use rusqlite::{params, Connection, Result};
+use std::sync::Mutex;
+use tauri::Manager;
 use uuid::Uuid;
 
 type CommandResult<T> = std::result::Result<T, String>;
 
+struct Db {
+    conn: Mutex<Connection>,
+}
+
 #[derive(Debug, serde::Serialize)]
-struct Document {
+struct Module {
     id: String,
     name: String,
-    yjs_state: Vec<u8>,
-    updated_at: i64,
 }
 
 fn db_err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-fn table(conn: &Connection) -> Result<()> {
-    conn.execute(
-        "create table if not exists documents (
-          id TEXT PRIMARY KEY,
-          title TEXT,
-          yjs_state BLOB NOT NULL,
-          updated_at INTEGER NOT NULL
-        );",
-        (),
-    )?;
+fn init_db(app: &tauri::App) -> CommandResult<Db> {
+    let app_dir = app.path().app_data_dir().map_err(db_err)?;
 
-    Ok(())
-}
+    std::fs::create_dir_all(&app_dir).map_err(db_err)?;
 
-#[tauri::command]
-fn get_doc(yjs_state: Vec<u8>) -> CommandResult<Document> {
-    let conn = Connection::open("main.db").map_err(db_err)?;
+    let db_path = app_dir.join("main.db");
+    let conn = Connection::open(&db_path).map_err(db_err)?;
 
-    table(&conn).map_err(db_err)?;
+    conn.execute_batch(
+        "
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = NORMAL;
+        PRAGMA foreign_keys = ON;
 
-    let updated_at: i64 = chrono::offset::Utc::now().timestamp();
+        create table if not exists modules (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL
+        );
 
-    conn.execute(
-        "insert into documents (id, title, yjs_state, updated_at)
-             values (?1, ?2, ?3, ?4)",
-        params!["doc2", "Document 2", yjs_state, updated_at],
+        create table if not exists contents (
+            module_id TEXT PRIMARY KEY,
+            state BLOB NOT NULL,
+            FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
+        );
+
+        create table if not exists contents_updates (
+            id INTEGER PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            bytes BLOB NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
+        )",
     )
     .map_err(db_err)?;
 
-    let mut stmt = conn.prepare("select * from documents ").map_err(db_err)?;
-
-    let doc = stmt
-        .query_one([], |row| {
-            Ok(Document {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                yjs_state: row.get(2)?,
-                updated_at: row.get(3)?,
-            })
-        })
-        .map_err(db_err)?;
-
-    Ok(doc)
+    Ok(Db {
+        conn: Mutex::new(conn),
+    })
 }
 
 #[tauri::command]
-fn create_doc(title: String) -> CommandResult<String> {
-    let conn = Connection::open("main.db").map_err(db_err)?;
-
-    table(&conn).map_err(db_err)?;
-
-    let updated_at: i64 = chrono::offset::Utc::now().timestamp();
-
+fn create_module(db: tauri::State<Db>, name: String) -> CommandResult<String> {
+    let conn = db.conn.lock().map_err(db_err)?;
     let id = Uuid::new_v4().to_string();
 
     conn.execute(
-        "insert into documents (id, title, yjs_state, updated_at)
-             values (?1, ?2, ?3, ?4)",
-        params![id, title, Vec::new(), updated_at],
+        "insert into modules (id, name)
+             values (?1, ?2)",
+        params![id, name],
+    )
+    .map_err(db_err)?;
+
+    conn.execute(
+        "insert into contents (module_id, state)
+             values (?1, ?2)",
+        params![id, Vec::<u8>::new()],
     )
     .map_err(db_err)?;
 
@@ -84,27 +85,33 @@ fn create_doc(title: String) -> CommandResult<String> {
 }
 
 #[tauri::command]
-fn update_doc(id: String, title: String, yjs_state: Vec<u8>) -> CommandResult<()> {
-    let conn = Connection::open("main.db").map_err(db_err)?;
+fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
+    let conn = db.conn.lock().map_err(db_err)?;
+    let mut stmt = conn.prepare("select * from modules").map_err(db_err)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(Module {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })
+        .map_err(db_err)?;
 
-    table(&conn).map_err(db_err)?;
+    let modules = rows.collect::<Result<Vec<Module>>>().map_err(db_err)?;
 
-    let updated_at: i64 = chrono::offset::Utc::now().timestamp();
-
-    conn.execute(
-        "update documents set title = ?2, yjs_state = ?3, updated_at = ?4 where id = ?1",
-        params![id, title, yjs_state, updated_at],
-    )
-    .map_err(db_err)?;
-
-    Ok(())
+    Ok(modules)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_doc, create_doc, update_doc])
+        .setup(|app| {
+            let db = init_db(app).expect("Failed to init db.");
+            app.manage(db);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![create_module, modules])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
