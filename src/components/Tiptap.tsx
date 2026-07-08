@@ -1,5 +1,5 @@
 // src/Tiptap.tsx
-import { useEditor, EditorContent, EditorContext } from "@tiptap/react";
+import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
