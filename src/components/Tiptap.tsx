@@ -93,7 +93,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       ],
       editorProps: {
         attributes: {
-          class: "tiptap-editor",
+          class: "tiptap",
         },
       },
     },
@@ -109,7 +109,9 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     }
   }, [editor, isSuccess]);
 
-  return <EditorContent editor={editor} />;
+  return <main className="tiptap-shell">
+    <EditorContent editor={editor} />
+  </main>;
 };
 
 export default Tiptap;

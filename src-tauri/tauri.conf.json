@@ -14,7 +14,10 @@
       {
         "title": "notes",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay"
       }
     ],
     "security": {

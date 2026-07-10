@@ -5,17 +5,17 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { FilePlus2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Field, FieldError, FieldGroup } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
+import { SidebarGroupAction } from "./ui/sidebar";
 
 const CreateModule = () => {
   const [name, setName] = useState("");
@@ -38,7 +38,7 @@ const CreateModule = () => {
   const trimmedName = name.trim();
 
   const nameError =
-    (sumbitted ?? !trimmedName) ? "Module name is required" : undefined;
+    sumbitted && !trimmedName ? "Module name is required" : undefined;
 
   const sumbitError = mutation.isError ? mutation.error.message : undefined;
 
@@ -56,10 +56,14 @@ const CreateModule = () => {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
-        render={<Button type="button" variant="ghost" size="icon-sm" />}
+        render={
+          <SidebarGroupAction
+            aria-label="Add Module"
+            className="invisible group-hover:visible"
+          />
+        }
       >
-        <FilePlus2 className="size-4" />{" "}
-        <span className="sr-only">Add Module</span>
+        <Plus className="size-3" />
       </DialogTrigger>
       <DialogContent>
         <form onSubmit={handleSubmit}>

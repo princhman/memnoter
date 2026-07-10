@@ -42,7 +42,7 @@
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
+    --background: #191919;
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);
     --card-foreground: oklch(0.985 0 0);
@@ -65,7 +65,7 @@
     --chart-3: oklch(0.511 0.262 276.966);
     --chart-4: oklch(0.457 0.24 277.023);
     --chart-5: oklch(0.398 0.195 277.366);
-    --sidebar: oklch(0.205 0 0);
+    --sidebar: #202020;
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.585 0.233 277.117);
     --sidebar-primary-foreground: oklch(0.962 0.018 272.314);
@@ -76,8 +76,8 @@
 }
 
 @theme inline {
-    --font-sans: 'Inter Variable', sans-serif;
-    --font-heading: 'DM Sans Variable', sans-serif;
+    --font-sans: "Inter Variable", sans-serif;
+    --font-heading: "DM Sans Variable", sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -118,14 +118,210 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+html,
+body,
+#root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+body {
+    margin: 0;
+}
+
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+    * {
+        @apply border-border outline-ring/50;
     }
-  body {
-    @apply bg-background text-foreground;
+    body {
+        @apply bg-background text-foreground;
     }
-  html {
-    @apply font-sans;
+    html {
+        @apply font-sans;
     }
+}
+
+.tiptap-shell {
+    width: 100%;
+    background: var(--background);
+}
+
+.tiptap {
+    max-width: 760px;
+    margin: 0 auto;
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.72;
+    outline: none;
+    caret-color: var(--foreground);
+}
+
+.tiptap:focus {
+    outline: none;
+}
+
+.tiptap > *:first-child {
+    margin-top: 0;
+}
+
+.tiptap p {
+    margin: 0.35rem 0;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+    color: var(--muted-foreground);
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+}
+
+/* Headings — Notion-ish */
+.tiptap h1,
+.tiptap h2,
+.tiptap h3,
+.tiptap h4,
+.tiptap h5,
+.tiptap h6 {
+    color: var(--foreground);
+    font-family: var(--font-heading);
+    font-weight: 700;
+    line-height: 1.18;
+    letter-spacing: -0.035em;
+    text-wrap: pretty;
+}
+
+.tiptap h1 {
+    margin-top: 2.25rem;
+    margin-bottom: 0.75rem;
+    font-size: 2.35rem;
+}
+
+.tiptap h2 {
+    margin-top: 1.9rem;
+    margin-bottom: 0.55rem;
+    font-size: 1.65rem;
+}
+
+.tiptap h3 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.4rem;
+    font-size: 1.25rem;
+}
+
+.tiptap h4,
+.tiptap h5,
+.tiptap h6 {
+    margin-top: 1.25rem;
+    margin-bottom: 0.35rem;
+    font-size: 1.05rem;
+}
+
+/* Lists */
+.tiptap ul,
+.tiptap ol {
+    margin: 0.55rem 0;
+    padding-left: 1.6rem;
+}
+
+.tiptap ul {
+    list-style: disc;
+}
+
+.tiptap ol {
+    list-style: decimal;
+}
+
+.tiptap li {
+    margin: 0.18rem 0;
+    padding-left: 0.15rem;
+}
+
+.tiptap li p {
+    margin: 0.15rem 0;
+}
+
+.tiptap li::marker {
+    color: var(--muted-foreground);
+}
+
+/* Task-ish visual polish if you add task lists later */
+.tiptap ul[data-type="taskList"] {
+    list-style: none;
+    padding-left: 0;
+}
+
+.tiptap ul[data-type="taskList"] li {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Inline code */
+.tiptap code {
+    border-radius: 0.35rem;
+    background: var(--muted);
+    color: var(--foreground);
+    font-family:
+        "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace;
+    font-size: 0.86em;
+    padding: 0.18em 0.35em;
+}
+
+/* Code blocks */
+.tiptap pre {
+    margin: 1.25rem 0;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    overflow-x: auto;
+    padding: 1rem 1.1rem;
+}
+
+.tiptap pre code {
+    background: transparent;
+    border-radius: 0;
+    color: inherit;
+    font-size: 0.9rem;
+    padding: 0;
+}
+
+/* Quote block */
+.tiptap blockquote {
+    margin: 1.1rem 0;
+    border-left: 3px solid var(--border);
+    color: var(--muted-foreground);
+    padding-left: 1rem;
+}
+
+/* Divider */
+.tiptap hr {
+    margin: 2rem 0;
+    border: none;
+    border-top: 1px solid var(--border);
+}
+
+/* Links, if enabled later */
+.tiptap a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+}
+
+/* Selection */
+.tiptap ::selection {
+    background: color-mix(in oklch, var(--primary) 18%, transparent);
+}
+
+/* Empty editor feel */
+.tiptap.ProseMirror {
+    min-height: 55vh;
+}
+
+/* Dark mode tuning */
+.dark .tiptap pre {
+    background: oklch(0.19 0 0);
 }

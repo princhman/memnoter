@@ -29,17 +29,23 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader>
         <div className="flex justify-between">
-          <div className="px-2 py-1 text-sm font-semibold">Notes</div>
-          <SidebarTrigger />
+          <div className="px-2 py-1 text-sm font-semibold pt-8">Notes</div>
         </div>
       </SidebarHeader>
 
       <SidebarContent>
         <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton>
+                <span>Home</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+        <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
-          <SidebarGroupAction>
-            <CreateModule />
-          </SidebarGroupAction>
+          <CreateModule />
 
           {isPending && <div>Loading...</div>}
           {error && <div>Error: {error.message}</div>}
