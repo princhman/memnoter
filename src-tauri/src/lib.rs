@@ -109,6 +109,19 @@ fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
 }
 
 #[tauri::command]
+fn rename_module(db: tauri::State<Db>, module_id: String, name: String) -> CommandResult<()> {
+    let conn = db.conn.lock().map_err(db_err)?;
+
+    conn.execute(
+        "update modules set name = ?2 where id = ?1",
+        params![&module_id, &name],
+    )
+    .map_err(db_err)?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetContentResponse> {
     let conn = db.conn.lock().map_err(db_err)?;
 
@@ -160,6 +173,7 @@ pub fn run() {
             modules,
             get_content,
             add_update,
+            rename_module,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

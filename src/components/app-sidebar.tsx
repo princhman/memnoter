@@ -8,6 +8,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarTrigger,
@@ -17,8 +18,55 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
+import { Ellipsis, Pencil } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import RenameModule from "./rename-module";
+import { useState } from "react";
 
-export function AppSidebar() {
+const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
+  const [renameOpen, setRenameOpen] = useState(false);
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <SidebarMenuAction showOnHover aria-label={`Actions for ${name}`} />
+          }
+        >
+          <Ellipsis />
+        </DropdownMenuTrigger>
+
+        <DropdownMenuContent>
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={() => setRenameOpen(true)}>
+              <Pencil className="size-3" />
+              Rename
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <RenameModule
+        moduleName={name}
+        moduleId={moduleId}
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+      />
+    </>
+  );
+};
+
+const AppSidebar = () => {
   const { isPending, error, data } = useQuery({
     queryKey: ["modules"],
     queryFn: async () => await invoke<Module[]>("modules"),
@@ -29,7 +77,7 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader>
         <div className="flex justify-between">
-          <div className="px-2 py-1 text-sm font-semibold pt-8">Notes</div>
+          <div className="px-2 text-md font-semibold pt-8">Notes</div>
         </div>
       </SidebarHeader>
 
@@ -52,7 +100,7 @@ export function AppSidebar() {
 
           {data && (
             <SidebarGroupContent>
-              <SidebarMenu>
+              <SidebarMenu className="gap-0.5">
                 {data.map((module) => {
                   const isActive = !!matchRoute({
                     to: "/$moduleId",
@@ -60,13 +108,20 @@ export function AppSidebar() {
                     fuzzy: true,
                   });
                   return (
-                    <Link to="/$moduleId" params={{ moduleId: module.id }}>
-                      <SidebarMenuItem>
-                        <SidebarMenuButton isActive={isActive}>
-                          <span>{module.name}</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    </Link>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        isActive={isActive}
+                        render={
+                          <Link
+                            to="/$moduleId"
+                            params={{ moduleId: module.id }}
+                          />
+                        }
+                      >
+                        <span>{module.name}</span>
+                      </SidebarMenuButton>
+                      <ModuleMenu moduleId={module.id} name={module.name} />
+                    </SidebarMenuItem>
                   );
                 })}
               </SidebarMenu>
@@ -78,4 +133,6 @@ export function AppSidebar() {
       <SidebarFooter />
     </Sidebar>
   );
-}
+};
+
+export default AppSidebar;

@@ -313,7 +313,7 @@ body {
 
 /* Selection */
 .tiptap ::selection {
-    background: color-mix(in oklch, var(--primary) 18%, transparent);
+    background: color-mix(in oklch, var(--primary) 80%, transparent);
 }
 
 /* Empty editor feel */
