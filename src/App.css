@@ -154,7 +154,7 @@ body {
     color: var(--foreground);
     font-family: var(--font-sans);
     font-size: 1rem;
-    line-height: 1.72;
+    line-height: normal;
     outline: none;
     caret-color: var(--foreground);
 }

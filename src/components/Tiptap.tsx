@@ -7,9 +7,17 @@ import Collaboration from "@tiptap/extension-collaboration";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+const COMPACTION_THRESHOLD = 300;
+const COMPACTION_IDLE_MS = 3_000;
+
+type ContentUpdate = {
+  id: number;
+  bytes: number[];
+};
+
 type GetContentResponse = {
   state: number[];
-  updates: number[][];
+  updates: ContentUpdate[];
 };
 
 type TipTapProps = {
@@ -30,10 +38,11 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   });
 
   const addUpdateMutation = useMutation({
+    mutationKey: ["add-content-update", moduleId],
     mutationFn: async (bytes: number[]) =>
-      invoke("add_update", { moduleId, bytes }),
+      invoke<ContentUpdate>("add_update", { moduleId, bytes }),
 
-    onSuccess: (_, bytes) => {
+    onSuccess: (update) => {
       queryClient.setQueryData<GetContentResponse>(
         ["content", moduleId],
         (oldContent) => {
@@ -41,13 +50,41 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
           return {
             state: oldContent.state,
-            updates: [...oldContent.updates, bytes],
+            updates: [...oldContent.updates, update],
           };
         },
       );
     },
     onError: (error) => {
       console.error("Failed to save Tiptap update:", error);
+    },
+  });
+
+  const compactionMutation = useMutation({
+    mutationKey: ["compact-content", moduleId],
+    mutationFn: async ({
+      newState,
+      updateId,
+    }: {
+      newState: number[];
+      updateId: number;
+    }) => {
+      await invoke("save_compaction", { moduleId, newState, updateId });
+    },
+    onSuccess: (_, { newState, updateId }) => {
+      queryClient.setQueryData<GetContentResponse>(
+        ["content", moduleId],
+        (oldContent) => {
+          if (!oldContent) return oldContent;
+
+          return {
+            state: newState,
+            updates: oldContent.updates.filter(
+              (update) => update.id > updateId,
+            ),
+          };
+        },
+      );
     },
   });
 
@@ -60,7 +97,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     }
 
     for (const update of data.updates) {
-      Y.applyUpdate(yDoc, new Uint8Array(update), "tauri-load");
+      Y.applyUpdate(yDoc, new Uint8Array(update.bytes), "tauri-load");
     }
 
     hasAppliedRemoteContent.current = true;
@@ -100,6 +137,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     [yDoc],
   );
 
+  // if editor is empty
   useEffect(() => {
     if (!editor || !isSuccess || hasInsertedInitialContent.current) return;
 
@@ -109,9 +147,68 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     }
   }, [editor, isSuccess]);
 
-  return <main className="tiptap-shell">
-    <EditorContent editor={editor} />
-  </main>;
+  // compaction listener
+  useEffect(() => {
+    if (!data || data.updates.length < COMPACTION_THRESHOLD) {
+      return;
+    }
+
+    if (compactionMutation.isPending) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      // read the latest cache rather than using possibly stale effect data.
+      const currentContent = queryClient.getQueryData<GetContentResponse>([
+        "content",
+        moduleId,
+      ]);
+
+      if (
+        !currentContent ||
+        currentContent.updates.length < COMPACTION_THRESHOLD
+      ) {
+        return;
+      }
+
+      // do not compact while an older update is still being persisted.
+      const pendingUpdates = queryClient.isMutating({
+        mutationKey: ["add-content-update", moduleId],
+      });
+
+      if (pendingUpdates > 0) {
+        return;
+      }
+
+      const updateId = Math.max(
+        ...currentContent.updates.map((update) => update.id),
+      );
+
+      const newState = Array.from(Y.encodeStateAsUpdate(yDoc));
+
+      compactionMutation.mutate({
+        newState,
+        updateId,
+      });
+    }, COMPACTION_IDLE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    data,
+    moduleId,
+    yDoc,
+    queryClient,
+    compactionMutation.isPending,
+    compactionMutation.mutate,
+  ]);
+
+  return (
+    <main className="tiptap-shell">
+      <EditorContent editor={editor} />
+    </main>
+  );
 };
 
 export default Tiptap;

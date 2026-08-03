@@ -19,9 +19,15 @@ struct Module {
 }
 
 #[derive(Debug, serde::Serialize)]
+struct ContentUpdate {
+    id: i64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, serde::Serialize)]
 struct GetContentResponse {
     state: Vec<u8>,
-    updates: Vec<Vec<u8>>,
+    updates: Vec<ContentUpdate>,
 }
 
 fn db_err(error: impl std::fmt::Display) -> String {
@@ -134,25 +140,61 @@ fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetCont
         .map_err(db_err)?;
 
     let mut stmt = conn
-        .prepare("select bytes from contents_updates where module_id = ?1")
+        .prepare("select id, bytes from contents_updates where module_id = ?1 order by id asc")
         .map_err(db_err)?;
 
     let updates = stmt
-        .query_map(params![module_id], |row| row.get(0))
+        .query_map(params![&module_id], |row| {
+            Ok(ContentUpdate {
+                id: row.get(0)?,
+                bytes: row.get(1)?,
+            })
+        })
         .map_err(db_err)?
-        .collect::<Result<Vec<Vec<u8>>>>()
+        .collect::<Result<Vec<ContentUpdate>>>()
         .map_err(db_err)?;
 
     Ok(GetContentResponse { state, updates })
 }
 
 #[tauri::command]
-fn add_update(db: tauri::State<Db>, module_id: String, bytes: Vec<u8>) -> CommandResult<()> {
+fn add_update(
+    db: tauri::State<Db>,
+    module_id: String,
+    bytes: Vec<u8>,
+) -> CommandResult<(ContentUpdate)> {
     let conn = db.conn.lock().map_err(db_err)?;
 
     conn.execute(
         "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
         params![module_id, bytes, Utc::now().timestamp_millis()],
+    )
+    .map_err(db_err)?;
+
+    Ok((ContentUpdate {
+        id: conn.last_insert_rowid(),
+        bytes,
+    }))
+}
+
+#[tauri::command]
+fn save_compaction(
+    db: tauri::State<Db>,
+    module_id: String,
+    new_state: Vec<u8>,
+    update_id: i64,
+) -> CommandResult<()> {
+    let conn = db.conn.lock().map_err(db_err)?;
+
+    conn.execute(
+        "update contents set state = ?1 where module_id = ?2",
+        params![new_state, module_id],
+    )
+    .map_err(db_err)?;
+
+    conn.execute(
+        "delete from contents_updates where module_id = ?1 and id <= ?2",
+        params![module_id, update_id],
     )
     .map_err(db_err)?;
 
@@ -174,6 +216,7 @@ pub fn run() {
             get_content,
             add_update,
             rename_module,
+            save_compaction,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
