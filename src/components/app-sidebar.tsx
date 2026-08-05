@@ -3,7 +3,6 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -11,7 +10,6 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Module } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
@@ -19,14 +17,11 @@ import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
 import { Ellipsis, Pencil } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import RenameModule from "./rename-module";

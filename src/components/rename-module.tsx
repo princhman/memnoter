@@ -8,14 +8,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
-import { Pencil } from "lucide-react";
 import { Field, FieldError, FieldGroup } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
-import { SidebarGroupAction } from "./ui/sidebar";
 import { Module } from "@/lib/types";
 
 const RenameModule = ({

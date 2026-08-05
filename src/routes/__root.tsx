@@ -1,6 +1,5 @@
-import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
+import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
-import type { ReactNode } from "react";
 import AppSidebar from "@/components/app-sidebar";
 import {
   SidebarInset,
