@@ -162,7 +162,7 @@ fn add_update(
     db: tauri::State<Db>,
     module_id: String,
     bytes: Vec<u8>,
-) -> CommandResult<(ContentUpdate)> {
+) -> CommandResult<ContentUpdate> {
     let conn = db.conn.lock().map_err(db_err)?;
 
     conn.execute(
@@ -171,10 +171,10 @@ fn add_update(
     )
     .map_err(db_err)?;
 
-    Ok((ContentUpdate {
+    Ok(ContentUpdate {
         id: conn.last_insert_rowid(),
         bytes,
-    }))
+    })
 }
 
 #[tauri::command]

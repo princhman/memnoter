@@ -6,6 +6,7 @@ import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -23,6 +24,7 @@ type GetContentResponse = {
 type TipTapProps = {
   moduleId: string;
 };
+
 const Tiptap = ({ moduleId }: TipTapProps) => {
   const yDoc = useMemo(() => new Y.Doc(), [moduleId]);
   const queryClient = useQueryClient();
@@ -124,6 +126,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         StarterKit.configure({
           undoRedo: false,
         }),
+        HeadingHieararchy,
         Collaboration.configure({
           document: yDoc,
         }),
