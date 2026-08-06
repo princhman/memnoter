@@ -144,6 +144,7 @@ body {
 }
 
 .tiptap-shell {
+    position: relative;
     width: 100%;
     background: var(--background);
 }

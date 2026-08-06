@@ -7,6 +7,7 @@ import Collaboration from "@tiptap/extension-collaboration";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
+import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -208,9 +209,9 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   ]);
 
   return (
-    <main className="tiptap-shell">
+    <HeadingActionOverlay>
       <EditorContent editor={editor} />
-    </main>
+    </HeadingActionOverlay>
   );
 };
 
