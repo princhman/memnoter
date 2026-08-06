@@ -8,19 +8,16 @@ export type HeadingActionPosition = {
 
 type HeadingActionProps = {
   position: HeadingActionPosition;
+  onClick: () => void;
 };
 
-export function HeadingAction({ position }: HeadingActionProps) {
-  function handleClick() {
-    console.log("clicked");
-  }
-
+export function HeadingAction({ position, onClick }: HeadingActionProps) {
   return (
     <Button
       data-heading-action=""
       type="button"
       onMouseDown={(event) => event.preventDefault()}
-      onClick={handleClick}
+      onClick={onClick}
       size="icon-sm"
       variant="ghost"
       className="absolute z-10"

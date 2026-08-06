@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
+import { SectionFocus } from "@/lib/section-focus";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -128,6 +129,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           undoRedo: false,
         }),
         HeadingHieararchy,
+        SectionFocus,
         Collaboration.configure({
           document: yDoc,
         }),
@@ -209,7 +211,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   ]);
 
   return (
-    <HeadingActionOverlay>
+    <HeadingActionOverlay editor={editor}>
       <EditorContent editor={editor} />
     </HeadingActionOverlay>
   );

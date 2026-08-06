@@ -4,17 +4,17 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  HeadingAction,
-  type HeadingActionPosition,
-} from "./heading-action";
+import { HeadingAction, type HeadingActionPosition } from "./heading-action";
+import type { Editor } from "@tiptap/core";
 
 const HEADING_ACTION_SIZE = 28;
 
 export const HeadingActionOverlay = ({
   children,
+  editor,
 }: {
   children: ReactNode;
+  editor: Editor | null;
 }) => {
   const hoveredHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const [headingActionPosition, setHeadingActionPosition] =
@@ -54,6 +54,15 @@ export const HeadingActionOverlay = ({
     setHeadingActionPosition(null);
   }
 
+  function onClick() {
+    const heading = hoveredHeadingRef.current;
+    if (!editor || !heading) return;
+    const contentPosition = editor.view.posAtDOM(heading, 0);
+    const headingPosition = editor.state.doc.resolve(contentPosition).before();
+
+    editor.commands.showSection(headingPosition);
+  }
+
   return (
     <main
       className="tiptap-shell"
@@ -62,7 +71,7 @@ export const HeadingActionOverlay = ({
     >
       {children}
       {headingActionPosition && (
-        <HeadingAction position={headingActionPosition} />
+        <HeadingAction position={headingActionPosition} onClick={onClick} />
       )}
     </main>
   );
