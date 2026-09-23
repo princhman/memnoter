@@ -1,5 +1,5 @@
 import { Button } from "./ui/button";
-import { Maximize2 } from "lucide-react";
+import { Maximize2, Minimize2 } from "lucide-react";
 
 export type HeadingActionPosition = {
   left: number;
@@ -9,9 +9,14 @@ export type HeadingActionPosition = {
 type HeadingActionProps = {
   position: HeadingActionPosition;
   onClick: () => void;
+  inFocus: () => boolean;
 };
 
-export function HeadingAction({ position, onClick }: HeadingActionProps) {
+export function HeadingAction({
+  position,
+  onClick,
+  inFocus,
+}: HeadingActionProps) {
   return (
     <Button
       data-heading-action=""
@@ -23,7 +28,7 @@ export function HeadingAction({ position, onClick }: HeadingActionProps) {
       className="absolute z-10"
       style={position}
     >
-      <Maximize2 />
+      {inFocus() ? <Minimize2 /> : <Maximize2 />}
     </Button>
   );
 }

@@ -5,5 +5,5 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  return <div className="card"></div>;
+  return <div className="card">Choose module</div>;
 }

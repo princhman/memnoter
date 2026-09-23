@@ -1,0 +1,138 @@
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { cn } from "cn";
+import { useSidebar } from "./ui/sidebar";
+import { useQuery } from "@tanstack/react-query";
+import { invoke } from "@tauri-apps/api/core";
+import { Module } from "@/lib/types";
+import { useMatchRoute } from "@tanstack/react-router";
+import { useEditorState } from "@tiptap/react";
+import { getFocusedSectionPath } from "@/lib/section-focus";
+import { useActiveEditor } from "@/lib/active-editor-context";
+import { Fragment } from "react";
+import { useIsFullscreen } from "@/hooks/use-fullscreen";
+
+export function FileBreadcrumb() {
+  const { state } = useSidebar();
+  const isFullScreen = useIsFullscreen();
+
+  const {
+    isPending,
+    error,
+    data: modules = [],
+  } = useQuery({
+    queryKey: ["modules"],
+    queryFn: async () => await invoke<Module[]>("modules"),
+  });
+
+  const matchRoute = useMatchRoute();
+  const match = matchRoute({ to: "/$moduleId" });
+  const moduleId = match ? match.moduleId : null;
+  const moduleName = modules.find((module) => module.id === moduleId)?.name;
+  const { activeEditor } = useActiveEditor();
+  const editor =
+    activeEditor?.moduleId === moduleId ? activeEditor.editor : null;
+
+  const sectionPath =
+    useEditorState({
+      editor,
+      selector: ({ editor }) => (editor ? getFocusedSectionPath(editor) : []),
+      equalityFn: (previous, next) => {
+        if (previous === next) return true;
+        if (!previous || !next) return false;
+        return (
+          previous.length === next.length &&
+          previous.every(
+            (crumb, index) =>
+              crumb.pos === next[index].pos &&
+              crumb.title === next[index].title,
+          )
+        );
+      },
+    }) ?? [];
+
+  const moduleTitle =
+    moduleName ??
+    (isPending ? "Loading..." : error ? "Module unavailable" : moduleId);
+
+  return (
+    <>
+      <div
+        className={cn(
+          "shrink-0 transition-[width] duration-100 ease-linear",
+          !isFullScreen && state === "collapsed" ? "w-18" : "w-2",
+        )}
+      />
+      <div
+        className={cn(
+          "min-w-0 transition-transform duration-100 ease-linear",
+          state === "collapsed" ? "translate-x-10" : "translate-x-0",
+        )}
+      >
+        <Breadcrumb>
+          <BreadcrumbList>
+            {!moduleId ? (
+              <BreadcrumbItem>
+                <BreadcrumbPage>Home</BreadcrumbPage>
+              </BreadcrumbItem>
+            ) : (
+              <BreadcrumbItem>
+                {sectionPath.length ? (
+                  <BreadcrumbLink
+                    className="font-bold"
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => editor?.commands.showDocument()}
+                      >
+                        {moduleTitle}
+                      </button>
+                    }
+                  />
+                ) : (
+                  <BreadcrumbPage className="font-bold">
+                    {moduleTitle}
+                  </BreadcrumbPage>
+                )}
+              </BreadcrumbItem>
+            )}
+            {sectionPath.map((crumb, index) => (
+              <Fragment key={crumb.pos}>
+                {index === 0 ? (
+                  <BreadcrumbSeparator />
+                ) : (
+                  <BreadcrumbSeparator>/</BreadcrumbSeparator>
+                )}
+
+                <BreadcrumbItem>
+                  {index === sectionPath.length - 1 ? (
+                    <BreadcrumbPage>{crumb.title}</BreadcrumbPage>
+                  ) : (
+                    <BreadcrumbLink
+                      render={
+                        <button
+                          type="button"
+                          onClick={() =>
+                            editor?.commands.showSection(crumb.pos)
+                          }
+                        >
+                          {crumb.title}
+                        </button>
+                      }
+                    />
+                  )}
+                </BreadcrumbItem>
+              </Fragment>
+            ))}
+          </BreadcrumbList>
+        </Breadcrumb>
+      </div>
+    </>
+  );
+}

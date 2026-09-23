@@ -1,8 +1,10 @@
 import { Extension } from "@tiptap/core";
 import { EditorState, PluginKey, Plugin } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { appStore } from "./store";
+import type { Editor } from "@tiptap/core";
 
-const sectionFocusKey = new PluginKey<number | null>("section-focus");
+export const sectionFocusKey = new PluginKey<number | null>("section-focus");
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     sectionFocus: {
@@ -10,6 +12,40 @@ declare module "@tiptap/core" {
       showDocument: () => ReturnType;
     };
   }
+}
+
+type SectionCrumb = {
+  pos: number;
+  level: number;
+  title: string;
+};
+
+export function getFocusedSectionPath(editor: Editor): SectionCrumb[] {
+  const focusedPos = sectionFocusKey.getState(editor.state);
+  if (focusedPos == null) return [];
+
+  const focusedNode = editor.state.doc.nodeAt(focusedPos);
+  if (focusedNode?.type.name !== "heading") return [];
+
+  const path: SectionCrumb[] = [];
+
+  editor.state.doc.forEach((node, pos) => {
+    if (pos > focusedPos || node.type.name !== "heading") return;
+
+    const level = Number(node.attrs.level);
+
+    while (path.length && path[path.length - 1].level >= level) {
+      path.pop();
+    }
+
+    path.push({
+      pos,
+      level,
+      title: node.textContent || "Untitled section",
+    });
+  });
+
+  return path;
 }
 
 export const SectionFocus = Extension.create({
@@ -25,6 +61,13 @@ export const SectionFocus = Extension.create({
               position: headingPos,
             }),
           );
+          appStore.setState((state) => ({
+            ...state,
+            focusedSectionByModule: {
+              ...state.focusedSectionByModule,
+              [state.openedModuleId!]: headingPos,
+            },
+          }));
           return true;
         },
       showDocument:
@@ -104,7 +147,7 @@ export const SectionFocus = Extension.create({
               if (isOutsideSection) {
                 decorations.push(
                   Decoration.node(pos, nodeEnd, {
-                  class: "section-hidden",
+                    class: "section-hidden",
                   }),
                 );
               }

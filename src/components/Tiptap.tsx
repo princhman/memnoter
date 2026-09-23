@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { SectionFocus } from "@/lib/section-focus";
+import { useActiveEditor } from "@/lib/active-editor-context";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -40,6 +41,8 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       return await invoke<GetContentResponse>("get_content", { moduleId });
     },
   });
+
+  const { setActiveEditor } = useActiveEditor();
 
   const addUpdateMutation = useMutation({
     mutationKey: ["add-content-update", moduleId],
@@ -153,6 +156,18 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     }
   }, [editor, isSuccess]);
 
+  // pass editor into the context
+  useEffect(() => {
+    if (!editor) return;
+
+    setActiveEditor({ moduleId, editor });
+
+    return () => {
+      setActiveEditor((current) =>
+        current?.editor === editor ? null : current,
+      );
+    };
+  }, [editor, moduleId, setActiveEditor]);
   // compaction listener
   useEffect(() => {
     if (!data || data.updates.length < COMPACTION_THRESHOLD) {

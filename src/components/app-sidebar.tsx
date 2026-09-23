@@ -70,13 +70,13 @@ const AppSidebar = () => {
 
   return (
     <Sidebar>
-      <SidebarHeader>
+      <SidebarContent className="pt-6">
+        {/*<SidebarHeader>
         <div className="flex justify-between">
           <div className="px-2 text-md font-semibold pt-8">Notes</div>
         </div>
       </SidebarHeader>
 
-      <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -85,7 +85,7 @@ const AppSidebar = () => {
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-        </SidebarGroup>
+        </SidebarGroup>*/}
         <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
           <CreateModule />
