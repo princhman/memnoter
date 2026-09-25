@@ -157,7 +157,9 @@ fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetCont
     Ok(GetContentResponse { state, updates })
 }
 
-#[tauri::command]
+// Editing emits a save for every Yjs update. Keep the database lock and disk
+// write off the native UI thread so rapid input can continue while it saves.
+#[tauri::command(async)]
 fn add_update(
     db: tauri::State<Db>,
     module_id: String,
@@ -177,7 +179,7 @@ fn add_update(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_compaction(
     db: tauri::State<Db>,
     module_id: String,

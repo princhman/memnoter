@@ -9,6 +9,7 @@ import {
 import { useIsFullscreen } from "@/hooks/use-fullscreen";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
+import { UndoRedo } from "@/components/undo-redo";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
@@ -36,8 +37,9 @@ const RootLayout = () => {
           </SidebarInset>
           <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
             {!isFullScrean && <div className="w-18" />}
-            <div className="pl-2">
+            <div className="flex items-center pl-2 gap-1.5">
               <SidebarTrigger />
+              <UndoRedo />
             </div>
           </div>
         </SidebarProvider>

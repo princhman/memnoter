@@ -64,17 +64,18 @@ export function FileBreadcrumb() {
   return (
     <>
       <div
+        // Keep the offset in layout, alongside the sidebar gap. A separate
+        // translate can advance ahead of layout and briefly reverse the motion.
         className={cn(
-          "shrink-0 transition-[width] duration-100 ease-linear",
-          !isFullScreen && state === "collapsed" ? "w-18" : "w-2",
+          "shrink-0 transition-[width] duration-(--sidebar-motion-duration) ease-(--sidebar-motion-ease) motion-reduce:transition-none",
+          state === "collapsed"
+            ? isFullScreen
+              ? "w-30"
+              : "w-46"
+            : "w-2",
         )}
       />
-      <div
-        className={cn(
-          "min-w-0 transition-transform duration-100 ease-linear",
-          state === "collapsed" ? "translate-x-10" : "translate-x-0",
-        )}
-      >
+      <div className="min-w-0">
         <Breadcrumb>
           <BreadcrumbList>
             {!moduleId ? (
