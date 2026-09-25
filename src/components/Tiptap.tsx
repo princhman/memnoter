@@ -127,6 +127,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   const editor = useEditor(
     {
+      shouldRerenderOnTransaction: false,
       extensions: [
         StarterKit.configure({
           undoRedo: false,
@@ -141,6 +142,31 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         attributes: {
           class: "tiptap",
         },
+      },
+      // ai-suggested change
+      onTransaction: ({ editor, transaction }) => {
+        if (
+          !transaction.docChanged ||
+          !editor.state.selection.empty ||
+          editor.state.selection.$from.nodeBefore?.type.name !== "hardBreak" ||
+          editor.view.composing ||
+          !editor.view.hasFocus()
+        ) {
+          return;
+        }
+
+        const selection = editor.view.dom.ownerDocument.getSelection();
+        if (!selection?.isCollapsed || selection.rangeCount !== 1) return;
+
+        const range = selection.getRangeAt(0);
+        if (!editor.view.dom.contains(range.startContainer)) return;
+
+        // WebKit can draw the caret at its old position after a hard break.
+        // Reapply the already-updated DOM selection without changing content.
+        // https://github.com/ProseMirror/prosemirror/issues/1092
+        const restoredRange = range.cloneRange();
+        selection.removeAllRanges();
+        selection.addRange(restoredRange);
       },
     },
     [yDoc],
@@ -168,6 +194,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       );
     };
   }, [editor, moduleId, setActiveEditor]);
+
   // compaction listener
   useEffect(() => {
     if (!data || data.updates.length < COMPACTION_THRESHOLD) {
