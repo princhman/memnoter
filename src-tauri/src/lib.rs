@@ -1,7 +1,8 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 use chrono::Utc;
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result};
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::Manager;
 use uuid::Uuid;
@@ -44,8 +45,11 @@ fn db_err(error: impl std::fmt::Display) -> String {
 
 fn init_db(app: &tauri::App) -> CommandResult<Db> {
     let app_dir = app.path().app_data_dir().map_err(db_err)?;
+    open_db(&app_dir)
+}
 
-    std::fs::create_dir_all(&app_dir).map_err(db_err)?;
+fn open_db(app_dir: &Path) -> CommandResult<Db> {
+    std::fs::create_dir_all(app_dir).map_err(db_err)?;
 
     let db_path = app_dir.join("main.db");
     let conn = Connection::open(&db_path).map_err(db_err)?;
@@ -90,6 +94,133 @@ fn init_db(app: &tauri::App) -> CommandResult<Db> {
     Ok(Db {
         conn: Mutex::new(conn),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Fixture {
+        dir: std::path::PathBuf,
+        db: Db,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("notes-cleanup-{}", Uuid::new_v4()));
+            let db = open_db(&dir).unwrap();
+            {
+                let conn = db.conn.lock().unwrap();
+                conn.execute_batch(
+                    "insert into modules values ('note', 'Note'), ('other', 'Other');
+                     insert into contents values ('note', X'01'), ('other', X'02');
+                     insert into contents_updates values (7, 'note', X'03', 0);",
+                )
+                .unwrap();
+            }
+            Self { dir, db }
+        }
+
+        fn file(&self, module: &str) -> String {
+            let id = Uuid::new_v4().to_string();
+            let path = self.dir.join("files").join(&id);
+            std::fs::write(&path, b"image bytes").unwrap();
+            self.db
+                .conn
+                .lock()
+                .unwrap()
+                .execute(
+                    "insert into files values (?1, ?2, ?3, 'image/png')",
+                    params![id, module, path.to_str().unwrap()],
+                )
+                .unwrap();
+            id
+        }
+
+        fn cleanup(&self, ids: &[String], state: &[u8], update_id: i64) -> Vec<String> {
+            cleanup_unused_files(
+                &self.db.conn.lock().unwrap(),
+                &self.dir.join("files"),
+                "note",
+                ids,
+                state,
+                update_id,
+            )
+            .unwrap()
+        }
+
+        fn row_exists(&self, id: &str) -> bool {
+            self.db
+                .conn
+                .lock()
+                .unwrap()
+                .query_one(
+                    "select exists(select 1 from files where id = ?1)",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn cleanup_removes_only_requested_files_owned_by_the_note() {
+        let f = Fixture::new();
+        let unused = f.file("note");
+        let retained = f.file("note");
+        let other = f.file("other");
+        assert_eq!(
+            f.cleanup(&[unused.clone(), other.clone()], &[1], 7),
+            vec![unused.clone()]
+        );
+        assert!(!f.row_exists(&unused));
+        assert!(!f.dir.join("files").join(&unused).exists());
+        for id in [&retained, &other] {
+            assert!(f.row_exists(id));
+            assert_eq!(
+                std::fs::read(f.dir.join("files").join(id)).unwrap(),
+                b"image bytes"
+            );
+        }
+        assert!(f.cleanup(&[unused], &[1], 7).is_empty());
+    }
+
+    #[test]
+    fn stale_snapshots_never_remove_files() {
+        let f = Fixture::new();
+        let id = f.file("note");
+        for (state, update_id) in [(vec![0], 7), (vec![1], 6)] {
+            assert!(f
+                .cleanup(std::slice::from_ref(&id), &state, update_id)
+                .is_empty());
+            assert!(f.row_exists(&id));
+            assert!(f.dir.join("files").join(&id).exists());
+        }
+    }
+
+    #[test]
+    fn failed_removals_remain_retryable_and_missing_files_are_cleaned_up() {
+        let f = Fixture::new();
+        let id = f.file("note");
+        let path = f.dir.join("files").join(&id);
+        std::fs::remove_file(&path).unwrap();
+        // A directory at the file path reliably fails remove_file, even as root.
+        std::fs::create_dir(&path).unwrap();
+        assert!(f.cleanup(std::slice::from_ref(&id), &[1], 7).is_empty());
+        assert!(f.row_exists(&id));
+        std::fs::remove_dir(&path).unwrap();
+        assert_eq!(
+            f.cleanup(std::slice::from_ref(&id), &[1], 7),
+            vec![id.clone()]
+        );
+        assert!(!f.row_exists(&id));
+    }
 }
 
 #[tauri::command]
@@ -284,6 +415,84 @@ fn save_file(
     })
 }
 
+// The caller reconstructs the persisted Yjs document before supplying unused
+// IDs. Keep the connection locked through the revision check and deletion so
+// a concurrent save cannot turn that snapshot into a stale cleanup decision.
+fn cleanup_unused_files(
+    conn: &Connection,
+    files_dir: &Path,
+    module_id: &str,
+    file_ids: &[String],
+    expected_state: &[u8],
+    expected_update_id: i64,
+) -> CommandResult<Vec<String>> {
+    let (state, update_id): (Vec<u8>, i64) = conn
+        .query_one(
+            "select state, coalesce((select max(id) from contents_updates
+             where module_id = ?1), 0) from contents where module_id = ?1",
+            [module_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(db_err)?;
+    if state != expected_state || update_id != expected_update_id {
+        return Ok(Vec::new());
+    }
+
+    let mut deleted = Vec::new();
+    for id in file_ids {
+        let path: Option<String> = conn
+            .query_row(
+                "select path from files where id = ?1 and module_id = ?2",
+                params![id, module_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_err)?;
+        let Some(path) = path else { continue };
+        // Only remove files created by save_file, inside the managed directory.
+        if Uuid::parse_str(id).is_err() || Path::new(&path) != files_dir.join(id) {
+            return Err("Refusing to clean up a file outside managed storage".into());
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                // Keep its row so the disk removal can be retried next launch.
+                eprintln!("Failed to remove unused image {id}: {error}");
+                continue;
+            }
+        }
+        conn.execute(
+            "delete from files where id = ?1 and module_id = ?2",
+            params![id, module_id],
+        )
+        .map_err(db_err)?;
+        deleted.push(id.clone());
+    }
+    Ok(deleted)
+}
+
+#[tauri::command(async)]
+fn cleanup_files(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    module_id: String,
+    file_ids: Vec<String>,
+    expected_state: Vec<u8>,
+    expected_update_id: i64,
+) -> CommandResult<Vec<String>> {
+    let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
+    let conn = db.conn.lock().map_err(db_err)?;
+    cleanup_unused_files(
+        &conn,
+        &files_dir,
+        &module_id,
+        &file_ids,
+        &expected_state,
+        expected_update_id,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -300,7 +509,8 @@ pub fn run() {
             add_update,
             rename_module,
             save_compaction,
-            save_file
+            save_file,
+            cleanup_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

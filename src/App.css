@@ -362,3 +362,56 @@ body {
 .tiptap .section-hidden {
     display: none;
 }
+
+/* Saved images use Tiptap's resize handles and persist their node attributes. */
+.note-image-block {
+    margin: 1rem 0;
+    max-width: 100%;
+}
+.note-image-host [data-resize-container] { max-width: 100%; }
+.note-image-host [data-resize-wrapper] { max-width: 100%; }
+.note-image-block[data-align="center"] [data-resize-container] { justify-content: center; }
+.note-image-block[data-align="right"] [data-resize-container] { justify-content: flex-end; }
+.note-image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.4rem;
+}
+.note-image-block[data-selected="true"] .note-image { outline: 2px solid var(--primary); }
+.note-image-host [data-resize-handle] {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--background);
+    border-radius: 3px;
+    background: var(--primary);
+    opacity: 0;
+    touch-action: none;
+}
+.note-image-block[data-selected="true"] [data-resize-handle],
+.note-image-host:hover [data-resize-handle],
+.note-image-host [data-resize-state="true"] [data-resize-handle] { opacity: 1; }
+.note-image-host [data-resize-handle="top-left"],
+.note-image-host [data-resize-handle="bottom-right"] { cursor: nwse-resize; }
+.note-image-host [data-resize-handle="top-right"],
+.note-image-host [data-resize-handle="bottom-left"] { cursor: nesw-resize; }
+.note-image-controls {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--popover);
+    font-size: 0.75rem;
+}
+.note-image-controls [aria-pressed="true"] { background: var(--accent); }
+.note-image-controls details { margin-top: 0.5rem; }
+.note-image-controls summary { cursor: pointer; color: var(--muted-foreground); }
+.note-image-controls label { display: grid; gap: 0.25rem; }
+.note-image-controls input {
+    width: 100%;
+    border: 1px solid var(--input);
+    border-radius: 0.25rem;
+    padding: 0.4rem 0.5rem;
+    background: var(--background);
+    color: var(--foreground);
+}

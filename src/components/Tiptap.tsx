@@ -2,81 +2,29 @@
 import {
   useEditor,
   EditorContent,
-  NodeViewWrapper,
-  ReactNodeViewRenderer,
-  type NodeViewProps,
+  type Editor,
 } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { SectionFocus } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import Image from "@tiptap/extension-image";
+import { FilesContext, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
+import {
+  loadContent,
+  type ContentUpdate,
+  type FileType,
+  type GetContentResponse,
+} from "@/lib/content";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
-
-type ContentUpdate = {
-  id: number;
-  bytes: number[];
-};
-
-type FileType = {
-  id: string;
-  path: string;
-  file_type: string;
-};
-
-const FilesContext = createContext<ReadonlyMap<string, FileType>>(new Map());
-
-function SavedImageView({ node }: NodeViewProps) {
-  const filesById = useContext(FilesContext);
-  const file = filesById.get(node.attrs.fileId);
-  const src = file ? convertFileSrc(file.path) : node.attrs.src;
-
-  return (
-    <NodeViewWrapper contentEditable={false}>
-      {src ? (
-        <img
-          src={src}
-          alt={node.attrs.alt ?? ""}
-          title={node.attrs.title ?? undefined}
-          className="note-image"
-        />
-      ) : (
-        <span>Image unavailable</span>
-      )}
-    </NodeViewWrapper>
-  );
-}
-
-const SavedImage = Image.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      fileId: {
-        default: null,
-        rendered: false,
-      },
-    };
-  },
-
-  addNodeView() {
-    return ReactNodeViewRenderer(SavedImageView);
-  },
-});
-
-type GetContentResponse = {
-  state: number[];
-  updates: ContentUpdate[];
-  files: FileType[];
-};
 
 type TipTapProps = {
   moduleId: string;
@@ -91,9 +39,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   const { isSuccess, data } = useQuery({
     queryKey: ["content", moduleId],
-    queryFn: async () => {
-      return await invoke<GetContentResponse>("get_content", { moduleId });
-    },
+    queryFn: () => loadContent(moduleId),
   });
 
   const filesById = useMemo(() => {
@@ -219,8 +165,33 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     };
   }, [isSuccess, yDoc, addUpdateMutation]);
 
+  async function insertImages(currentEditor: Editor, files: File[], position: number) {
+    if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
+    // Map the insertion point through edits made while files are being saved.
+    let insertAt = position;
+    const mapPosition = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => {
+      insertAt = transaction.mapping.map(insertAt);
+    };
+    currentEditor.on("transaction", mapPosition);
+    try {
+      for (const file of files) {
+        const saved = await uploadFileMutation.mutateAsync(file);
+        if (currentEditor.isDestroyed) return;
+        currentEditor.chain().insertContentAt(insertAt, {
+          type: "image",
+          attrs: { fileId: saved.id, alt: file.name },
+        }).run();
+      }
+    } catch (error) {
+      console.error("Failed to save image:", error);
+    } finally {
+      currentEditor.off("transaction", mapPosition);
+    }
+  }
+
   const editor = useEditor(
     {
+      editable: isSuccess,
       shouldRerenderOnTransaction: false,
       extensions: [
         StarterKit.configure({
@@ -239,28 +210,13 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           },
         }),
         FileHandler.configure({
-          allowedMimeTypes: ["image/png", "image/jpeg", "image/webp"],
-          onPaste: async (currentEditor, files) => {
-            for (const file of files) {
-              try {
-                const fileResult = await uploadFileMutation.mutateAsync(file);
-
-                if (currentEditor.isDestroyed) return;
-
-                currentEditor
-                  .chain()
-                  .insertContentAt(currentEditor.state.selection.anchor, {
-                    type: "image",
-                    attrs: {
-                      fileId: fileResult.id,
-                    },
-                  })
-                  .focus()
-                  .run();
-              } catch (error) {
-                console.error("Failed to save image: ", error);
-              }
-            }
+          allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
+          consumePasteEvent: true,
+          onPaste: (currentEditor, files) => {
+            void insertImages(currentEditor, files, currentEditor.state.selection.anchor);
+          },
+          onDrop: (currentEditor, files, position) => {
+            void insertImages(currentEditor, files, position);
           },
         }),
       ],
@@ -297,6 +253,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     },
     [yDoc],
   );
+
+  useEffect(() => {
+    editor?.setEditable(isSuccess, false);
+  }, [editor, isSuccess]);
 
   // if editor is empty
   useEffect(() => {
