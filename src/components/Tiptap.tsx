@@ -1,15 +1,23 @@
 // src/Tiptap.tsx
-import { useEditor, EditorContent } from "@tiptap/react";
+import {
+  useEditor,
+  EditorContent,
+  NodeViewWrapper,
+  ReactNodeViewRenderer,
+  type NodeViewProps,
+} from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useEffect, useMemo, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { SectionFocus } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
+import Image from "@tiptap/extension-image";
+import FileHandler from "@tiptap/extension-file-handler";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -19,9 +27,55 @@ type ContentUpdate = {
   bytes: number[];
 };
 
+type FileType = {
+  id: string;
+  path: string;
+  file_type: string;
+};
+
+const FilesContext = createContext<ReadonlyMap<string, FileType>>(new Map());
+
+function SavedImageView({ node }: NodeViewProps) {
+  const filesById = useContext(FilesContext);
+  const file = filesById.get(node.attrs.fileId);
+  const src = file ? convertFileSrc(file.path) : node.attrs.src;
+
+  return (
+    <NodeViewWrapper contentEditable={false}>
+      {src ? (
+        <img
+          src={src}
+          alt={node.attrs.alt ?? ""}
+          title={node.attrs.title ?? undefined}
+          className="note-image"
+        />
+      ) : (
+        <span>Image unavailable</span>
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+const SavedImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      fileId: {
+        default: null,
+        rendered: false,
+      },
+    };
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(SavedImageView);
+  },
+});
+
 type GetContentResponse = {
   state: number[];
   updates: ContentUpdate[];
+  files: FileType[];
 };
 
 type TipTapProps = {
@@ -42,6 +96,16 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     },
   });
 
+  const filesById = useMemo(() => {
+    const map = new Map<string, FileType>();
+
+    for (const file of data?.files ?? []) {
+      map.set(file.id, file);
+    }
+
+    return map;
+  }, [data?.files]);
+
   const { setActiveEditor } = useActiveEditor();
 
   const addUpdateMutation = useMutation({
@@ -58,6 +122,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           return {
             state: oldContent.state,
             updates: [...oldContent.updates, update],
+            files: oldContent.files,
           };
         },
       );
@@ -89,6 +154,35 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
             updates: oldContent.updates.filter(
               (update) => update.id > updateId,
             ),
+            files: oldContent.files,
+          };
+        },
+      );
+    },
+  });
+
+  const uploadFileMutation = useMutation({
+    mutationKey: ["upload-file"],
+    mutationFn: async (file: File) => {
+      const buffer = await file.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buffer));
+
+      return invoke<FileType>("save_file", {
+        moduleId,
+        bytes,
+        mimeType: file.type,
+      });
+    },
+    onSuccess: (update) => {
+      queryClient.setQueryData<GetContentResponse>(
+        ["content", moduleId],
+        (oldContent) => {
+          if (!oldContent) return oldContent;
+
+          return {
+            state: oldContent.state,
+            updates: oldContent.updates,
+            files: [...oldContent.files, update],
           };
         },
       );
@@ -137,13 +231,45 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         Collaboration.configure({
           document: yDoc,
         }),
+        SavedImage.configure({
+          inline: false,
+          allowBase64: false,
+          HTMLAttributes: {
+            class: "note-image",
+          },
+        }),
+        FileHandler.configure({
+          allowedMimeTypes: ["image/png", "image/jpeg", "image/webp"],
+          onPaste: async (currentEditor, files) => {
+            for (const file of files) {
+              try {
+                const fileResult = await uploadFileMutation.mutateAsync(file);
+
+                if (currentEditor.isDestroyed) return;
+
+                currentEditor
+                  .chain()
+                  .insertContentAt(currentEditor.state.selection.anchor, {
+                    type: "image",
+                    attrs: {
+                      fileId: fileResult.id,
+                    },
+                  })
+                  .focus()
+                  .run();
+              } catch (error) {
+                console.error("Failed to save image: ", error);
+              }
+            }
+          },
+        }),
       ],
       editorProps: {
         attributes: {
           class: "tiptap",
         },
       },
-      // ai-suggested change
+      // ai-suggested change to prevent double enter lag
       onTransaction: ({ editor, transaction }) => {
         if (
           !transaction.docChanged ||
@@ -253,9 +379,11 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   ]);
 
   return (
-    <HeadingActionOverlay editor={editor}>
-      <EditorContent editor={editor} />
-    </HeadingActionOverlay>
+    <FilesContext.Provider value={filesById}>
+      <HeadingActionOverlay editor={editor}>
+        <EditorContent editor={editor} />
+      </HeadingActionOverlay>
+    </FilesContext.Provider>
   );
 };
 

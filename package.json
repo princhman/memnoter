@@ -23,6 +23,8 @@
     "@tiptap/core": "^3.29.2",
     "@tiptap/extension-collaboration": "^3.27.3",
     "@tiptap/extension-document": "^3.27.3",
+    "@tiptap/extension-file-handler": "^3.31.3",
+    "@tiptap/extension-image": "^3.31.3",
     "@tiptap/extension-paragraph": "^3.27.3",
     "@tiptap/extension-text": "^3.27.3",
     "@tiptap/pm": "^3.27.1",

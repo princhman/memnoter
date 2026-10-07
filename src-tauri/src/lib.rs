@@ -25,9 +25,17 @@ struct ContentUpdate {
 }
 
 #[derive(Debug, serde::Serialize)]
+struct FileType {
+    id: String,
+    path: String,
+    file_type: String,
+}
+
+#[derive(Debug, serde::Serialize)]
 struct GetContentResponse {
     state: Vec<u8>,
     updates: Vec<ContentUpdate>,
+    files: Vec<FileType>,
 }
 
 fn db_err(error: impl std::fmt::Display) -> String {
@@ -41,6 +49,9 @@ fn init_db(app: &tauri::App) -> CommandResult<Db> {
 
     let db_path = app_dir.join("main.db");
     let conn = Connection::open(&db_path).map_err(db_err)?;
+
+    let files_path = app_dir.join("files");
+    std::fs::create_dir_all(&files_path).map_err(db_err)?;
 
     conn.execute_batch(
         "
@@ -65,6 +76,13 @@ fn init_db(app: &tauri::App) -> CommandResult<Db> {
             bytes BLOB NOT NULL,
             created_at INTEGER NOT NULL,
             FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
+        );
+
+        create table if not exists files (
+            id TEXT PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            file_type TEXT NOT NULL
         )",
     )
     .map_err(db_err)?;
@@ -154,7 +172,27 @@ fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetCont
         .collect::<Result<Vec<ContentUpdate>>>()
         .map_err(db_err)?;
 
-    Ok(GetContentResponse { state, updates })
+    let mut files_stmt = conn
+        .prepare("select id, path, file_type from files where module_id = ?1")
+        .map_err(db_err)?;
+
+    let files = files_stmt
+        .query_map(params![&module_id], |row| {
+            Ok(FileType {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                file_type: row.get(2)?,
+            })
+        })
+        .map_err(db_err)?
+        .collect::<Result<Vec<FileType>>>()
+        .map_err(db_err)?;
+
+    Ok(GetContentResponse {
+        state,
+        updates,
+        files,
+    })
 }
 
 // Editing emits a save for every Yjs update. Keep the database lock and disk
@@ -203,6 +241,49 @@ fn save_compaction(
     Ok(())
 }
 
+#[tauri::command(async)]
+fn save_file(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    module_id: String,
+    bytes: Vec<u8>,
+    mime_type: String,
+) -> CommandResult<FileType> {
+    let id = Uuid::new_v4().to_string();
+    let app_dir = app.path().app_data_dir().map_err(db_err)?;
+    let path = app_dir.join("files").join(&id);
+
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| "File path is not valid UTF-8".to_string())?;
+
+    std::fs::write(&path, &bytes).map_err(db_err)?;
+
+    let conn = db.conn.lock().map_err(db_err)?;
+
+    // ai-suggested error handling - cleanup if failed
+    if let Err(error) = conn.execute(
+        "insert into files (id, module_id, path, file_type)
+         values (?1, ?2, ?3, ?4)",
+        params![id, module_id, path_str, mime_type],
+    ) {
+        if let Err(cleanup_error) = std::fs::remove_file(&path) {
+            return Err(format!(
+                "Database insert failed: {error}. \
+                 File cleanup also failed: {cleanup_error}"
+            ));
+        }
+
+        return Err(db_err(error));
+    }
+
+    Ok(FileType {
+        id: id,
+        path: path_str.to_owned(),
+        file_type: mime_type,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -219,6 +300,7 @@ pub fn run() {
             add_update,
             rename_module,
             save_compaction,
+            save_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
