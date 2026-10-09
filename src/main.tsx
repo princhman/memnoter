@@ -4,6 +4,7 @@ import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import "./App.css";
+import "katex/dist/katex.min.css";
 
 function syncThemeWithSystem() {
   const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");

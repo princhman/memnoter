@@ -368,17 +368,27 @@ body {
     margin: 1rem 0;
     max-width: 100%;
 }
-.note-image-host [data-resize-container] { max-width: 100%; }
-.note-image-host [data-resize-wrapper] { max-width: 100%; }
-.note-image-block[data-align="center"] [data-resize-container] { justify-content: center; }
-.note-image-block[data-align="right"] [data-resize-container] { justify-content: flex-end; }
+.note-image-host [data-resize-container] {
+    max-width: 100%;
+}
+.note-image-host [data-resize-wrapper] {
+    max-width: 100%;
+}
+.note-image-block[data-align="center"] [data-resize-container] {
+    justify-content: center;
+}
+.note-image-block[data-align="right"] [data-resize-container] {
+    justify-content: flex-end;
+}
 .note-image {
     display: block;
     max-width: 100%;
     height: auto;
     border-radius: 0.4rem;
 }
-.note-image-block[data-selected="true"] .note-image { outline: 2px solid var(--primary); }
+.note-image-block[data-selected="true"] .note-image {
+    outline: 2px solid var(--primary);
+}
 .note-image-host [data-resize-handle] {
     width: 12px;
     height: 12px;
@@ -390,11 +400,17 @@ body {
 }
 .note-image-block[data-selected="true"] [data-resize-handle],
 .note-image-host:hover [data-resize-handle],
-.note-image-host [data-resize-state="true"] [data-resize-handle] { opacity: 1; }
+.note-image-host [data-resize-state="true"] [data-resize-handle] {
+    opacity: 1;
+}
 .note-image-host [data-resize-handle="top-left"],
-.note-image-host [data-resize-handle="bottom-right"] { cursor: nwse-resize; }
+.note-image-host [data-resize-handle="bottom-right"] {
+    cursor: nwse-resize;
+}
 .note-image-host [data-resize-handle="top-right"],
-.note-image-host [data-resize-handle="bottom-left"] { cursor: nesw-resize; }
+.note-image-host [data-resize-handle="bottom-left"] {
+    cursor: nesw-resize;
+}
 .note-image-controls {
     margin-top: 0.5rem;
     padding: 0.5rem;
@@ -403,10 +419,20 @@ body {
     background: var(--popover);
     font-size: 0.75rem;
 }
-.note-image-controls [aria-pressed="true"] { background: var(--accent); }
-.note-image-controls details { margin-top: 0.5rem; }
-.note-image-controls summary { cursor: pointer; color: var(--muted-foreground); }
-.note-image-controls label { display: grid; gap: 0.25rem; }
+.note-image-controls [aria-pressed="true"] {
+    background: var(--accent);
+}
+.note-image-controls details {
+    margin-top: 0.5rem;
+}
+.note-image-controls summary {
+    cursor: pointer;
+    color: var(--muted-foreground);
+}
+.note-image-controls label {
+    display: grid;
+    gap: 0.25rem;
+}
 .note-image-controls input {
     width: 100%;
     border: 1px solid var(--input);
@@ -414,4 +440,121 @@ body {
     padding: 0.4rem 0.5rem;
     background: var(--background);
     color: var(--foreground);
+}
+
+/* Inline math — styled to match the app's theme tokens (shadcn / Tailwind vars).
+   Light/dark is handled by the CSS variables, so no media queries are needed. */
+
+/* ---------- Hidden source (cursor outside) ---------- */
+/* class + inline style are set by the plugin; a widget shows the rendered KaTeX */
+.inline-math-hidden {
+    display: none !important;
+}
+
+/* ---------- Editing state (cursor inside) — looks like inline code ---------- */
+.tiptap .inline-math.is-editing {
+    display: inline;
+    border-radius: 0.35rem;
+    background: var(--muted);
+    color: var(--foreground);
+    font-family:
+        "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace;
+    font-size: 0.86em;
+    padding: 0.18em 0.35em;
+    white-space: pre;
+}
+
+.tiptap .inline-math.is-editing::before,
+.tiptap .inline-math.is-editing::after {
+    content: "$";
+    color: var(--muted-foreground);
+}
+
+/* ---------- Rendered widget (cursor outside) ---------- */
+.tiptap .inline-math-widget {
+    display: inline-block;
+    vertical-align: baseline;
+    padding: 0 0.15em;
+    border-radius: 0.35rem;
+    margin-block: calc(var(--inline-math-overflow, 0.5em) * -1);
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: background-color 120ms ease;
+}
+
+.tiptap .inline-math-widget *,
+.tiptap .inline-math-widget {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.tiptap .inline-math-widget::selection,
+.tiptap .inline-math-widget *::selection {
+    background: transparent;
+}
+
+.tiptap .inline-math-widget {
+    line-height: 1;
+}
+
+.tiptap .inline-math-widget .katex {
+    font-size: 1.1em;
+    line-height: 1;
+}
+
+.tiptap .inline-math-widget:hover {
+    background: var(--accent);
+}
+
+.tiptap .inline-math-widget.is-selected {
+    --inline-math-selection: color-mix(
+        in srgb,
+        var(--primary) 80%,
+        var(--background)
+    );
+
+    border-radius: 0;
+    background: var(--inline-math-selection);
+    /*box-shadow:
+        0 -0.15em 0 0 var(--inline-math-selection),
+        -1px 0 0 0 var(--inline-math-selection);*/
+}
+
+.tiptap .inline-math-widget.is-empty::before {
+    content: "math";
+    color: var(--muted-foreground);
+    font-size: 0.8em;
+    font-style: italic;
+    padding: 0 0.25em;
+}
+
+/* ---------- Floating live preview (while editing) — popover look ---------- */
+.tiptap .inline-math-preview {
+    position: relative;
+    display: inline-block;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    user-select: none;
+}
+
+.tiptap .inline-math-preview > span {
+    position: absolute;
+    bottom: 1.4em;
+    left: 0;
+    z-index: 50;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow:
+        0 4px 6px -1px rgb(0 0 0 / 0.1),
+        0 2px 4px -2px rgb(0 0 0 / 0.1);
+    white-space: nowrap;
+}
+
+.tiptap .inline-math-preview .katex {
+    font-size: 1.1em;
 }

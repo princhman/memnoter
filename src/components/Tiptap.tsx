@@ -1,9 +1,5 @@
 // src/Tiptap.tsx
-import {
-  useEditor,
-  EditorContent,
-  type Editor,
-} from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
@@ -22,6 +18,7 @@ import {
   type FileType,
   type GetContentResponse,
 } from "@/lib/content";
+import { InlineMath } from "@/lib/inline-math";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -165,11 +162,19 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     };
   }, [isSuccess, yDoc, addUpdateMutation]);
 
-  async function insertImages(currentEditor: Editor, files: File[], position: number) {
+  async function insertImages(
+    currentEditor: Editor,
+    files: File[],
+    position: number,
+  ) {
     if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
     // Map the insertion point through edits made while files are being saved.
     let insertAt = position;
-    const mapPosition = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => {
+    const mapPosition = ({
+      transaction,
+    }: {
+      transaction: import("@tiptap/pm/state").Transaction;
+    }) => {
       insertAt = transaction.mapping.map(insertAt);
     };
     currentEditor.on("transaction", mapPosition);
@@ -177,10 +182,13 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       for (const file of files) {
         const saved = await uploadFileMutation.mutateAsync(file);
         if (currentEditor.isDestroyed) return;
-        currentEditor.chain().insertContentAt(insertAt, {
-          type: "image",
-          attrs: { fileId: saved.id, alt: file.name },
-        }).run();
+        currentEditor
+          .chain()
+          .insertContentAt(insertAt, {
+            type: "image",
+            attrs: { fileId: saved.id, alt: file.name },
+          })
+          .run();
       }
     } catch (error) {
       console.error("Failed to save image:", error);
@@ -197,6 +205,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         StarterKit.configure({
           undoRedo: false,
         }),
+        InlineMath,
         HeadingHieararchy,
         SectionFocus,
         Collaboration.configure({
@@ -210,10 +219,19 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           },
         }),
         FileHandler.configure({
-          allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
+          allowedMimeTypes: [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif",
+          ],
           consumePasteEvent: true,
           onPaste: (currentEditor, files) => {
-            void insertImages(currentEditor, files, currentEditor.state.selection.anchor);
+            void insertImages(
+              currentEditor,
+              files,
+              currentEditor.state.selection.anchor,
+            );
           },
           onDrop: (currentEditor, files, position) => {
             void insertImages(currentEditor, files, position);
