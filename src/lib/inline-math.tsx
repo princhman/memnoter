@@ -19,7 +19,7 @@ type MathInfo = { pos: number; size: number; tex: string };
 const EMPTY_MATH_PLACEHOLDER = "\u200b";
 
 function cleanMathText(tex: string) {
-  return tex.replaceAll(EMPTY_MATH_PLACEHOLDER, "");
+  return tex.replace(/\u200b/g, "");
 }
 
 function collect(doc: PMNode, name: string): MathInfo[] {

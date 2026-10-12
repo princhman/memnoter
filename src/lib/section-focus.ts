@@ -108,7 +108,11 @@ export const SectionFocus = Extension.create({
           decorations(state: EditorState) {
             const headingPos = sectionFocusKey.getState(state);
 
-            if (headingPos === null || headingPos === undefined)
+            if (
+              headingPos === null ||
+              headingPos === undefined ||
+              headingPos === -1
+            )
               return DecorationSet.empty;
 
             const heading = state.doc.nodeAt(headingPos);
