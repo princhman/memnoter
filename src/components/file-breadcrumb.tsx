@@ -1,5 +1,6 @@
 import {
   Breadcrumb,
+  BreadcrumbEllipsis,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
@@ -17,6 +18,14 @@ import { getFocusedSectionPath } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { Fragment } from "react";
 import { useIsFullscreen } from "@/hooks/use-fullscreen";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { Button } from "./ui/button";
 
 export function FileBreadcrumb() {
   const { state } = useSidebar();
@@ -68,11 +77,7 @@ export function FileBreadcrumb() {
         // translate can advance ahead of layout and briefly reverse the motion.
         className={cn(
           "shrink-0 transition-[width] duration-(--sidebar-motion-duration) ease-(--sidebar-motion-ease) motion-reduce:transition-none",
-          state === "collapsed"
-            ? isFullScreen
-              ? "w-30"
-              : "w-46"
-            : "w-2",
+          state === "collapsed" ? (isFullScreen ? "w-30" : "w-46") : "w-2",
         )}
       />
       <div className="min-w-0">
@@ -103,34 +108,68 @@ export function FileBreadcrumb() {
                 )}
               </BreadcrumbItem>
             )}
-            {sectionPath.map((crumb, index) => (
-              <Fragment key={crumb.pos}>
-                {index === 0 ? (
-                  <BreadcrumbSeparator />
-                ) : (
-                  <BreadcrumbSeparator>/</BreadcrumbSeparator>
-                )}
-
+            {sectionPath.length > 2 && (
+              <>
+                <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  {index === sectionPath.length - 1 ? (
-                    <BreadcrumbPage>{crumb.title}</BreadcrumbPage>
-                  ) : (
-                    <BreadcrumbLink
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
                       render={
-                        <button
-                          type="button"
-                          onClick={() =>
-                            editor?.commands.showSection(crumb.pos)
-                          }
-                        >
-                          {crumb.title}
-                        </button>
+                        <Button size="icon-sm" variant="ghost">
+                          <BreadcrumbEllipsis />
+                          <span className="sr-only">Toggle menu</span>
+                        </Button>
                       }
                     />
-                  )}
+                    <DropdownMenuContent align="start">
+                      <DropdownMenuGroup>
+                        {sectionPath
+                          .slice(0, sectionPath.length - 2)
+                          .map((crumb) => (
+                            <DropdownMenuItem
+                              onClick={() =>
+                                editor?.commands.showSection(crumb.pos)
+                              }
+                            >
+                              {crumb.title}
+                            </DropdownMenuItem>
+                          ))}
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </BreadcrumbItem>
-              </Fragment>
-            ))}
+              </>
+            )}
+            {sectionPath
+              .slice(sectionPath.length - 2, sectionPath.length)
+              .map((crumb, index) => (
+                <Fragment key={crumb.pos}>
+                  {index === 0 && !(sectionPath.length > 2) ? (
+                    <BreadcrumbSeparator />
+                  ) : (
+                    <BreadcrumbSeparator>/</BreadcrumbSeparator>
+                  )}
+
+                  <BreadcrumbItem>
+                    {index === sectionPath.length - 1 ? (
+                      <BreadcrumbPage>{crumb.title}</BreadcrumbPage>
+                    ) : (
+                      <BreadcrumbLink
+                        render={
+                          <button
+                            type="button"
+                            onClick={() =>
+                              editor?.commands.showSection(crumb.pos)
+                            }
+                          >
+                            {crumb.title}
+                          </button>
+                        }
+                      />
+                    )}
+                  </BreadcrumbItem>
+                </Fragment>
+              ))}
           </BreadcrumbList>
         </Breadcrumb>
       </div>
