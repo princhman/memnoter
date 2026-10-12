@@ -147,6 +147,12 @@ body {
     }
 }
 
+@font-face {
+    font-family: "Arrows";
+    src: url("./assets/fonts/InterVariable.woff2") format("woff2");
+    unicode-range: U+2190-21FF;
+}
+
 .tiptap-shell {
     position: relative;
     width: 100%;
@@ -182,7 +188,7 @@ body {
     max-width: 760px;
     margin: 0 auto;
     color: var(--foreground);
-    font-family: var(--font-sans);
+    font-family: "Arrows", var(--font-sans);
     font-size: 1rem;
     line-height: normal;
     outline: none;
@@ -217,7 +223,7 @@ body {
 .tiptap h5,
 .tiptap h6 {
     color: var(--foreground);
-    font-family: var(--font-heading);
+    font-family: "Arrows", var(--font-heading);
     font-weight: 700;
     line-height: 1.18;
     letter-spacing: -0.035em;

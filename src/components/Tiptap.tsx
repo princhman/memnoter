@@ -19,6 +19,7 @@ import {
   type GetContentResponse,
 } from "@/lib/content";
 import { InlineMath } from "@/lib/inline-math";
+import { Arrows } from "@/lib/arrows";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -205,6 +206,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         StarterKit.configure({
           undoRedo: false,
         }),
+        Arrows,
         InlineMath,
         HeadingHieararchy,
         SectionFocus,
