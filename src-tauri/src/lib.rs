@@ -33,6 +33,12 @@ struct FileType {
 }
 
 #[derive(Debug, serde::Serialize)]
+struct FileContents {
+    bytes: Vec<u8>,
+    file_type: String,
+}
+
+#[derive(Debug, serde::Serialize)]
 struct GetContentResponse {
     state: Vec<u8>,
     updates: Vec<ContentUpdate>,
@@ -415,6 +421,40 @@ fn save_file(
     })
 }
 
+#[tauri::command(async)]
+fn read_file(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    module_id: String,
+    file_id: String,
+) -> CommandResult<FileContents> {
+    if Uuid::parse_str(&file_id).is_err() {
+        return Err("Invalid file ID".to_string());
+    }
+
+    let expected_path = app
+        .path()
+        .app_data_dir()
+        .map_err(db_err)?
+        .join("files")
+        .join(&file_id);
+    let conn = db.conn.lock().map_err(db_err)?;
+    let (path, file_type): (String, String) = conn
+        .query_row(
+            "select path, file_type from files where id = ?1 and module_id = ?2",
+            params![file_id, module_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(db_err)?;
+
+    if Path::new(&path) != expected_path.as_path() {
+        return Err("Stored image path is invalid".to_string());
+    }
+
+    let bytes = std::fs::read(expected_path).map_err(db_err)?;
+    Ok(FileContents { bytes, file_type })
+}
+
 // The caller reconstructs the persisted Yjs document before supplying unused
 // IDs. Keep the connection locked through the revision check and deletion so
 // a concurrent save cannot turn that snapshot into a stale cleanup decision.
@@ -510,6 +550,7 @@ pub fn run() {
             rename_module,
             save_compaction,
             save_file,
+            read_file,
             cleanup_files
         ])
         .run(tauri::generate_context!())

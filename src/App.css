@@ -375,9 +375,13 @@ body {
 
 /* Saved images use Tiptap's resize handles and persist their node attributes. */
 .note-image-block {
+    position: relative;
+    width: fit-content;
     margin: 1rem 0;
     max-width: 100%;
 }
+.note-image-block[data-align="center"] { margin-right: auto; margin-left: auto; }
+.note-image-block[data-align="right"] { margin-right: 0; margin-left: auto; }
 .note-image-host [data-resize-container] {
     max-width: 100%;
 }
@@ -395,6 +399,16 @@ body {
     max-width: 100%;
     height: auto;
     border-radius: 0.4rem;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+}
+.note-image-block,
+.note-image-host,
+.note-image-host [data-resize-container],
+.note-image-host [data-resize-wrapper] {
+    user-select: none;
+    -webkit-user-select: none;
 }
 .note-image-block[data-selected="true"] .note-image {
     outline: 2px solid var(--primary);
@@ -409,7 +423,6 @@ body {
     touch-action: none;
 }
 .note-image-block[data-selected="true"] [data-resize-handle],
-.note-image-host:hover [data-resize-handle],
 .note-image-host [data-resize-state="true"] [data-resize-handle] {
     opacity: 1;
 }
@@ -422,11 +435,16 @@ body {
     cursor: nesw-resize;
 }
 .note-image-controls {
-    margin-top: 0.5rem;
+    position: absolute;
+    z-index: 5;
+    top: 0;
+    right: 0;
+    max-width: 100%;
     padding: 0.5rem;
     border: 1px solid var(--border);
     border-radius: 0.5rem;
-    background: var(--popover);
+    background: color-mix(in oklch, var(--popover) 94%, transparent);
+    box-shadow: 0 2px 10px color-mix(in oklch, black 14%, transparent);
     font-size: 0.75rem;
 }
 .note-image-controls [aria-pressed="true"] {
@@ -451,6 +469,66 @@ body {
     background: var(--background);
     color: var(--foreground);
 }
+
+.image-crop-backdrop {
+    position: fixed;
+    z-index: 100;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+    background: color-mix(in oklch, black 55%, transparent);
+}
+.image-crop-dialog {
+    width: min(44rem, 100%);
+    max-height: min(90vh, 52rem);
+    overflow: auto;
+    padding: 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: var(--background);
+    color: var(--foreground);
+    box-shadow: 0 12px 40px color-mix(in oklch, black 28%, transparent);
+}
+.image-crop-dialog h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+.image-crop-dialog > p { margin: 0.35rem 0 1rem; color: var(--muted-foreground); font-size: 0.85rem; }
+.image-crop-preview {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+    background: #222;
+    touch-action: none;
+}
+.image-crop-preview > img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    user-select: none;
+}
+.image-crop-selection {
+    position: absolute;
+    box-sizing: border-box;
+    border: 2px solid white;
+    outline: 9999px solid rgb(0 0 0 / 48%);
+    cursor: move;
+    touch-action: none;
+}
+.image-crop-resize {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    width: 14px;
+    height: 14px;
+    border: 2px solid white;
+    border-radius: 3px;
+    background: var(--primary);
+    cursor: nwse-resize;
+    touch-action: none;
+}
+.image-crop-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+.image-crop-error { color: var(--destructive); font-size: 0.85rem; }
 
 /* Inline math — styled to match the app's theme tokens (shadcn / Tailwind vars).
    Light/dark is handled by the CSS variables, so no media queries are needed. */
