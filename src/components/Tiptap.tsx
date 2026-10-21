@@ -241,6 +241,24 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         }),
       ],
       editorProps: {
+        handleScrollToSelection: (view) => {
+          if (!view.state.selection.empty) return false;
+          const container = view.dom.closest<HTMLElement>(".app-scroll-container");
+          if (!container) return false;
+
+          const caret = view.coordsAtPos(view.state.selection.head);
+          const bounds = container.getBoundingClientRect();
+          const top = bounds.top + container.clientTop;
+          const left = bounds.left + container.clientLeft;
+          // Skip ProseMirror's ancestor-scrolling routine when the caret is
+          // already visible. Keep its normal reveal behavior outside the viewport.
+          return (
+            caret.top >= top &&
+            caret.bottom <= top + container.clientHeight &&
+            caret.left >= left &&
+            caret.right <= left + container.clientWidth
+          );
+        },
         attributes: {
           class: "tiptap",
           autocapitalize: "off",
