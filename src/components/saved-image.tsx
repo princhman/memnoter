@@ -86,6 +86,9 @@ function SavedImageView(props: NodeViewProps) {
   const file = files.get(node.attrs.fileId);
   const src = file ? convertFileSrc(file.path) : node.attrs.src;
   const host = useRef<HTMLDivElement>(null);
+  // The host shrinks with the image; its containing block defines room to grow.
+  const getAvailableWidth = () =>
+    host.current?.closest<HTMLElement>(".note-image-block")?.parentElement?.clientWidth ?? 0;
   const image = useRef<HTMLImageElement | null>(null);
   const latest = useRef(props);
   latest.current = props;
@@ -125,7 +128,7 @@ function SavedImageView(props: NodeViewProps) {
           // Read at drag time: the sidebar/window can change the available width
           // after this node view mounts (including initially hidden sections).
           get width() {
-            return host.current?.clientWidth || undefined;
+            return getAvailableWidth() || undefined;
           },
         },
         preserveAspectRatio: true,
@@ -153,7 +156,7 @@ function SavedImageView(props: NodeViewProps) {
   const resizeTo = (fraction: number) => {
     const img = image.current;
     if (!img?.naturalWidth || !host.current) return;
-    const width = Math.round(host.current.clientWidth * fraction);
+    const width = Math.round(getAvailableWidth() * fraction);
     updateAttributes({ width, height: Math.round(width * img.naturalHeight / img.naturalWidth) });
   };
 

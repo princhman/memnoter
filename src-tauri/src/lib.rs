@@ -176,6 +176,49 @@ mod tests {
     }
 
     #[test]
+    fn deleting_module_removes_its_data_and_images_but_preserves_other_modules() {
+        let f = Fixture::new();
+        let image = f.file("note");
+        let missing_image = f.file("note");
+        let other_image = f.file("other");
+        let files_dir = f.dir.join("files");
+        std::fs::remove_file(files_dir.join(&missing_image)).unwrap();
+
+        let mut conn = f.db.conn.lock().unwrap();
+        delete_module_data(&mut conn, &files_dir, "note").unwrap();
+        for table in ["contents", "contents_updates", "files"] {
+            let count: i64 = conn
+                .query_one(
+                    &format!("select count(*) from {table} where module_id = 'note'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "{table} retained deleted module data");
+        }
+        let modules: Vec<String> = conn
+            .prepare("select id from modules")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(modules, vec!["other"]);
+        let other_state: Vec<u8> = conn
+            .query_one(
+                "select state from contents where module_id = 'other'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(other_state, vec![2]);
+        drop(conn);
+        assert!(!files_dir.join(image).exists());
+        assert!(files_dir.join(&other_image).exists());
+        assert!(f.row_exists(&other_image));
+    }
+
+    #[test]
     fn cleanup_removes_only_requested_files_owned_by_the_note() {
         let f = Fixture::new();
         let unused = f.file("note");
@@ -280,6 +323,53 @@ fn rename_module(db: tauri::State<Db>, module_id: String, name: String) -> Comma
     .map_err(db_err)?;
 
     Ok(())
+}
+
+fn delete_module_data(conn: &mut Connection, files_dir: &Path, module_id: &str) -> CommandResult<()> {
+    let tx = conn.transaction().map_err(db_err)?;
+    let files = {
+        let mut stmt = tx
+            .prepare("select id, path from files where module_id = ?1")
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([module_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(db_err)?;
+        rows.collect::<Result<Vec<_>>>().map_err(db_err)?
+    };
+    for (id, path) in &files {
+        if Uuid::parse_str(id).is_err() || Path::new(path) != files_dir.join(id) {
+            return Err("Refusing to delete a file outside managed storage".into());
+        }
+    }
+    tx.execute("delete from files where module_id = ?1", [module_id])
+        .map_err(db_err)?;
+    // Foreign keys cascade to the document snapshot and all pending updates.
+    tx.execute("delete from modules where id = ?1", [module_id])
+        .map_err(db_err)?;
+    tx.commit().map_err(db_err)?;
+
+    for (_, path) in files {
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                // The module is already deleted; report disk cleanup separately.
+                eprintln!("Failed to remove deleted module image {path}: {error}");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn delete_module(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    module_id: String,
+) -> CommandResult<()> {
+    let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
+    let mut conn = db.conn.lock().map_err(db_err)?;
+    delete_module_data(&mut conn, &files_dir, &module_id)
 }
 
 #[tauri::command]
@@ -394,9 +484,17 @@ fn save_file(
         .to_str()
         .ok_or_else(|| "File path is not valid UTF-8".to_string())?;
 
-    std::fs::write(&path, &bytes).map_err(db_err)?;
-
     let conn = db.conn.lock().map_err(db_err)?;
+    // Serialize uploads with deletion so a pending paste cannot recreate files
+    // for a module that has already been removed.
+    conn.query_one(
+        "select id from modules where id = ?1",
+        [&module_id],
+        |row| row.get::<_, String>(0),
+    )
+    .map_err(db_err)?;
+
+    std::fs::write(&path, &bytes).map_err(db_err)?;
 
     // ai-suggested error handling - cleanup if failed
     if let Err(error) = conn.execute(
@@ -548,6 +646,7 @@ pub fn run() {
             get_content,
             add_update,
             rename_module,
+            delete_module,
             save_compaction,
             save_file,
             read_file,

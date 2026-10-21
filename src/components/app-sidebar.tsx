@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
-import { Ellipsis, Pencil } from "lucide-react";
+import { Ellipsis, Pencil, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,10 +24,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import RenameModule from "./rename-module";
+import DeleteModule from "./delete-module";
 import { useState } from "react";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
   const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   return (
     <>
@@ -46,6 +48,13 @@ const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
               <Pencil className="size-3" />
               Rename
             </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 className="size-3" />
+              Delete
+            </DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -55,6 +64,12 @@ const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
         moduleId={moduleId}
         open={renameOpen}
         onOpenChange={setRenameOpen}
+      />
+      <DeleteModule
+        moduleName={name}
+        moduleId={moduleId}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
       />
     </>
   );
@@ -102,7 +117,7 @@ const AppSidebar = () => {
                     fuzzy: true,
                   });
                   return (
-                    <SidebarMenuItem>
+                    <SidebarMenuItem key={module.id}>
                       <SidebarMenuButton
                         isActive={isActive}
                         render={
