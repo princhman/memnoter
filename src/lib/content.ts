@@ -22,20 +22,34 @@ export type GetContentResponse = {
 // may overlap pending pastes/saves or an editor with live undo/redo history.
 const loadedModules = new Set<string>();
 
-export async function loadContent(moduleId: string): Promise<GetContentResponse> {
-  const canCleanUp = !loadedModules.has(moduleId);
-  loadedModules.add(moduleId);
-  const content = await invoke<GetContentResponse>("get_content", { moduleId });
-  if (!canCleanUp || content.files.length === 0) return content;
-
-  const doc = new Y.Doc();
-  try {
+export function applySavedContent(doc: Y.Doc, content: GetContentResponse) {
+  // Notify the editor once with the finished document, not after every edit
+  // in the persisted history. Loading must not enter autosave or undo history.
+  doc.transact(() => {
     if (content.state.length > 0) {
       Y.applyUpdate(doc, new Uint8Array(content.state));
     }
     for (const update of content.updates) {
       Y.applyUpdate(doc, new Uint8Array(update.bytes));
     }
+  }, "tauri-load");
+}
+
+export async function loadContent(
+  moduleId: string,
+  document?: Y.Doc,
+): Promise<GetContentResponse> {
+  const canCleanUp = !loadedModules.has(moduleId);
+  loadedModules.add(moduleId);
+  const content = await invoke<GetContentResponse>("get_content", { moduleId });
+  // Reuse the live document for cleanup instead of decoding its history twice.
+  // A restore failure must reject loading, rather than expose an empty editor.
+  if (document) applySavedContent(document, content);
+  if (!canCleanUp || content.files.length === 0) return content;
+
+  const doc = document ?? new Y.Doc();
+  try {
+    if (!document) applySavedContent(doc, content);
 
     // Incomplete update chains cannot prove that a file is unused.
     if (doc.store.pendingStructs || doc.store.pendingDs) return content;
@@ -73,6 +87,6 @@ export async function loadContent(moduleId: string): Promise<GetContentResponse>
     console.error("Failed to clean up unused images:", error);
     return content;
   } finally {
-    doc.destroy();
+    if (!document) doc.destroy();
   }
 }

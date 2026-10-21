@@ -17,7 +17,53 @@ function files(...ids) {
   return ids.map((id) => ({ id, path: `/files/${id}`, file_type: "image/png" }));
 }
 
-test("startup cleanup respects saved updates, duplicate references, and session history", async () => {
+test("opening a long edit history publishes only the complete document and preserves undo", async () => {
+  const source = new Y.Doc();
+  const root = source.getXmlFragment("default");
+  const paragraph = new Y.XmlElement("paragraph");
+  const text = new Y.XmlText();
+  text.insert(0, "Saved text");
+  paragraph.insert(0, [text]);
+  root.insert(0, [paragraph, image("keep")]);
+  const state = Array.from(Y.encodeStateAsUpdate(source));
+  const updates = [];
+  source.on("update", (bytes) => updates.push({ id: updates.length + 1, bytes: Array.from(bytes) }));
+  for (let i = 0; i < 250; i++) text.insert(text.length, ".");
+  const content = { state, updates, files: files("keep", "unused") };
+  mockIPC((command, args) => {
+    if (command === "get_content") return content;
+    assert.equal(command, "cleanup_files");
+    assert.deepEqual(args.fileIds, ["unused"]);
+    assert.equal(args.expectedUpdateId, 250);
+    return ["unused"];
+  });
+
+  const document = new Y.Doc();
+  const restoredRoot = document.getXmlFragment("default");
+  const history = new Y.UndoManager(restoredRoot);
+  const visibleStates = [];
+  restoredRoot.observeDeep((_, transaction) => {
+    visibleStates.push({ content: restoredRoot.toString(), origin: transaction.origin });
+  });
+  try {
+    const loaded = await loadContent("batched-opening", document);
+    assert.equal(restoredRoot.toString(), root.toString());
+    assert.equal(visibleStates.length, 1, "opening must not expose intermediate edits");
+    assert.deepEqual(visibleStates, [{ content: root.toString(), origin: "tauri-load" }]);
+    assert.deepEqual(loaded.files.map((file) => file.id), ["keep"]);
+    assert.deepEqual(loaded.updates, updates, "retain update IDs for later compaction");
+    assert.equal(history.undoStack.length, 0, "loading is not an undoable edit");
+    restoredRoot.get(0).get(0).insert(0, "New edit ");
+    history.undo();
+    assert.equal(restoredRoot.toString(), root.toString(), "undo only reverts the new edit");
+  } finally {
+    history.destroy();
+    document.destroy();
+    source.destroy();
+  }
+});
+
+test("startup cleanup respects saved updates, duplicate references, and later loads", async () => {
   const doc = new Y.Doc();
   const root = doc.getXmlFragment("default");
   const quote = new Y.XmlElement("blockquote");
@@ -50,17 +96,10 @@ test("startup cleanup respects saved updates, duplicate references, and session 
   }]);
   assert.deepEqual(loaded.files.map((file) => file.id), ["shared", "new", "abandoned"]);
 
-  const history = new Y.UndoManager(root);
   root.delete(0, root.length);
   content = { ...loaded, updates: [...updates] };
   await loadContent("lifecycle");
   assert.equal(cleanups.length, 1, "refetch must not delete images recoverable through undo");
-  history.undo();
-  assert.match(root.toString(), /fileId="shared"/);
-  history.redo();
-  await loadContent("lifecycle");
-  assert.equal(cleanups.length, 1, "redo must retain the same protection");
-  history.destroy();
   doc.destroy();
 });
 

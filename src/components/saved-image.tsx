@@ -102,6 +102,14 @@ function SavedImageView(props: NodeViewProps) {
     image.current = img;
     img.className = "note-image";
     img.draggable = false;
+    img.loading = "lazy";
+    img.decoding = "async";
+    const { width, height } = latest.current.node.attrs;
+    if (width > 0 && height > 0) {
+      img.width = width;
+      img.height = height;
+      img.style.aspectRatio = `${width} / ${height}`;
+    }
     img.src = src;
     img.alt = latest.current.node.attrs.alt ?? "";
     img.title = latest.current.node.attrs.title ?? "";

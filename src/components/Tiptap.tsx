@@ -13,6 +13,7 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { FilesContext, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
 import {
+  applySavedContent,
   loadContent,
   type ContentUpdate,
   type FileType,
@@ -37,7 +38,13 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   const { isSuccess, data } = useQuery({
     queryKey: ["content", moduleId],
-    queryFn: () => loadContent(moduleId),
+    queryFn: async () => {
+      const content = await loadContent(moduleId, yDoc);
+      hasAppliedRemoteContent.current = true;
+      return content;
+    },
+    // local mutations keep this cache current; focus/remount needs no disk read.
+    staleTime: Infinity,
   });
 
   const filesById = useMemo(() => {
@@ -137,14 +144,8 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   useEffect(() => {
     if (!data || hasAppliedRemoteContent.current) return;
 
-    if (data.state.length > 0) {
-      Y.applyUpdate(yDoc, new Uint8Array(data.state), "tauri-load");
-    }
-
-    for (const update of data.updates) {
-      Y.applyUpdate(yDoc, new Uint8Array(update.bytes), "tauri-load");
-    }
-
+    // a cached note has not gone through this editor's query function.
+    applySavedContent(yDoc, data);
     hasAppliedRemoteContent.current = true;
   }, [data, yDoc]);
 
@@ -161,7 +162,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     return () => {
       yDoc.off("update", handleUpdate);
     };
-  }, [isSuccess, yDoc, addUpdateMutation]);
+  }, [isSuccess, yDoc, addUpdateMutation.mutate]);
 
   async function insertImages(
     currentEditor: Editor,
@@ -379,22 +380,26 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     compactionMutation.mutate,
   ]);
 
+  // Save acknowledgements must not invalidate every image's context value.
+  const filesContext = useMemo(
+    () => ({
+      files: filesById,
+      saveImage: (file: File) => uploadFileMutation.mutateAsync(file),
+      readImage: async (fileId: string) => {
+        const contents = await invoke<{ bytes: number[]; file_type: string }>(
+          "read_file",
+          { moduleId, fileId },
+        );
+        return new Blob([new Uint8Array(contents.bytes)], {
+          type: contents.file_type,
+        });
+      },
+    }),
+    [filesById, moduleId, uploadFileMutation.mutateAsync],
+  );
+
   return (
-    <FilesContext.Provider
-      value={{
-        files: filesById,
-        saveImage: (file) => uploadFileMutation.mutateAsync(file),
-        readImage: async (fileId) => {
-          const contents = await invoke<{ bytes: number[]; file_type: string }>(
-            "read_file",
-            { moduleId, fileId },
-          );
-          return new Blob([new Uint8Array(contents.bytes)], {
-            type: contents.file_type,
-          });
-        },
-      }}
-    >
+    <FilesContext.Provider value={filesContext}>
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>

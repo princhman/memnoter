@@ -372,7 +372,8 @@ fn delete_module(
     delete_module_data(&mut conn, &files_dir, &module_id)
 }
 
-#[tauri::command]
+// Reading and serializing a long edit history must not block the native UI.
+#[tauri::command(async)]
 fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetContentResponse> {
     let conn = db.conn.lock().map_err(db_err)?;
 

@@ -5,6 +5,8 @@ import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import { createMathIndex } from "./math-index";
+import { createViewportRenderer } from "./viewport-renderer";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -15,22 +17,8 @@ declare module "@tiptap/core" {
   }
 }
 
-type MathInfo = { pos: number; size: number; tex: string };
-
 function cleanMathText(tex: string) {
   return tex.replace(/\u200b/g, "");
-}
-
-function collect(doc: PMNode, name: string): MathInfo[] {
-  const out: MathInfo[] = [];
-  doc.descendants((node, pos) => {
-    if (node.type.name === name) {
-      out.push({ pos, size: node.nodeSize, tex: node.textContent });
-      return false;
-    }
-    return true;
-  });
-  return out;
 }
 
 function renderKatex(el: HTMLElement, tex: string) {
@@ -75,6 +63,7 @@ export const InlineMath = Node.create({
   },
 
   addNodeView() {
+    const deferRender = createViewportRenderer();
     return ({ node, decorations, getPos, editor }) => {
       const dom = document.createElement("span");
       dom.className = "inline-math";
@@ -87,6 +76,20 @@ export const InlineMath = Node.create({
       dom.append(contentDOM, rendered);
 
       let currentNode = node;
+      let renderedTex: string | undefined;
+      let pendingTex: string | undefined;
+      let cancelRender: (() => void) | undefined;
+      let wasEditing: boolean | undefined;
+      const renderNow = () => {
+        cancelRender?.();
+        cancelRender = undefined;
+        pendingTex = undefined;
+        const tex = cleanMathText(currentNode.textContent);
+        if (tex.trim()) renderKatex(rendered, tex);
+        else rendered.replaceChildren();
+        rendered.removeAttribute("data-render-pending");
+        renderedTex = tex;
+      };
       const updateAppearance = (nextDecorations: readonly Decoration[]) => {
         const editing = nextDecorations.some(
           (decoration) => decoration.spec.mathEditing,
@@ -94,20 +97,40 @@ export const InlineMath = Node.create({
         const selected = nextDecorations.some(
           (decoration) => decoration.spec.mathSelected,
         );
-        contentDOM.style.display = editing ? "" : "none";
-        rendered.style.display = editing ? "none" : "inline-block";
-        // A rendered formula must not expose its hidden source to native caret movement.
-        dom.contentEditable = editing ? "true" : "false";
+        if (editing !== wasEditing) {
+          contentDOM.style.display = editing ? "" : "none";
+          rendered.style.display = editing ? "none" : "inline-block";
+          // Rendered formulas must not expose hidden source to caret movement.
+          dom.contentEditable = editing ? "true" : "false";
+          wasEditing = editing;
+        }
         const tex = cleanMathText(currentNode.textContent);
         rendered.classList.toggle("is-empty", !tex.trim());
         rendered.classList.toggle("is-selected", selected);
-        if (tex.trim()) renderKatex(rendered, tex);
-        else rendered.replaceChildren();
+        if (editing) {
+          cancelRender?.();
+          cancelRender = undefined;
+          pendingTex = undefined;
+        } else if (tex !== renderedTex) {
+          if (selected || !tex.trim()) {
+            renderNow();
+          } else if (tex !== pendingTex) {
+            cancelRender?.();
+            // The real source stays in contentDOM. This lightweight preview
+            // keeps off-screen formulas usable before their KaTeX DOM exists.
+            rendered.textContent = tex;
+            rendered.setAttribute("data-render-pending", "");
+            renderedTex = undefined;
+            pendingTex = tex;
+            cancelRender = deferRender(rendered, renderNow);
+          }
+        }
       };
 
       rendered.addEventListener("mousedown", (event) => {
         if (event.button !== 0) return;
         event.preventDefault();
+        if (pendingTex !== undefined) renderNow();
         const pos = getPos();
         if (typeof pos !== "number") return;
         const rect = rendered.getBoundingClientRect();
@@ -139,6 +162,9 @@ export const InlineMath = Node.create({
       return {
         dom,
         contentDOM,
+        destroy() {
+          cancelRender?.();
+        },
         update(nextNode, nextDecorations) {
           if (nextNode.type !== currentNode.type) return false;
           currentNode = nextNode;
@@ -404,7 +430,8 @@ export const InlineMath = Node.create({
   addProseMirrorPlugins() {
     const name = this.name;
     const type = this.type;
-    const pluginKey = new PluginKey<{ nodes: MathInfo[] }>("inlineMath");
+    const collect = createMathIndex(name);
+    const pluginKey = new PluginKey<{ nodes: ReturnType<typeof collect> }>("inlineMath");
 
     // floating preview, shown above the node while it is being edited
     const makePreview = (tex: string) => () => {
@@ -422,11 +449,11 @@ export const InlineMath = Node.create({
       new Plugin({
         key: pluginKey,
 
-        // cache the list of math nodes; rescan only when the doc changes
+        // Rescan only the changed range and shift unaffected formula positions.
         state: {
-          init: (_, state) => ({ nodes: collect(state.doc, name) }),
+          init: (_, state) => ({ nodes: collect(state.doc) }),
           apply: (tr, value) =>
-            tr.docChanged ? { nodes: collect(tr.doc, name) } : value,
+            tr.docChanged ? { nodes: collect(tr.doc) } : value,
         },
 
         props: {
