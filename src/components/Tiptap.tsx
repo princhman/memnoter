@@ -21,6 +21,11 @@ import {
 } from "@/lib/content";
 import { InlineMath } from "@/lib/inline-math";
 import { Arrows } from "@/lib/arrows";
+import { TableOfContents as TocExtension } from "@tiptap/extension-table-of-contents";
+import {
+  TableOfContents,
+  createTocStore,
+} from "@/components/table-of-contents";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -32,6 +37,8 @@ type TipTapProps = {
 const Tiptap = ({ moduleId }: TipTapProps) => {
   const yDoc = useMemo(() => new Y.Doc(), [moduleId]);
   const queryClient = useQueryClient();
+  // TOC updates on scroll; a store keeps those from re-rendering the editor.
+  const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
   const hasAppliedRemoteContent = useRef(false);
   const hasInsertedInitialContent = useRef(false);
@@ -211,6 +218,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         InlineMath,
         HeadingHieararchy,
         SectionFocus,
+        TocExtension.configure({
+          scrollParent: () =>
+            document.querySelector<HTMLElement>(".app-scroll-container") ??
+            window,
+          onUpdate: (content) => tocStore.setState(() => content),
+        }),
         Collaboration.configure({
           document: yDoc,
         }),
@@ -403,6 +416,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
+      <TableOfContents editor={editor} store={tocStore} />
     </FilesContext.Provider>
   );
 };

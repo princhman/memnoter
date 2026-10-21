@@ -65,6 +65,38 @@ export function getFocusedSectionPath(editor: Editor): SectionCrumb[] {
   return path;
 }
 
+// The focused heading and everything up to the next heading at its level or higher.
+export function getFocusedSectionRange(
+  state: EditorState,
+): { from: number; to: number } | null {
+  const headingPos = sectionFocusKey.getState(state);
+  if (!isHeadingPosition(state.doc, headingPos)) return null;
+
+  const heading = state.doc.nodeAt(headingPos);
+  if (heading?.type.name !== "heading") return null;
+
+  const level = heading.attrs.level;
+  let sectionEnd = state.doc.content.size;
+
+  state.doc.nodesBetween(
+    headingPos + heading.nodeSize,
+    state.doc.content.size,
+    (node, pos) => {
+      if (
+        sectionEnd === state.doc.content.size &&
+        node.type.name === "heading" &&
+        node.attrs.level <= level
+      ) {
+        sectionEnd = pos;
+      }
+
+      return false;
+    },
+  );
+
+  return { from: headingPos, to: sectionEnd };
+}
+
 export const SectionFocus = Extension.create({
   name: "section-focus",
   addCommands() {
@@ -128,36 +160,10 @@ export const SectionFocus = Extension.create({
 
         props: {
           decorations(state: EditorState) {
-            const headingPos = sectionFocusKey.getState(state);
+            const range = getFocusedSectionRange(state);
+            if (!range) return DecorationSet.empty;
 
-            if (!isHeadingPosition(state.doc, headingPos)) return DecorationSet.empty;
-
-            const heading = state.doc.nodeAt(headingPos);
-
-            if (heading?.type.name !== "heading") {
-              return DecorationSet.empty;
-            }
-
-            const level = heading.attrs.level;
-            let sectionEnd = state.doc.content.size;
-            if (!sectionEnd) return DecorationSet.empty;
-
-            state.doc.nodesBetween(
-              headingPos + heading.nodeSize,
-              state.doc.content.size,
-              (node, pos) => {
-                if (
-                  sectionEnd === state.doc.content.size &&
-                  node.type.name === "heading" &&
-                  node.attrs.level <= level
-                ) {
-                  sectionEnd = pos;
-                }
-
-                return false;
-              },
-            );
-
+            const { from: headingPos, to: sectionEnd } = range;
             const decorations: Decoration[] = [];
 
             state.doc.forEach((node, pos) => {

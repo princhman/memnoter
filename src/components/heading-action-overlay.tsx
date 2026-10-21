@@ -17,6 +17,7 @@ export const HeadingActionOverlay = ({
   children: ReactNode;
   editor: Editor | null;
 }) => {
+  const shellRef = useRef<HTMLElement>(null);
   const hoveredHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const [headingActionPosition, setHeadingActionPosition] =
     useState<HeadingActionPosition | null>(null);
@@ -70,7 +71,14 @@ export const HeadingActionOverlay = ({
       return;
     }
 
-    const shellRect = event.currentTarget.getBoundingClientRect();
+    positionHeadingAction(heading);
+  }
+
+  function positionHeadingAction(heading: HTMLElement) {
+    const shell = shellRef.current;
+    if (!shell) return;
+
+    const shellRect = shell.getBoundingClientRect();
     const headingRect = heading.getBoundingClientRect();
     setHeadingActionPosition({
       left: headingRect.right - shellRect.left - HEADING_ACTION_SIZE,
@@ -88,12 +96,24 @@ export const HeadingActionOverlay = ({
 
   function onClick() {
     const headingPosition = getHoveredHeadingPosition();
-    if (!editor || headingPosition === null) return;
+    const heading = hoveredHeadingRef.current;
+    if (!editor || headingPosition === null || !heading) return;
+
+    const container = heading.closest<HTMLElement>(".app-scroll-container");
     if (isCurrentlyInFocus()) {
+      // Revealing the rest of the note pushes the heading down; scroll by the
+      // same amount so it stays where it was on screen.
+      const before = heading.getBoundingClientRect().top;
       editor.commands.showDocument();
+      if (container) {
+        container.scrollTop += heading.getBoundingClientRect().top - before;
+      }
     } else {
       editor.commands.showSection(headingPosition);
+      heading.scrollIntoView({ block: "start" });
     }
+    // The heading moved inside the shell, so move the button with it.
+    positionHeadingAction(heading);
   }
 
   function isCurrentlyInFocus(): boolean {
@@ -115,6 +135,7 @@ export const HeadingActionOverlay = ({
 
   return (
     <main
+      ref={shellRef}
       className="tiptap-shell"
       onPointerOver={handlePointerOver}
       onPointerLeave={handlePointerLeave}
