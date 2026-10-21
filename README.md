@@ -1,6 +1,6 @@
-# Tauri + React + Typescript
+# Notes
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+A local notes app built with Tauri, React, and TipTap.
 
 Deleted images remain on disk during the app session so Undo/Redo can restore
 them. After restarting the app, the first time each note is opened, unused image
@@ -11,6 +11,8 @@ failed disk removals keep their records for retry on a later launch.
 Run `pnpm test` (Node 22.6+), `cargo test --manifest-path src-tauri/Cargo.toml`,
 and `pnpm build` to check image cleanup and compile the app.
 
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+Notes restore their snapshot and edit history in one Yjs transaction. The same
+document is used for startup image cleanup, and local saves keep the query
+cache current without rereading the note on window focus. Formula indexes
+rescan changed ranges. Formula rendering and image loading are deferred until
+near the viewport; rendered formulas retain their DOM when scrolling away.
