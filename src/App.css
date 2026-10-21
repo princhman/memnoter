@@ -362,6 +362,7 @@ body {
 /* Empty editor feel */
 .tiptap.ProseMirror {
     min-height: 55vh;
+    padding-bottom: 50dvh;
 }
 
 /* Dark mode tuning */
@@ -380,8 +381,14 @@ body {
     margin: 1rem 0;
     max-width: 100%;
 }
-.note-image-block[data-align="center"] { margin-right: auto; margin-left: auto; }
-.note-image-block[data-align="right"] { margin-right: 0; margin-left: auto; }
+.note-image-block[data-align="center"] {
+    margin-right: auto;
+    margin-left: auto;
+}
+.note-image-block[data-align="right"] {
+    margin-right: 0;
+    margin-left: auto;
+}
 .note-image-host [data-resize-container] {
     max-width: 100%;
 }
@@ -490,8 +497,16 @@ body {
     color: var(--foreground);
     box-shadow: 0 12px 40px color-mix(in oklch, black 28%, transparent);
 }
-.image-crop-dialog h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
-.image-crop-dialog > p { margin: 0.35rem 0 1rem; color: var(--muted-foreground); font-size: 0.85rem; }
+.image-crop-dialog h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+.image-crop-dialog > p {
+    margin: 0.35rem 0 1rem;
+    color: var(--muted-foreground);
+    font-size: 0.85rem;
+}
 .image-crop-preview {
     position: relative;
     width: 100%;
@@ -527,8 +542,16 @@ body {
     cursor: nwse-resize;
     touch-action: none;
 }
-.image-crop-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
-.image-crop-error { color: var(--destructive); font-size: 0.85rem; }
+.image-crop-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+.image-crop-error {
+    color: var(--destructive);
+    font-size: 0.85rem;
+}
 
 /* Inline math — styled to match the app's theme tokens (shadcn / Tailwind vars).
    Light/dark is handled by the CSS variables, so no media queries are needed. */

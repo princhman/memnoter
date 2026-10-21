@@ -8,27 +8,38 @@ export type HeadingActionPosition = {
 
 type HeadingActionProps = {
   position: HeadingActionPosition;
+  level: string;
   onClick: () => void;
   inFocus: () => boolean;
 };
 
 export function HeadingAction({
   position,
+  level,
   onClick,
   inFocus,
 }: HeadingActionProps) {
   return (
-    <Button
+    <div
       data-heading-action=""
-      type="button"
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={onClick}
-      size="icon-sm"
-      variant="ghost"
-      className="absolute z-10"
-      style={position}
+      className="absolute z-10 flex items-center gap-2"
+      style={{
+        ...position,
+        transform: "translateX(calc(28px - 100%))",
+      }}
     >
-      {inFocus() ? <Minimize2 /> : <Maximize2 />}
-    </Button>
+      <span className="text-xs text-muted-foreground">{level}</span>
+      <Button
+        data-heading-action=""
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onClick}
+        size="icon-sm"
+        variant="ghost"
+        style={position}
+      >
+        {inFocus() ? <Minimize2 /> : <Maximize2 />}
+      </Button>
+    </div>
   );
 }

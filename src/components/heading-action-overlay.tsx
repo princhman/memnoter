@@ -21,6 +21,37 @@ export const HeadingActionOverlay = ({
   const [headingActionPosition, setHeadingActionPosition] =
     useState<HeadingActionPosition | null>(null);
 
+  function getHoveredHeadingPosition(): number | null {
+    const heading = hoveredHeadingRef.current;
+    if (
+      !editor ||
+      !heading?.isConnected ||
+      !editor.view.dom.contains(heading)
+    ) {
+      return null;
+    }
+
+    const contentPosition = editor.view.posAtDOM(heading, 0);
+    if (
+      contentPosition < 0 ||
+      contentPosition > editor.state.doc.content.size
+    ) {
+      return null;
+    }
+
+    try {
+      const resolved = editor.state.doc.resolve(contentPosition);
+      for (let depth = resolved.depth; depth > 0; depth -= 1) {
+        if (resolved.node(depth).type.name === "heading") {
+          return resolved.before(depth);
+        }
+      }
+    } catch {
+      // The heading can be replaced by an editor transaction between hover and click.
+    }
+    return null;
+  }
+
   function handlePointerOver(event: ReactPointerEvent<HTMLElement>) {
     const target = event.target;
 
@@ -56,10 +87,8 @@ export const HeadingActionOverlay = ({
   }
 
   function onClick() {
-    const heading = hoveredHeadingRef.current;
-    if (!editor || !heading) return;
-    const contentPosition = editor.view.posAtDOM(heading, 0);
-    const headingPosition = editor.state.doc.resolve(contentPosition).before();
+    const headingPosition = getHoveredHeadingPosition();
+    if (!editor || headingPosition === null) return;
     if (isCurrentlyInFocus()) {
       editor.commands.showDocument();
     } else {
@@ -68,13 +97,16 @@ export const HeadingActionOverlay = ({
   }
 
   function isCurrentlyInFocus(): boolean {
-    const heading = hoveredHeadingRef.current;
-    if (!editor || !heading) return false;
-    const contentPosition = editor.view.posAtDOM(heading, 0);
-    const headingPosition = editor.state.doc.resolve(contentPosition).before();
+    const headingPosition = getHoveredHeadingPosition();
+    if (!editor || headingPosition === null) return false;
 
     const focusedPos = sectionFocusKey.getState(editor.state);
-    if (focusedPos == null) return false;
+    if (
+      focusedPos == null ||
+      focusedPos < 0 ||
+      focusedPos >= editor.state.doc.content.size
+    )
+      return false;
     const focusedNode = editor.state.doc.nodeAt(focusedPos);
     if (focusedNode?.type.name !== "heading" || focusedPos !== headingPosition)
       return false;
@@ -91,6 +123,7 @@ export const HeadingActionOverlay = ({
       {headingActionPosition && (
         <HeadingAction
           position={headingActionPosition}
+          level={hoveredHeadingRef.current?.tagName ?? ""}
           onClick={onClick}
           inFocus={isCurrentlyInFocus}
         />
