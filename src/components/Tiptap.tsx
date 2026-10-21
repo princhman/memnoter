@@ -243,6 +243,9 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       editorProps: {
         attributes: {
           class: "tiptap",
+          autocapitalize: "off",
+          // macOS WebKit also applies capitalisation through text correction.
+          autocorrect: "off",
         },
       },
       // ai-suggested change to prevent double enter lag
@@ -359,14 +362,21 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   ]);
 
   return (
-    <FilesContext.Provider value={{
-      files: filesById,
-      saveImage: (file) => uploadFileMutation.mutateAsync(file),
-      readImage: async (fileId) => {
-        const contents = await invoke<{ bytes: number[]; file_type: string }>("read_file", { moduleId, fileId });
-        return new Blob([new Uint8Array(contents.bytes)], { type: contents.file_type });
-      },
-    }}>
+    <FilesContext.Provider
+      value={{
+        files: filesById,
+        saveImage: (file) => uploadFileMutation.mutateAsync(file),
+        readImage: async (fileId) => {
+          const contents = await invoke<{ bytes: number[]; file_type: string }>(
+            "read_file",
+            { moduleId, fileId },
+          );
+          return new Blob([new Uint8Array(contents.bytes)], {
+            type: contents.file_type,
+          });
+        },
+      }}
+    >
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>

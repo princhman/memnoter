@@ -160,7 +160,9 @@ function SavedImageView(props: NodeViewProps) {
   const selectImage = () => {
     if (!editor.isEditable) return;
     const position = latest.current.getPos();
-    if (position !== undefined) editor.commands.setNodeSelection(position);
+    if (position !== undefined && position >= 0 && position < editor.state.doc.content.size) {
+      editor.commands.setNodeSelection(position);
+    }
   };
 
   const applyCrop = async (crop: Crop) => {

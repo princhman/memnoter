@@ -5,6 +5,19 @@ import { appStore } from "./store";
 import type { Editor } from "@tiptap/core";
 
 export const sectionFocusKey = new PluginKey<number | null>("section-focus");
+
+function isHeadingPosition(
+  doc: EditorState["doc"],
+  position: unknown,
+): position is number {
+  return (
+    typeof position === "number" &&
+    Number.isInteger(position) &&
+    position >= 0 &&
+    position < doc.content.size &&
+    doc.nodeAt(position)?.type.name === "heading"
+  );
+}
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     sectionFocus: {
@@ -22,7 +35,11 @@ type SectionCrumb = {
 
 export function getFocusedSectionPath(editor: Editor): SectionCrumb[] {
   const focusedPos = sectionFocusKey.getState(editor.state);
-  if (focusedPos == null) return [];
+  if (
+    focusedPos == null ||
+    focusedPos < 0 ||
+    focusedPos >= editor.state.doc.content.size
+  ) return [];
 
   const focusedNode = editor.state.doc.nodeAt(focusedPos);
   if (focusedNode?.type.name !== "heading") return [];
@@ -55,6 +72,7 @@ export const SectionFocus = Extension.create({
       showSection:
         (headingPos: number) =>
         ({ state, dispatch }) => {
+          if (!isHeadingPosition(state.doc, headingPos)) return false;
           dispatch?.(
             state.tr.setMeta(sectionFocusKey, {
               type: "show",
@@ -92,13 +110,17 @@ export const SectionFocus = Extension.create({
             }
 
             if (action?.type === "show") {
-              return action?.position;
+              return isHeadingPosition(transaction.doc, action.position)
+                ? action.position
+                : null;
             }
 
             if (currentPosition !== null && transaction.docChanged) {
-              const mapping = transaction.mapping.mapResult(currentPosition);
-
-              return mapping.deleted ? null : mapping.pos;
+              const mapping = transaction.mapping.mapResult(currentPosition, -1);
+              return !mapping.deleted &&
+                isHeadingPosition(transaction.doc, mapping.pos)
+                ? mapping.pos
+                : null;
             }
             return currentPosition;
           },
@@ -108,12 +130,7 @@ export const SectionFocus = Extension.create({
           decorations(state: EditorState) {
             const headingPos = sectionFocusKey.getState(state);
 
-            if (
-              headingPos === null ||
-              headingPos === undefined ||
-              headingPos === -1
-            )
-              return DecorationSet.empty;
+            if (!isHeadingPosition(state.doc, headingPos)) return DecorationSet.empty;
 
             const heading = state.doc.nodeAt(headingPos);
 
