@@ -21,6 +21,8 @@ import {
 } from "@/lib/content";
 import { InlineMath } from "@/lib/inline-math";
 import { Arrows } from "@/lib/arrows";
+import { MoveLines } from "@/lib/move-lines";
+import { ItalicCaret } from "@/lib/italic-caret";
 import { TableOfContents as TocExtension } from "@tiptap/extension-table-of-contents";
 import {
   TableOfContents,
@@ -215,6 +217,8 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           undoRedo: false,
         }),
         Arrows,
+        MoveLines,
+        ItalicCaret,
         InlineMath,
         HeadingHieararchy,
         SectionFocus,

@@ -199,6 +199,35 @@ body {
     outline: none;
 }
 
+/* Native carets can't slant, so italic typing uses a drawn one. */
+.tiptap.ProseMirror-focused.italic-caret-active {
+    caret-color: transparent;
+}
+
+.italic-caret {
+    position: relative;
+}
+
+.ProseMirror-focused .italic-caret::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 1.5px;
+    background: var(--foreground);
+    transform: skewX(-10deg);
+    transform-origin: bottom left;
+    pointer-events: none;
+    animation: italic-caret-blink 1.06s step-end infinite;
+}
+
+@keyframes italic-caret-blink {
+    50% {
+        opacity: 0;
+    }
+}
+
 .tiptap > *:first-child {
     margin-top: 0;
 }
