@@ -17,4 +17,6 @@ SVG wordmarks contain embedded raster icons and outlined text. They need no inst
 
 Regenerate from the repository root using `python scripts/generate-brand-assets.py` with Pillow, numpy, fonttools and brotli installed. Project dependencies supply the source DM Sans WOFF2 font. `manifest.json` lists the current deliverables. The script is also included in the ZIP.
 
-Obsolete concepts, independently generated variants and draft exports have been removed. This directory contains only the current asset set and its supporting files. No application icons or configuration have been changed.
+Obsolete concepts, independently generated variants and draft exports have been removed. This directory contains only the current asset set and its supporting files.
+
+`app-icon.png` is `icon-purple-1024.png` as a macOS-style rounded square (824 px on a transparent 1024 px canvas). The app icons in `src-tauri/icons` are generated from it with `pnpm tauri icon brand/app-icon.png`.
