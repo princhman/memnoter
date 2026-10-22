@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
+import { installUpdateInBackground } from "./lib/updater";
 import "./App.css";
 import "katex/dist/katex.min.css";
 
@@ -25,6 +26,7 @@ function syncThemeWithSystem() {
 }
 
 syncThemeWithSystem();
+installUpdateInBackground();
 
 const queryClient = new QueryClient();
 const router = createRouter({ routeTree });

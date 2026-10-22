@@ -1,4 +1,4 @@
-# Notes
+# Memnoter
 
 A local notes app built with Tauri, React, and TipTap.
 

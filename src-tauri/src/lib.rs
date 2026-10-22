@@ -49,9 +49,99 @@ fn db_err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+// Data dir name used before the app was renamed to memnoter.
+const LEGACY_IDENTIFIER: &str = "com.vladyslavnalyvaiko.notes";
+
 fn init_db(app: &tauri::App) -> CommandResult<Db> {
     let app_dir = app.path().app_data_dir().map_err(db_err)?;
+    migrate_legacy_data(&app_dir)?;
     open_db(&app_dir)
+}
+
+// One-time copy of the pre-rename data dir into the new one. The legacy dir is
+// never modified, so it stays as a backup. main.db is moved in last: its
+// presence marks the migration as complete, so an interrupted run just retries.
+fn migrate_legacy_data(app_dir: &Path) -> CommandResult<()> {
+    if app_dir.join("main.db").exists() {
+        return Ok(());
+    }
+    let Some(parent) = app_dir.parent() else {
+        return Ok(());
+    };
+    let legacy_dir = parent.join(LEGACY_IDENTIFIER);
+    if legacy_dir == app_dir || !legacy_dir.join("main.db").exists() {
+        return Ok(());
+    }
+
+    let staging_dir = parent.join(format!(
+        "{}.migrating",
+        app_dir.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    if staging_dir.exists() {
+        std::fs::remove_dir_all(&staging_dir).map_err(db_err)?;
+    }
+    copy_dir(&legacy_dir, &staging_dir)?;
+    rewrite_file_paths(&staging_dir.join("main.db"), &app_dir.join("files"))?;
+
+    std::fs::create_dir_all(app_dir).map_err(db_err)?;
+    let mut entries = std::fs::read_dir(&staging_dir)
+        .map_err(db_err)?
+        .collect::<std::io::Result<Vec<_>>>()
+        .map_err(db_err)?;
+    entries.sort_by_key(|entry| entry.file_name() == "main.db");
+    for entry in entries {
+        let target = app_dir.join(entry.file_name());
+        if target.is_dir() {
+            std::fs::remove_dir_all(&target).map_err(db_err)?;
+        } else if target.exists() {
+            std::fs::remove_file(&target).map_err(db_err)?;
+        }
+        std::fs::rename(entry.path(), &target).map_err(db_err)?;
+    }
+    std::fs::remove_dir_all(&staging_dir).map_err(db_err)
+}
+
+fn copy_dir(from: &Path, to: &Path) -> CommandResult<()> {
+    std::fs::create_dir_all(to).map_err(db_err)?;
+    for entry in std::fs::read_dir(from).map_err(db_err)? {
+        let entry = entry.map_err(db_err)?;
+        let target = to.join(entry.file_name());
+        if entry.file_type().map_err(db_err)?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target).map_err(db_err)?;
+        }
+    }
+    Ok(())
+}
+
+// Stored file paths are absolute, so point them at the new files dir and fold
+// the WAL into main.db so the moved database is self-contained.
+fn rewrite_file_paths(db_path: &Path, files_dir: &Path) -> CommandResult<()> {
+    let mut conn = Connection::open(db_path).map_err(db_err)?;
+    let tx = conn.transaction().map_err(db_err)?;
+    let ids = tx
+        .prepare("select id from files")
+        .map_err(db_err)?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(db_err)?
+        .collect::<Result<Vec<_>>>()
+        .map_err(db_err)?;
+    for id in ids {
+        let path = files_dir.join(&id);
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| "File path is not valid UTF-8".to_string())?;
+        tx.execute(
+            "update files set path = ?1 where id = ?2",
+            params![path_str, id],
+        )
+        .map_err(db_err)?;
+    }
+    tx.commit().map_err(db_err)?;
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(db_err)?;
+    conn.close().map_err(|(_, error)| db_err(error))
 }
 
 fn open_db(app_dir: &Path) -> CommandResult<Db> {
@@ -270,6 +360,58 @@ mod tests {
         );
         assert!(!f.row_exists(&id));
     }
+
+    #[test]
+    fn legacy_data_is_copied_with_rewritten_paths_and_left_intact() {
+        let root = std::env::temp_dir().join(format!("notes-migrate-{}", Uuid::new_v4()));
+        let legacy = Fixture {
+            dir: root.join(LEGACY_IDENTIFIER),
+            db: open_db(&root.join(LEGACY_IDENTIFIER)).unwrap(),
+        };
+        legacy
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch("insert into modules values ('note', 'Note');")
+            .unwrap();
+        // Keep the legacy connection open so its writes are still in the WAL.
+        let id = legacy.file("note");
+
+        let app_dir = root.join("com.vladyslavnalyvaiko.memnoter");
+        migrate_legacy_data(&app_dir).unwrap();
+
+        let db = open_db(&app_dir).unwrap();
+        let path: String = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_one("select path from files where id = ?1", [&id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(Path::new(&path), app_dir.join("files").join(&id));
+        assert_eq!(std::fs::read(&path).unwrap(), b"image bytes");
+        assert!(legacy.dir.join("files").join(&id).exists());
+        assert!(!root
+            .join("com.vladyslavnalyvaiko.memnoter.migrating")
+            .exists());
+
+        // Already migrated: a second run must not overwrite newer data.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("delete from files", [])
+            .unwrap();
+        migrate_legacy_data(&app_dir).unwrap();
+        let count: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_one("select count(*) from files", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
 }
 
 #[tauri::command]
@@ -325,7 +467,11 @@ fn rename_module(db: tauri::State<Db>, module_id: String, name: String) -> Comma
     Ok(())
 }
 
-fn delete_module_data(conn: &mut Connection, files_dir: &Path, module_id: &str) -> CommandResult<()> {
+fn delete_module_data(
+    conn: &mut Connection,
+    files_dir: &Path,
+    module_id: &str,
+) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     let files = {
         let mut stmt = tx
@@ -635,6 +781,7 @@ fn cleanup_files(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let db = init_db(app).expect("Failed to init db.");
