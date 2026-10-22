@@ -47,7 +47,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVEMDZERjgxOThBMTgwODEKUldTQmdLR1lnZDhHWFJuOU93UmtYZFZwbU9XOXZ3dCtJNFRiMnlDZ05za242ZTdjbEo5WXF3aTYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJGOEIwMDRFQTkwODMwNjYKUldSbU1BaXBUZ0NMditlM0J4S3N0VjdBZURTNE53NGJISUUvc1dTdVFqdFJPRmQzK0Q5eVl4MlMK",
       "endpoints": [
         "https://github.com/princhman/memnoter/releases/latest/download/latest.json"
       ],
