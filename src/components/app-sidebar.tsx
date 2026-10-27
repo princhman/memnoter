@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
+import UpdateStatus from "./update-status";
 import { useState } from "react";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
@@ -139,7 +140,9 @@ const AppSidebar = () => {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter />
+      <SidebarFooter>
+        <UpdateStatus />
+      </SidebarFooter>
     </Sidebar>
   );
 };

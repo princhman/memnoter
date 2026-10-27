@@ -782,6 +782,7 @@ fn cleanup_files(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let db = init_db(app).expect("Failed to init db.");
