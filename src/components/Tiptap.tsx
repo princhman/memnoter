@@ -20,6 +20,7 @@ import {
   type GetContentResponse,
 } from "@/lib/content";
 import { InlineMath } from "@/lib/inline-math";
+import { MathBlock } from "@/lib/math-block";
 import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
 import { ItalicCaret } from "@/lib/italic-caret";
@@ -220,6 +221,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         MoveLines,
         ItalicCaret,
         InlineMath,
+        MathBlock,
         HeadingHieararchy,
         SectionFocus,
         TocExtension.configure({

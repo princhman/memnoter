@@ -21,9 +21,9 @@ function cleanMathText(tex: string) {
   return tex.replace(/\u200b/g, "");
 }
 
-function renderKatex(el: HTMLElement, tex: string) {
+export function renderKatex(el: HTMLElement, tex: string, displayMode = false) {
   try {
-    katex.render(tex, el, { throwOnError: false, displayMode: false });
+    katex.render(tex, el, { throwOnError: false, displayMode });
   } catch {
     el.textContent = tex;
   }
@@ -197,7 +197,9 @@ export const InlineMath = Node.create({
       insertInlineMath:
         (tex) =>
         ({ state, tr, dispatch }) => {
-          const { from, to } = state.selection;
+          const { from, to, $from } = state.selection;
+          // Math blocks and code hold plain text only.
+          if ($from.parent.type.spec.code) return false;
           const text = tex ?? state.doc.textBetween(from, to, " ");
           const node = this.type.create(null, text ? state.schema.text(text) : null);
 
