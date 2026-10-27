@@ -97,7 +97,9 @@ export function TableOfContents({
   // Showing or hiding sections moves headings, so recompute which one is current.
   useEffect(() => {
     setHovered(null);
-    editor?.storage.tableOfContents.scrollHandler();
+    // A destroyed editor (e.g. replaced during a reload) has empty storage.
+    if (!editor || editor.isDestroyed) return;
+    editor.storage.tableOfContents.scrollHandler();
   }, [editor, focusRange]);
 
   useLayoutEffect(() => {

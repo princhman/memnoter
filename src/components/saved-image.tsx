@@ -1,10 +1,15 @@
-import { createContext, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
-import { ResizableNodeView } from "@tiptap/core";
+import { mergeAttributes, ResizableNodeView } from "@tiptap/core";
+import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import type { NodeType } from "@tiptap/pm/model";
+import type { EditorView } from "@tiptap/pm/view";
 import Image from "@tiptap/extension-image";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { AlignLeft, AlignCenter, AlignRight, Crop, Trash2 } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Crop, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { FileType } from "@/lib/content";
 
 type FilesContextValue = {
@@ -85,7 +90,8 @@ function SavedImageView(props: NodeViewProps) {
   const { files, saveImage, readImage } = useContext(FilesContext);
   const file = files.get(node.attrs.fileId);
   const src = file ? convertFileSrc(file.path) : node.attrs.src;
-  const host = useRef<HTMLDivElement>(null);
+  const isInline = node.type.isInline;
+  const host = useRef<HTMLElement>(null);
   // The host shrinks with the image; its containing block defines room to grow.
   const getAvailableWidth = () =>
     host.current?.closest<HTMLElement>(".note-image-block")?.parentElement?.clientWidth ?? 0;
@@ -94,6 +100,7 @@ function SavedImageView(props: NodeViewProps) {
   latest.current = props;
   const [failed, setFailed] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
+  const [describing, setDescribing] = useState(false);
 
   useEffect(() => {
     if (!host.current || !src) return;
@@ -176,6 +183,55 @@ function SavedImageView(props: NodeViewProps) {
     }
   };
 
+  const layout: ImageLayout = isInline ? "inline" : node.attrs.wrap ? "wrap" : "break";
+
+  // Mirrors Google Docs' image layouts. A node type is either inline or block,
+  // so moving into or out of a line of text replaces the node.
+  const setLayout = (target: ImageLayout) => {
+    if (target === layout) return;
+    const wrap = target === "wrap";
+    // Wrapped text flows around one side, so a centred image has no wrap side.
+    const alignment = wrap && node.attrs.alignment === "center" ? "left" : node.attrs.alignment;
+    if (!isInline && target !== "inline") {
+      updateAttributes({ wrap, alignment });
+      return;
+    }
+    const position = latest.current.getPos();
+    if (position === undefined) return;
+    const { state, schema } = editor;
+    const { fileId, src, alt, title, width, height } = node.attrs;
+    const tr = state.tr;
+    let selectAt: number;
+    if (isInline) {
+      const image = schema.nodes.image.create({ fileId, src, alt, title, width, height, alignment, wrap });
+      tr.delete(position, position + 1);
+      const $at = tr.doc.resolve(position);
+      if ($at.parent.content.size === 0) {
+        // The image was alone in its line: take that line's place.
+        selectAt = $at.before();
+        tr.replaceWith(selectAt, $at.after(), image);
+      } else {
+        if ($at.parentOffset === 0) selectAt = $at.before();
+        else if ($at.parentOffset === $at.parent.content.size) selectAt = $at.after();
+        else {
+          tr.split(position);
+          selectAt = position + 1;
+        }
+        tr.insert(selectAt, image);
+      }
+    } else {
+      const image = schema.nodes.inlineImage.create({ fileId, src, alt, title, width, height });
+      tr.replaceWith(position, position + 1, schema.nodes.paragraph.create(null, image));
+      selectAt = position + 1;
+    }
+    try {
+      tr.setSelection(NodeSelection.create(tr.doc, selectAt));
+    } catch {
+      // The schema fitted the image elsewhere; keep the mapped selection.
+    }
+    editor.view.dispatch(tr);
+  };
+
   const applyCrop = async (crop: Crop) => {
     const fileId = node.attrs.fileId as string | null;
     if (!fileId) throw new Error("This image cannot be read for cropping");
@@ -205,33 +261,181 @@ function SavedImageView(props: NodeViewProps) {
   };
 
   return (
-    <NodeViewWrapper contentEditable={false} className="note-image-block" data-selected={selected} data-align={node.attrs.alignment}>
-      <div ref={host} className="note-image-host" data-drag-handle onClick={selectImage} />
+    <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-align={isInline ? undefined : node.attrs.alignment}>
+      {isInline
+        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" data-drag-handle onClick={selectImage} />
+        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" data-drag-handle onClick={selectImage} />}
       {(!src || failed) && <span className="text-sm text-muted-foreground">Image unavailable</span>}
       {selected && editor.isEditable && (
         <div className="note-image-controls" aria-label="Image controls" contentEditable={false}>
-          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Image size and alignment">
-            {[25, 50, 75].map((size) => (
-              <Button key={size} size="xs" variant="ghost" onClick={() => resizeTo(size / 100)} disabled={!src || failed} aria-label={`Set image to ${size}% of editor width`}>{size}%</Button>
+          <div className="note-image-toolbar">
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button size="sm" variant="ghost" disabled={!src || failed} />}>
+                Size<ChevronDown data-icon="inline-end" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-auto">
+                {IMAGE_SIZES.map(([fraction, label]) => (
+                  <DropdownMenuItem key={label} onClick={() => resizeTo(fraction)}>{label}</DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => updateAttributes({ width: null, height: null })}>Original size</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <span className="note-image-divider" />
+            {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => (
+              <ToolbarButton key={value} label={label} hint={hint} pressed={layout === value} onClick={() => setLayout(value)}><Icon /></ToolbarButton>
             ))}
-            <Button size="xs" variant="ghost" onClick={() => updateAttributes({ width: null, height: null })}>Original size</Button>
-            <Button size="icon-xs" variant="ghost" aria-label="Crop image" title="Crop image" onClick={() => setCropOpen(true)} disabled={!src || failed || !node.attrs.fileId}><Crop /></Button>
-            {([ ["left", AlignLeft], ["center", AlignCenter], ["right", AlignRight] ] as const).map(([alignment, Icon]) => (
-              <Button key={alignment} size="icon-xs" variant="ghost" aria-label={`Align image ${alignment}`} title={`Align ${alignment}`} aria-pressed={node.attrs.alignment === alignment} onClick={() => updateAttributes({ alignment })}><Icon /></Button>
+            {!isInline && <span className="note-image-divider" />}
+            {!isInline && IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => (
+              <ToolbarButton key={alignment} label={layout === "wrap" ? `Image on the ${alignment}, text beside it` : label} pressed={node.attrs.alignment === alignment} onClick={() => updateAttributes({ alignment })}><Icon /></ToolbarButton>
             ))}
-            <Button size="icon-xs" variant="ghost" aria-label="Remove image" title="Remove image" onClick={deleteNode}><Trash2 /></Button>
+            <span className="note-image-divider" />
+            <ToolbarButton label="Crop" disabled={!src || failed || !node.attrs.fileId} onClick={() => setCropOpen(true)}><Crop /></ToolbarButton>
+            <ToolbarButton label="Alt text and title" pressed={describing} onClick={() => setDescribing((open) => !open)}><Captions /></ToolbarButton>
+            <span className="note-image-divider" />
+            <ToolbarButton label="Remove image" onClick={deleteNode}><Trash2 /></ToolbarButton>
           </div>
-          <details>
-            <summary>Image description</summary>
-            <div className="grid gap-2 pt-2">
+          {describing && (
+            <div className="note-image-description">
               <label>Alt text<input key={`alt-${node.attrs.alt}`} defaultValue={node.attrs.alt ?? ""} placeholder="Describe the image" onBlur={(event) => { if (event.target.value !== (node.attrs.alt ?? "")) updateAttributes({ alt: event.target.value }); }} /></label>
               <label>Title<input key={`title-${node.attrs.title}`} defaultValue={node.attrs.title ?? ""} placeholder="Shown when hovering over the image" onBlur={(event) => { if (event.target.value !== (node.attrs.title ?? "")) updateAttributes({ title: event.target.value }); }} /></label>
             </div>
-          </details>
+          )}
         </div>
       )}
       {cropOpen && image.current && <CropDialog image={image.current} onCancel={() => setCropOpen(false)} onSave={applyCrop} />}
     </NodeViewWrapper>
+  );
+}
+
+type ImageLayout = "inline" | "wrap" | "break";
+
+const IMAGE_NODES = new Set(["image", "inlineImage"]);
+
+// Puts the cursor in the text flowing beside a wrapped image: at the end of
+// the last text block that starts above the click, or in a new paragraph when
+// nothing follows the image yet.
+function placeCursorBeside(view: EditorView, imagePos: number, imageSize: number, y: number) {
+  const after = imagePos + imageSize;
+  const $after = view.state.doc.resolve(after);
+  const parent = $after.parent;
+  let target: number | null = null;
+  let offset = after;
+  for (let index = $after.index(); index < parent.childCount; index++) {
+    const child = parent.child(index);
+    if (!child.isTextblock) break;
+    const dom = view.nodeDOM(offset);
+    // The first block starts level with the image, so it always qualifies.
+    if (target !== null && (!(dom instanceof HTMLElement) || dom.getBoundingClientRect().top > y)) break;
+    target = offset + child.nodeSize - 1;
+    offset += child.nodeSize;
+  }
+  const tr = view.state.tr;
+  if (target === null) {
+    tr.insert(after, view.state.schema.nodes.paragraph.create());
+    target = after + 1;
+  }
+  tr.setSelection(TextSelection.create(tr.doc, target));
+  view.dispatch(tr);
+  view.focus();
+}
+
+// Typing replaces a selected node, so a selected image would be overwritten.
+// Send the text where it reads next to the image instead.
+function typeBesideImage(view: EditorView, selection: NodeSelection, text: string) {
+  const { node, from } = selection;
+  const after = from + node.nodeSize;
+  if (node.type.isInline) {
+    const tr = view.state.tr.insertText(text, after);
+    view.dispatch(tr.setSelection(TextSelection.create(tr.doc, after + text.length)));
+    return;
+  }
+  if (node.attrs.wrap) {
+    const block = (view.nodeDOM(from) as HTMLElement | null)?.querySelector(".note-image-block");
+    placeCursorBeside(view, from, node.nodeSize, block?.getBoundingClientRect().bottom ?? 0);
+    view.dispatch(view.state.tr.insertText(text));
+    return;
+  }
+  // Text below an image on its own line starts a new line of its own.
+  const tr = view.state.tr.insert(after, view.state.schema.nodes.paragraph.create(null, view.state.schema.text(text)));
+  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, after + 1 + text.length)));
+}
+
+// Handles typing on a selected image, and clicks in the blank space beside a
+// floated image, which belongs to no text block: the browser would resolve
+// those clicks into the image itself.
+function imageTextPlugin(type: NodeType) {
+  return new Plugin({
+    key: new PluginKey("image-text"),
+    props: {
+      handleTextInput(view, _from, _to, text) {
+        const { selection } = view.state;
+        if (!(selection instanceof NodeSelection) || !IMAGE_NODES.has(selection.node.type.name)) return false;
+        typeBesideImage(view, selection, text);
+        return true;
+      },
+      handleDOMEvents: {
+        mousedown(view, event) {
+          if (event.button !== 0 || event.target !== view.dom || !view.editable) return false;
+          let handled = false;
+          view.state.doc.descendants((node, pos) => {
+            if (handled) return false;
+            if (node.type !== type || !node.attrs.wrap) return;
+            const dom = view.nodeDOM(pos);
+            const block = dom instanceof HTMLElement ? dom.querySelector(".note-image-block") ?? dom : null;
+            if (!block) return false;
+            const box = block.getBoundingClientRect();
+            if (event.clientY < box.top || event.clientY > box.bottom) return false;
+            const textSide = node.attrs.alignment === "right" ? event.clientX < box.left : event.clientX > box.right;
+            if (!textSide) return false;
+            placeCursorBeside(view, pos, node.nodeSize, event.clientY);
+            handled = true;
+            return false;
+          });
+          if (handled) event.preventDefault();
+          return handled;
+        },
+      },
+    },
+  });
+}
+
+const IMAGE_LAYOUTS = [
+  ["inline", "In line", "Sits inside one line of text, like a large letter", TextCursorInput],
+  ["wrap", "Wrap text", "Text flows beside the image over several lines", WrapText],
+  ["break", "Break text", "Image on its own line, no text beside it", BetweenHorizontalStart],
+] as const;
+
+const IMAGE_ALIGNMENTS = [
+  ["left", "Align left", AlignLeft],
+  ["center", "Align center", AlignCenter],
+  ["right", "Align right", AlignRight],
+] as const;
+
+const IMAGE_SIZES = [
+  [0.25, "Small · 25%"],
+  [0.5, "Medium · 50%"],
+  [0.75, "Large · 75%"],
+  [1, "Full width"],
+] as const;
+
+function ToolbarButton({ label, hint, pressed, disabled, onClick, children }: {
+  label: string;
+  hint?: string;
+  pressed?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Button size="icon-sm" variant="ghost" aria-label={label} aria-pressed={pressed} disabled={disabled} onClick={onClick} />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {hint ? <span className="grid gap-0.5"><strong className="font-medium">{label}</strong><span className="text-muted-foreground">{hint}</span></span> : label}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -248,9 +452,49 @@ export const SavedImage = Image.extend({
           style: `display: block; margin-left: ${attributes.alignment === "left" ? "0" : "auto"}; margin-right: ${attributes.alignment === "right" ? "0" : "auto"}`,
         }),
       },
+      // Floats the image so the following text flows around it.
+      wrap: {
+        default: false,
+        parseHTML: (element) => element.hasAttribute("data-wrap"),
+        renderHTML: (attributes) =>
+          attributes.wrap
+            ? { "data-wrap": "", style: `float: ${attributes.alignment === "right" ? "right" : "left"}` }
+            : {},
+      },
     };
   },
   addNodeView() {
     return ReactNodeViewRenderer(SavedImageView);
+  },
+  addProseMirrorPlugins() {
+    return [imageTextPlugin(this.type)];
+  },
+});
+
+// The same image, placed within a line of text instead of on its own line.
+export const InlineImage = SavedImage.extend({
+  name: "inlineImage",
+  inline: true,
+  group: "inline",
+  addAttributes() {
+    const { alignment: _alignment, wrap: _wrap, ...attributes } = (this.parent?.() ?? {}) as Record<string, unknown>;
+    return attributes;
+  },
+  parseHTML() {
+    return [{ tag: "img[src][data-inline-image]", priority: 60 }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["img", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { "data-inline-image": "" })];
+  },
+  // The block image already owns the markdown input rule and setImage.
+  addInputRules() {
+    return [];
+  },
+  addCommands() {
+    return {};
+  },
+  // SavedImage's plugin covers both node types; plugin keys must be unique.
+  addProseMirrorPlugins() {
+    return [];
   },
 });

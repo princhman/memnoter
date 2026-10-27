@@ -10,7 +10,7 @@ import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { SectionFocus } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { FilesContext, SavedImage } from "@/components/saved-image";
+import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
 import {
   applySavedContent,
@@ -235,6 +235,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         }),
         SavedImage.configure({
           inline: false,
+          allowBase64: false,
+          HTMLAttributes: {
+            class: "note-image",
+          },
+        }),
+        InlineImage.configure({
           allowBase64: false,
           HTMLAttributes: {
             class: "note-image",

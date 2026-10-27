@@ -185,6 +185,8 @@ body {
 }
 
 .tiptap {
+    /* Contains floated images so they never overlap what follows the editor. */
+    display: flow-root;
     max-width: 760px;
     margin: 0 auto;
     color: var(--foreground);
@@ -475,40 +477,84 @@ body {
 .note-image-host [data-resize-handle="bottom-left"] {
     cursor: nesw-resize;
 }
+/* Wrapped images float beside the text that follows them, like Google Docs. */
+.note-image-block[data-wrap] {
+    float: left;
+    clear: both;
+    margin: 0.25rem 1.25rem 0.5rem 0;
+}
+.note-image-block[data-wrap][data-align="right"] {
+    float: right;
+    margin: 0.25rem 0 0.5rem 1.25rem;
+}
+
+/* Images within text sit on the text line beside the words around them. */
+.note-image-block[data-inline] {
+    display: inline-block;
+    margin: 0 0.15em;
+    vertical-align: text-bottom;
+}
+/* A compact toolbar below the selected image, so it never hides the image. */
 .note-image-controls {
     position: absolute;
     z-index: 5;
-    top: 0;
-    right: 0;
-    max-width: 100%;
-    padding: 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.5rem;
-    background: color-mix(in oklch, var(--popover) 94%, transparent);
-    box-shadow: 0 2px 10px color-mix(in oklch, black 14%, transparent);
-    font-size: 0.75rem;
-}
-.note-image-controls [aria-pressed="true"] {
-    background: var(--accent);
-}
-.note-image-controls details {
-    margin-top: 0.5rem;
-}
-.note-image-controls summary {
-    cursor: pointer;
-    color: var(--muted-foreground);
-}
-.note-image-controls label {
+    top: calc(100% + 0.5rem);
+    left: 0;
     display: grid;
     gap: 0.25rem;
+    width: max-content;
+    max-width: min(40rem, 90vw);
+    padding: 0.25rem;
+    border-radius: 0.6rem;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 4px 16px color-mix(in oklch, black 18%, transparent);
+    font-size: 0.8rem;
 }
-.note-image-controls input {
+.note-image-block[data-align="center"] .note-image-controls {
+    left: 50%;
+    transform: translateX(-50%);
+}
+.note-image-block[data-align="right"] .note-image-controls {
+    right: 0;
+    left: auto;
+}
+.note-image-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.125rem;
+}
+.note-image-toolbar [aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+.note-image-divider {
+    width: 1px;
+    height: 1.25rem;
+    margin: 0 0.25rem;
+    background: var(--border);
+}
+.note-image-description {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.5rem 0.4rem 0.4rem;
+    border-top: 1px solid var(--border);
+}
+.note-image-description label {
+    display: grid;
+    gap: 0.25rem;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+}
+.note-image-description input {
     width: 100%;
     border: 1px solid var(--input);
-    border-radius: 0.25rem;
-    padding: 0.4rem 0.5rem;
+    border-radius: 0.375rem;
+    padding: 0.35rem 0.5rem;
     background: var(--background);
     color: var(--foreground);
+    font-size: 0.8rem;
 }
 
 .image-crop-backdrop {
@@ -848,7 +894,6 @@ body {
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-width: thin;
-    border: 1px solid var(--border);
     border-radius: 0.75rem;
     background: var(--popover);
     color: var(--popover-foreground);
