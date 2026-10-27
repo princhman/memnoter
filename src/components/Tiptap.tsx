@@ -24,6 +24,7 @@ import { MathBlock } from "@/lib/math-block";
 import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
 import { ItalicCaret } from "@/lib/italic-caret";
+import FindAndReplace from "@tiptap/extension-find-and-replace";
 import { TableOfContents as TocExtension } from "@tiptap/extension-table-of-contents";
 import {
   TableOfContents,
@@ -229,6 +230,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
             document.querySelector<HTMLElement>(".app-scroll-container") ??
             window,
           onUpdate: (content) => tocStore.setState(() => content),
+        }),
+        FindAndReplace.configure({
+          searchDebounceMs: 100,
+          injectCSS: false,
         }),
         Collaboration.configure({
           document: yDoc,

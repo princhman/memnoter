@@ -941,3 +941,13 @@ body {
 .toc-item .katex {
     font-size: 1em;
 }
+
+.tiptap .find-and-replace-result {
+  border-radius: 2px;
+  background-color: color-mix(in oklch, var(--primary) 18%, transparent);
+}
+
+.tiptap .find-and-replace-result-current {
+  background-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 60%, transparent);
+}

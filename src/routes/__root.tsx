@@ -10,6 +10,7 @@ import { useIsFullscreen } from "@/hooks/use-fullscreen";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
+import { FindBar } from "@/components/find-bar";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
@@ -30,6 +31,8 @@ const RootLayout = () => {
                 <FileBreadcrumb />
               </div>
             </header>
+
+            <FindBar />
 
             <main className="app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">
               <Outlet />
