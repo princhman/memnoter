@@ -168,14 +168,21 @@ export const MathBlock = Node.create({
           } else if (parent.isTextblock && !parent.type.spec.code) {
             if (!$from.sameParent($to)) return false;
             const steps = tr.steps.length;
+            // Hard breaks end lines in the source; dropping them would let a
+            // `%` comment swallow the next line.
+            const leafText = (node: PMNode) => (node.type.name === "hardBreak" ? "\n" : "");
             if (selection.empty) {
               const index = $from.index(-1);
               if (!$from.node(-1).canReplaceWith(index, index + 1, this.type)) return false;
-              const text = parent.textContent;
+              const text = parent.textBetween(0, parent.content.size, undefined, leafText);
               tr.replaceWith(start, end, this.type.create(null, text ? schema.text(text) : null));
             } else {
-              const text = state.doc.textBetween(selection.from, selection.to);
-              tr.replaceRangeWith(selection.from, selection.to, this.type.create(null, schema.text(text)));
+              const text = state.doc.textBetween(selection.from, selection.to, undefined, leafText);
+              tr.replaceRangeWith(
+                selection.from,
+                selection.to,
+                this.type.create(null, text ? schema.text(text) : null),
+              );
             }
             selectionToInsertionEnd(tr, steps, -1);
           } else {
