@@ -1,5 +1,5 @@
 // ai - generated module
-import { Node } from "@tiptap/core";
+import { Node, PasteRule } from "@tiptap/core";
 import { Node as PMNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -212,6 +212,29 @@ export const InlineMath = Node.create({
     };
   },
 
+  // Pasted  $...$  converts like the typed form; $$ is left alone.
+  addPasteRules() {
+    const type = this.type;
+    return [
+      new PasteRule({
+        find: /(?<![$\\])\$([^$\n]+)\$(?!\$)/g,
+        handler: ({ state, range, match }) => {
+          const tex = match[1];
+          // Paste rules visit both a textblock and its text nodes, so skip a
+          // range that an earlier match already replaced.
+          if (
+            !tex.trim() ||
+            state.doc.resolve(range.from).parent.type === type ||
+            state.doc.textBetween(range.from, range.to) !== match[0]
+          ) return;
+          state.tr.replaceWith(
+            range.from, range.to, type.create(null, state.schema.text(tex)),
+          );
+        },
+      }),
+    ];
+  },
+
   // cursor / key handling
   addKeyboardShortcuts() {
     const name = this.name;
@@ -221,33 +244,11 @@ export const InlineMath = Node.create({
       const { selection } = state;
       const { $head } = selection;
 
-      function stepOutside(pos: number): number {
-        const $pos = state.doc.resolve(pos);
-        const adjacent = direction < 0 ? $pos.nodeBefore : $pos.nodeAfter;
-        if (adjacent?.type.name === name) {
-          const start = direction < 0 ? pos - adjacent.nodeSize : pos;
-          return stepMath(adjacent, start, direction < 0 ? adjacent.content.size : 0);
-        }
-        if (adjacent?.isText) {
-          const character = direction < 0
-            ? Array.from(adjacent.text!).pop()!
-            : String.fromCodePoint(adjacent.text!.codePointAt(0)!);
-          return pos + direction * character.length;
-        }
-        const nextPos = pos + direction * (adjacent?.nodeSize ?? 1);
-        if (nextPos < 0 || nextPos > state.doc.content.size) return pos;
-        return Selection.findFrom(state.doc.resolve(nextPos), direction, true)?.head ?? pos;
-      }
-
       function stepMath(math: PMNode, pos: number, offset: number): number {
         const text = math.textContent;
-        if (!cleanMathText(text)) return direction < 0 ? pos : pos + math.nodeSize;
         const remaining = direction < 0 ? text.slice(0, offset) : text.slice(offset);
-        if (!cleanMathText(remaining)) {
-          // A typed or clicked inner endpoint shares its visible position with
-          // the outer boundary. Move past that shared stop in the same press.
-          return stepOutside(direction < 0 ? pos : pos + math.nodeSize);
-        }
+        // From an inner edge, the next stop is just outside the formula.
+        if (!cleanMathText(remaining)) return direction < 0 ? pos : pos + math.nodeSize;
         // Cross one visible character, skipping placeholders in older notes.
         while ((direction < 0 && offset > 0) || (direction > 0 && offset < text.length)) {
           const character = direction < 0
@@ -256,8 +257,6 @@ export const InlineMath = Node.create({
           offset += direction * character.length;
           if (character !== "\u200b") break;
         }
-        if (direction < 0 && !cleanMathText(text.slice(0, offset))) return pos;
-        if (direction > 0 && !cleanMathText(text.slice(offset))) return pos + math.nodeSize;
         return pos + 1 + offset;
       }
 
@@ -273,7 +272,8 @@ export const InlineMath = Node.create({
       } else {
         const adjacent = direction < 0 ? $head.nodeBefore : $head.nodeAfter;
         if (adjacent?.type.name !== name) return false;
-        target = stepOutside($head.pos);
+        // Step onto the formula's near inner edge, even when it is empty.
+        target = $head.pos + direction;
       }
       view.dispatch(
         state.tr.setSelection(TextSelection.create(

@@ -609,9 +609,10 @@ body {
     color: var(--muted-foreground);
 }
 
+/* Just wide enough to hold the caret, so an empty formula reads as "$$". */
 .tiptap .inline-math-source:empty {
     display: inline-block;
-    min-width: 0.5ch;
+    min-width: 1px;
     min-height: 1em;
 }
 
