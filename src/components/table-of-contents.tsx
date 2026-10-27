@@ -91,6 +91,7 @@ export function TableOfContents({
   const [hovered, setHovered] = useState<HoveredSection | null>(null);
   const navRef = useRef<HTMLElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const safeAreaRef = useRef<HTMLDivElement>(null);
 
   // Centre the popup on the hovered dash, then clamp it inside the window.
   // Showing or hiding sections moves headings, so recompute which one is current.
@@ -128,6 +129,27 @@ export function TableOfContents({
       ? { ...hovered, end: Math.min(hovered.end, items.length) }
       : null;
 
+  // Stretches an invisible triangle from the pointer to the popup's edge. It sits
+  // above the rail, so heading for the popup diagonally neither hovers other
+  // dashes nor leaves the nav.
+  function updateSafeArea(event: React.PointerEvent) {
+    const nav = navRef.current;
+    const panel = panelRef.current;
+    const area = safeAreaRef.current;
+    if (!nav || !panel || !area) return;
+
+    const navRect = nav.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const top = Math.min(panelRect.top, event.clientY);
+    const bottom = Math.max(panelRect.bottom, event.clientY);
+    const width = event.clientX - panelRect.right;
+    area.style.left = `${panelRect.right - navRect.left}px`;
+    area.style.top = `${top - navRect.top}px`;
+    area.style.width = `${Math.max(width, 0)}px`;
+    area.style.height = `${bottom - top}px`;
+    area.style.clipPath = `polygon(${width}px ${event.clientY - top}px, 0 ${panelRect.top - top}px, 0 ${panelRect.bottom - top}px)`;
+  }
+
   function scrollTo(item: TableOfContentDataItem) {
     // The stored DOM node can be replaced by a re-render, so look it up fresh.
     const heading =
@@ -144,6 +166,10 @@ export function TableOfContents({
       aria-label="Table of contents"
       onPointerLeave={() => setHovered(null)}
     >
+      {section && (
+        // Keyed so a new section starts without the previous dash's triangle.
+        <div key={section.start} ref={safeAreaRef} className="toc-safe-area" />
+      )}
       {section && (
         <div ref={panelRef} className="toc-panel">
           {items.slice(section.start, section.end).map((item) => (
@@ -185,6 +211,9 @@ export function TableOfContents({
                   event.currentTarget.offsetHeight / 2,
               })
             }
+            onPointerMove={(event) => {
+              if (section?.start === index) updateSafeArea(event);
+            }}
             onClick={() => scrollTo(item)}
           >
             <span
