@@ -752,6 +752,12 @@ body {
     background: var(--chart-3);
 }
 
+/* Positioned and clipped from script; catches the pointer on its way to the popup. */
+.toc-safe-area {
+    position: absolute;
+    z-index: 1;
+}
+
 /* Sits flush against the rail's padding, so hover carries over without a gap. */
 .toc-panel {
     position: absolute;
