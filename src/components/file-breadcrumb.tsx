@@ -41,8 +41,9 @@ export function FileBreadcrumb() {
   });
 
   const matchRoute = useMatchRoute();
+  const isSettings = !!matchRoute({ to: "/settings" });
   const match = matchRoute({ to: "/$moduleId" });
-  const moduleId = match ? match.moduleId : null;
+  const moduleId = match && !isSettings ? match.moduleId : null;
   const moduleName = modules.find((module) => module.id === moduleId)?.name;
   const { activeEditor } = useActiveEditor();
   const editor =
@@ -91,7 +92,9 @@ export function FileBreadcrumb() {
           <BreadcrumbList>
             {!moduleId ? (
               <BreadcrumbItem>
-                <BreadcrumbPage>Home</BreadcrumbPage>
+                <BreadcrumbPage>
+                  {isSettings ? "Settings" : "Home"}
+                </BreadcrumbPage>
               </BreadcrumbItem>
             ) : (
               <BreadcrumbItem>
@@ -121,9 +124,12 @@ export function FileBreadcrumb() {
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       render={
-                        <Button size="icon-sm" variant="ghost">
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label="Show parent sections"
+                        >
                           <BreadcrumbEllipsis />
-                          <span className="sr-only">Toggle menu</span>
                         </Button>
                       }
                     />

@@ -1,4 +1,5 @@
 import { OcclusionEditor } from "@/components/occlusion-editor";
+import { saveQueue } from "@/lib/saves";
 import { validMasks } from "@/lib/occlusion";
 import { createContext, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
@@ -324,6 +325,7 @@ function SavedImageView(props: NodeViewProps) {
   };
 
   const applyCrop = async (crop: Crop) => {
+    if (saveQueue.isSuspended() || editor.isDestroyed || !editor.isEditable) throw new Error("Image writes are suspended");
     const fileId = node.attrs.fileId as string | null;
     if (!fileId) throw new Error("This image cannot be read for cropping");
     const original = await readImage(fileId);
@@ -344,6 +346,7 @@ function SavedImageView(props: NodeViewProps) {
       context.drawImage(source, Math.round(crop.x * source.naturalWidth), Math.round(crop.y * source.naturalHeight), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not create the cropped image")), "image/png"));
       const saved = await saveImage(new File([blob], `${node.attrs.alt || "image"}-cropped.png`, { type: "image/png" }));
+      if (saveQueue.isSuspended() || editor.isDestroyed || !editor.isEditable) throw new Error("Image writes are suspended");
       // Keep the on-page scale: the kept region stays the size it was before cropping.
       const shownWidth = (node.attrs.width as number | null) || image.current?.offsetWidth || 0;
       const width = shownWidth ? Math.max(1, Math.round(shownWidth * crop.width)) : null;
@@ -400,7 +403,7 @@ function SavedImageView(props: NodeViewProps) {
           )}
         </div>
       )}
-      {occlusionOpen && src && <OcclusionEditor src={src} masks={validMasks(node.attrs.masks)} onCancel={() => setOcclusionOpen(false)} onSave={masks => { updateAttributes({ masks, imageId: node.attrs.imageId || crypto.randomUUID() }); setOcclusionOpen(false); }} />}
+      {occlusionOpen && src && <OcclusionEditor src={src} masks={validMasks(node.attrs.masks)} onCancel={() => setOcclusionOpen(false)} onSave={masks => { if (saveQueue.isSuspended() || editor.isDestroyed || !editor.isEditable) return; updateAttributes({ masks, imageId: node.attrs.imageId || crypto.randomUUID() }); setOcclusionOpen(false); }} />}
       {cropOpen && image.current && <CropDialog image={image.current} onCancel={() => setCropOpen(false)} onSave={applyCrop} />}
     </NodeViewWrapper>
   );

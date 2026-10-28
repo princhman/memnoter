@@ -1,3 +1,5 @@
+import { openReview } from "@/lib/card-sync";
+import { useCommand } from "@/lib/commands";
 import Tiptap from "@/components/Tiptap";
 import { Button } from "@/components/ui/button";
 import { useDueCounts } from "@/lib/card-sync";
@@ -10,6 +12,10 @@ export const Route = createFileRoute("/$moduleId/")({
 function RouteComponent() {
   const { moduleId } = Route.useParams();
   const { byModule } = useDueCounts();
+  const navigate = Route.useNavigate();
+  useCommand({ id: "review.module", title: "Review this module", keywords: ["flashcards"],
+    run: () => openReview(() => navigate({ to: "/review", search: { module: moduleId } })),
+  });
   return (
     <>
       <div className="mb-4 flex justify-end">
