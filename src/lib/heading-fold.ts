@@ -33,6 +33,10 @@ declare module "@tiptap/core" {
     headingFold: {
       toggleFold: (headingPos: number) => ReturnType;
       setFolds: (headingIds: string[]) => ReturnType;
+      // Fold the innermost open section around the caret, or the one above
+      // it when that is folded already; unfold the innermost folded one.
+      foldCurrentSection: () => ReturnType;
+      unfoldCurrentSection: () => ReturnType;
     };
   }
 }
@@ -183,6 +187,22 @@ function buildDecorations(doc: PMNode, folded: string[]) {
   };
 }
 
+// The foldable headings whose sections hold the caret, outermost first. A
+// heading's own line counts as inside its section.
+function sectionsAround(state: EditorState) {
+  const ends = sectionEnds(state.doc);
+  const { head } = state.selection;
+  const around: { pos: number; id: string }[] = [];
+
+  state.doc.forEach((node, pos) => {
+    const id = headingId(node);
+    if (id === null || pos >= head) return;
+    const end = ends.get(pos)!;
+    if (head <= end && end > pos + node.nodeSize) around.push({ pos, id });
+  });
+  return around;
+}
+
 function applyAction(folded: string[], action: FoldAction): string[] {
   if (action.type === "set") return [...new Set(action.ids)];
   return folded.includes(action.id)
@@ -227,6 +247,39 @@ export const HeadingFold = Extension.create({
           dispatch?.(foldTransaction(state, { type: "set", ids: headingIds }));
           return true;
         },
+      foldCurrentSection:
+        () =>
+        ({ state, dispatch }) => {
+          const folded = headingFoldKey.getState(state)?.folded ?? [];
+          const target = sectionsAround(state)
+            .reverse()
+            .find((section) => !folded.includes(section.id));
+          if (!target) return false;
+          // A caret in the hidden content moves up onto the heading.
+          dispatch?.(
+            foldTransaction(state, { type: "toggle", id: target.id }).scrollIntoView(),
+          );
+          return true;
+        },
+      unfoldCurrentSection:
+        () =>
+        ({ state, dispatch }) => {
+          const folded = headingFoldKey.getState(state)?.folded ?? [];
+          const target = sectionsAround(state)
+            .reverse()
+            .find((section) => folded.includes(section.id));
+          if (!target) return false;
+          dispatch?.(foldTransaction(state, { type: "toggle", id: target.id }));
+          return true;
+        },
+    };
+  },
+
+  // Like VS Code's fold and unfold.
+  addKeyboardShortcuts() {
+    return {
+      "Mod-Alt-[": () => this.editor.commands.foldCurrentSection(),
+      "Mod-Alt-]": () => this.editor.commands.unfoldCurrentSection(),
     };
   },
 
