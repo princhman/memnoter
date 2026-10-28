@@ -14,9 +14,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { queryClient } from "@/lib/query-client";
 import { flushSaves, saveQueue, saveStatusStore } from "@/lib/saves";
 
 const CLOSE_FLUSH_TIMEOUT_MS = 3_000;
+
+const restorePending = () => queryClient.isMutating({ mutationKey: ["restore-backup"] }) > 0;
+
+// Restore owns the database until its mutation (including success/rollback)
+// settles. Neither ordinary Quit nor the discard-edits action may interrupt it.
+async function waitForRestore() {
+  if (!restorePending()) return;
+  await new Promise<void>((resolve) => {
+    const stop = queryClient.getMutationCache().subscribe(() => {
+      if (!restorePending()) { stop(); resolve(); }
+    });
+    if (!restorePending()) { stop(); resolve(); }
+  });
+}
+
+async function confirmExitAfterRestore() {
+  await waitForRestore();
+  // Do not authorize an exit if another restore started during the await.
+  if (!restorePending()) await invoke("confirm_exit");
+}
 
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and
 // the queue keeps retrying in the background.
@@ -33,8 +54,10 @@ const SaveStatus = () => {
       if (busy) return;
       busy = true;
       try {
+        await waitForRestore();
+        if (disposed || restorePending()) return;
         if (saveQueue.isEmpty() || await flushSaves(CLOSE_FLUSH_TIMEOUT_MS)) {
-          await invoke("confirm_exit");
+          await confirmExitAfterRestore();
         } else setConfirmClose(true);
       } finally { busy = false; }
     };
@@ -90,7 +113,7 @@ const SaveStatus = () => {
             />
             <Button
               variant="destructive"
-              onClick={() => void invoke("confirm_exit")}
+              onClick={() => void confirmExitAfterRestore()}
             >
               Quit anyway
             </Button>
