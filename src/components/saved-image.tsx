@@ -211,6 +211,7 @@ function SavedImageView(props: NodeViewProps) {
     if (img.src === (adaptive ? cachedAdaptedUrl(key, dark) : src)) return;
     let cancelled = false;
     let stopWaiting: (() => void) | undefined;
+    let release: (() => void) | undefined;
     void (async () => {
       // Recoloring is costly, so images far off screen wait until they come close.
       if (adaptive) {
@@ -225,9 +226,12 @@ function SavedImageView(props: NodeViewProps) {
         });
       }
       if (cancelled) return;
-      const next = adaptive
-        ? await adaptedUrl(key, dark, async () => fileId ? readImage(fileId) : (await fetch(src)).blob())
-        : src;
+      let next = src;
+      if (adaptive) {
+        const adapted = adaptedUrl(key, dark, async () => fileId ? readImage(fileId) : (await fetch(src)).blob());
+        release = adapted.release;
+        next = await adapted.url;
+      }
       // Decode first so the swap never shows an empty frame.
       const probe = document.createElement("img");
       probe.src = next;
@@ -236,10 +240,11 @@ function SavedImageView(props: NodeViewProps) {
     })().catch((error) => {
       console.error("Failed to adapt image:", error);
       if (!cancelled) swapImage(img, src);
-    });
+    }).finally(() => release?.());
     return () => {
       cancelled = true;
       stopWaiting?.();
+      release?.();
     };
   }, [src, adaptive, dark, node.attrs.fileId, readImage]);
 

@@ -173,8 +173,12 @@ let worker: Worker | null | undefined;
 let nextJob = 0;
 const jobs = new Map<number, Job>();
 
+// One at a time here too: after a worker failure, every waiting job lands here.
+let hereQueue = Promise.resolve();
+
 function adaptHere(job: Job) {
-  adaptImageHere(job.source, job.dark).then(job.resolve, job.reject);
+  hereQueue = hereQueue.then(() =>
+    adaptImageHere(job.source, job.dark).then(job.resolve, job.reject));
 }
 
 function adaptWorker() {
@@ -214,7 +218,9 @@ function adaptImage(source: Blob, dark: boolean): Promise<Blob> {
 
 // Adapted copies by image and theme. Sections mount and unmount as they scroll
 // into view, so without this every remount would recolor (and blink) again.
-const cache = new Map<string, { url?: string; pending: Promise<string> }>();
+// An image waiting to show a copy holds a lease on it until it has.
+type Entry = { url?: string; pending: Promise<string>; leases: number };
+const cache = new Map<string, Entry>();
 const CACHE_SIZE = 48;
 
 const cacheKey = (image: string, dark: boolean) => `${dark ? "dark" : "light"}:${image}`;
@@ -222,13 +228,13 @@ const cacheKey = (image: string, dark: boolean) => `${dark ? "dark" : "light"}:$
 const isShown = (url: string) =>
   [...document.images].some((img) => img.src === url);
 
-// Drops the stalest copies beyond the limit. Ones still being made, or still
-// shown, stay: revoking their URL would break the image.
+// Drops the stalest copies beyond the limit. Ones still being made, waited
+// for or shown stay: revoking their URL would break the image.
 function trimCache() {
   let excess = cache.size - CACHE_SIZE;
   for (const [key, entry] of cache) {
     if (excess <= 0) break;
-    if (!entry.url || isShown(entry.url)) continue;
+    if (!entry.url || entry.leases > 0 || isShown(entry.url)) continue;
     cache.delete(key);
     URL.revokeObjectURL(entry.url);
     excess--;
@@ -239,26 +245,36 @@ export function cachedAdaptedUrl(image: string, dark: boolean) {
   return cache.get(cacheKey(image, dark))?.url;
 }
 
+// The adapted copy's URL, and a release to call once it is shown or no longer
+// wanted; until then the copy is never evicted.
 export function adaptedUrl(image: string, dark: boolean, load: () => Promise<Blob>) {
   const key = cacheKey(image, dark);
-  const hit = cache.get(key);
-  if (hit) {
+  let entry = cache.get(key);
+  if (entry) {
     // Most recently used goes last, so eviction drops the stalest.
     cache.delete(key);
-    cache.set(key, hit);
-    return hit.pending;
+    cache.set(key, entry);
+  } else {
+    const created: Entry = {
+      leases: 0,
+      pending: load()
+        .then((blob) => adaptImage(blob, dark))
+        .then((blob) => (created.url = URL.createObjectURL(blob))),
+    };
+    created.pending.catch(() => cache.delete(key));
+    cache.set(key, created);
+    entry = created;
   }
-  const entry: { url?: string; pending: Promise<string> } = {
-    pending: load()
-      .then((blob) => adaptImage(blob, dark))
-      .then((blob) => (entry.url = URL.createObjectURL(blob))),
-  };
-  entry.pending.then(
-    // Trimmed after the waiting image has had its chance to show it.
-    () => setTimeout(trimCache, 1000),
-    () => cache.delete(key),
-  );
-  cache.set(key, entry);
+  const leased = entry;
+  leased.leases++;
   trimCache();
-  return entry.pending;
+
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    leased.leases--;
+    trimCache();
+  };
+  return { url: leased.pending, release };
 }
