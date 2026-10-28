@@ -1,3 +1,4 @@
+import { useBlocker } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/react";
 import { invoke } from "@tauri-apps/api/core";
@@ -24,6 +25,20 @@ export const dueCountsKey = ["cards", "due-counts"];
 // edits settle, and when the note closes.
 export function useCardSync(editor: Editor | null, moduleId: string, ready: boolean) {
   const queryClient = useQueryClient();
+  // Keep the editor alive until copied ids have been repaired and resynced.
+  useBlocker({
+    disabled: !editor || !ready,
+    enableBeforeUnload: false,
+    shouldBlockFn: async () => {
+      try {
+        await flushCardSyncs();
+        return false;
+      } catch {
+        window.alert("Could not save flashcards. Please try leaving the note again.");
+        return true;
+      }
+    },
+  });
 
   useEffect(() => {
     if (!editor || !ready) return;

@@ -3,10 +3,13 @@
 Cards are authored as editable note text. ProseMirror decorations style syntax;
 paragraph and heading `cardId` attributes are persisted in Yjs. Math blocks do
 not create cards. Cards are indexed when a module is opened, after 800 ms of
-idle editing, and on editor cleanup. Review navigation flushes pending writes
+idle editing, and on editor cleanup. All in-app navigation flushes pending writes
 before leaving the editor, including cross-module copy conflict repairs.
 Existing modules must be opened once to index their cards; there is no background
-scan of unopened Yjs documents.
+scan of unopened Yjs documents. Review displays the unindexed notes with Open
+buttons and does not claim the whole library is caught up until they are checked.
+The card_indexed_modules table tracks successful complete syncs, including empty
+notes; unresolved cross-module conflicts leave a note marked incomplete.
 
 ## Syntax and identity
 

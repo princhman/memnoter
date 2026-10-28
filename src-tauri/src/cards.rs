@@ -37,6 +37,10 @@ pub(crate) fn migrate_flashcards(conn: &Connection) -> CommandResult<()> {
             FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
         );
 
+        create table if not exists card_indexed_modules (
+            module_id TEXT PRIMARY KEY REFERENCES modules(id) ON DELETE CASCADE
+        );
+
         create index if not exists cards_module on cards(module_id);
         create index if not exists cards_due on cards(due_at) where deleted_at is null;
 
@@ -148,6 +152,17 @@ fn sync_module_cards(
     now: i64,
 ) -> CommandResult<Vec<String>> {
     let tx = conn.transaction().map_err(db_err)?;
+    // A final editor sync may arrive after the module was deleted.
+    if !tx
+        .query_row(
+            "select exists(select 1 from modules where id = ?1)",
+            [module_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(db_err)?
+    {
+        return Ok(Vec::new());
+    }
     let mut conflicts = Vec::new();
     {
         let mut upsert = tx
@@ -201,6 +216,18 @@ fn sync_module_cards(
         params![module_id, now, kept],
     )
     .map_err(db_err)?;
+    tx.execute(
+        "delete from card_indexed_modules where module_id = ?1",
+        [module_id],
+    )
+    .map_err(db_err)?;
+    if conflicts.is_empty() {
+        tx.execute(
+            "insert or ignore into card_indexed_modules (module_id) values (?1)",
+            [module_id],
+        )
+        .map_err(db_err)?;
+    }
     tx.commit().map_err(db_err)?;
     Ok(conflicts)
 }
@@ -499,6 +526,31 @@ mod tests {
     }
 
     #[test]
+    fn indexing_completeness_requires_a_conflict_free_snapshot_even_for_empty_notes() {
+        let f = Fixture::new();
+        let indexed = |id: &str| -> bool {
+            f.db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "select exists(select 1 from card_indexed_modules where module_id = ?1)",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert!(!indexed("a"));
+        f.sync("a", &[basic("shared", "Q", "A")], 10);
+        assert!(indexed("a"));
+        f.sync("b", &[], 10);
+        assert!(indexed("b"));
+        assert_eq!(f.sync("b", &[basic("shared", "Q", "A")], 20), ["shared"]);
+        assert!(!indexed("b"));
+        f.sync("b", &[basic("repaired", "Q", "A")], 30);
+        assert!(indexed("b"));
+    }
+
+    #[test]
     fn new_cards_are_due_immediately_and_counted_per_module() {
         let f = Fixture::new();
         f.sync("a", &[basic("1", "Q", "A"), basic("2", "Q2", "A2")], 10);
@@ -648,4 +700,25 @@ mod tests {
         let other: i64 = f.column("select count(*) from review_log where card_id = ?1", "2");
         assert_eq!((cards, logs, other), (0, 0, 1));
     }
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct UnindexedModule {
+    id: String,
+    name: String,
+}
+
+#[tauri::command(async)]
+pub(crate) fn unindexed_card_modules(db: tauri::State<Db>) -> CommandResult<Vec<UnindexedModule>> {
+    let conn = db.conn.lock().map_err(db_err)?;
+    let mut stmt = conn.prepare("select id, name from modules where id not in (select module_id from card_indexed_modules) order by name").map_err(db_err)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(UnindexedModule {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })
+        .map_err(db_err)?;
+    rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }

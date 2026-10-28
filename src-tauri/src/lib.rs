@@ -805,6 +805,7 @@ pub fn run() {
             read_file,
             cleanup_files,
             cards::sync_cards,
+            cards::unindexed_card_modules,
             cards::due_cards,
             cards::due_counts,
             cards::review_card

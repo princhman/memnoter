@@ -42,6 +42,7 @@ function Review() {
   const canGoBack = useCanGoBack();
   const queryClient = useQueryClient();
 
+  const [unindexed, setUnindexed] = useState<{ id: string; name: string }[]>([]);
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
   // The session's cards, loaded once: syncs made meanwhile do not reshuffle it.
   const [queue, setQueue] = useState<StoredCard[] | null>(null);
@@ -60,14 +61,16 @@ function Review() {
     setReviewed(0);
     Promise.all([
       getScheduler(),
+      invoke<{ id: string; name: string }[]>("unindexed_card_modules"),
       flushCardSyncs().then(() =>
         invoke<StoredCard[]>("due_cards", { moduleId: moduleId ?? null, now: Date.now() }),
       ),
     ])
-      .then(([scheduler, cards]) => {
+      .then(([scheduler, unindexed, cards]) => {
         if (cancelled) return;
         setScheduler(() => scheduler);
         setQueue(cards);
+        setUnindexed(unindexed.filter((note) => !moduleId || note.id === moduleId));
       })
       .catch((error) => !cancelled && setError(String(error)));
     return () => {
@@ -194,6 +197,18 @@ function Review() {
 
       <main className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-8">
         <div className="flex w-full max-w-2xl flex-1 flex-col justify-center gap-8 py-8">
+          {unindexed.length > 0 && (
+            <section className="rounded-lg border p-4 text-sm" aria-label="Notes awaiting card indexing">
+              <p>Review is incomplete: {unindexed.length} {unindexed.length === 1 ? "note has" : "notes have"} not been checked for cards. Open each note below to include its cards, then return to review.</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {unindexed.map((note) => (
+                  <Button key={note.id} variant="outline" onClick={() => void router.navigate({ to: "/$moduleId", params: { moduleId: note.id } })}>
+                    Open {note.name || "Untitled note"}
+                  </Button>
+                ))}
+              </div>
+            </section>
+          )}
           {error && (
             <p role="alert" className="text-center text-sm text-destructive">
               {error}
@@ -205,7 +220,7 @@ function Review() {
           {queue !== null && !card && (
             <div className="grid justify-items-center gap-3 text-center">
               <CheckCircle2 className="size-10 text-emerald-600 dark:text-emerald-400" />
-              <h1 className="text-2xl font-semibold">All caught up</h1>
+              <h1 className="text-2xl font-semibold">{unindexed.length ? "No due cards in checked notes" : "All caught up"}</h1>
               <p className="text-muted-foreground">
                 {reviewed > 0
                   ? `You reviewed ${reviewed} ${reviewed === 1 ? "card" : "cards"}.`
