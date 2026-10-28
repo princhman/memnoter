@@ -1,4 +1,4 @@
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useMatchRoute } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
 import {
@@ -17,6 +17,8 @@ import { appStore, setSidebarOpen } from "@/lib/store";
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
+  const matchRoute = useMatchRoute();
+  if (matchRoute({ to: "/review" })) return <Outlet />;
   return (
     <>
       <ActiveEditorProvider>

@@ -27,6 +27,7 @@ import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
 import { useState } from "react";
+import { useDueCounts } from "@/lib/card-sync";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
   const [renameOpen, setRenameOpen] = useState(false);
@@ -82,6 +83,7 @@ const AppSidebar = () => {
     queryFn: async () => await invoke<Module[]>("modules"),
   });
   const matchRoute = useMatchRoute();
+  const { total } = useDueCounts();
 
   return (
     <Sidebar>
@@ -101,6 +103,15 @@ const AppSidebar = () => {
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>*/}
+        <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton render={<Link to="/review" search={{}} />}>
+                <span>Review ({total} due)</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
           <CreateModule />
