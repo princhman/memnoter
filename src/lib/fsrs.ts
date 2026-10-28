@@ -114,7 +114,7 @@ export function scheduleReview(
       rating,
       reviewTime: result.revlog.reviewTime.getTime(),
       durationMs,
-      fsrsModel: scheduler.schedulerDefinition.model.name,
+      fsrsModel: FSRS_VERSION.toLowerCase(),
     },
   };
 }
