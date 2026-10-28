@@ -175,7 +175,11 @@ export function usePersistedView(
 
     return () => {
       stopRestoring?.();
-      window.clearTimeout(saveTimeout);
+      // Switching notes right after a change must not lose it.
+      if (saveTimeout !== undefined) {
+        window.clearTimeout(saveTimeout);
+        save();
+      }
       editor.off("transaction", scheduleSave);
       container.removeEventListener("scroll", scheduleSave);
     };

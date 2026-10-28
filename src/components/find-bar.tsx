@@ -16,12 +16,27 @@ import {
   ReplaceAll,
   X,
 } from "lucide-react";
+import type { Editor } from "@tiptap/core";
 import { useActiveEditor } from "@/lib/active-editor-context";
+import { getFocusedSectionRange } from "@/lib/section-focus";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const inputClassName =
   "h-7 min-w-0 flex-1 rounded-md bg-input/50 px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-input/30";
+
+// A match outside the focused section is hidden, so show the whole note first.
+function revealCurrentResult(editor: Editor) {
+  const { results, currentIndex } = editor.storage.findAndReplace;
+  const match = currentIndex == null ? undefined : results[currentIndex];
+  const focused = getFocusedSectionRange(editor.state);
+  if (match && focused && (match.from < focused.from || match.to > focused.to)) {
+    editor.commands.showDocument();
+  }
+  editor.view.dom
+    .querySelector(".find-and-replace-result-current")
+    ?.scrollIntoView({ block: "nearest" });
+}
 
 export function FindBar() {
   const { activeEditor } = useActiveEditor();
@@ -64,10 +79,8 @@ export function FindBar() {
   // A fresh search marks the first match without selecting it, so reveal it here.
   useEffect(() => {
     if (!editor || editor.isDestroyed || search?.current == null) return;
-    editor.view.dom
-      .querySelector(".find-and-replace-result-current")
-      ?.scrollIntoView({ block: "nearest" });
-  }, [editor, search?.count, search?.current]);
+    revealCurrentResult(editor);
+  }, [editor, search?.count, search?.current, searchTerm, caseSensitive, useRegex]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -120,8 +133,14 @@ export function FindBar() {
     }
   };
 
-  const goToNext = () => editor.commands.goToNextResult();
-  const goToPrevious = () => editor.commands.goToPreviousResult();
+  const goToNext = () => {
+    editor.commands.goToNextResult();
+    revealCurrentResult(editor);
+  };
+  const goToPrevious = () => {
+    editor.commands.goToPreviousResult();
+    revealCurrentResult(editor);
+  };
 
   return (
     <div className="absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 rounded-lg bg-popover p-1 text-popover-foreground shadow-md">
