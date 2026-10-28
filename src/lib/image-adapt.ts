@@ -124,6 +124,28 @@ export function adaptPixels(data: Uint8ClampedArray, width: number, height: numb
 // Large photos are scaled down: the result is only ever shown at editor width.
 const MAX_SIDE = 2560;
 
+type Canvas2D = OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+
+// An OffscreenCanvas where there is one (workers, newer WebKit); a page canvas
+// on the main thread otherwise.
+function makeCanvas(width: number, height: number) {
+  if (typeof OffscreenCanvas !== "undefined") {
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (context) return { context: context as Canvas2D, toPng: () => canvas.convertToBlob({ type: "image/png" }) };
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Could not prepare the image");
+  return {
+    context: context as Canvas2D,
+    toPng: () => new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not create the adapted image")), "image/png")),
+  };
+}
+
 // Runs where it is called: in the worker, or on the main thread as a fallback.
 export async function adaptImageHere(source: Blob, dark: boolean): Promise<Blob> {
   const bitmap = await createImageBitmap(source);
@@ -131,40 +153,47 @@ export async function adaptImageHere(source: Blob, dark: boolean): Promise<Blob>
     const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("Could not prepare the image");
+    const { context, toPng } = makeCanvas(width, height);
     context.drawImage(bitmap, 0, 0, width, height);
     const pixels = context.getImageData(0, 0, width, height);
     adaptPixels(pixels.data, width, height, dark);
     context.putImageData(pixels, 0, 0);
-    return await canvas.convertToBlob({ type: "image/png" });
+    return await toPng();
   } finally {
     bitmap.close();
   }
 }
 
 // Recoloring a large image takes tens of milliseconds, so it runs off the main
-// thread. The single worker also takes images one at a time.
+// thread, one image at a time. Whatever the worker cannot do (it may fail to
+// start, or lack a canvas in older WebKit) is done here instead.
+type Job = { source: Blob; dark: boolean; resolve: (blob: Blob) => void; reject: (error: unknown) => void };
+
 let worker: Worker | null | undefined;
 let nextJob = 0;
-const jobs = new Map<number, { resolve: (blob: Blob) => void; reject: (error: Error) => void }>();
+const jobs = new Map<number, Job>();
+
+function adaptHere(job: Job) {
+  adaptImageHere(job.source, job.dark).then(job.resolve, job.reject);
+}
 
 function adaptWorker() {
   if (worker !== undefined) return worker;
   try {
     worker = new Worker(new URL("./image-adapt.worker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = ({ data }: MessageEvent<{ id: number; blob?: Blob; error?: string }>) => {
+    worker.onmessage = ({ data }: MessageEvent<{ id: number; blob?: Blob }>) => {
       const job = jobs.get(data.id);
       jobs.delete(data.id);
-      if (data.blob) job?.resolve(data.blob);
-      else job?.reject(new Error(data.error ?? "Could not adapt the image"));
+      if (!job) return;
+      if (data.blob) job.resolve(data.blob);
+      else adaptHere(job);
     };
-    // The worker failed to start: fail what it holds, adapt here from now on.
     worker.onerror = () => {
+      worker?.terminate();
       worker = null;
-      for (const job of jobs.values()) job.reject(new Error("Could not start the image worker"));
+      const failed = [...jobs.values()];
       jobs.clear();
+      failed.forEach(adaptHere);
     };
   } catch {
     worker = null;
@@ -173,11 +202,12 @@ function adaptWorker() {
 }
 
 function adaptImage(source: Blob, dark: boolean): Promise<Blob> {
-  const target = adaptWorker();
-  if (!target) return adaptImageHere(source, dark);
-  const id = nextJob++;
   return new Promise((resolve, reject) => {
-    jobs.set(id, { resolve, reject });
+    const job: Job = { source, dark, resolve, reject };
+    const target = adaptWorker();
+    if (!target) return adaptHere(job);
+    const id = nextJob++;
+    jobs.set(id, job);
     target.postMessage({ id, source, dark });
   });
 }
@@ -188,6 +218,22 @@ const cache = new Map<string, { url?: string; pending: Promise<string> }>();
 const CACHE_SIZE = 48;
 
 const cacheKey = (image: string, dark: boolean) => `${dark ? "dark" : "light"}:${image}`;
+
+const isShown = (url: string) =>
+  [...document.images].some((img) => img.src === url);
+
+// Drops the stalest copies beyond the limit. Ones still being made, or still
+// shown, stay: revoking their URL would break the image.
+function trimCache() {
+  let excess = cache.size - CACHE_SIZE;
+  for (const [key, entry] of cache) {
+    if (excess <= 0) break;
+    if (!entry.url || isShown(entry.url)) continue;
+    cache.delete(key);
+    URL.revokeObjectURL(entry.url);
+    excess--;
+  }
+}
 
 export function cachedAdaptedUrl(image: string, dark: boolean) {
   return cache.get(cacheKey(image, dark))?.url;
@@ -207,15 +253,12 @@ export function adaptedUrl(image: string, dark: boolean, load: () => Promise<Blo
       .then((blob) => adaptImage(blob, dark))
       .then((blob) => (entry.url = URL.createObjectURL(blob))),
   };
-  entry.pending.catch(() => cache.delete(key));
+  entry.pending.then(
+    // Trimmed after the waiting image has had its chance to show it.
+    () => setTimeout(trimCache, 1000),
+    () => cache.delete(key),
+  );
   cache.set(key, entry);
-  // Entries still being adapted stay: their URL does not exist yet to revoke,
-  // and an image is waiting for it. Once done, a later eviction can drop them.
-  for (const [oldKey, old] of cache) {
-    if (cache.size <= CACHE_SIZE) break;
-    if (!old.url) continue;
-    cache.delete(oldKey);
-    URL.revokeObjectURL(old.url);
-  }
+  trimCache();
   return entry.pending;
 }
