@@ -1056,15 +1056,27 @@ body {
     font-size: 1em;
 }
 
-.tiptap .find-and-replace-result {
+/* Search matches are drawn as boxes behind the text, never as spans inside it,
+   so the text does not shift (src/lib/find-highlights.ts). */
+:has(> .find-highlight-layer) {
+  position: relative;
+  isolation: isolate;
+}
+
+.find-highlight-layer {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.find-highlight {
+  position: absolute;
   border-radius: 2px;
   background-color: color-mix(in oklch, var(--primary) 18%, transparent);
 }
 
-.tiptap .find-and-replace-result-current {
+.find-highlight-current {
   background-color: color-mix(in oklch, var(--primary) 40%, transparent);
   box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 60%, transparent);
 }
-
-/* Where supported, matches are painted without spans instead; their styles
-   live in src/lib/find-highlights.ts. */

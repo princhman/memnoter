@@ -5,34 +5,15 @@ import {
 import { Plugin } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 
-// Matches are painted with the CSS Custom Highlight API rather than wrapped in
+// Matches are drawn as boxes on a layer behind the text rather than wrapped in
 // spans: WebKit does not kern or shape text across an element boundary, so each
-// span nudged the text around it, and it moved as the search was typed.
-const supported =
-  typeof CSS !== "undefined" &&
-  "highlights" in CSS &&
-  typeof Highlight !== "undefined";
-
-// Kept out of App.css: the CSS build step does not know ::highlight and drops it.
-const STYLES = `
-::highlight(find-result) {
-  background-color: color-mix(in oklch, var(--primary) 18%, transparent);
-}
-::highlight(find-current) {
-  background-color: color-mix(in oklch, var(--primary) 45%, transparent);
-}`;
-
-function injectStyles() {
-  if (document.getElementById("find-highlight-styles")) return;
-  const style = document.createElement("style");
-  style.id = "find-highlight-styles";
-  style.textContent = STYLES;
-  document.head.appendChild(style);
-}
+// span nudged the text around it, and it moved as the search was typed. The CSS
+// Highlight API avoids spans too, but WebKit does not repaint when highlights
+// are removed, so cleared matches stayed on screen.
 
 const SCROLL_CONTAINER = ".app-scroll-container";
-// Only matches near the viewport are painted, as finding each one in the DOM
-// costs time in long notes. Positions this far beyond the screen's edges count.
+// Only matches near the viewport are drawn, as measuring each one costs time in
+// long notes. Positions this far beyond the screen's edges count.
 const SLACK = 3000;
 
 type Match = { from: number; to: number };
@@ -67,34 +48,51 @@ function visibleSpan(view: EditorView): Match {
   };
 }
 
-function paint(view: EditorView) {
+function currentMatch(view: EditorView): Match | null {
   const state = FindAndReplacePluginKey.getState(view.state);
-  const results: Match[] = state?.results ?? [];
-  const current =
-    state?.currentIndex == null ? null : (results[state.currentIndex] ?? null);
+  return state?.currentIndex == null
+    ? null
+    : (state.results[state.currentIndex] ?? null);
+}
 
-  const others = new Highlight();
-  const active = new Highlight();
-  if (results.length) {
-    const span = visibleSpan(view);
-    for (const match of results) {
-      if (match === current) continue;
-      if (match.to < span.from || match.from > span.to) continue;
-      const range = domRange(view, match);
-      if (range) others.add(range);
-    }
-    const range = current && domRange(view, current);
-    if (range) active.add(range);
+function draw(view: EditorView, layer: HTMLElement) {
+  const results: Match[] =
+    FindAndReplacePluginKey.getState(view.state)?.results ?? [];
+  if (!results.length) {
+    layer.replaceChildren();
+    return;
   }
-  CSS.highlights.set("find-result", others);
-  CSS.highlights.set("find-current", active);
+
+  const current = currentMatch(view);
+  const origin = layer.getBoundingClientRect();
+  const span = visibleSpan(view);
+  const boxes: HTMLElement[] = [];
+
+  for (const match of results) {
+    if (match !== current && (match.to < span.from || match.from > span.to)) {
+      continue;
+    }
+    const range = domRange(view, match);
+    if (!range) continue;
+    for (const rect of range.getClientRects()) {
+      // Hidden (folded or out-of-focus) text has no size.
+      if (rect.width === 0 || rect.height === 0) continue;
+      const box = document.createElement("div");
+      box.className =
+        match === current ? "find-highlight find-highlight-current" : "find-highlight";
+      box.style.left = `${rect.left - origin.left}px`;
+      box.style.top = `${rect.top - origin.top}px`;
+      box.style.width = `${rect.width}px`;
+      box.style.height = `${rect.height}px`;
+      boxes.push(box);
+    }
+  }
+  layer.replaceChildren(...boxes);
 }
 
 // Scrolls the current match into view, as its span used to be.
 export function scrollCurrentResultIntoView(view: EditorView) {
-  const state = FindAndReplacePluginKey.getState(view.state);
-  const current =
-    state?.currentIndex == null ? null : state.results[state.currentIndex];
+  const current = currentMatch(view);
   if (!current) return;
   const range = domRange(view, current);
   const container = view.dom.closest<HTMLElement>(SCROLL_CONTAINER);
@@ -112,26 +110,43 @@ export function scrollCurrentResultIntoView(view: EditorView) {
 export const FindHighlights = FindAndReplace.extend({
   addProseMirrorPlugins() {
     const plugins = this.parent?.() ?? [];
-    // Older WebKit keeps the extension's own span highlights.
-    if (!supported) return plugins;
     for (const plugin of plugins) delete plugin.props.decorations;
-    injectStyles();
 
     return [
       ...plugins,
       new Plugin({
         view(view) {
+          // Sits right before the editor, in the same positioned wrapper, and
+          // behind it (see .find-highlight-layer in App.css).
+          const layer = document.createElement("div");
+          layer.className = "find-highlight-layer";
+          layer.setAttribute("aria-hidden", "true");
+
           let frame = 0;
-          // Scrolling brings other matches near; the container may not be
-          // mounted yet, so listen on the document.
-          const schedule = () => {
-            if (frame || !FindAndReplacePluginKey.getState(view.state)?.results.length) return;
-            frame = requestAnimationFrame(() => {
-              frame = 0;
-              if (view.dom.isConnected) paint(view);
-            });
+          const redraw = () => {
+            frame = 0;
+            const parent = view.dom.parentElement;
+            if (!parent || !view.dom.isConnected) return;
+            if (layer.parentElement !== parent) parent.insertBefore(layer, view.dom);
+            draw(view, layer);
           };
-          document.addEventListener("scroll", schedule, { capture: true, passive: true });
+          const schedule = () => {
+            if (!frame) frame = requestAnimationFrame(redraw);
+          };
+          const hasResults = () =>
+            !!FindAndReplacePluginKey.getState(view.state)?.results.length;
+
+          // Scrolling brings other matches near; images loading, folds and
+          // section focus move text. The scroll container may not be mounted
+          // yet, so scrolling is watched on the document.
+          const onScroll = () => {
+            if (hasResults()) schedule();
+          };
+          document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+          const resizeObserver = new ResizeObserver(() => {
+            if (hasResults() || layer.childElementCount) schedule();
+          });
+          resizeObserver.observe(view.dom);
 
           return {
             update(view, previous) {
@@ -139,15 +154,16 @@ export const FindHighlights = FindAndReplace.extend({
                 FindAndReplacePluginKey.getState(view.state) !==
                 FindAndReplacePluginKey.getState(previous)
               ) {
-                // Painted now, so a new match never shows a frame unlit.
-                paint(view);
+                // Drawn now, so a new match never shows a frame unlit.
+                cancelAnimationFrame(frame);
+                redraw();
               }
             },
             destroy() {
               cancelAnimationFrame(frame);
-              document.removeEventListener("scroll", schedule, { capture: true });
-              CSS.highlights.delete("find-result");
-              CSS.highlights.delete("find-current");
+              document.removeEventListener("scroll", onScroll, { capture: true });
+              resizeObserver.disconnect();
+              layer.remove();
             },
           };
         },
