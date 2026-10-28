@@ -571,7 +571,6 @@ body {
     max-height: min(90vh, 52rem);
     overflow: auto;
     padding: 1.25rem;
-    border: 1px solid var(--border);
     border-radius: 0.75rem;
     background: var(--background);
     color: var(--foreground);
@@ -588,40 +587,63 @@ body {
     font-size: 0.85rem;
 }
 .image-crop-preview {
-    position: relative;
-    width: 100%;
-    overflow: hidden;
-    background: #222;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     touch-action: none;
 }
-.image-crop-preview > img {
+.image-crop-frame {
+    position: relative;
+    max-width: 100%;
+    line-height: 0;
+}
+.image-crop-frame > img {
     display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
+    max-width: 100%;
+    max-height: min(60vh, 32rem);
+    width: auto;
+    height: auto;
+    margin: 0;
     pointer-events: none;
     user-select: none;
+}
+.image-crop-shade-clip {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+.image-crop-shade {
+    position: absolute;
+    box-shadow: 0 0 0 9999px rgb(0 0 0 / 52%);
 }
 .image-crop-selection {
     position: absolute;
     box-sizing: border-box;
     border: 2px solid white;
-    outline: 9999px solid rgb(0 0 0 / 48%);
     cursor: move;
     touch-action: none;
 }
-.image-crop-resize {
+.image-crop-handle {
     position: absolute;
-    right: -5px;
-    bottom: -5px;
+    box-sizing: border-box;
     width: 14px;
-    height: 8px;
+    height: 14px;
     border: 2px solid white;
     border-radius: 3px;
     background: var(--primary);
-    cursor: nwse-resize;
     touch-action: none;
 }
+.image-crop-handle-n, .image-crop-handle-s { left: calc(50% - 11px); width: 22px; height: 10px; cursor: ns-resize; }
+.image-crop-handle-e, .image-crop-handle-w { top: calc(50% - 11px); width: 10px; height: 22px; cursor: ew-resize; }
+.image-crop-handle-n { top: -6px; }
+.image-crop-handle-s { bottom: -6px; }
+.image-crop-handle-e { right: -6px; }
+.image-crop-handle-w { left: -6px; }
+.image-crop-handle-nw { top: -7px; left: -7px; cursor: nwse-resize; }
+.image-crop-handle-ne { top: -7px; right: -7px; cursor: nesw-resize; }
+.image-crop-handle-se { bottom: -7px; right: -7px; cursor: nwse-resize; }
+.image-crop-handle-sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
 .image-crop-actions {
     display: flex;
     justify-content: flex-end;

@@ -25,38 +25,51 @@ export const FilesContext = createContext<FilesContextValue>({
 });
 
 type Crop = { x: number; y: number; width: number; height: number };
+type CropHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+const CROP_HANDLES: CropHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+const MIN_CROP = 0.05;
+
+function resizeCrop(crop: Crop, handle: CropHandle, dx: number, dy: number): Crop {
+  let left = crop.x, top = crop.y, right = crop.x + crop.width, bottom = crop.y + crop.height;
+  if (handle.includes("w")) left = Math.max(0, Math.min(right - MIN_CROP, left + dx));
+  if (handle.includes("e")) right = Math.min(1, Math.max(left + MIN_CROP, right + dx));
+  if (handle.includes("n")) top = Math.max(0, Math.min(bottom - MIN_CROP, top + dy));
+  if (handle.includes("s")) bottom = Math.min(1, Math.max(top + MIN_CROP, bottom + dy));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
 
 function CropDialog({ image, onCancel, onSave }: {
   image: HTMLImageElement;
   onCancel: () => void;
   onSave: (crop: Crop) => Promise<void>;
 }) {
-  const preview = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ pointerId: number; startX: number; startY: number; crop: Crop; mode: "move" | "resize" } | null>(null);
-  const [crop, setCrop] = useState<Crop>({ x: 0.08, y: 0.08, width: 0.84, height: 0.84 });
+  const frame = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ pointerId: number; startX: number; startY: number; crop: Crop; mode: "move" | CropHandle } | null>(null);
+  const [crop, setCrop] = useState<Crop>({ x: 0, y: 0, width: 1, height: 1 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const beginDrag = (event: ReactPointerEvent<HTMLElement>, mode: "move" | "resize") => {
-    const bounds = preview.current?.getBoundingClientRect();
-    if (!bounds) return;
+  const beginDrag = (event: ReactPointerEvent<HTMLElement>, mode: "move" | CropHandle) => {
     event.preventDefault();
+    event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     drag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, crop, mode };
   };
 
   const updateDrag = (event: ReactPointerEvent<HTMLElement>) => {
     const current = drag.current;
-    const bounds = preview.current?.getBoundingClientRect();
+    const bounds = frame.current?.getBoundingClientRect();
     if (!current || !bounds || current.pointerId !== event.pointerId) return;
     const dx = (event.clientX - current.startX) / bounds.width;
     const dy = (event.clientY - current.startY) / bounds.height;
     if (current.mode === "move") {
       setCrop({ ...current.crop, x: Math.max(0, Math.min(1 - current.crop.width, current.crop.x + dx)), y: Math.max(0, Math.min(1 - current.crop.height, current.crop.y + dy)) });
     } else {
-      setCrop({ ...current.crop, width: Math.max(0.12, Math.min(1 - current.crop.x, current.crop.width + dx)), height: Math.max(0.12, Math.min(1 - current.crop.y, current.crop.height + dy)) });
+      setCrop(resizeCrop(current.crop, current.mode, dx, dy));
     }
   };
+
+  const endDrag = () => { drag.current = null; };
 
   const save = async () => {
     setSaving(true);
@@ -67,19 +80,27 @@ function CropDialog({ image, onCancel, onSave }: {
     }
   };
 
+  const area = { left: `${crop.x * 100}%`, top: `${crop.y * 100}%`, width: `${crop.width * 100}%`, height: `${crop.height * 100}%` };
+  const uncropped = crop.x === 0 && crop.y === 0 && crop.width === 1 && crop.height === 1;
+
   return (
     <div className="image-crop-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
       <section className="image-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="image-crop-title">
         <h2 id="image-crop-title">Crop image</h2>
-        <p>Drag the crop area to reposition it, or drag its lower corner to resize.</p>
-        <div ref={preview} className="image-crop-preview" style={{ aspectRatio: `${image.naturalWidth} / ${image.naturalHeight}` }}>
-          <img src={image.src} alt="Crop preview" draggable={false} />
-          <div className="image-crop-selection" style={{ left: `${crop.x * 100}%`, top: `${crop.y * 100}%`, width: `${crop.width * 100}%`, height: `${crop.height * 100}%` }} onPointerDown={(event) => beginDrag(event, "move")} onPointerMove={updateDrag} onPointerUp={() => { drag.current = null; }}>
-            <span className="image-crop-resize" aria-label="Resize crop area" onPointerDown={(event) => { event.stopPropagation(); beginDrag(event, "resize"); }} onPointerMove={updateDrag} onPointerUp={() => { drag.current = null; }} />
+        <p>Drag any edge or corner to crop, or drag inside the area to reposition it.</p>
+        <div className="image-crop-preview">
+          <div ref={frame} className="image-crop-frame">
+            <img src={image.src} alt="Crop preview" draggable={false} />
+            <div className="image-crop-shade-clip"><div className="image-crop-shade" style={area} /></div>
+            <div className="image-crop-selection" style={area} onPointerDown={(event) => beginDrag(event, "move")} onPointerMove={updateDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+              {CROP_HANDLES.map((handle) => (
+                <span key={handle} className={`image-crop-handle image-crop-handle-${handle}`} aria-label={`Resize crop area (${handle})`} onPointerDown={(event) => beginDrag(event, handle)} onPointerMove={updateDrag} onPointerUp={endDrag} onPointerCancel={endDrag} />
+              ))}
+            </div>
           </div>
         </div>
         {error && <p className="image-crop-error" role="alert">{error}</p>}
-        <div className="image-crop-actions"><Button variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button><Button onClick={() => void save()} disabled={saving}>{saving ? "Saving…" : "Apply crop"}</Button></div>
+        <div className="image-crop-actions"><Button variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button><Button onClick={() => void save()} disabled={saving || uncropped}>{saving ? "Saving…" : "Apply crop"}</Button></div>
       </section>
     </div>
   );
@@ -253,7 +274,11 @@ function SavedImageView(props: NodeViewProps) {
       context.drawImage(source, Math.round(crop.x * source.naturalWidth), Math.round(crop.y * source.naturalHeight), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not create the cropped image")), "image/png"));
       const saved = await saveImage(new File([blob], `${node.attrs.alt || "image"}-cropped.png`, { type: "image/png" }));
-      updateAttributes({ fileId: saved.id, src: null, width: null, height: null });
+      // Keep the on-page scale: the kept region stays the size it was before cropping.
+      const shownWidth = (node.attrs.width as number | null) || image.current?.offsetWidth || 0;
+      const width = shownWidth ? Math.max(1, Math.round(shownWidth * crop.width)) : null;
+      const height = width ? Math.max(1, Math.round(width * canvas.height / canvas.width)) : null;
+      updateAttributes({ fileId: saved.id, src: null, width, height });
       setCropOpen(false);
     } finally {
       URL.revokeObjectURL(sourceUrl);
