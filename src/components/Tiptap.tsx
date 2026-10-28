@@ -11,6 +11,7 @@ import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
 import { SectionFocus } from "@/lib/section-focus";
 import { Sections } from "@/lib/sections";
+import { HeadingFold } from "@/lib/heading-fold";
 import { SlashCommand } from "@/components/slash-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
@@ -229,6 +230,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         HeadingHieararchy,
         SectionFocus,
         Sections,
+        HeadingFold,
         SlashCommand,
         TocExtension.configure({
           scrollParent: () =>
