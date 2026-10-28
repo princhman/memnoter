@@ -4,6 +4,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
+import { redo as yRedo, undo as yUndo } from "@tiptap/y-tiptap";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
@@ -286,6 +287,23 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         }),
       ],
       editorProps: {
+        handleDOMEvents: {
+          // The menu bar's Undo and Redo, and ⌘Z when the editor has nothing
+          // to undo, reach the page as native undo. WebKit's own history does
+          // not know the editor's changes, so route it to the Yjs history.
+          beforeinput: (view, event) => {
+            const command =
+              event.inputType === "historyUndo"
+                ? yUndo
+                : event.inputType === "historyRedo"
+                  ? yRedo
+                  : null;
+            if (!command) return false;
+            event.preventDefault();
+            command(view.state);
+            return true;
+          },
+        },
         handleScrollToSelection: (view) => {
           if (!view.state.selection.empty) return false;
           const container = view.dom.closest<HTMLElement>(".app-scroll-container");

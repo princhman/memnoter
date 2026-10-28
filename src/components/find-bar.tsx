@@ -21,11 +21,9 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { getFoldedRanges, headingFoldKey } from "@/lib/heading-fold";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { scrollCurrentResultIntoView } from "@/lib/find-highlights";
+import { FIND_EVENT } from "@/lib/app-events";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-
-// Dispatched on window to open the bar, e.g. by the app menu.
-export const FIND_EVENT = "memnoter:find";
 
 const inputClassName =
   "h-7 min-w-0 flex-1 rounded-md bg-input/50 px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-input/30";

@@ -4,6 +4,7 @@ import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { checkForUpdates } from "./lib/updater";
+import { listenToMenu } from "./lib/app-events";
 import "./App.css";
 import "katex/dist/katex.min.css";
 
@@ -27,6 +28,7 @@ function syncThemeWithSystem() {
 
 syncThemeWithSystem();
 void checkForUpdates();
+listenToMenu();
 
 const queryClient = new QueryClient();
 const router = createRouter({ routeTree });
