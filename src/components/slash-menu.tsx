@@ -182,7 +182,7 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
 
     return (
       <div
-        className="w-56 rounded-lg bg-popover py-1 pl-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
+        className="w-56 rounded-lg bg-popover py-1 pl-1 text-popover-foreground shadow-md"
         // Keep the editor focused while clicking items.
         onMouseDown={(event) => event.preventDefault()}
       >

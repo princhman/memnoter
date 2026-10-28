@@ -806,7 +806,6 @@ body {
     left: 0;
     z-index: 50;
     padding: 0.35rem 0.65rem;
-    border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--popover);
     color: var(--popover-foreground);

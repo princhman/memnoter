@@ -13,6 +13,7 @@ import { SectionFocus } from "@/lib/section-focus";
 import { Sections } from "@/lib/sections";
 import { HeadingFold } from "@/lib/heading-fold";
 import { SlashCommand } from "@/components/slash-menu";
+import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
@@ -232,6 +233,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         Sections,
         HeadingFold,
         SlashCommand,
+        LatexSuggest,
         TocExtension.configure({
           scrollParent: () =>
             document.querySelector<HTMLElement>(".app-scroll-container") ??
