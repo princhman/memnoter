@@ -73,3 +73,65 @@ Native GUI QA remains a gap: mask authoring/undo/crop/copy, menu/focus/shortcuts
 review rendering, quit during pending writes/restore, and native modal scheduling.
 No browser preview or simulator was used. Existing power-loss fsync and OS-level
 reopen/maintenance fault-injection limits remain. Independent review is pending.
+
+## Final lifecycle blockers (follow-up to fb6fd8e)
+
+The deletion owner now enters `exclusiveWrite` before invoking `delete_module`.
+It closes editor/image admission synchronously, waits for complete admitted image
+operations, flushes card snapshots and every note's Yjs queue, then suspends the
+queue and drains other QueryClient mutations before the native shared-reference
+scan. Deletion retains admission through navigation/cache removal. A failed
+foreign-note save prevents IPC deletion, leaves its queued bytes intact and
+reopens editing; the module dialog displays the error and remains open.
+
+Normal quit uses the same barrier. `imageOperation` tracks the full paste/drop/
+file-picker and crop continuation, including insertion, rather than only the
+`upload-file` mutation. Once insertion emits its synchronous Yjs update, the
+subsequent global save drain waits for that receipt. Admission rejects reentrant
+image/crop/picker callbacks. Upload retains its pre-read and post-read suspension
+checks; insertion/crop recheck suspension and editor destruction after upload,
+and crop also checks after reading. Already-admitted operations may finish while
+editors are temporarily read-only, because the exclusive owner waits before
+suspending persistence. Failed insertion commands now reject the operation.
+Native undo/redo rejects a read-only editor; the pinned history implementation
+and dependency patch are preserved.
+
+Restore, delete and quit share one exclusive owner and reject overlaps. Only that
+owner can suspend/resume the queue. Failures resume its suspension and reopen
+editor admission; restore success retains both until reload, and exit success
+retains them until termination. Quit still waits for the restore mutation,
+including its success/rollback callbacks. The quit failure dialog offers retry,
+keep editing and explicit discard. Discard skips saving but still waits for full
+image continuations and all other native write mutations before confirming exit.
+
+Three new tests own these shared lifecycle contracts, using real QueryClient
+mutations, Yjs documents, the production save queue and mocked Tauri IPC:
+
+- Foreign image reference in B fails/backoffs, deletion of A is denied without
+  dropping B, then retry persists the reference before deletion's IPC scan.
+  The deletion itself is a QueryClient mutation, checking self-drain exclusion.
+- Deferred upload completes its mutation while its insertion continuation is
+  still waiting; quit waits for that continuation and its deferred Yjs receipt.
+  New image/exclusive admission is rejected while the owner is active.
+- Failed image continuation prevents normal exit; explicit discard still waits
+  for an outstanding native mutation and rejects overlapping exclusive work.
+
+These protect observable ordering missing from the previous 60 tests. No
+production test-only seam was added. Negative controls bypassing the global save
+drain and the full image-operation drain each failed with the expected missing
+persisted image reference. Both controls were removed. Full validation: 63 JS
+and 35 Rust tests passing; TypeScript/Vite, Rust formatting, strict Clippy
+`--all-targets -- -D warnings`, native `tauri build --debug --no-bundle`, and
+`git diff --check` passing. The existing Vite chunk-size warning remains.
+Rust fixtures use temporary directories; frontend tests use in-memory documents
+and mocked IPC. No application was launched and no real user notes were read.
+The test-audit authoring gate was applied; its OpenClaw scripts/autoreview are
+not available in this repository. Production changes were reviewed directly.
+
+Native GUI verification remains open: WebKit/native file-picker callback timing,
+read-only editor behavior while a modal is pending, actual pasted/copied shared
+image deletion, crop/undo interactions, quit retry/discard during upload or
+restore, native menu/focus routing and relaunch. The deferred tests prove the
+JavaScript lifecycle ordering, not native dialog scheduling or OS termination.
+No simulator or browser was used. Existing disk durability/power-loss gaps from
+the preceding integration remain unchanged.

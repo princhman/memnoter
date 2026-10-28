@@ -1,5 +1,4 @@
-import { flushCardSyncs } from "@/lib/card-sync";
-import { drainCardWrites } from "@/lib/card-writes";
+import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { invoke } from "@tauri-apps/api/core";
@@ -17,9 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/query-client";
-import { flushSaves, saveQueue, saveStatusStore } from "@/lib/saves";
-
-const CLOSE_FLUSH_TIMEOUT_MS = 3_000;
+import { saveQueue, saveStatusStore } from "@/lib/saves";
 
 const restorePending = () => queryClient.isMutating({ mutationKey: ["restore-backup"] }) > 0;
 
@@ -35,14 +32,10 @@ async function waitForRestore() {
   });
 }
 
-async function confirmExitAfterRestore() {
+async function confirmExitAfterRestore(discard = false) {
   await waitForRestore();
-  // Do not authorize an exit if another restore started during the await.
-  if (!restorePending()) {
-    await saveQueue.suspend();
-    await drainCardWrites();
-    if (!restorePending()) await invoke("confirm_exit");
-  }
+  if (restorePending()) throw new Error("Restore is in progress.");
+  await exclusiveWrite(() => invoke("confirm_exit"), { discard, retain: true });
 }
 
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and
@@ -62,10 +55,7 @@ const SaveStatus = () => {
       try {
         await waitForRestore();
         if (disposed || restorePending()) return;
-        await flushCardSyncs();
-        if (saveQueue.isEmpty() || await flushSaves(CLOSE_FLUSH_TIMEOUT_MS)) {
-          await confirmExitAfterRestore();
-        } else setConfirmClose(true);
+        await confirmExitAfterRestore();
       } catch {
         setConfirmClose(true);
       } finally { busy = false; }
@@ -120,9 +110,10 @@ const SaveStatus = () => {
             <DialogClose
               render={<Button variant="outline">Keep editing</Button>}
             />
+            <Button onClick={() => void confirmExitAfterRestore().catch(() => setConfirmClose(true))}>Retry saving</Button>
             <Button
               variant="destructive"
-              onClick={() => void confirmExitAfterRestore()}
+              onClick={() => void confirmExitAfterRestore(true).catch(() => setConfirmClose(true))}
             >
               Quit anyway
             </Button>

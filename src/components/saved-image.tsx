@@ -1,3 +1,4 @@
+import { imageOperation } from "@/lib/write-lifecycle";
 import { OcclusionEditor } from "@/components/occlusion-editor";
 import { saveQueue } from "@/lib/saves";
 import { validMasks } from "@/lib/occlusion";
@@ -324,11 +325,12 @@ function SavedImageView(props: NodeViewProps) {
     editor.view.dispatch(tr);
   };
 
-  const applyCrop = async (crop: Crop) => {
+  const applyCrop = (crop: Crop) => imageOperation(async () => {
     if (saveQueue.isSuspended() || editor.isDestroyed || !editor.isEditable) throw new Error("Image writes are suspended");
     const fileId = node.attrs.fileId as string | null;
     if (!fileId) throw new Error("This image cannot be read for cropping");
     const original = await readImage(fileId);
+    if (saveQueue.isSuspended() || editor.isDestroyed) throw new Error("Image writes are suspended");
     const sourceUrl = URL.createObjectURL(original);
     try {
       const source = document.createElement("img");
@@ -346,7 +348,7 @@ function SavedImageView(props: NodeViewProps) {
       context.drawImage(source, Math.round(crop.x * source.naturalWidth), Math.round(crop.y * source.naturalHeight), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not create the cropped image")), "image/png"));
       const saved = await saveImage(new File([blob], `${node.attrs.alt || "image"}-cropped.png`, { type: "image/png" }));
-      if (saveQueue.isSuspended() || editor.isDestroyed || !editor.isEditable) throw new Error("Image writes are suspended");
+      if (saveQueue.isSuspended() || editor.isDestroyed) throw new Error("Image writes are suspended");
       // Keep the on-page scale: the kept region stays the size it was before cropping.
       const shownWidth = (node.attrs.width as number | null) || image.current?.offsetWidth || 0;
       const width = shownWidth ? Math.max(1, Math.round(shownWidth * crop.width)) : null;
@@ -356,7 +358,7 @@ function SavedImageView(props: NodeViewProps) {
     } finally {
       URL.revokeObjectURL(sourceUrl);
     }
-  };
+  });
 
   return (
     <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-align={isInline ? undefined : node.attrs.alignment}>

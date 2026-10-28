@@ -1,3 +1,4 @@
+import { imageOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
 // src/Tiptap.tsx
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -193,33 +194,39 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     position: number,
   ) {
     if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
-    // Map the insertion point through edits made while files are being saved.
-    let insertAt = position;
-    const mapPosition = ({
-      transaction,
-    }: {
-      transaction: import("@tiptap/pm/state").Transaction;
-    }) => {
-      insertAt = transaction.mapping.map(insertAt);
-    };
-    currentEditor.on("transaction", mapPosition);
-    try {
-      for (const file of files) {
-        const saved = await uploadFileMutation.mutateAsync(file);
-        if (currentEditor.isDestroyed) return;
-        currentEditor
-          .chain()
-          .insertContentAt(insertAt, {
-            type: "image",
-            attrs: { fileId: saved.id, alt: file.name },
-          })
-          .run();
+    return imageOperation(async () => {
+      // Map the insertion point through edits made while files are being saved.
+      let insertAt = position;
+      const mapPosition = ({
+        transaction,
+      }: {
+        transaction: import("@tiptap/pm/state").Transaction;
+      }) => {
+        insertAt = transaction.mapping.map(insertAt);
+      };
+      currentEditor.on("transaction", mapPosition);
+      try {
+        for (const file of files) {
+          const saved = await uploadFileMutation.mutateAsync(file);
+          // Admission is already owned by imageOperation; an exclusive drain
+          // waits for this insertion before suspending the save queue.
+          if (saveQueue.isSuspended() || currentEditor.isDestroyed) throw new Error("Image writes are suspended.");
+          const inserted = currentEditor
+            .chain()
+            .insertContentAt(insertAt, {
+              type: "image",
+              attrs: { fileId: saved.id, alt: file.name },
+            })
+            .run();
+          if (!inserted) throw new Error("Could not insert the uploaded image.");
+        }
+      } catch (error) {
+        console.error("Failed to save image:", error);
+        throw error;
+      } finally {
+        currentEditor.off("transaction", mapPosition);
       }
-    } catch (error) {
-      console.error("Failed to save image:", error);
-    } finally {
-      currentEditor.off("transaction", mapPosition);
-    }
+    }).catch(error => console.error("Failed to insert image:", error));
   }
 
   const editor = useEditor(
@@ -345,6 +352,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     [yDoc],
   );
 
+  useLayoutEffect(() => watchWriteAdmission(blocked => {
+    if (editor && !editor.isDestroyed) editor.setEditable(isSuccess && !blocked, false);
+  }), [editor, isSuccess]);
+
   useEffect(() => {
     if (!editor) return;
     const dom = editor.view.dom;
@@ -358,7 +369,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     document.addEventListener("focusin", update);
     document.addEventListener("focusout", update);
     const unlisten = listen<string>("menu", ({ payload }) => {
-      if (disposed || document.activeElement !== dom) return;
+      if (disposed || !editor.isEditable || document.activeElement !== dom) return;
       if (payload === "editor-undo") yUndo(editor.state);
       if (payload === "editor-redo") yRedo(editor.state);
     }).then((stop) => {
@@ -377,13 +388,9 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     };
   }, [editor]);
 
-  useEffect(() => {
-    editor?.setEditable(isSuccess, false);
-  }, [editor, isSuccess]);
-
   // if editor is empty
   useEffect(() => {
-    if (!editor || !isSuccess || hasInsertedInitialContent.current) return;
+    if (!editor || !isSuccess || !editor.isEditable || hasInsertedInitialContent.current) return;
 
     hasInsertedInitialContent.current = true;
     if (editor.isEmpty) {
