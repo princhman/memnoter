@@ -55,6 +55,8 @@ export function createSaveQueue<Update, Saved>({
   },
 }: SaveQueueOptions<Update, Saved>) {
   const queues = new Map<string, ModuleQueue<Update>>();
+  let suspended = false;
+  const active = new Set<Promise<unknown>>();
   let lastError: string | null = null;
   let flushWaiters: ((saved: boolean) => void)[] = [];
 
@@ -115,9 +117,12 @@ export function createSaveQueue<Update, Saved>({
   async function drain(moduleId: string, queue: ModuleQueue<Update>) {
     if (queue.running) return;
     queue.running = true;
-    while (queue.items.length > 0 && !queue.dropped) {
+    while (queue.items.length > 0 && !queue.dropped && !suspended) {
       try {
-        const saved = await persist(moduleId, queue.items[0]);
+        const write = persist(moduleId, queue.items[0]);
+        active.add(write);
+        let saved: Saved;
+        try { saved = await write; } finally { active.delete(write); }
         if (queue.dropped) break;
         queue.items.shift();
         queue.attempts = 0;
@@ -148,6 +153,15 @@ export function createSaveQueue<Update, Saved>({
   }
 
   return {
+    async suspend() {
+      suspended = true;
+      retryNow();
+      await Promise.allSettled([...active]);
+    },
+    resume() {
+      suspended = false;
+      for (const [id, queue] of queues) void drain(id, queue);
+    },
     enqueue(moduleId: string, update: Update) {
       let queue = queues.get(moduleId);
       if (!queue) {

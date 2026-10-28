@@ -32,14 +32,32 @@ const RestoreBackup = ({
   backup: Backup | null;
   onOpenChange: (open: boolean) => void;
 }) => {
+  const queryClient = useQueryClient();
   const pending = useSelector(saveStatusStore, (state) => state.pending);
   const mutation = useMutation({
+    mutationKey: ["restore-backup"],
     mutationFn: async (id: string) => {
       // Save what still can be, so the snapshot taken first includes it.
-      await flushSaves(3_000);
-      // Anything left would be written into the restored database.
-      saveQueue.clear();
-      await invoke("restore_backup", { id });
+      if (!await flushSaves(3_000)) throw new Error("Save pending edits before restoring. Please retry saving first.");
+      // Suspend new writes and wait for any already-running IPC before swapping.
+      await saveQueue.suspend();
+      try {
+        // Existing image uploads/compactions also belong to the old database.
+        const writesPending = () => queryClient.isMutating({
+          predicate: mutation => mutation.options.mutationKey?.[0] !== "restore-backup",
+        }) > 0;
+        if (writesPending()) await new Promise<void>(resolve => {
+          const stop = queryClient.getMutationCache().subscribe(() => {
+            if (!writesPending()) { stop(); resolve(); }
+          });
+          if (!writesPending()) { stop(); resolve(); }
+        });
+        await invoke("restore_backup", { id });
+        saveQueue.clear();
+      } catch (error) {
+        saveQueue.resume();
+        throw error;
+      }
     },
     // Every cache and open document belongs to the replaced data.
     onSuccess: () => window.location.reload(),
@@ -62,7 +80,7 @@ const RestoreBackup = ({
             {backup && formatTime(backup.created_at)}. The current state is
             backed up first, so you can restore it again from this list.
             {pending > 0 &&
-              " Edits that could not be saved yet will be discarded."}
+              " Pending edits must be saved before restoring."}
           </DialogDescription>
         </DialogHeader>
         {mutation.isError && (

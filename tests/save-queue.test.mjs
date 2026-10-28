@@ -168,3 +168,27 @@ test("clear discards every module's pending updates", async () => {
   assert.deepEqual(persisted, []);
   assert.deepEqual(queue.status(), { pending: 0, failing: false, lastError: null });
 });
+
+test('suspending restore waits for in-flight persistence and retains new edits on rollback', async () => {
+  let finish;
+  const persisted = [];
+  const queue = createSaveQueue({ persist: (id, update) => {
+    persisted.push(update);
+    return new Promise(resolve => { finish = resolve; });
+  }});
+  queue.enqueue('note', 'before');
+  let suspended = false;
+  const suspension = queue.suspend().then(() => { suspended = true; });
+  queue.enqueue('note', 'during');
+  await settle();
+  assert.equal(suspended, false);
+  finish('saved');
+  await suspension;
+  assert.deepEqual(persisted, ['before']);
+  assert.deepEqual(queue.pending('note'), ['during']);
+  queue.resume();
+  assert.deepEqual(persisted, ['before', 'during']);
+  finish('saved');
+  await queue.flush();
+  assert.equal(queue.isEmpty(), true);
+});
