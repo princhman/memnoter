@@ -6,11 +6,13 @@ import type { NodeType } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import Image from "@tiptap/extension-image";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Crop, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { FileType } from "@/lib/content";
+import { adaptedUrl, cachedAdaptedUrl } from "@/lib/image-adapt";
+import { useDarkTheme } from "@/hooks/use-dark-theme";
 
 type FilesContextValue = {
   files: ReadonlyMap<string, FileType>;
@@ -122,6 +124,8 @@ function SavedImageView(props: NodeViewProps) {
   const [failed, setFailed] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
   const [describing, setDescribing] = useState(false);
+  const dark = useDarkTheme();
+  const adaptive = Boolean(node.attrs.adaptive);
 
   useEffect(() => {
     if (!host.current || !src) return;
@@ -138,7 +142,16 @@ function SavedImageView(props: NodeViewProps) {
       img.height = height;
       img.style.aspectRatio = `${width} / ${height}`;
     }
-    img.src = src;
+    if (latest.current.node.attrs.adaptive) {
+      // Start on the recolored copy when one is ready; otherwise stay hidden
+      // until it is, rather than flashing the original's background.
+      const cached = cachedAdaptedUrl(latest.current.node.attrs.fileId ?? src, dark);
+      if (cached) img.src = cached;
+      else {
+        img.src = src;
+        img.style.opacity = "0";
+      }
+    } else img.src = src;
     img.alt = latest.current.node.attrs.alt ?? "";
     img.title = latest.current.node.attrs.title ?? "";
     img.onerror = () => setFailed(true);
@@ -189,6 +202,30 @@ function SavedImageView(props: NodeViewProps) {
     image.current.style.height = "auto";
   }, [src, node.attrs.alt, node.attrs.title, node.attrs.width, node.attrs.height]);
 
+  // Recolored on the fly rather than saved, so it follows theme changes.
+  useEffect(() => {
+    const img = image.current;
+    if (!img || !src) return;
+    const fileId = node.attrs.fileId as string | null;
+    const key = fileId ?? src;
+    if (img.src === (adaptive ? cachedAdaptedUrl(key, dark) : src)) return;
+    let cancelled = false;
+    void (async () => {
+      const next = adaptive
+        ? await adaptedUrl(key, dark, async () => fileId ? readImage(fileId) : (await fetch(src)).blob())
+        : src;
+      // Decode first so the swap never shows an empty frame.
+      const probe = document.createElement("img");
+      probe.src = next;
+      await probe.decode();
+      if (!cancelled) swapImage(img, next);
+    })().catch((error) => {
+      console.error("Failed to adapt image:", error);
+      if (!cancelled) swapImage(img, src);
+    });
+    return () => { cancelled = true; };
+  }, [src, adaptive, dark, node.attrs.fileId, readImage]);
+
   const resizeTo = (fraction: number) => {
     const img = image.current;
     if (!img?.naturalWidth || !host.current) return;
@@ -220,11 +257,11 @@ function SavedImageView(props: NodeViewProps) {
     const position = latest.current.getPos();
     if (position === undefined) return;
     const { state, schema } = editor;
-    const { fileId, src, alt, title, width, height } = node.attrs;
+    const { fileId, src, alt, title, width, height, adaptive } = node.attrs;
     const tr = state.tr;
     let selectAt: number;
     if (isInline) {
-      const image = schema.nodes.image.create({ fileId, src, alt, title, width, height, alignment, wrap });
+      const image = schema.nodes.image.create({ fileId, src, alt, title, width, height, adaptive, alignment, wrap });
       tr.delete(position, position + 1);
       const $at = tr.doc.resolve(position);
       if ($at.parent.content.size === 0) {
@@ -241,7 +278,7 @@ function SavedImageView(props: NodeViewProps) {
         tr.insert(selectAt, image);
       }
     } else {
-      const image = schema.nodes.inlineImage.create({ fileId, src, alt, title, width, height });
+      const image = schema.nodes.inlineImage.create({ fileId, src, alt, title, width, height, adaptive });
       tr.replaceWith(position, position + 1, schema.nodes.paragraph.create(null, image));
       selectAt = position + 1;
     }
@@ -315,6 +352,7 @@ function SavedImageView(props: NodeViewProps) {
               <ToolbarButton key={alignment} label={layout === "wrap" ? `Image on the ${alignment}, text beside it` : label} pressed={node.attrs.alignment === alignment} onClick={() => updateAttributes({ alignment })}><Icon /></ToolbarButton>
             ))}
             <span className="note-image-divider" />
+            <ToolbarButton label="Adapt to theme" hint="Swaps the image's background for the page's and recolors it for dark or light mode" pressed={adaptive} disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast /></ToolbarButton>
             <ToolbarButton label="Crop" disabled={!src || failed || !node.attrs.fileId} onClick={() => setCropOpen(true)}><Crop /></ToolbarButton>
             <ToolbarButton label="Alt text and title" pressed={describing} onClick={() => setDescribing((open) => !open)}><Captions /></ToolbarButton>
             <span className="note-image-divider" />
@@ -331,6 +369,42 @@ function SavedImageView(props: NodeViewProps) {
       {cropOpen && image.current && <CropDialog image={image.current} onCancel={() => setCropOpen(false)} onSave={applyCrop} />}
     </NodeViewWrapper>
   );
+}
+
+const SWAP_FADE_MS = 220;
+
+// Shows `next` in place of the image's current picture: fades in a hidden
+// image, otherwise crossfades by fading a copy of the old picture out on top.
+function swapImage(img: HTMLImageElement, next: string) {
+  const hidden = img.style.opacity === "0";
+  img.style.opacity = "";
+  if (img.src === next) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !img.isConnected) {
+    img.src = next;
+    return;
+  }
+  if (hidden) {
+    img.src = next;
+    img.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SWAP_FADE_MS, easing: "ease-out" });
+    return;
+  }
+  // The resize wrapper is positioned, so the copy can sit exactly over the image.
+  const ghost = img.cloneNode() as HTMLImageElement;
+  Object.assign(ghost.style, {
+    position: "absolute",
+    left: `${img.offsetLeft}px`,
+    top: `${img.offsetTop}px`,
+    width: `${img.offsetWidth}px`,
+    height: `${img.offsetHeight}px`,
+    margin: "0",
+    outline: "none",
+    pointerEvents: "none",
+  });
+  ghost.removeAttribute("loading");
+  img.insertAdjacentElement("afterend", ghost);
+  img.src = next;
+  ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SWAP_FADE_MS, easing: "ease-in-out" })
+    .finished.finally(() => ghost.remove());
 }
 
 type ImageLayout = "inline" | "wrap" | "break";
@@ -469,6 +543,12 @@ export const SavedImage = Image.extend({
     return {
       ...this.parent?.(),
       fileId: { default: null, rendered: false },
+      // Blends the image into the theme; see image-adapt.ts.
+      adaptive: {
+        default: false,
+        parseHTML: (element) => element.hasAttribute("data-adaptive"),
+        renderHTML: (attributes) => (attributes.adaptive ? { "data-adaptive": "" } : {}),
+      },
       alignment: {
         default: "left",
         parseHTML: (element) => element.getAttribute("data-align") || "left",
