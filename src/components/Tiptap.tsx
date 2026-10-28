@@ -1,7 +1,7 @@
 // src/Tiptap.tsx
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
 import { invoke } from "@tauri-apps/api/core";
@@ -15,6 +15,7 @@ import { HeadingFold } from "@/lib/heading-fold";
 import { SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
+import { usePersistedView } from "@/lib/view-persistence";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
 import {
@@ -156,8 +157,8 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     },
   });
 
-  // applying updates
-  useEffect(() => {
+  // applying updates; before paint, so a switched-to note never shows empty
+  useLayoutEffect(() => {
     if (!data || hasAppliedRemoteContent.current) return;
 
     // a cached note has not gone through this editor's query function.
@@ -348,6 +349,9 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       editor.commands.setContent("<p>Hello World!</p>");
     }
   }, [editor, isSuccess]);
+
+  // restore where the reader left off; runs after the empty-note content above
+  usePersistedView(editor, moduleId, isSuccess);
 
   // pass editor into the context
   useEffect(() => {

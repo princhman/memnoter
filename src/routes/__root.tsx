@@ -11,13 +11,20 @@ import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
+import { useSelector } from "@tanstack/react-store";
+import { appStore, setSidebarOpen } from "@/lib/store";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
+  const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   return (
     <>
       <ActiveEditorProvider>
-        <SidebarProvider className="h-dvh overflow-hidden overscroll-none">
+        <SidebarProvider
+          open={sidebarOpen}
+          onOpenChange={setSidebarOpen}
+          className="h-dvh overflow-hidden overscroll-none"
+        >
           <AppSidebar />
 
           <SidebarInset className="min-h-0 overflow-hidden">

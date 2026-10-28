@@ -1,7 +1,6 @@
 import { Extension } from "@tiptap/core";
 import { EditorState, PluginKey, Plugin } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { appStore } from "./store";
 import type { Editor } from "@tiptap/core";
 
 export const sectionFocusKey = new PluginKey<number | null>("section-focus");
@@ -118,13 +117,6 @@ export const SectionFocus = Extension.create({
               position: headingPos,
             }),
           );
-          appStore.setState((state) => ({
-            ...state,
-            focusedSectionByModule: {
-              ...state.focusedSectionByModule,
-              [state.openedModuleId!]: headingPos,
-            },
-          }));
           return true;
         },
       showDocument:
