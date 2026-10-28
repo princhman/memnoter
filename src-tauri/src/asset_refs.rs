@@ -38,11 +38,23 @@ pub fn retain_module(conn: &Connection, module_id: &str) -> CommandResult<()> {
         .map_err(db_err)?;
     let doc = Doc::new();
     let root = doc.get_or_insert_xml_fragment("default");
-    for bytes in std::iter::once(state).chain(updates) {
+    for (index, bytes) in std::iter::once(state).chain(updates).enumerate() {
         if !bytes.is_empty() {
-            doc.transact_mut()
-                .apply_update(Update::decode_v1(&bytes).map_err(db_err)?)
-                .map_err(db_err)?;
+            let update = Update::decode_v1(&bytes).map_err(db_err)?;
+            if index > 0 {
+                let known = doc.transact().state_vector();
+                // Do not let a delete conceal content that has never been
+                // observed in a preceding persisted revision, even if the
+                // decoder does not retain that deletion as pending.
+                if update.delete_set().iter().any(|(client, ranges)| {
+                    ranges.iter().any(|range| range.end > known.get(client))
+                }) {
+                    return Err(format!(
+                        "Out-of-order persisted image deletions in module {module_id}"
+                    ));
+                }
+            }
+            doc.transact_mut().apply_update(update).map_err(db_err)?;
         }
         let txn = doc.transact();
         // An early delete may hide a later insertion before it ever appears in
