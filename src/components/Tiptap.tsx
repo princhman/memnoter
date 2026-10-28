@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
+import { TextBubbleMenu } from "@/components/text-bubble-menu";
 import { SectionFocus } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
@@ -433,6 +434,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
+      <TextBubbleMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} />
     </FilesContext.Provider>
   );

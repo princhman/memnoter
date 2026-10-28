@@ -745,6 +745,18 @@ body {
         0 4px 6px -1px rgb(0 0 0 / 0.1),
         0 2px 4px -2px rgb(0 0 0 / 0.1);
     white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.tiptap .inline-math-preview-actions {
+    display: flex;
+    gap: 0.125rem;
+    padding-left: 0.375rem;
+    border-left: 1px solid var(--border);
+    pointer-events: auto;
+    font-style: normal;
 }
 
 .tiptap .inline-math-preview .katex {

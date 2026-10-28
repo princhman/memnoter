@@ -1,5 +1,5 @@
 // ai - generated module
-import { Node, PasteRule } from "@tiptap/core";
+import { Node, PasteRule, type Editor } from "@tiptap/core";
 import { Node as PMNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -7,12 +7,21 @@ import katex from "katex";
 import "katex/dist/katex.min.css";
 import { createMathIndex } from "./math-index";
 import { createViewportRenderer } from "./viewport-renderer";
+import type { ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { RemoveFormatting, Sigma } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { MOD_KEY } from "@/lib/utils";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     inlineMath: {
       // use current selection
       insertInlineMath: (tex?: string) => ReturnType;
+      // unwrap inline math touched by the selection, or wrap the selection
+      toggleInlineMath: () => ReturnType;
     };
   }
 }
@@ -27,6 +36,59 @@ export function renderKatex(el: HTMLElement, tex: string, displayMode = false) {
   } catch {
     el.textContent = tex;
   }
+}
+
+function PreviewAction({ label, hint, onClick, children }: {
+  label: string;
+  hint: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={label}
+            // Keep the caret in the formula until the command runs.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={onClick}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>
+        <span className="grid gap-0.5">
+          <strong className="font-medium">{label}</strong>
+          <span className="text-muted-foreground">{hint}</span>
+        </span>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function PreviewActions({ editor }: { editor: Editor }) {
+  return (
+    <>
+      <PreviewAction
+        label="Convert to text"
+        hint={`${MOD_KEY}Shift+M`}
+        onClick={() => editor.chain().focus().toggleInlineMath().run()}
+      >
+        <RemoveFormatting />
+      </PreviewAction>
+      <PreviewAction
+        label="Math block"
+        hint={`${MOD_KEY}Alt+M`}
+        onClick={() => editor.chain().focus().toggleMathBlock().run()}
+      >
+        <Sigma />
+      </PreviewAction>
+    </>
+  );
 }
 
 /**
@@ -211,6 +273,27 @@ export const InlineMath = Node.create({
           if (dispatch) dispatch(tr);
           return true;
         },
+      toggleInlineMath:
+        () =>
+        ({ state, tr, dispatch, commands }) => {
+          const { from, to } = state.selection;
+          const found: { pos: number; node: PMNode }[] = [];
+          // Also visits the formula that holds the cursor.
+          state.doc.nodesBetween(from, to, (node, pos) => {
+            if (node.type === this.type) found.push({ pos, node });
+          });
+          if (!found.length) return commands.insertInlineMath();
+
+          // Back to front so earlier positions stay valid.
+          for (const { pos, node } of found.reverse()) {
+            const text = cleanMathText(node.textContent);
+            const end = pos + node.nodeSize;
+            if (text) tr.replaceWith(pos, end, state.schema.text(text));
+            else tr.delete(pos, end);
+          }
+          if (dispatch) dispatch(tr);
+          return true;
+        },
     };
   },
 
@@ -337,23 +420,7 @@ export const InlineMath = Node.create({
     };
 
     return {
-      "Mod-Shift-m": ({ editor }) => {
-        const { $from } = editor.state.selection;
-        if ($from.parent.type.name === name) {
-          const from = $from.before();
-          const to = from + $from.parent.nodeSize;
-          const text = cleanMathText($from.parent.textContent);
-
-          if (!text) return editor.chain().deleteRange({ from, to }).run();
-
-          return editor
-            .chain()
-            .insertContentAt({ from, to }, { type: "text", text })
-            .setTextSelection(from + text.length)
-            .run();
-        }
-        return editor.commands.insertInlineMath();
-      },
+      "Mod-Shift-m": () => this.editor.commands.toggleInlineMath(),
 
       ArrowRight: () => horizontal(1),
       ArrowLeft: () => horizontal(-1),
@@ -434,6 +501,8 @@ export const InlineMath = Node.create({
     const type = this.type;
     const collect = createMathIndex(name);
     const pluginKey = new PluginKey<{ nodes: ReturnType<typeof collect> }>("inlineMath");
+    const editor = this.editor;
+    const previewRoots = new WeakMap<globalThis.Node, ReturnType<typeof createRoot>>();
 
     // floating preview, shown above the node while it is being edited
     const makePreview = (tex: string) => () => {
@@ -442,9 +511,29 @@ export const InlineMath = Node.create({
       anchor.className = "inline-math-preview";
       anchor.contentEditable = "false";
       const box = document.createElement("span");
-      if (visibleTex.trim()) renderKatex(box, visibleTex);
+      const formula = document.createElement("span");
+      if (visibleTex.trim()) renderKatex(formula, visibleTex);
+      const actions = document.createElement("span");
+      actions.className = "inline-math-preview-actions";
+      box.append(formula, actions);
       anchor.appendChild(box);
+
+      const root = createRoot(actions);
+      // Render now so the buttons do not blink in after each keystroke.
+      flushSync(() => root.render(<PreviewActions editor={editor} />));
+      previewRoots.set(anchor, root);
       return anchor;
+    };
+    const previewSpec = {
+      side: -1,
+      // ProseMirror must not treat clicks on the buttons as editor input.
+      stopEvent: () => true,
+      ignoreSelection: true,
+      destroy: (dom: globalThis.Node) => {
+        const root = previewRoots.get(dom);
+        // Unmounting during ProseMirror's own update upsets React.
+        if (root) queueMicrotask(() => root.unmount());
+      },
     };
 
     return [
@@ -546,7 +635,7 @@ export const InlineMath = Node.create({
                 if (cleanMathText(tex).trim()) {
                   decos.push(
                     Decoration.widget(pos, makePreview(tex), {
-                      side: -1,
+                      ...previewSpec,
                       key: `p:${tex}`,
                     }),
                   );
