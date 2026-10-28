@@ -1,4 +1,4 @@
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
 import {
@@ -15,10 +15,23 @@ import { IconTooltip } from "@/components/icon-tooltip";
 import { MOD_KEY } from "@/lib/utils";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
+import SaveStatus from "@/components/save-status";
+import { useEffect } from "react";
+import { OPEN_SETTINGS_EVENT } from "@/lib/app-events";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
+  const navigate = useNavigate();
+
+  // Dispatched by the app menu.
+  useEffect(() => {
+    const openSettings = () => void navigate({ to: "/settings" });
+    window.addEventListener(OPEN_SETTINGS_EVENT, openSettings);
+    return () =>
+      window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);
+  }, [navigate]);
+
   return (
     <>
       <ActiveEditorProvider>
@@ -58,6 +71,8 @@ const RootLayout = () => {
           </div>
         </SidebarProvider>
       </ActiveEditorProvider>
+
+      <SaveStatus />
 
       <TanStackRouterDevtools />
     </>
