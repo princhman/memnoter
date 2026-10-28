@@ -28,7 +28,6 @@ import { PanelLeftIcon } from "lucide-react";
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
-const SIDEBAR_WIDTH_MOBILE = "18rem";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "d";
 
@@ -68,6 +67,12 @@ function SidebarProvider({
 }) {
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
+
+  // Close the sheet when leaving the mobile layout, so it doesn't reappear
+  // already open the next time the window is narrowed.
+  React.useEffect(() => {
+    if (!isMobile) setOpenMobile(false);
+  }, [isMobile]);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -190,12 +195,11 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-          style={
-            {
-              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
+          // Match the desktop sidebar width; the sheet's own side variants
+          // (w-3/4) would otherwise win over a plain width class.
+          className="bg-sidebar p-0 text-sidebar-foreground data-[side=left]:w-(--sidebar-width) data-[side=right]:w-(--sidebar-width) [&>button]:hidden"
+          // The sheet is portalled out of the wrapper, so pass the width in.
+          style={{ "--sidebar-width": SIDEBAR_WIDTH } as React.CSSProperties}
           side={side}
         >
           <SheetHeader className="sr-only">
