@@ -1,4 +1,4 @@
-import { imageOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
+import { imageFilesOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
 // src/Tiptap.tsx
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -68,6 +68,7 @@ type TipTapProps = {
 
 const Tiptap = ({ moduleId }: TipTapProps) => {
   const yDoc = useMemo(() => new Y.Doc(), [moduleId]);
+  const persistenceTarget = useRef<Y.Doc | null>(null);
   const queryClient = useQueryClient();
   // TOC updates on scroll; a store keeps those from re-rendering the editor.
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
@@ -180,8 +181,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       saveQueue.enqueue(moduleId, Array.from(update));
     };
 
+    persistenceTarget.current = yDoc;
     yDoc.on("update", handleUpdate);
     return () => {
+      persistenceTarget.current = null;
       yDoc.off("update", handleUpdate);
       // Leaving the note: retry any failed saves now rather than after backoff.
       saveQueue.retryNow();
@@ -194,39 +197,30 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     position: number,
   ) {
     if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
-    return imageOperation(async () => {
-      // Map the insertion point through edits made while files are being saved.
-      let insertAt = position;
-      const mapPosition = ({
-        transaction,
-      }: {
-        transaction: import("@tiptap/pm/state").Transaction;
-      }) => {
-        insertAt = transaction.mapping.map(insertAt);
-      };
-      currentEditor.on("transaction", mapPosition);
-      try {
-        for (const file of files) {
-          const saved = await uploadFileMutation.mutateAsync(file);
-          // Admission is already owned by imageOperation; an exclusive drain
-          // waits for this insertion before suspending the save queue.
-          if (saveQueue.isSuspended() || currentEditor.isDestroyed) throw new Error("Image writes are suspended.");
-          const inserted = currentEditor
-            .chain()
-            .insertContentAt(insertAt, {
-              type: "image",
-              attrs: { fileId: saved.id, alt: file.name },
-            })
-            .run();
-          if (!inserted) throw new Error("Could not insert the uploaded image.");
+    // Keep mapped position and per-file receipts across retries. The original
+    // editor is the target; navigation never redirects these files to a new note.
+    let insertAt = position;
+    const mapPosition = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => {
+      insertAt = transaction.mapping.map(insertAt);
+    };
+    currentEditor.on("transaction", mapPosition);
+    return imageFilesOperation(files, {
+      checkTarget: () => {
+        if (persistenceTarget.current !== yDoc || currentEditor.isDestroyed || saveQueue.isSuspended()) {
+          throw new Error("The original note is closed. Reopen it and add the remaining images, then discard this failed operation.");
         }
-      } catch (error) {
-        console.error("Failed to save image:", error);
-        throw error;
-      } finally {
-        currentEditor.off("transaction", mapPosition);
-      }
-    }).catch(error => console.error("Failed to insert image:", error));
+      },
+      upload: file => uploadFileMutation.mutateAsync(file),
+      insert: (saved, file) => {
+        // Owned retries use programmatic commands while user admission is closed.
+        const inserted = currentEditor.chain().insertContentAt(insertAt, {
+          type: "image", attrs: { fileId: saved.id, alt: file.name },
+        }).run();
+        if (!inserted) throw new Error("Could not insert the uploaded image.");
+      },
+      dispose: () => currentEditor.off("transaction", mapPosition),
+    })
+      .catch(error => console.error("Failed to insert image:", error));
   }
 
   const editor = useEditor(

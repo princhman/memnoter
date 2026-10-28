@@ -12,7 +12,7 @@ register(`data:text/javascript,${encodeURIComponent(`
   }
 `)}`, import.meta.url);
 globalThis.window = { setTimeout, clearTimeout };
-const { exclusiveWrite, imageOperation, watchWriteAdmission } = await import('../src/lib/write-lifecycle.ts');
+const { exclusiveWrite, imageOperation, imageFilesOperation, imageStatusStore, discardFailedImages, watchWriteAdmission } = await import('../src/lib/write-lifecycle.ts');
 const { saveQueue } = await import('../src/lib/saves.ts');
 const { queryClient } = await import('../src/lib/query-client.ts');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -134,4 +134,81 @@ test('failed image continuation blocks normal exit; explicit discard still waits
   assert.equal(exited, true);
   assert.equal(saveQueue.isSuspended(), false);
   queryClient.clear();
+});
+
+
+test('completed failure remains visible across quit, failed retry and unrelated success; resumable files save before exit', async () => {
+  const doc = new Y.Doc();
+  const disk = new Y.Doc();
+  const persisted = deferred();
+  const uploads = [];
+  let fail = true;
+  let exited = false;
+  let blocked = false;
+  const stop = watchWriteAdmission(value => { blocked = value; });
+  mockIPC(async (command, args) => {
+    if (command === 'upload') {
+      uploads.push(args.file);
+      if (args.file === 'second' && fail) throw new Error('offline');
+      return args.file;
+    }
+    assert.equal(command, 'add_update');
+    await persisted.promise;
+    Y.applyUpdate(disk, new Uint8Array(args.bytes));
+    return { id: 3, bytes: args.bytes };
+  });
+  const quit = () => exclusiveWrite(async () => {
+    assert.deepEqual(disk.getArray('images').toArray(), ['first', 'second']);
+    exited = true;
+  }, { retryImages: true });
+  try {
+    doc.on('update', bytes => saveQueue.enqueue('retry-note', Array.from(bytes)));
+    await assert.rejects(imageFilesOperation(['first', 'second'], {
+      checkTarget: () => assert.equal(saveQueue.isSuspended(), false),
+      upload: file => queryClient.getMutationCache().build(queryClient, {
+        gcTime: 0, mutationKey: ['upload-file'], mutationFn: () => invoke('upload', { file }),
+      }).execute(),
+      insert: saved => doc.getArray('images').push([saved]),
+      dispose: () => {},
+    }), /offline/);
+    assert.match(imageStatusStore.state.errors.join(), /offline/);
+    await imageOperation(async () => {});
+    await assert.rejects(exclusiveWrite(async () => { exited = true; }), /offline/);
+    await assert.rejects(quit(), /offline/);
+    assert.equal(exited, false);
+    assert.deepEqual(doc.getArray('images').toArray(), ['first']);
+    fail = false;
+    const retry = quit();
+    await tick();
+    assert.equal(blocked, true);
+    assert.equal(exited, false, 'receipt still outstanding');
+    await assert.rejects(imageOperation(async () => {}), /suspended/);
+    await assert.rejects(quit(), /in progress/);
+    persisted.resolve();
+    await retry;
+    assert.equal(exited, true);
+    assert.deepEqual(uploads, ['first', 'second', 'second', 'second']);
+    assert.equal(imageStatusStore.state.errors.length, 0);
+  } finally {
+    persisted.resolve(); stop(); saveQueue.clear(); queryClient.clear(); clearMocks(); doc.destroy(); disk.destroy(); discardFailedImages();
+  }
+});
+
+test('unsafe or destroyed targets remain blocked until explicit discard without replaying stale work', async () => {
+  let alive = true;
+  let inserts = 0;
+  let attempts = 0;
+  await assert.rejects(imageFilesOperation(['file'], {
+    checkTarget: () => { if (!alive) throw new Error('original note closed'); },
+    upload: async () => { attempts++; alive = false; return 'receipt'; },
+    insert: () => { inserts++; }, dispose: () => {},
+  }), /closed/);
+  await assert.rejects(imageOperation(async () => { throw new Error('crop target changed'); }), /crop/);
+  await assert.rejects(exclusiveWrite(async () => {}, { retryImages: true }), /closed/);
+  assert.equal(attempts, 1);
+  assert.equal(inserts, 0);
+  assert.equal(imageStatusStore.state.errors.length, 2);
+  discardFailedImages();
+  await exclusiveWrite(async () => {});
+  assert.equal(imageStatusStore.state.errors.length, 0);
 });

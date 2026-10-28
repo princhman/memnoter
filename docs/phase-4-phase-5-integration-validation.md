@@ -135,3 +135,41 @@ restore, native menu/focus routing and relaunch. The deferred tests prove the
 JavaScript lifecycle ordering, not native dialog scheduling or OS termination.
 No simulator or browser was used. Existing disk durability/power-loss gaps from
 the preceding integration remain unchanged.
+
+### Failure-history follow-up
+
+Image lifecycle records now retain each unresolved failure after its callback
+settles, including failures completed before Quit. A global alert exposes the
+actual error; unrelated successful operations cannot acknowledge it. Ordinary
+quit/delete/restore remain blocked. Explicit discard clears failed operations
+only, and Quit anyway still drains admitted continuations/native mutations.
+
+Retry saving resumes upload batches with their original editor, mapped insertion
+position, next-file cursor and retained upload receipt. Completed files are not
+uploaded/inserted again. Programmatic insertion works under exclusive read-only
+admission without reopening user input. The target must still own its Yjs save
+listener; navigation/unmount/destroy rejects retry rather than inserting into a
+new note or silently losing the save. Save acknowledgement still precedes exit.
+Crop callbacks are deliberately not replayed: the global error directs users to
+keep editing, reapply the crop and explicitly discard its failed operation.
+Before applying an admitted crop, its mounted node and document identity are
+checked. A stale crop never targets a replacement node.
+
+Two additional lifecycle tests use real QueryClient mutations, Yjs documents and
+the production save queue with mocked IPC. They cover completed failure history,
+failed Retry saving, unrelated success, resumable partial batches, deferred Yjs
+receipts, overlapping retries/new admission, destroyed targets, unsafe crop-like
+callbacks and explicit discard. Negative controls removing failure retention and
+resetting the batch cursor both fail for the intended missing-error/duplicate
+insertion assertions. Controls were restored before full validation. No test-only
+production seam was introduced; the batch owner is used by Tiptap itself.
+
+Follow-up validation: all 65 frontend tests and all 35 Rust tests pass;
+TypeScript/Vite build, `cargo fmt --check`, strict
+`cargo clippy --all-targets -- -D warnings`, native
+`pnpm tauri build --debug --no-bundle`, and `git diff --check` pass.
+The existing Vite chunk-size warning remains. Test-audit's referenced OpenClaw
+scripts/autoreview are absent here; final changes were reviewed directly.
+Production delta: +143/-50 lines; tests: +78/-1; documentation: +38 lines.
+Tests use in-memory state and mocked transport; no real user data, native GUI,
+or simulator verification was performed.

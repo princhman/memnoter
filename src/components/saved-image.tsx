@@ -129,6 +129,8 @@ function SavedImageView(props: NodeViewProps) {
   const getAvailableWidth = () =>
     host.current?.closest<HTMLElement>(".note-image-block")?.parentElement?.clientWidth ?? 0;
   const image = useRef<HTMLImageElement | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const latest = useRef(props);
   latest.current = props;
   const [failed, setFailed] = useState(false);
@@ -326,7 +328,7 @@ function SavedImageView(props: NodeViewProps) {
   };
 
   const applyCrop = (crop: Crop) => imageOperation(async () => {
-    if (saveQueue.isSuspended() || editor.isDestroyed || !editor.isEditable) throw new Error("Image writes are suspended");
+    if (saveQueue.isSuspended() || editor.isDestroyed) throw new Error("Image writes are suspended");
     const fileId = node.attrs.fileId as string | null;
     if (!fileId) throw new Error("This image cannot be read for cropping");
     const original = await readImage(fileId);
@@ -349,6 +351,10 @@ function SavedImageView(props: NodeViewProps) {
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not create the cropped image")), "image/png"));
       const saved = await saveImage(new File([blob], `${node.attrs.alt || "image"}-cropped.png`, { type: "image/png" }));
       if (saveQueue.isSuspended() || editor.isDestroyed) throw new Error("Image writes are suspended");
+      const position = latest.current.getPos();
+      if (!mounted.current || position === undefined || editor.state.doc.nodeAt(position) !== node) {
+        throw new Error("The crop target changed. Reopen the image and reapply the crop, then discard this failed operation.");
+      }
       // Keep the on-page scale: the kept region stays the size it was before cropping.
       const shownWidth = (node.attrs.width as number | null) || image.current?.offsetWidth || 0;
       const width = shownWidth ? Math.max(1, Math.round(shownWidth * crop.width)) : null;
