@@ -102,11 +102,13 @@ export function FindBar() {
   }, [editor, isOpen, searchTerm]);
 
   // A fresh search marks the first match without selecting it, so reveal it here.
-  // Edits also change the results, but must not move the view or unfold.
+  // Edits also change the results, but must not move the view or unfold. A
+  // note still loading has none yet, so its first results count as fresh.
+  const hasAnyResult = (search?.count ?? 0) > 0;
   useEffect(() => {
     if (!editor || editor.isDestroyed || search?.current == null) return;
     revealCurrentResult(editor);
-  }, [editor, search?.applied]);
+  }, [editor, search?.applied, hasAnyResult]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -165,6 +167,11 @@ export function FindBar() {
   };
   const goToPrevious = () => {
     editor.commands.goToPreviousResult();
+    revealCurrentResult(editor);
+  };
+  // Replace moves on to the next match, which may be hidden.
+  const replace = () => {
+    editor.commands.replace();
     revealCurrentResult(editor);
   };
 
@@ -248,7 +255,7 @@ export function FindBar() {
             autoCorrect="off"
             onChange={(event) => setReplaceTerm(event.target.value)}
             onKeyDown={(event) =>
-              handleKeyDown(event, () => editor.commands.replace())
+              handleKeyDown(event, replace)
             }
           />
           <Button
@@ -256,7 +263,7 @@ export function FindBar() {
             variant="ghost"
             aria-label="Replace"
             disabled={!hasResults}
-            onClick={() => editor.commands.replace()}
+            onClick={replace}
           >
             <Replace />
           </Button>
