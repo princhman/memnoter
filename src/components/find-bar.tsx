@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { useEditorState } from "@tiptap/react";
+import { useSelector } from "@tanstack/react-store";
 import {
   CaseSensitive,
   ChevronDown,
@@ -21,6 +22,8 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { getFoldedRanges, headingFoldKey } from "@/lib/heading-fold";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { scrollCurrentResultIntoView } from "@/lib/find-highlights";
+import { clearFindRequest, findRequestStore } from "@/lib/find-request";
+import { stopScrollRestore } from "@/lib/view-persistence";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -50,10 +53,17 @@ function revealCurrentResult(editor: Editor) {
   scrollCurrentResultIntoView(editor.view);
 }
 
+// Terms from a find request still to try, the first being the one searched.
+type PendingFind = { terms: string[] };
+
 export function FindBar() {
   const { activeEditor } = useActiveEditor();
   const editor = activeEditor?.editor ?? null;
   const isReady = activeEditor?.isReady ?? false;
+  const findRequest = useSelector(findRequestStore, (request) => request);
+  const pendingFind = useRef<PendingFind | null>(null);
+  // Changes per request, so asking again for the applied term still reveals.
+  const [requestCount, setRequestCount] = useState(0);
 
   const [isOpen, setIsOpen] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
@@ -105,11 +115,41 @@ export function FindBar() {
   // Edits also change the results, but must not move the view or unfold. A note
   // that finishes loading counts as fresh, once its saved view is restored.
   useEffect(() => {
-    if (!editor || editor.isDestroyed || !isReady || search?.current == null) {
+    if (!editor || editor.isDestroyed || !isReady) return;
+
+    const pending = pendingFind.current;
+    if (pending) {
+      // Wait for the requested term's results, then fall back to the next term.
+      if (search?.applied !== `false:false:${pending.terms[0]}`) return;
+      if (search.current == null) {
+        const [, ...rest] = pending.terms;
+        pendingFind.current = rest.length ? { terms: rest } : null;
+        if (rest.length) setSearchTerm(rest[0]);
+        return;
+      }
+      pendingFind.current = null;
+      // The match, not the restored scroll position, is what to show now.
+      stopScrollRestore();
+      revealCurrentResult(editor);
+      const { results, currentIndex } = editor.storage.findAndReplace;
+      const match = results[currentIndex ?? 0];
+      if (match) editor.commands.setTextSelection(match);
       return;
     }
+
+    if (search?.current == null) return;
     revealCurrentResult(editor);
-  }, [editor, isReady, search?.applied]);
+  }, [editor, isReady, search?.applied, requestCount]);
+
+  const open = (focusReplace: boolean) => {
+    if (focusReplace) setShowReplace(true);
+    setIsOpen(true);
+    requestAnimationFrame(() => {
+      const input = focusReplace ? replaceInput.current : searchInput.current;
+      input?.focus();
+      input?.select();
+    });
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -126,25 +166,39 @@ export function FindBar() {
         }
       }
 
-      if (event.altKey) setShowReplace(true);
-      setIsOpen(true);
-      requestAnimationFrame(() => {
-        const input =
-          event.altKey ? replaceInput.current : searchInput.current;
-        input?.focus();
-        input?.select();
-      });
+      open(event.altKey);
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [editor]);
 
+  // Requests run once their note is open and has restored its view.
+  useEffect(() => {
+    if (!findRequest || !editor || editor.isDestroyed || !isReady) return;
+    if (findRequest.moduleId && findRequest.moduleId !== activeEditor?.moduleId) {
+      return;
+    }
+    clearFindRequest();
+
+    const terms = findRequest.terms.filter(Boolean);
+    if (terms.length) {
+      // The terms are plain text from the search index.
+      setCaseSensitive(false);
+      setUseRegex(false);
+      setSearchTerm(terms[0]);
+      pendingFind.current = { terms };
+      setRequestCount((count) => count + 1);
+    }
+    open(false);
+  }, [findRequest, editor, isReady, activeEditor?.moduleId]);
+
   if (!isOpen || !editor || editor.isDestroyed) return null;
 
   const hasResults = (search?.count ?? 0) > 0;
 
   const close = () => {
+    pendingFind.current = null;
     setIsOpen(false);
     if (!editor.isDestroyed) editor.commands.focus();
   };
