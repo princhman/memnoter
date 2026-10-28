@@ -9,6 +9,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
+import { LinkMenu } from "@/components/link-menu";
+import { LinkEditor } from "@/lib/link-editor";
 import { SectionFocus } from "@/lib/section-focus";
 import { Sections } from "@/lib/sections";
 import { HeadingFold } from "@/lib/heading-fold";
@@ -223,7 +225,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       extensions: [
         StarterKit.configure({
           undoRedo: false,
+          // Links open in the browser on ⌘-click, through LinkEditor.
+          link: { openOnClick: false },
         }),
+        LinkEditor,
         Arrows,
         MoveLines,
         ItalicCaret,
@@ -446,6 +451,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
+      <LinkMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} />
     </FilesContext.Provider>
   );
