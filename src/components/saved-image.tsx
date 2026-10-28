@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { FileType } from "@/lib/content";
-import { adaptedUrl, cachedAdaptedUrl } from "@/lib/image-adapt";
+import { adaptedUrl, cachedAdaptedUrl, scheduleTrim } from "@/lib/image-adapt";
 import { useDarkTheme } from "@/hooks/use-dark-theme";
 
 type FilesContextValue = {
@@ -191,6 +191,8 @@ function SavedImageView(props: NodeViewProps) {
       img.onerror = null;
       view.destroy();
       image.current = null;
+      // It may have been showing a cached copy that can now be evicted.
+      scheduleTrim();
     };
   }, [src, editor]);
 
@@ -426,7 +428,11 @@ function swapImage(img: HTMLImageElement, next: string) {
   img.insertAdjacentElement("afterend", ghost);
   img.src = next;
   ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SWAP_FADE_MS, easing: "ease-in-out" })
-    .finished.finally(() => ghost.remove());
+    .finished.finally(() => {
+      ghost.remove();
+      // The ghost kept the old copy in use.
+      scheduleTrim();
+    });
 }
 
 type ImageLayout = "inline" | "wrap" | "break";

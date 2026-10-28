@@ -241,6 +241,17 @@ function trimCache() {
   }
 }
 
+// Deferred, so images being unmounted or faded out have left the page first.
+let trimScheduled = false;
+export function scheduleTrim() {
+  if (trimScheduled) return;
+  trimScheduled = true;
+  setTimeout(() => {
+    trimScheduled = false;
+    trimCache();
+  });
+}
+
 export function cachedAdaptedUrl(image: string, dark: boolean) {
   return cache.get(cacheKey(image, dark))?.url;
 }
@@ -261,7 +272,7 @@ export function adaptedUrl(image: string, dark: boolean, load: () => Promise<Blo
         .then((blob) => adaptImage(blob, dark))
         .then((blob) => (created.url = URL.createObjectURL(blob))),
     };
-    created.pending.catch(() => cache.delete(key));
+    created.pending.then(scheduleTrim, () => cache.delete(key));
     cache.set(key, created);
     entry = created;
   }
@@ -270,11 +281,13 @@ export function adaptedUrl(image: string, dark: boolean, load: () => Promise<Blo
   trimCache();
 
   let released = false;
+  // Also called when the image unmounts, so trimming runs then as well.
   const release = () => {
-    if (released) return;
-    released = true;
-    leased.leases--;
-    trimCache();
+    if (!released) {
+      released = true;
+      leased.leases--;
+    }
+    scheduleTrim();
   };
   return { url: leased.pending, release };
 }
