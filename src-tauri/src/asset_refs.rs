@@ -45,6 +45,13 @@ pub fn retain_module(conn: &Connection, module_id: &str) -> CommandResult<()> {
                 .map_err(db_err)?;
         }
         let txn = doc.transact();
+        // An early delete may hide a later insertion before it ever appears in
+        // the visible tree. A complete final state does not prove undo safety.
+        if txn.has_missing_updates() {
+            return Err(format!(
+                "Out-of-order persisted image history in module {module_id}"
+            ));
+        }
         for node in root.successors(&txn) {
             if let XmlOut::Element(element) = node {
                 if let Some(Out::Any(Any::String(id))) = element.get_attribute(&txn, "fileId") {

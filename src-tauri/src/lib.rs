@@ -510,6 +510,48 @@ mod tests {
     }
 
     #[test]
+    fn reversed_image_updates_cannot_authorize_cleanup_or_compaction() {
+        use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
+        let f = Fixture::new();
+        let id = f.file("note");
+        let doc = yrs::Doc::new();
+        let root = doc.get_or_insert_xml_fragment("default");
+        let mut txn = doc.transact_mut();
+        let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("image"));
+        image.insert_attribute(&mut txn, "fileId", id.clone());
+        let inserted = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+        drop(txn);
+        let mut txn = doc.transact_mut();
+        root.remove_range(&mut txn, 0, 1);
+        let removal = txn.encode_update_v1();
+        let final_state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+        drop(txn);
+        let mut conn = f.db.conn.lock().unwrap();
+        conn.execute(
+            "insert into contents_updates values (8, 'other', ?1, 0)",
+            [&removal],
+        )
+        .unwrap();
+        conn.execute(
+            "insert into contents_updates values (9, 'other', ?1, 0)",
+            [&inserted],
+        )
+        .unwrap();
+        assert!(cleanup_unused_files(
+            &conn,
+            &f.dir.join("files"),
+            "note",
+            std::slice::from_ref(&id),
+            &[0, 0],
+            7
+        )
+        .is_err());
+        assert!(compact_content(&mut conn, "other", &final_state, 9).is_err());
+        assert!(delete_module_data(&mut conn, &f.dir.join("files"), "note").is_err());
+        assert!(f.dir.join("files").join(&id).is_file());
+    }
+
+    #[test]
     fn invalid_or_incomplete_foreign_notes_cannot_authorize_destruction() {
         use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
         let f = Fixture::new();
@@ -904,7 +946,7 @@ fn save_file(
     }
 
     Ok(FileType {
-        id: id,
+        id,
         path: path_str.to_owned(),
         file_type: mime_type,
     })
