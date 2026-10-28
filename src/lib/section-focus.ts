@@ -69,21 +69,28 @@ export function getFocusedSectionPath(editor: Editor): SectionCrumb[] {
 export function getFocusedSectionRange(
   state: EditorState,
 ): { from: number; to: number } | null {
-  const headingPos = sectionFocusKey.getState(state);
-  if (!isHeadingPosition(state.doc, headingPos)) return null;
+  return getSectionRange(state.doc, sectionFocusKey.getState(state));
+}
 
-  const heading = state.doc.nodeAt(headingPos);
+// A heading and everything up to the next heading at its level or higher.
+export function getSectionRange(
+  doc: EditorState["doc"],
+  headingPos: unknown,
+): { from: number; to: number } | null {
+  if (!isHeadingPosition(doc, headingPos)) return null;
+
+  const heading = doc.nodeAt(headingPos);
   if (heading?.type.name !== "heading") return null;
 
   const level = heading.attrs.level;
-  let sectionEnd = state.doc.content.size;
+  let sectionEnd = doc.content.size;
 
-  state.doc.nodesBetween(
+  doc.nodesBetween(
     headingPos + heading.nodeSize,
-    state.doc.content.size,
+    doc.content.size,
     (node, pos) => {
       if (
-        sectionEnd === state.doc.content.size &&
+        sectionEnd === doc.content.size &&
         node.type.name === "heading" &&
         node.attrs.level <= level
       ) {
