@@ -1,6 +1,9 @@
 import katex from "katex";
-import type { ReactNode } from "react";
-import type { CardKind, Segment } from "@/lib/cards";
+import { useEffect, useState, type ReactNode } from "react";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { MaskShape } from "@/components/occlusion-editor";
+import { validMasks, type OcclusionFace } from "@/lib/occlusion";
+import type { CardKind, Segment, CardPayload } from "@/lib/cards";
 import { cn } from "@/lib/utils";
 
 const MARK_TAGS: Record<string, keyof HTMLElementTagNameMap> = {
@@ -60,10 +63,12 @@ export function CardFace({
   revealed,
 }: {
   kind: CardKind;
-  front: Segment[];
-  back: Segment[];
+  front: CardPayload;
+  back: CardPayload;
   revealed: boolean;
 }) {
+  if (kind === "occlusion" && !Array.isArray(front) && !Array.isArray(back)) return <OcclusionReview face={revealed ? back : front} />;
+  if (!Array.isArray(front) || !Array.isArray(back)) return <p role="alert">This card has an unsupported payload. Open its note to repair it.</p>;
   const text = "card-face whitespace-pre-wrap text-xl leading-relaxed";
   switch (kind) {
     case "basic":
@@ -95,4 +100,24 @@ export function CardFace({
         </div>
       );
   }
+}
+
+function OcclusionReview({ face }: { face: OcclusionFace }) {
+  const [asset, setAsset] = useState<{ fileId: string; src?: string; failed?: boolean }>();
+  useEffect(() => {
+    let active = true;
+    void invoke<string>("resolve_card_image", { fileId: face.fileId }).then(path => {
+      if (active) setAsset({ fileId: face.fileId, src: convertFileSrc(path) });
+    }).catch(() => { if (active) setAsset({ fileId: face.fileId, failed: true }); });
+    return () => { active = false; };
+  }, [face.fileId]);
+  if (asset?.fileId !== face.fileId) return <p role="status">Loading image…</p>;
+  if (asset.failed || face.version !== 1) return <p role="alert">Image unavailable. Open the source note to check or remove the image.</p>;
+  const target = validMasks(face.masks).find(m => m.id === face.targetMaskId);
+  return <div className="grid gap-3"><p>{face.revealed ? "Answer outlined below" : "Recall the covered area"}</p><div className="occlusion-frame">
+    <img src={asset.src} alt="Occlusion review image" onError={() => setAsset({ fileId: face.fileId, failed: true })} />
+    <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-label={face.revealed ? "Target answer outlined" : "Target answer hidden"}>
+      {target && <MaskShape mask={target} fill={face.revealed ? "none" : "#557bcd"} stroke="#e9a23b" strokeWidth={0.006} />}
+    </svg>
+  </div></div>;
 }

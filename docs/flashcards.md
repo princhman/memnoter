@@ -1,4 +1,4 @@
-# Phase 4 flashcards
+# Flashcards: text and image occlusion
 
 Cards are authored as editable note text. ProseMirror decorations style syntax;
 paragraph and heading `cardId` attributes are persisted in Yjs. Math blocks do
@@ -139,3 +139,72 @@ bubble selection with inline math, typing/undo/copy across modules, immediately
 opening review after an edit, due counts after deletion, reopen persistence,
 keyboard/button focus, KaTeX rendering, full-screen chrome, and the done/error
 states. Test first-time indexing by opening an older module. No push or PR.
+
+
+## Phase 5 implemented policy
+
+Saved-image controls include **Occlusion** for saved block and inline images.
+A native modal dialog traps focus and supports Escape/Cancel. Choose rectangle,
+ellipse or freehand, then drag over the image. Freehand paths are closed polygons.
+Select a mask by clicking it with Select or by its numbered button. Rectangle and
+ellipse fields edit normalized coordinates; freehand points are editable JSON.
+The keyboard Add button creates a centered mask of the chosen shape. Delete and
+local Undo operate on the draft; Cancel discards the whole draft. Save writes one
+image-node attribute transaction, which the note's existing Yjs undo can restore.
+There is no separate scheduling or mask state outside the note.
+
+Each mask produces `<image UUID>:o:<mask UUID>`. Both card faces carry the same
+version-1 geometry. The front fills **only the target** in opaque blue; other
+answers are visible. The back removes that fill and outlines the target in gold.
+No policy toggle is offered. Coordinates use the actual displayed image bounds,
+normalized to 0–1; viewport/note resizing does not change geometry. Degenerate,
+non-finite and out-of-bounds masks are ignored rather than creating broken cards.
+Freehand paths are limited to 4096 points. Editing and reordering preserve ids;
+paste renews image and mask UUIDs, including copies between modules. Layout
+changes between inline/block retain ids. Image cards join text cards in the
+existing single complete module snapshot and use the same fixed FSRS-7 defaults,
+module/global review queues, and atomic review logs. Math behavior is unchanged.
+
+Crop is the existing asset-replacement operation: entering crop with masks
+requires an explicit reset confirmation. Applying it writes the new asset and
+clears masks together, retiring cards; note Undo restores the old asset, masks,
+ids and schedules. Opening/cancelling crop does not clear anything. No general
+image replacement action is exposed. Future replacement actions must also reset
+with confirmation or transform geometry; they must not reuse unchanged masks on
+unrelated pixels.
+
+Review resolves the managed file id through Tauri and the asset protocol, rather
+than saving URLs in cards. Copies can resolve/read the original module's managed
+asset. Missing files show a useful unavailable message in notes/review. Startup
+cleanup retains assets referenced by **any stored occlusion face, including
+soft-deleted cards**, so undo/history can recover them. This deliberately retains
+some disk space until source-module deletion; no history asset garbage collector
+is included. Source-module deletion retires all cards referencing its assets,
+including copies in other modules, before removing the files. A later sync cannot
+revive cards whose asset row is gone. Copied images are shared assets, so deleting
+the owning module also makes copies unavailable; their note must be repaired or
+the image removed. A physically missing file whose row remains is shown as
+unavailable rather than silently pretending it rendered.
+
+Phase 5 verification uses only synthetic editor documents and temporary SQLite
+fixtures. `pnpm build`, `pnpm test` (38 tests), `cargo test` (14 tests),
+`cargo clippy --all-targets`, and `git diff --check` are the validation commands.
+Native GUI QA has **not** been run; no browser preview was used.
+
+Manual macOS QA before release:
+
+- Draw each shape at several image sizes; resize the note/review and confirm
+  target alignment, front concealment, back outline, and other visible answers.
+- Use Tab/Shift-Tab, Escape, labeled numeric fields, freehand point editing,
+  keyboard Add, selection, Delete, draft Undo, Cancel, Save and note Undo/Redo.
+- Reopen a note and app; verify masks persist in Yjs. Edit/reorder/delete masks
+  after grading and verify schedules survive edit and delete/undo.
+- Copy through the native clipboard within/across modules, including inline
+  images and text-card paragraphs; verify fresh ids and independent schedules.
+- Switch image layout and theme, cancel a crop/reset confirmation, apply a crop,
+  then undo it. Confirm no silent geometry misalignment or unexpected retirement.
+- Exercise module/global review, immediate review after save, unavailable image
+  UI, cleanup after relaunch, and deletion of a source module with copied masks.
+  Verify unavailable copies have retired cards, with no stale grading accepted.
+
+Export and AI remain out of scope. No push or PR is part of this phase handoff.
