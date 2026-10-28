@@ -1,3 +1,5 @@
+import { Fragment, Slice } from "@tiptap/pm/model";
+import { renewImageIdentity } from "./occlusion.ts";
 import { Extension } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state";
@@ -139,13 +141,18 @@ export const Flashcards = Extension.create({
           const ids = new Set(blockIds);
           const targets: number[] = [];
           state.doc.descendants((node, pos) => {
+            if (["image", "inlineImage"].includes(node.type.name) && ids.has(node.attrs.imageId)) targets.push(pos);
             if (!node.isTextblock) return true;
             if (ids.has(node.attrs.cardId)) targets.push(pos);
-            return false;
+            return true;
           });
           if (targets.length === 0) return false;
           if (dispatch) {
-            for (const pos of targets) tr.setNodeAttribute(pos, "cardId", crypto.randomUUID());
+            for (const pos of targets) {
+              const node = tr.doc.nodeAt(pos)!;
+              if (["image", "inlineImage"].includes(node.type.name)) tr.setNodeMarkup(pos, undefined, renewImageIdentity(node.attrs, () => crypto.randomUUID()));
+              else tr.setNodeAttribute(pos, "cardId", crypto.randomUUID());
+            }
           }
           return true;
         },
@@ -164,10 +171,29 @@ export const Flashcards = Extension.create({
           const ranges = changedRanges(transactions.flatMap((tr) => tr.mapping.maps));
           if (ranges.length === 0) return null;
           const plan = planCardIds(state.doc, ranges, () => crypto.randomUUID());
-          if (plan.length === 0) return null;
           const tr = state.tr;
+          const images: { pos: number; attrs: Record<string, unknown>; touched: boolean }[] = [];
+          state.doc.descendants((node, pos) => {
+            if (["image", "inlineImage"].includes(node.type.name)) images.push({ pos, attrs: node.attrs, touched: ranges.some(r => r.from < pos + node.nodeSize && r.to > pos) });
+          });
+          const seen = new Set<unknown>();
+          for (const image of images.sort((a,b) => Number(a.touched) - Number(b.touched))) {
+            if (!image.attrs.imageId || seen.has(image.attrs.imageId)) tr.setNodeMarkup(image.pos, undefined, renewImageIdentity(image.attrs, () => crypto.randomUUID()));
+            else seen.add(image.attrs.imageId);
+          }
           for (const { pos, cardId } of plan) tr.setNodeAttribute(pos, "cardId", cardId);
-          return tr;
+          return tr.docChanged ? tr : null;
+        },
+        props: {
+          transformPasted(slice) {
+            const map = (fragment: import("@tiptap/pm/model").Fragment): import("@tiptap/pm/model").Fragment => Fragment.fromArray(Array.from({ length: fragment.childCount }, (_, i) => {
+              const node = fragment.child(i);
+              return ["image", "inlineImage"].includes(node.type.name)
+                ? node.type.create(renewImageIdentity(node.attrs, () => crypto.randomUUID()), node.content, node.marks)
+                : node.copy(map(node.content));
+            }));
+            return new Slice(map(slice.content), slice.openStart, slice.openEnd);
+          },
         },
       }),
       new Plugin({

@@ -5,7 +5,7 @@ import {
   type DefaultSchedulerCardInput,
   type DefaultSchedulerRevlog,
 } from "ts-fsrs";
-import type { CardKind, Segment } from "./cards";
+import type { CardKind, CardPayload } from "./cards";
 
 // Scheduling runs here with ts-fsrs; Rust only stores the results. The
 // library's default parameters for FSRS-7, with no settings yet.
@@ -48,8 +48,8 @@ export type StoredCard = FsrsFields & {
   moduleId: string;
   moduleName: string;
   kind: CardKind;
-  front: Segment[];
-  back: Segment[];
+  front: CardPayload;
+  back: CardPayload;
   reps: number;
   lapses: number;
   fsrsModel: string | null;
