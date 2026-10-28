@@ -3,7 +3,7 @@ import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
 import { queryClient } from "@/lib/query-client";
 import { createSaveQueue, type SaveQueueStatus } from "@/lib/save-queue";
-import type { ContentUpdate, GetContentResponse } from "@/lib/content";
+import { acknowledgeContent, type ContentUpdate, type GetContentResponse } from "@/lib/content";
 
 export const saveStatusStore = createStore<SaveQueueStatus>({
   pending: 0,
@@ -16,6 +16,7 @@ export const saveQueue = createSaveQueue<number[], ContentUpdate>({
   persist: (moduleId, bytes) =>
     invoke<ContentUpdate>("add_update", { moduleId, bytes }),
   onSaved: (moduleId, update) => {
+    acknowledgeContent(moduleId, update);
     queryClient.setQueryData<GetContentResponse>(
       ["content", moduleId],
       (oldContent) =>

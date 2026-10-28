@@ -22,6 +22,9 @@ import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image"
 import FileHandler from "@tiptap/extension-file-handler";
 import {
   applySavedContent,
+  contentQueryOptions,
+  acknowledgeCompaction,
+  type ContentUpdate,
   loadContent,
   type FileType,
   type GetContentResponse,
@@ -54,7 +57,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   const hasInsertedInitialContent = useRef(false);
 
   const { isSuccess, data } = useQuery({
-    queryKey: ["content", moduleId],
+    ...contentQueryOptions(moduleId),
     queryFn: async () => {
       // Taken before reading, so an edit saved meanwhile is in one or the other.
       const pending = saveQueue.pending(moduleId);
@@ -87,10 +90,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     }: {
       newState: number[];
       updateId: number;
+      representedUpdates: ContentUpdate[];
     }) => {
       await invoke("save_compaction", { moduleId, newState, updateId });
     },
-    onSuccess: (_, { newState, updateId }) => {
+    onSuccess: (_, { newState, updateId, representedUpdates }) => {
+      acknowledgeCompaction(moduleId, newState, representedUpdates);
       queryClient.setQueryData<GetContentResponse>(
         ["content", moduleId],
         (oldContent) => {
@@ -382,11 +387,14 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         ...currentContent.updates.map((update) => update.id),
       );
 
+      // Every receipt below the watermark must be represented in this doc.
+      applySavedContent(yDoc, currentContent);
       const newState = Array.from(Y.encodeStateAsUpdate(yDoc));
 
       compactionMutation.mutate({
         newState,
         updateId,
+        representedUpdates: currentContent.updates,
       });
     }, COMPACTION_IDLE_MS);
 
