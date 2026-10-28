@@ -362,6 +362,43 @@ mod tests {
     }
 
     #[test]
+    fn compaction_writes_state_and_drops_updates_together() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        conn.execute_batch("insert into contents_updates values (8, 'note', X'04', 0);")
+            .unwrap();
+        compact_content(&mut conn, "note", &[9], 7).unwrap();
+        let content = read_content(&conn, "note").unwrap();
+        assert_eq!(content.state, vec![9]);
+        assert_eq!(
+            content
+                .updates
+                .iter()
+                .map(|update| update.id)
+                .collect::<Vec<_>>(),
+            vec![8]
+        );
+    }
+
+    #[test]
+    fn failed_compaction_leaves_content_unchanged() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        let before = serde_json::to_value(read_content(&conn, "note").unwrap()).unwrap();
+        // Fail the second statement, after the state has already been written.
+        conn.execute_batch(
+            "create temp trigger fail_delete before delete on contents_updates
+             begin select raise(abort, 'disk full'); end;",
+        )
+        .unwrap();
+        assert!(compact_content(&mut conn, "note", &[9], 7).is_err());
+        conn.execute_batch("drop trigger fail_delete;").unwrap();
+        let after = serde_json::to_value(read_content(&conn, "note").unwrap()).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(after["state"], serde_json::json!([1]));
+    }
+
+    #[test]
     fn legacy_data_is_copied_with_rewritten_paths_and_left_intact() {
         let root = std::env::temp_dir().join(format!("notes-migrate-{}", Uuid::new_v4()));
         let legacy = Fixture {
@@ -522,7 +559,10 @@ fn delete_module(
 #[tauri::command(async)]
 fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetContentResponse> {
     let conn = db.conn.lock().map_err(db_err)?;
+    read_content(&conn, &module_id)
+}
 
+fn read_content(conn: &Connection, module_id: &str) -> CommandResult<GetContentResponse> {
     let state = conn
         .query_one(
             "select state from contents where module_id = ?1",
@@ -598,21 +638,34 @@ fn save_compaction(
     new_state: Vec<u8>,
     update_id: i64,
 ) -> CommandResult<()> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let mut conn = db.conn.lock().map_err(db_err)?;
+    compact_content(&mut conn, &module_id, &new_state, update_id)
+}
 
-    conn.execute(
+// The new state already contains the folded updates. Writing it and dropping
+// them must happen together, or a failure in between would lose or duplicate
+// history.
+fn compact_content(
+    conn: &mut Connection,
+    module_id: &str,
+    new_state: &[u8],
+    update_id: i64,
+) -> CommandResult<()> {
+    let tx = conn.transaction().map_err(db_err)?;
+
+    tx.execute(
         "update contents set state = ?1 where module_id = ?2",
         params![new_state, module_id],
     )
     .map_err(db_err)?;
 
-    conn.execute(
+    tx.execute(
         "delete from contents_updates where module_id = ?1 and id <= ?2",
         params![module_id, update_id],
     )
     .map_err(db_err)?;
 
-    Ok(())
+    tx.commit().map_err(db_err)
 }
 
 #[tauri::command(async)]
