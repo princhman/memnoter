@@ -1,4 +1,5 @@
 import katex from "katex";
+import { validatedOcclusionPair } from "@/lib/occlusion-face-validation";
 import { useEffect, useState, type ReactNode } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { MaskShape } from "@/components/occlusion-editor";
@@ -67,7 +68,11 @@ export function CardFace({
   back: CardPayload;
   revealed: boolean;
 }) {
-  if (kind === "occlusion" && !Array.isArray(front) && !Array.isArray(back)) return <OcclusionReview face={revealed ? back : front} />;
+  if (kind === "occlusion") {
+    const pair = validatedOcclusionPair(front, back);
+    if (!pair) return <p role="alert">This image card has invalid masks. Open its note to repair it.</p>;
+    return <OcclusionReview face={pair[revealed ? 1 : 0]} />;
+  }
   if (!Array.isArray(front) || !Array.isArray(back)) return <p role="alert">This card has an unsupported payload. Open its note to repair it.</p>;
   const text = "card-face whitespace-pre-wrap text-xl leading-relaxed";
   switch (kind) {
