@@ -7,6 +7,9 @@ use std::sync::Mutex;
 use tauri::Manager;
 use uuid::Uuid;
 
+mod cards;
+use cards::migrate_flashcards;
+
 type CommandResult<T> = std::result::Result<T, String>;
 
 struct Db {
@@ -186,6 +189,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
         )",
     )
     .map_err(db_err)?;
+    migrate_flashcards(&conn)?;
 
     Ok(Db {
         conn: Mutex::new(conn),
@@ -799,7 +803,11 @@ pub fn run() {
             save_compaction,
             save_file,
             read_file,
-            cleanup_files
+            cleanup_files,
+            cards::sync_cards,
+            cards::due_cards,
+            cards::due_counts,
+            cards::review_card
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
