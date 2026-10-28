@@ -13,6 +13,7 @@ import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
+import SaveStatus from "@/components/save-status";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
@@ -54,6 +55,8 @@ const RootLayout = () => {
           </div>
         </SidebarProvider>
       </ActiveEditorProvider>
+
+      <SaveStatus />
 
       <TanStackRouterDevtools />
     </>

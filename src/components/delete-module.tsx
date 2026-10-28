@@ -3,6 +3,7 @@ import { useRouter } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { Module } from "@/lib/types";
 import { forgetModule } from "@/lib/store";
+import { saveQueue } from "@/lib/saves";
 import {
   Dialog,
   DialogClose,
@@ -31,6 +32,7 @@ const DeleteModule = ({
     mutationFn: () => invoke("delete_module", { moduleId }),
     onSuccess: async () => {
       forgetModule(moduleId);
+      saveQueue.drop(moduleId);
       if (
         router.state.matches.some(
           (match) =>
