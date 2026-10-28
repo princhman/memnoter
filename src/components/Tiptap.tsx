@@ -1,16 +1,23 @@
 // src/Tiptap.tsx
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
+import { TextBubbleMenu } from "@/components/text-bubble-menu";
 import { SectionFocus } from "@/lib/section-focus";
+import { Sections } from "@/lib/sections";
+import { HeadingFold } from "@/lib/heading-fold";
+import { SlashCommand } from "@/components/slash-menu";
+import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { FilesContext, SavedImage } from "@/components/saved-image";
+import { usePersistedView } from "@/lib/view-persistence";
+import { FindHighlights } from "@/lib/find-highlights";
+import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
 import {
   applySavedContent,
@@ -150,8 +157,8 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     },
   });
 
-  // applying updates
-  useEffect(() => {
+  // applying updates; before paint, so a switched-to note never shows empty
+  useLayoutEffect(() => {
     if (!data || hasAppliedRemoteContent.current) return;
 
     // a cached note has not gone through this editor's query function.
@@ -224,17 +231,31 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         MathBlock,
         HeadingHieararchy,
         SectionFocus,
+        Sections,
+        HeadingFold,
+        SlashCommand,
+        LatexSuggest,
         TocExtension.configure({
           scrollParent: () =>
             document.querySelector<HTMLElement>(".app-scroll-container") ??
             window,
           onUpdate: (content) => tocStore.setState(() => content),
         }),
+        FindHighlights.configure({
+          searchDebounceMs: 100,
+          injectCSS: false,
+        }),
         Collaboration.configure({
           document: yDoc,
         }),
         SavedImage.configure({
           inline: false,
+          allowBase64: false,
+          HTMLAttributes: {
+            class: "note-image",
+          },
+        }),
+        InlineImage.configure({
           allowBase64: false,
           HTMLAttributes: {
             class: "note-image",
@@ -329,18 +350,21 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     }
   }, [editor, isSuccess]);
 
+  // restore where the reader left off; runs after the empty-note content above
+  usePersistedView(editor, moduleId, isSuccess);
+
   // pass editor into the context
   useEffect(() => {
     if (!editor) return;
 
-    setActiveEditor({ moduleId, editor });
+    setActiveEditor({ moduleId, editor, isReady: isSuccess });
 
     return () => {
       setActiveEditor((current) =>
         current?.editor === editor ? null : current,
       );
     };
-  }, [editor, moduleId, setActiveEditor]);
+  }, [editor, moduleId, isSuccess, setActiveEditor]);
 
   // compaction listener
   useEffect(() => {
@@ -422,6 +446,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
+      <TextBubbleMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} />
     </FilesContext.Provider>
   );

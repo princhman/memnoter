@@ -75,10 +75,16 @@ export function FileBreadcrumb() {
       <div
         // Keep the offset in layout, alongside the sidebar gap. A separate
         // translate can advance ahead of layout and briefly reverse the motion.
+        // Only shown from md up, like the sidebar gap, so it only eases on
+        // sidebar toggles and swaps instantly when crossing the breakpoint.
         className={cn(
-          "shrink-0 transition-[width] duration-(--sidebar-motion-duration) ease-(--sidebar-motion-ease) motion-reduce:transition-none",
+          "hidden shrink-0 transition-[width] duration-(--sidebar-motion-duration) ease-(--sidebar-motion-ease) motion-reduce:transition-none md:block",
           state === "collapsed" ? (isFullScreen ? "w-30" : "w-46") : "w-2",
         )}
+      />
+      {/* Below md the sidebar is a sheet, so always clear the window controls. */}
+      <div
+        className={cn("shrink-0 md:hidden", isFullScreen ? "w-30" : "w-46")}
       />
       <div className="min-w-0">
         <Breadcrumb>

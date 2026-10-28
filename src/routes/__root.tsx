@@ -10,13 +10,21 @@ import { useIsFullscreen } from "@/hooks/use-fullscreen";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
+import { FindBar } from "@/components/find-bar";
+import { useSelector } from "@tanstack/react-store";
+import { appStore, setSidebarOpen } from "@/lib/store";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
+  const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   return (
     <>
       <ActiveEditorProvider>
-        <SidebarProvider className="h-dvh overflow-hidden overscroll-none">
+        <SidebarProvider
+          open={sidebarOpen}
+          onOpenChange={setSidebarOpen}
+          className="h-dvh overflow-hidden overscroll-none"
+        >
           <AppSidebar />
 
           <SidebarInset className="min-h-0 overflow-hidden">
@@ -30,6 +38,8 @@ const RootLayout = () => {
                 <FileBreadcrumb />
               </div>
             </header>
+
+            <FindBar />
 
             <main className="app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">
               <Outlet />

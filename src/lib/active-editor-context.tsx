@@ -8,7 +8,8 @@ import {
   useContext,
 } from "react";
 
-type ActiveEditor = { moduleId: string; editor: Editor };
+// isReady: the content has loaded and the saved view has been restored.
+type ActiveEditor = { moduleId: string; editor: Editor; isReady: boolean };
 
 const Context = createContext<{
   activeEditor: ActiveEditor | null;

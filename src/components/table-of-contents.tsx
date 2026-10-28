@@ -14,7 +14,9 @@ import type { Node as PMNode } from "@tiptap/pm/model";
 import { useEditorState } from "@tiptap/react";
 import { createStore, useSelector } from "@tanstack/react-store";
 import katex from "katex";
+import { ChevronRight } from "lucide-react";
 import { getFocusedSectionRange } from "@/lib/section-focus";
+import { getFoldedRanges } from "@/lib/heading-fold";
 
 export type TocStore = ReturnType<typeof createTocStore>;
 
@@ -83,11 +85,29 @@ export function TableOfContents({
       return range ? `${range.from}:${range.to}` : null;
     },
   });
+  // Folding doesn't touch the document either. Serialised so equal folds compare equal.
+  const foldedRanges = useEditorState({
+    editor,
+    selector: ({ editor }) =>
+      editor ? JSON.stringify(getFoldedRanges(editor.state)) : "[]",
+  });
+  const folded = useMemo(
+    () =>
+      JSON.parse(foldedRanges ?? "[]") as ReturnType<typeof getFoldedRanges>,
+    [foldedRanges],
+  );
+  // Headings inside a folded section are hidden in the editor, so leave them out
+  // here too; their folded heading is marked instead.
   const items = useMemo(() => {
-    if (!focusRange) return allItems;
-    const [from, to] = focusRange.split(":").map(Number);
-    return allItems.filter((item) => item.pos >= from && item.pos < to);
-  }, [allItems, focusRange]);
+    const [from, to] = focusRange?.split(":").map(Number) ?? [];
+    return allItems.filter(
+      (item) =>
+        (!focusRange || (item.pos >= from && item.pos < to)) &&
+        !folded.some((range) => item.pos >= range.from && item.pos < range.to),
+    );
+  }, [allItems, focusRange, folded]);
+  const isFolded = (item: TableOfContentDataItem) =>
+    folded.some((range) => range.heading === item.pos);
   const [hovered, setHovered] = useState<HoveredSection | null>(null);
   const navRef = useRef<HTMLElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -97,8 +117,10 @@ export function TableOfContents({
   // Showing or hiding sections moves headings, so recompute which one is current.
   useEffect(() => {
     setHovered(null);
-    editor?.storage.tableOfContents.scrollHandler();
-  }, [editor, focusRange]);
+    // A destroyed editor (e.g. replaced during a reload) has empty storage.
+    if (!editor || editor.isDestroyed) return;
+    editor.storage.tableOfContents.scrollHandler();
+  }, [editor, focusRange, foldedRanges]);
 
   useLayoutEffect(() => {
     const nav = navRef.current;
@@ -178,13 +200,17 @@ export function TableOfContents({
               type="button"
               className="toc-item"
               data-active={item.id === activeId}
+              data-folded={isFolded(item)}
               style={{
                 paddingLeft: `${0.5 + (item.level - items[section.start].level) * 0.625}rem`,
               }}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => scrollTo(item)}
             >
-              <HeadingTitle node={item.node} />
+              <span className="toc-item-title">
+                <HeadingTitle node={item.node} />
+              </span>
+              {isFolded(item) && <ChevronRight aria-label="Folded" />}
             </button>
           ))}
         </div>
@@ -198,6 +224,7 @@ export function TableOfContents({
             className="toc-dash"
             aria-label={item.textContent}
             data-active={item.id === activeId}
+            data-folded={isFolded(item)}
             data-related={
               section !== null && index >= section.start && index < section.end
             }

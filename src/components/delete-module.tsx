@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { Module } from "@/lib/types";
+import { forgetModule } from "@/lib/store";
 import {
   Dialog,
   DialogClose,
@@ -29,6 +30,7 @@ const DeleteModule = ({
   const mutation = useMutation({
     mutationFn: () => invoke("delete_module", { moduleId }),
     onSuccess: async () => {
+      forgetModule(moduleId);
       if (
         router.state.matches.some(
           (match) =>
