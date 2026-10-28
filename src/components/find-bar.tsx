@@ -5,7 +5,10 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { FindAndReplacePluginKey } from "@tiptap/extension-find-and-replace";
 import { useEditorState } from "@tiptap/react";
+import { useSelector } from "@tanstack/react-store";
 import {
   CaseSensitive,
   ChevronDown,
@@ -21,8 +24,15 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { getFoldedRanges, headingFoldKey } from "@/lib/heading-fold";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { scrollCurrentResultIntoView } from "@/lib/find-highlights";
+import { clearFindRequest, findRequestStore } from "@/lib/find-request";
+import { stopScrollRestore } from "@/lib/view-persistence";
+import { FIND_EVENT, usesNativeMenuShortcuts } from "@/lib/app-events";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { IconTooltip } from "@/components/icon-tooltip";
+import { cn, MOD_KEY } from "@/lib/utils";
+
+const ALT_KEY = MOD_KEY === "⌘" ? "⌥" : "Alt+";
+const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
 
 const inputClassName =
   "h-7 min-w-0 flex-1 rounded-md bg-input/50 px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-input/30";
@@ -50,10 +60,26 @@ function revealCurrentResult(editor: Editor) {
   scrollCurrentResultIntoView(editor.view);
 }
 
+// Terms from a find request still to try, the first being the one searched.
+type PendingFind = { terms: string[]; editor: Editor; request: NonNullable<typeof findRequestStore.state> };
+
 export function FindBar() {
+  const router = useRouter();
   const { activeEditor } = useActiveEditor();
   const editor = activeEditor?.editor ?? null;
   const isReady = activeEditor?.isReady ?? false;
+  const findRequest = useSelector(findRequestStore, (request) => request);
+  const pendingFind = useRef<PendingFind | null>(null);
+  useEffect(() => router.subscribe("onBeforeNavigate", ({ toLocation }) => {
+    const request = findRequestStore.state;
+    if (request && (!request.moduleId || toLocation.pathname !== `/${encodeURIComponent(request.moduleId)}`)) {
+      clearFindRequest();
+      if (pendingFind.current) setSearchTerm("");
+      pendingFind.current = null;
+    }
+  }), [router]);
+  // Changes per request, so asking again for the applied term still reveals.
+  const [requestCount, setRequestCount] = useState(0);
 
   const [isOpen, setIsOpen] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
@@ -105,46 +131,128 @@ export function FindBar() {
   // Edits also change the results, but must not move the view or unfold. A note
   // that finishes loading counts as fresh, once its saved view is restored.
   useEffect(() => {
-    if (!editor || editor.isDestroyed || !isReady || search?.current == null) {
+    if (!editor || editor.isDestroyed || !isReady) return;
+
+    const pending = pendingFind.current;
+    if (pending && (pending.editor !== editor || pending.request !== findRequestStore.state)) {
+      pendingFind.current = null;
       return;
     }
+    if (pending) {
+      // Wait for the requested term's results, then fall back to the next term.
+      if (search?.applied !== `false:false:${pending.terms[0]}`) return;
+      if (search.current == null) {
+        const [, ...rest] = pending.terms;
+        pendingFind.current = rest.length ? { ...pending, terms: rest } : null;
+        if (rest.length) setSearchTerm(rest[0]);
+        else clearFindRequest();
+        return;
+      }
+      pendingFind.current = null;
+      clearFindRequest();
+      editor.view.dispatch(editor.state.tr.setMeta(FindAndReplacePluginKey, { currentIndex: 0 }));
+      // The match, not the restored scroll position, is what to show now.
+      stopScrollRestore();
+      revealCurrentResult(editor);
+      const { results, currentIndex } = editor.storage.findAndReplace;
+      const match = results[currentIndex ?? 0];
+      if (match) editor.commands.setTextSelection(match);
+      return;
+    }
+
+    if (search?.current == null) return;
     revealCurrentResult(editor);
-  }, [editor, isReady, search?.applied]);
+  }, [editor, isReady, search?.applied, requestCount]);
+
+  const goToNext = () => {
+    if (!editor || editor.isDestroyed) return;
+    editor.commands.goToNextResult();
+    revealCurrentResult(editor);
+  };
+  const goToPrevious = () => {
+    if (!editor || editor.isDestroyed) return;
+    editor.commands.goToPreviousResult();
+    revealCurrentResult(editor);
+  };
+
+  const open = (withReplace: boolean, seedSelection = true) => {
+    // Seed the search with a short single-line selection, like most editors.
+    if (seedSelection && editor && !editor.isDestroyed) {
+      const { from, to, empty } = editor.state.selection;
+      const selected = empty ? "" : editor.state.doc.textBetween(from, to);
+      if (selected && !selected.includes("\n") && selected.length <= 200) {
+        setSearchTerm(selected);
+      }
+    }
+
+    if (withReplace) setShowReplace(true);
+    setIsOpen(true);
+    requestAnimationFrame(() => {
+      const input = withReplace ? replaceInput.current : searchInput.current;
+      input?.focus();
+      input?.select();
+    });
+  };
+
+  // Rebound every render, so the handlers see the current state.
+  const handlers = useRef({ open, goToNext, goToPrevious });
+  handlers.current = { open, goToNext, goToPrevious };
+  const canStep = isOpen && !!searchTerm;
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.code !== "KeyF")
-        return;
-      event.preventDefault();
-
-      // Seed the search with a short single-line selection, like most editors.
-      if (editor && !editor.isDestroyed) {
-        const { from, to, empty } = editor.state.selection;
-        const selected = empty ? "" : editor.state.doc.textBetween(from, to);
-        if (selected && !selected.includes("\n") && selected.length <= 200) {
-          setSearchTerm(selected);
-        }
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.code === "KeyF") {
+        if (!event.altKey && usesNativeMenuShortcuts()) return;
+        event.preventDefault();
+        handlers.current.open(event.altKey);
+      } else if (event.code === "KeyG" && canStep) {
+        // Steps through matches from the editor, without going to the bar.
+        event.preventDefault();
+        if (event.shiftKey) handlers.current.goToPrevious();
+        else handlers.current.goToNext();
       }
-
-      if (event.altKey) setShowReplace(true);
-      setIsOpen(true);
-      requestAnimationFrame(() => {
-        const input =
-          event.altKey ? replaceInput.current : searchInput.current;
-        input?.focus();
-        input?.select();
-      });
     };
+    // The Find item of the app menu.
+    const handleFind = () => handlers.current.open(false);
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [editor]);
+    window.addEventListener(FIND_EVENT, handleFind);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener(FIND_EVENT, handleFind);
+    };
+  }, [canStep]);
+
+  // Requests run once their note is open and has restored its view.
+  useEffect(() => {
+    if (!findRequest || !editor || editor.isDestroyed || !isReady) return;
+    if (findRequest.moduleId && findRequest.moduleId !== activeEditor?.moduleId) {
+      return;
+    }
+    if (pendingFind.current?.request === findRequest) return;
+
+    const terms = findRequest.terms.filter(Boolean);
+    if (terms.length) {
+      // The terms are plain text from the search index.
+      setCaseSensitive(false);
+      setUseRegex(false);
+      setSearchTerm(terms[0]);
+      pendingFind.current = { terms, editor, request: findRequest };
+      setRequestCount((count) => count + 1);
+    } else {
+      clearFindRequest();
+    }
+    open(false, false);
+  }, [findRequest, editor, isReady, activeEditor?.moduleId]);
 
   if (!isOpen || !editor || editor.isDestroyed) return null;
 
   const hasResults = (search?.count ?? 0) > 0;
 
   const close = () => {
+    pendingFind.current = null;
+    clearFindRequest();
     setIsOpen(false);
     if (!editor.isDestroyed) editor.commands.focus();
   };
@@ -162,14 +270,6 @@ export function FindBar() {
     }
   };
 
-  const goToNext = () => {
-    editor.commands.goToNextResult();
-    revealCurrentResult(editor);
-  };
-  const goToPrevious = () => {
-    editor.commands.goToPreviousResult();
-    revealCurrentResult(editor);
-  };
   // Replace moves on to the next match, which may be hidden.
   const replace = () => {
     editor.commands.replace();
@@ -179,17 +279,24 @@ export function FindBar() {
   return (
     <div className="absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 rounded-lg bg-popover p-1 text-popover-foreground shadow-md">
       <div className="flex items-center gap-1">
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Toggle replace"
-          aria-expanded={showReplace}
-          onClick={() => setShowReplace((value) => !value)}
+        <IconTooltip
+          label="Toggle replace"
+          hint={`${MOD_KEY}${ALT_KEY}F`}
+          side="bottom"
         >
-          {showReplace ? <ChevronDown /> : <ChevronRight />}
-        </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Toggle replace"
+            aria-expanded={showReplace}
+            onClick={() => setShowReplace((value) => !value)}
+          >
+            {showReplace ? <ChevronDown /> : <ChevronRight />}
+          </Button>
+        </IconTooltip>
         <input
           ref={searchInput}
+          aria-label="Find"
           className={inputClassName}
           placeholder="Find"
           value={searchTerm}
@@ -201,11 +308,22 @@ export function FindBar() {
             handleKeyDown(event, event.shiftKey ? goToPrevious : goToNext)
           }
         />
-        <span className="w-12 shrink-0 text-center text-xs text-muted-foreground tabular-nums">
+        <span
+          aria-hidden="true"
+          className="w-12 shrink-0 text-center text-xs text-muted-foreground tabular-nums"
+        >
           {searchTerm
             ? hasResults
               ? `${(search?.current ?? 0) + 1}/${search?.count}`
               : "0/0"
+            : ""}
+        </span>
+        {/* The count read out as it changes, in words rather than "3/10". */}
+        <span aria-live="polite" aria-atomic="true" className="sr-only">
+          {searchTerm
+            ? hasResults
+              ? `Match ${(search?.current ?? 0) + 1} of ${search?.count}`
+              : "No matches"
             : ""}
         </span>
         <ToggleButton
@@ -222,32 +340,43 @@ export function FindBar() {
         >
           <Regex />
         </ToggleButton>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Previous match"
-          disabled={!hasResults}
-          onClick={goToPrevious}
+        <IconTooltip
+          label="Previous match"
+          hint={`${MOD_KEY}${SHIFT_KEY}G`}
+          side="bottom"
         >
-          <ChevronUp />
-        </Button>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Next match"
-          disabled={!hasResults}
-          onClick={goToNext}
-        >
-          <ChevronDown />
-        </Button>
-        <Button size="icon-xs" variant="ghost" aria-label="Close" onClick={close}>
-          <X />
-        </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Previous match"
+            disabled={!hasResults}
+            onClick={goToPrevious}
+          >
+            <ChevronUp />
+          </Button>
+        </IconTooltip>
+        <IconTooltip label="Next match" hint={`${MOD_KEY}G`} side="bottom">
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Next match"
+            disabled={!hasResults}
+            onClick={goToNext}
+          >
+            <ChevronDown />
+          </Button>
+        </IconTooltip>
+        <IconTooltip label="Close" hint="Esc" side="bottom">
+          <Button size="icon-xs" variant="ghost" aria-label="Close" onClick={close}>
+            <X />
+          </Button>
+        </IconTooltip>
       </div>
       {showReplace && (
         <div className="flex items-center gap-1 pl-7">
           <input
             ref={replaceInput}
+            aria-label="Replace with"
             className={inputClassName}
             placeholder="Replace"
             value={replaceTerm}
@@ -259,24 +388,28 @@ export function FindBar() {
               handleKeyDown(event, replace)
             }
           />
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Replace"
-            disabled={!hasResults}
-            onClick={replace}
-          >
-            <Replace />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Replace all"
-            disabled={!hasResults}
-            onClick={() => editor.commands.replaceAll()}
-          >
-            <ReplaceAll />
-          </Button>
+          <IconTooltip label="Replace" hint="Enter" side="bottom">
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Replace"
+              disabled={!hasResults}
+              onClick={replace}
+            >
+              <Replace />
+            </Button>
+          </IconTooltip>
+          <IconTooltip label="Replace all" side="bottom">
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Replace all"
+              disabled={!hasResults}
+              onClick={() => editor.commands.replaceAll()}
+            >
+              <ReplaceAll />
+            </Button>
+          </IconTooltip>
         </div>
       )}
     </div>
@@ -295,15 +428,17 @@ function ToggleButton({
   children: ReactNode;
 }) {
   return (
-    <Button
-      size="icon-xs"
-      variant="ghost"
-      aria-label={label}
-      aria-pressed={pressed}
-      className={cn(pressed && "bg-primary/15 text-primary hover:bg-primary/20")}
-      onClick={onToggle}
-    >
-      {children}
-    </Button>
+    <IconTooltip label={label} side="bottom">
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        aria-label={label}
+        aria-pressed={pressed}
+        className={cn(pressed && "bg-primary/15 text-primary hover:bg-primary/20")}
+        onClick={onToggle}
+      >
+        {children}
+      </Button>
+    </IconTooltip>
   );
 }

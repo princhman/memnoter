@@ -7,6 +7,7 @@ import {
   Braces,
   Code,
   Italic,
+  Link,
   Radical,
   Sigma,
   Strikethrough,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
 import { cn, MOD_KEY } from "@/lib/utils";
 
 // Marks make no sense inside these; the menu stays hidden there. Inline
@@ -39,6 +41,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         underline: editor.isActive("underline"),
         strike: editor.isActive("strike"),
         code: editor.isActive("code"),
+        link: editor.isActive("link"),
         // Only a selection within one textblock converts to a math block.
         canMathBlock: editor.can().toggleMathBlock(),
         canMakeCard: editor.can().makeCloze(),
@@ -51,13 +54,15 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
   return (
     <BubbleMenu
       editor={editor}
-      pluginKey="textBubbleMenu"
+      pluginKey={TEXT_BUBBLE_MENU_KEY}
       // The default 250ms debounce makes the menu lag behind the selection.
       updateDelay={0}
       options={{ placement: "top", offset: 8, flip: true, shift: true }}
       shouldShow={({ editor, state, from, to }) => {
         const { selection } = state;
         if (!editor.isEditable || !editor.view.hasFocus()) return false;
+        // The link menu's URL field takes its place.
+        if (isLinkEditorOpen(state)) return false;
         if (!(selection instanceof TextSelection) || selection.empty) return false;
         if (!state.doc.textBetween(from, to).trim()) return false;
 
@@ -112,6 +117,14 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         onToggle={() => editor.chain().focus().toggleCode().run()}
       >
         <Code />
+      </MarkButton>
+      <MarkButton
+        label="Link"
+        hint={`${MOD_KEY}L`}
+        pressed={active.link}
+        onToggle={() => editor.commands.openLinkEditor()}
+      >
+        <Link />
       </MarkButton>
       <MarkButton
         label="Inline math"

@@ -1,3 +1,4 @@
+import { writeCards } from "@/lib/card-writes";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useCanGoBack, useRouter } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -114,7 +115,7 @@ function Review() {
           reviewTime,
           reviewTime - shownAt.current,
         );
-        await invoke("review_card", {
+        await writeCards("review_card", {
           cardId: card.id,
           expectedReps: card.reps,
           card: result.card,

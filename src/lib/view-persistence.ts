@@ -78,6 +78,14 @@ function restoreSelection(editor: Editor, view: ModuleView) {
   editor.view.dispatch(tr.setMeta("addToHistory", false));
 }
 
+let stopActiveRestore: (() => void) | undefined;
+
+// Ends the hold on the restored scroll position early, for code that moves the
+// view on the reader's behalf, like revealing a search match.
+export function stopScrollRestore() {
+  stopActiveRestore?.();
+}
+
 function restoreScroll(
   editor: Editor,
   container: HTMLElement,
@@ -100,6 +108,7 @@ function restoreScroll(
   const resizeObserver = new ResizeObserver(apply);
 
   const stop = () => {
+    if (stopActiveRestore === stop) stopActiveRestore = undefined;
     resizeObserver.disconnect();
     window.clearTimeout(holdTimeout);
     for (const event of USER_SCROLL_EVENTS) {
@@ -107,6 +116,8 @@ function restoreScroll(
     }
   };
 
+  stopActiveRestore?.();
+  stopActiveRestore = stop;
   apply();
   resizeObserver.observe(editor.view.dom);
   const holdTimeout = window.setTimeout(stop, ANCHOR_HOLD_MS);

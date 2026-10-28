@@ -1,3 +1,5 @@
+import { writeCards } from "@/lib/card-writes";
+import { saveQueue } from "@/lib/saves";
 import { useBlocker } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/react";
@@ -16,6 +18,17 @@ const pendingSyncs = new Set<Promise<unknown>>();
 export async function flushCardSyncs() {
   await Promise.all([...activeSyncs].map((sync) => sync()));
   await Promise.all([...pendingSyncs]);
+}
+
+// Palette actions share the same flush/error behavior as blocked navigation.
+export async function openReview(navigate: () => Promise<unknown>) {
+  try {
+    await flushCardSyncs();
+    await navigate();
+  } catch (error) {
+    window.alert("Could not open review. Please retry saving flashcards first.");
+    console.error("Failed to open review:", error);
+  }
 }
 
 export const dueCountsKey = ["cards", "due-counts"];
@@ -58,13 +71,14 @@ export function useCardSync(editor: Editor | null, moduleId: string, ready: bool
     const sync = (): Promise<void> => {
       window.clearTimeout(timeout);
       timeout = undefined;
+      if (saveQueue.isSuspended()) return Promise.resolve();
       const cards = snapshot();
       const payload = JSON.stringify(cards);
       if (payload === lastSent) return lastWrite;
       lastSent = payload;
       // Keep syncs in order so an older snapshot never lands last.
       const write = queue
-        .then(() => invoke<string[]>("sync_cards", { moduleId, cards }))
+        .then(() => writeCards<string[]>("sync_cards", { moduleId, cards }))
         .then((conflicts) => {
           // Blocks copied from another note get their own cards here.
           if (conflicts.length > 0 && !editor.isDestroyed) {
@@ -96,7 +110,7 @@ export function useCardSync(editor: Editor | null, moduleId: string, ready: bool
       // Conflict repair changes the document; persist its fresh ids as well.
       do {
         await sync();
-      } while (!editor.isDestroyed && JSON.stringify(snapshot()) !== lastSent);
+      } while (!saveQueue.isSuspended() && !editor.isDestroyed && JSON.stringify(snapshot()) !== lastSent);
     };
     activeSyncs.add(flush);
     void sync().catch(() => {});

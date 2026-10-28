@@ -193,6 +193,9 @@ body {
     max-width: calc(760px + 0.8rem);
     margin: 0 auto;
     padding-inline: 0.4rem;
+    /* Lets the last line scroll up to the middle of the window. Clicks here
+       put the caret at the end. */
+    padding-bottom: 50vh;
     color: var(--foreground);
     font-family: "Arrows", var(--font-sans);
     font-size: 1rem;

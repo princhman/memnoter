@@ -1,7 +1,7 @@
 import { Node, selectionToInsertionEnd } from "@tiptap/core";
 import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { renderKatex } from "./inline-math";
 import { createViewportRenderer } from "./viewport-renderer";
 
@@ -23,6 +23,29 @@ declare module "@tiptap/core" {
  * the source between  $$  markers, with the rendered formula as a live preview
  * underneath.
  */
+type TopBlock = { node: PMNode; pos: number };
+
+// The visible top-level blocks just above and below a height in the editor,
+// when it falls in the space between them.
+function gapAt(view: EditorView, y: number) {
+  const { doc } = view.state;
+  let above: TopBlock | null = null;
+  let pos = 0;
+  for (let index = 0; index < doc.childCount; index++) {
+    const node = doc.child(index);
+    const dom = view.nodeDOM(pos);
+    const rect = dom instanceof HTMLElement ? dom.getBoundingClientRect() : null;
+    // Folded and out-of-focus blocks take no space.
+    if (rect && rect.height) {
+      if (rect.top >= y) return above ? { above, below: { node, pos } } : null;
+      if (rect.bottom > y) return null;
+      above = { node, pos };
+    }
+    pos += node.nodeSize;
+  }
+  return null;
+}
+
 export const MathBlock = Node.create({
   name: "mathBlock",
   group: "block",
@@ -305,6 +328,30 @@ export const MathBlock = Node.create({
 
       Backspace: () => deleteToward(-1),
       Delete: () => deleteToward(1),
+
+      // Enter before a formula opens a line above it, which may have no
+      // other way in, e.g. right under a heading.
+      Enter: ({ editor }) => {
+        const { selection, schema } = editor.state;
+        const { $from } = selection;
+        if (
+          !selection.empty ||
+          $from.parent.type !== type ||
+          $from.parentOffset !== 0 ||
+          !$from.parent.content.size
+        ) {
+          return false;
+        }
+        const start = $from.before();
+        const index = $from.index(-1);
+        if (!$from.node(-1).canReplaceWith(index, index, schema.nodes.paragraph)) {
+          return false;
+        }
+        const tr = editor.state.tr.insert(start, schema.nodes.paragraph.create());
+        tr.setSelection(TextSelection.create(tr.doc, start + 1));
+        editor.view.dispatch(tr.scrollIntoView());
+        return true;
+      },
     };
   },
 
@@ -344,6 +391,35 @@ export const MathBlock = Node.create({
             const node = type.create(null, view.state.schema.text(tex));
             view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView());
             return true;
+          },
+
+          // Clicking the space between a formula and its neighbour puts the
+          // caret on a line there, opening one unless a paragraph is there.
+          handleDOMEvents: {
+            mousedown(view, event) {
+              if (event.button !== 0 || event.target !== view.dom) return false;
+              const gap = gapAt(view, event.clientY);
+              if (!gap || (gap.above.node.type !== type && gap.below.node.type !== type)) {
+                return false;
+              }
+              const { above, below } = gap;
+              const { paragraph } = view.state.schema.nodes;
+              let tr = view.state.tr;
+              if (below.node.type === paragraph && above.node.type === type) {
+                tr.setSelection(TextSelection.create(tr.doc, below.pos + 1));
+              } else if (above.node.type === paragraph && below.node.type === type) {
+                tr.setSelection(
+                  TextSelection.create(tr.doc, above.pos + above.node.nodeSize - 1),
+                );
+              } else {
+                tr = tr.insert(below.pos, paragraph.create());
+                tr.setSelection(TextSelection.create(tr.doc, below.pos + 1));
+              }
+              event.preventDefault();
+              view.dispatch(tr.scrollIntoView());
+              view.focus();
+              return true;
+            },
           },
 
           // Show the source of any block either end of the selection is in.

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Module } from "@/lib/types";
 import { dueCountsKey } from "@/lib/card-sync";
 import { forgetModule } from "@/lib/store";
+import { saveQueue } from "@/lib/saves";
 import {
   Dialog,
   DialogClose,
@@ -33,6 +34,7 @@ const DeleteModule = ({
     onSuccess: async () => {
       forgetModule(moduleId);
       void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+      saveQueue.drop(moduleId);
       if (
         router.state.matches.some(
           (match) =>

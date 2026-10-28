@@ -385,7 +385,7 @@ pub(crate) fn sync_cards(
     module_id: String,
     cards: Vec<CardContent>,
 ) -> CommandResult<Vec<String>> {
-    let mut conn = db.conn.lock().map_err(db_err)?;
+    let mut conn = db.lock()?;
     sync_module_cards(&mut conn, &module_id, &cards, Utc::now().timestamp_millis())
 }
 
@@ -395,13 +395,13 @@ pub(crate) fn due_cards(
     module_id: Option<String>,
     now: i64,
 ) -> CommandResult<Vec<Card>> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     query_due_cards(&conn, module_id.as_deref(), now)
 }
 
 #[tauri::command(async)]
 pub(crate) fn due_counts(db: tauri::State<'_, Db>, now: i64) -> CommandResult<Vec<DueCount>> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     query_due_counts(&conn, now)
 }
 
@@ -413,7 +413,7 @@ pub(crate) fn review_card(
     card: ReviewedCard,
     log: ReviewLog,
 ) -> CommandResult<()> {
-    let mut conn = db.conn.lock().map_err(db_err)?;
+    let mut conn = db.lock()?;
     save_review(&mut conn, &card_id, expected_reps, &card, &log)
 }
 
@@ -710,7 +710,7 @@ pub(crate) struct UnindexedModule {
 
 #[tauri::command(async)]
 pub(crate) fn unindexed_card_modules(db: tauri::State<Db>) -> CommandResult<Vec<UnindexedModule>> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     let mut stmt = conn.prepare("select id, name from modules where id not in (select module_id from card_indexed_modules) order by name").map_err(db_err)?;
     let rows = stmt
         .query_map([], |row| {
