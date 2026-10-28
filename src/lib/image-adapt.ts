@@ -124,24 +124,62 @@ export function adaptPixels(data: Uint8ClampedArray, width: number, height: numb
 // Large photos are scaled down: the result is only ever shown at editor width.
 const MAX_SIDE = 2560;
 
-export async function adaptImage(source: Blob, dark: boolean): Promise<Blob> {
+// Runs where it is called: in the worker, or on the main thread as a fallback.
+export async function adaptImageHere(source: Blob, dark: boolean): Promise<Blob> {
   const bitmap = await createImageBitmap(source);
   try {
     const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = new OffscreenCanvas(width, height);
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) throw new Error("Could not prepare the image");
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-    adaptPixels(pixels.data, canvas.width, canvas.height, dark);
+    context.drawImage(bitmap, 0, 0, width, height);
+    const pixels = context.getImageData(0, 0, width, height);
+    adaptPixels(pixels.data, width, height, dark);
     context.putImageData(pixels, 0, 0);
-    return await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not create the adapted image")), "image/png"));
+    return await canvas.convertToBlob({ type: "image/png" });
   } finally {
     bitmap.close();
   }
+}
+
+// Recoloring a large image takes tens of milliseconds, so it runs off the main
+// thread. The single worker also takes images one at a time.
+let worker: Worker | null | undefined;
+let nextJob = 0;
+const jobs = new Map<number, { resolve: (blob: Blob) => void; reject: (error: Error) => void }>();
+
+function adaptWorker() {
+  if (worker !== undefined) return worker;
+  try {
+    worker = new Worker(new URL("./image-adapt.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = ({ data }: MessageEvent<{ id: number; blob?: Blob; error?: string }>) => {
+      const job = jobs.get(data.id);
+      jobs.delete(data.id);
+      if (data.blob) job?.resolve(data.blob);
+      else job?.reject(new Error(data.error ?? "Could not adapt the image"));
+    };
+    // The worker failed to start: fail what it holds, adapt here from now on.
+    worker.onerror = () => {
+      worker = null;
+      for (const job of jobs.values()) job.reject(new Error("Could not start the image worker"));
+      jobs.clear();
+    };
+  } catch {
+    worker = null;
+  }
+  return worker;
+}
+
+function adaptImage(source: Blob, dark: boolean): Promise<Blob> {
+  const target = adaptWorker();
+  if (!target) return adaptImageHere(source, dark);
+  const id = nextJob++;
+  return new Promise((resolve, reject) => {
+    jobs.set(id, { resolve, reject });
+    target.postMessage({ id, source, dark });
+  });
 }
 
 // Adapted copies by image and theme. Sections mount and unmount as they scroll
@@ -171,10 +209,13 @@ export function adaptedUrl(image: string, dark: boolean, load: () => Promise<Blo
   };
   entry.pending.catch(() => cache.delete(key));
   cache.set(key, entry);
+  // Entries still being adapted stay: their URL does not exist yet to revoke,
+  // and an image is waiting for it. Once done, a later eviction can drop them.
   for (const [oldKey, old] of cache) {
     if (cache.size <= CACHE_SIZE) break;
+    if (!old.url) continue;
     cache.delete(oldKey);
-    if (old.url) URL.revokeObjectURL(old.url);
+    URL.revokeObjectURL(old.url);
   }
   return entry.pending;
 }

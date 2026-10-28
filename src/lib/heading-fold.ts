@@ -15,7 +15,13 @@ type HeadingFoldState = {
   // Yjs binding replaces the whole document when it renders, and ids are saved
   // with the note. Ids of deleted headings are kept so undo brings the fold back.
   folded: string[];
-  decorations: DecorationSet;
+  // Two sets: when a block holding decorations is edited, ProseMirror rebuilds
+  // its set from scratch, so the many hidden blocks stay apart from the toggles
+  // inside headings, where typing happens.
+  hidden: DecorationSet;
+  toggles: DecorationSet;
+  // What the decorations show, block by block; see foldLayout.
+  layout: string;
 };
 
 type FoldAction = { type: "toggle"; id: string } | { type: "set"; ids: string[] };
@@ -103,16 +109,49 @@ function createToggle(view: EditorView, getPos: () => number | undefined, folded
   return button;
 }
 
-function buildDecorations(doc: PMNode, folded: string[]): DecorationSet {
+// One token per decorated top-level block, without positions: a toggle (folded
+// or open, with its heading id) or a hidden block. Typing text leaves it as is,
+// so the decorations can be mapped rather than rebuilt, which is costly in long
+// notes: ProseMirror scans every decoration for each top-level block.
+function foldLayout(doc: PMNode, folded: string[]): string {
   const foldedSet = new Set(folded);
   const ends = sectionEnds(doc);
-  const decorations: Decoration[] = [];
+  const tokens: string[] = [];
+  let hiddenUntil = -1;
+
+  doc.forEach((node, pos) => {
+    const nodeEnd = pos + node.nodeSize;
+    if (pos < hiddenUntil) tokens.push("x");
+    const id = headingId(node);
+    if (id === null) return;
+    const end = ends.get(pos)!;
+    if (end <= nodeEnd) return;
+    const isFolded = foldedSet.has(id);
+    if (isFolded) hiddenUntil = Math.max(hiddenUntil, end);
+    tokens.push(`${isFolded ? "f" : "o"}${id}`);
+  });
+  return tokens.join(" ");
+}
+
+function buildState(doc: PMNode, folded: string[]): HeadingFoldState {
+  return {
+    folded,
+    ...buildDecorations(doc, folded),
+    layout: foldLayout(doc, folded),
+  };
+}
+
+function buildDecorations(doc: PMNode, folded: string[]) {
+  const foldedSet = new Set(folded);
+  const ends = sectionEnds(doc);
+  const hidden: Decoration[] = [];
+  const toggles: Decoration[] = [];
   let hiddenUntil = -1;
 
   doc.forEach((node, pos) => {
     const nodeEnd = pos + node.nodeSize;
     if (pos < hiddenUntil) {
-      decorations.push(Decoration.node(pos, nodeEnd, { class: "section-hidden" }));
+      hidden.push(Decoration.node(pos, nodeEnd, { class: "section-hidden" }));
     }
     const id = headingId(node);
     // An empty heading has no id until it gets text.
@@ -124,7 +163,7 @@ function buildDecorations(doc: PMNode, folded: string[]): DecorationSet {
 
     const isFolded = foldedSet.has(id);
     if (isFolded) hiddenUntil = Math.max(hiddenUntil, end);
-    decorations.push(
+    toggles.push(
       Decoration.widget(
         pos + 1,
         (view, getPos) => createToggle(view, getPos, isFolded),
@@ -138,7 +177,10 @@ function buildDecorations(doc: PMNode, folded: string[]): DecorationSet {
     );
   });
 
-  return DecorationSet.create(doc, decorations);
+  return {
+    hidden: DecorationSet.create(doc, hidden),
+    toggles: DecorationSet.create(doc, toggles),
+  };
 }
 
 function applyAction(folded: string[], action: FoldAction): string[] {
@@ -193,20 +235,28 @@ export const HeadingFold = Extension.create({
       new Plugin<HeadingFoldState>({
         key: headingFoldKey,
         state: {
-          init: (_, state) => ({
-            folded: [],
-            decorations: buildDecorations(state.doc, []),
-          }),
+          init: (_, state) => buildState(state.doc, []),
           apply(tr, value) {
             const action = tr.getMeta(headingFoldKey) as FoldAction | undefined;
             if (!action && !tr.docChanged) return value;
 
             const folded = action ? applyAction(value.folded, action) : value.folded;
-            return { folded, decorations: buildDecorations(tr.doc, folded) };
+            const layout = foldLayout(tr.doc, folded);
+            if (layout === value.layout) {
+              // The Yjs binding replaces the whole document when it renders,
+              // which drops mapped decorations; rebuild if any went missing.
+              const hidden = value.hidden.map(tr.mapping, tr.doc);
+              const toggles = value.toggles.map(tr.mapping, tr.doc);
+              const expected = layout ? layout.split(" ").length : 0;
+              if (hidden.find().length + toggles.find().length === expected) {
+                return { folded, hidden, toggles, layout };
+              }
+            }
+            return buildState(tr.doc, folded);
           },
         },
         props: {
-          decorations: (state) => headingFoldKey.getState(state)?.decorations,
+          decorations: (state) => headingFoldKey.getState(state)?.hidden,
         },
         // Unfold any section the caret moves into, e.g. with the arrow keys
         // or a search match, so it never sits in hidden content. Yjs renders
@@ -233,6 +283,11 @@ export const HeadingFold = Extension.create({
             type: "set",
             ids: folded.filter((id) => !revealed.includes(id)),
           } satisfies FoldAction);
+        },
+      }),
+      new Plugin({
+        props: {
+          decorations: (state) => headingFoldKey.getState(state)?.toggles,
         },
       }),
     ];

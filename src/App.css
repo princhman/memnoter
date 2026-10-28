@@ -414,6 +414,13 @@ body {
     display: none;
 }
 
+/* Section focus marks only its heading and the block after the section. */
+.tiptap.section-focused > :not(.section-focus-start, .section-focus-start ~ *),
+.tiptap.section-focused > .section-focus-end,
+.tiptap.section-focused > .section-focus-end ~ * {
+    display: none;
+}
+
 /* Fold toggles sit in the gutter left of the heading so they never shift its text. */
 .tiptap :is(h1, h2, h3, h4, h5, h6) {
     position: relative;

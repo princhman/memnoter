@@ -210,7 +210,21 @@ function SavedImageView(props: NodeViewProps) {
     const key = fileId ?? src;
     if (img.src === (adaptive ? cachedAdaptedUrl(key, dark) : src)) return;
     let cancelled = false;
+    let stopWaiting: (() => void) | undefined;
     void (async () => {
+      // Recoloring is costly, so images far off screen wait until they come close.
+      if (adaptive) {
+        await new Promise<void>((resolve) => {
+          const observer = new IntersectionObserver((entries) => {
+            if (!entries.some((entry) => entry.isIntersecting)) return;
+            observer.disconnect();
+            resolve();
+          }, { rootMargin: "1000px 0px" });
+          observer.observe(img);
+          stopWaiting = () => observer.disconnect();
+        });
+      }
+      if (cancelled) return;
       const next = adaptive
         ? await adaptedUrl(key, dark, async () => fileId ? readImage(fileId) : (await fetch(src)).blob())
         : src;
@@ -223,7 +237,10 @@ function SavedImageView(props: NodeViewProps) {
       console.error("Failed to adapt image:", error);
       if (!cancelled) swapImage(img, src);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      stopWaiting?.();
+    };
   }, [src, adaptive, dark, node.attrs.fileId, readImage]);
 
   const resizeTo = (fraction: number) => {

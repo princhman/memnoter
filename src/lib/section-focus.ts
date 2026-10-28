@@ -103,6 +103,33 @@ export function getSectionRange(
   return { from: headingPos, to: sectionEnd };
 }
 
+const sectionMarksKey = new PluginKey<DecorationSet>("section-focus-marks");
+
+// Marks only the focused heading and the first block after its section; CSS
+// hides everything outside them. A decoration per hidden block would cost
+// time on every keystroke in long notes, as ProseMirror checks each top-level
+// decoration against each block.
+function buildSectionMarks(state: EditorState): DecorationSet {
+  const range = getFocusedSectionRange(state);
+  if (!range) return DecorationSet.empty;
+
+  const heading = state.doc.nodeAt(range.from)!;
+  const decorations = [
+    Decoration.node(range.from, range.from + heading.nodeSize, {
+      class: "section-focus-start",
+    }),
+  ];
+  const after = state.doc.nodeAt(range.to);
+  if (after) {
+    decorations.push(
+      Decoration.node(range.to, range.to + after.nodeSize, {
+        class: "section-focus-end",
+      }),
+    );
+  }
+  return DecorationSet.create(state.doc, decorations);
+}
+
 export const SectionFocus = Extension.create({
   name: "section-focus",
   addCommands() {
@@ -156,31 +183,22 @@ export const SectionFocus = Extension.create({
             return currentPosition;
           },
         },
-
+      }),
+      new Plugin<DecorationSet>({
+        key: sectionMarksKey,
+        state: {
+          init: (_, state) => buildSectionMarks(state),
+          apply: (transaction, value, _oldState, newState) =>
+            transaction.docChanged || transaction.getMeta(sectionFocusKey)
+              ? buildSectionMarks(newState)
+              : value,
+        },
         props: {
-          decorations(state: EditorState) {
-            const range = getFocusedSectionRange(state);
-            if (!range) return DecorationSet.empty;
-
-            const { from: headingPos, to: sectionEnd } = range;
-            const decorations: Decoration[] = [];
-
-            state.doc.forEach((node, pos) => {
-              const nodeEnd = pos + node.nodeSize;
-              const isOutsideSection =
-                nodeEnd <= headingPos || pos >= sectionEnd;
-
-              if (isOutsideSection) {
-                decorations.push(
-                  Decoration.node(pos, nodeEnd, {
-                    class: "section-hidden",
-                  }),
-                );
-              }
-            });
-
-            return DecorationSet.create(state.doc, decorations);
-          },
+          decorations: (state) => sectionMarksKey.getState(state),
+          attributes: (state): Record<string, string> =>
+            sectionMarksKey.getState(state) === DecorationSet.empty
+              ? {}
+              : { class: "section-focused" },
         },
       }),
     ];

@@ -30,20 +30,29 @@ function readScrollAnchor(
   container: HTMLElement,
 ): ScrollAnchor | undefined {
   const top = viewportTop(container);
-  let anchor: ScrollAnchor | undefined;
+  const { view } = editor;
+  const { doc } = view.state;
+  const box = view.dom.getBoundingClientRect();
+  const y = Math.max(top, box.top) + 1;
+  if (y >= box.bottom || doc.childCount === 0) return undefined;
 
-  editor.state.doc.forEach((_, pos) => {
-    if (anchor) return;
-    const dom = editor.view.nodeDOM(pos);
-    if (!(dom instanceof HTMLElement)) return;
+  // Start from the block under the viewport's top edge: scanning from the
+  // start of the note would measure every block above it, on every save.
+  const hit = view.posAtCoords({ left: box.left + box.width / 2, top: y });
+  const $hit = doc.resolve(hit?.pos ?? 0);
+  const first = Math.max(0, Math.min($hit.index(0), doc.childCount - 1) - 1);
+
+  for (let index = first; index < doc.childCount; index++) {
+    const pos = $hit.posAtIndex(index, 0);
+    const dom = view.nodeDOM(pos);
+    if (!(dom instanceof HTMLElement)) continue;
 
     const rect = dom.getBoundingClientRect();
     // Folded and out-of-focus blocks are not laid out.
-    if (rect.height === 0) return;
-    if (rect.bottom > top) anchor = { pos, offset: rect.top - top };
-  });
-
-  return anchor;
+    if (rect.height === 0) continue;
+    if (rect.bottom > top) return { pos, offset: rect.top - top };
+  }
+  return undefined;
 }
 
 function anchorElement(editor: Editor, anchor: ScrollAnchor) {
