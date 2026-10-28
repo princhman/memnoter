@@ -15,16 +15,39 @@ import Suggestion, {
 } from "@tiptap/suggestion";
 import { cn, MOD_KEY } from "@/lib/utils";
 
+export type SlashCommandOptions = {
+  // Saves picked images and inserts them at a position, as pasting does.
+  insertImages: (editor: Editor, files: File[], position: number) => void;
+};
+
 type SlashItem = {
   group: string;
   title: string;
   keywords: string[];
   hint: string;
-  run: (editor: Editor, range: Range) => void;
+  run: (editor: Editor, range: Range, options: SlashCommandOptions) => void;
 };
 
 const ALT_KEY = MOD_KEY === "⌘" ? "⌥" : "Alt+";
+const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
 const shortcut = (key: string) => `${MOD_KEY}${ALT_KEY}${key}`;
+const shiftShortcut = (key: string) => `${MOD_KEY}${SHIFT_KEY}${key}`;
+
+export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+function pickImages(onPick: (files: File[]) => void) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = IMAGE_TYPES.join(",");
+  input.multiple = true;
+  input.addEventListener("change", () => {
+    const files = Array.from(input.files ?? []).filter((file) =>
+      IMAGE_TYPES.includes(file.type),
+    );
+    if (files.length) onPick(files);
+  });
+  input.click();
+}
 
 // Listed in display order; a group label shows above its first item.
 const ITEMS: SlashItem[] = [
@@ -60,6 +83,50 @@ const ITEMS: SlashItem[] = [
     }),
   ),
   {
+    group: "Blocks",
+    title: "Bullet list",
+    keywords: ["list", "bullet", "unordered", "ul", "-"],
+    hint: shiftShortcut("8"),
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).toggleBulletList().run(),
+  },
+  {
+    group: "Blocks",
+    title: "Numbered list",
+    keywords: ["list", "numbered", "ordered", "ol", "1."],
+    hint: shiftShortcut("7"),
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).toggleOrderedList().run(),
+  },
+  {
+    group: "Blocks",
+    title: "Code block",
+    keywords: ["code", "pre", "snippet", "```"],
+    hint: shortcut("C"),
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).toggleCodeBlock().run(),
+  },
+  {
+    group: "Blocks",
+    title: "Quote",
+    keywords: ["quote", "blockquote", "citation", ">"],
+    hint: shiftShortcut("B"),
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).toggleBlockquote().run(),
+  },
+  {
+    group: "Blocks",
+    title: "Image",
+    keywords: ["image", "picture", "photo", "upload", "file"],
+    hint: "",
+    run: (editor, range, options) => {
+      editor.chain().focus().deleteRange(range).run();
+      pickImages((files) =>
+        options.insertImages(editor, files, editor.state.selection.from),
+      );
+    },
+  },
+  {
     group: "Math",
     title: "Inline math",
     keywords: ["math", "equation", "latex", "formula", "$"],
@@ -90,12 +157,17 @@ function filterItems(query: string) {
 // Typing  /  in raw text such as formulas or code is literal.
 const RAW_TEXT_NODES = new Set(["codeBlock", "mathBlock", "inlineMath"]);
 
-export const SlashCommand = Extension.create({
+export const SlashCommand = Extension.create<SlashCommandOptions>({
   name: "slash-command",
   // Arrow keys and Enter go to the open menu before other extensions.
   priority: 200,
 
+  addOptions() {
+    return { insertImages: () => {} };
+  },
+
   addProseMirrorPlugins() {
+    const options = this.options;
     return [
       Suggestion<SlashItem, SlashItem>({
         editor: this.editor,
@@ -109,7 +181,7 @@ export const SlashCommand = Extension.create({
           }
           return true;
         },
-        command: ({ editor, range, props }) => props.run(editor, range),
+        command: ({ editor, range, props }) => props.run(editor, range, options),
         render: () => {
           let renderer: ReactRenderer<SlashMenuHandle, SlashMenuProps> | null =
             null;
@@ -218,9 +290,11 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
               onClick={() => command(item)}
             >
               <span className="truncate">{item.title}</span>
-              <kbd className="shrink-0 font-sans text-xs text-muted-foreground">
-                {item.hint}
-              </kbd>
+              {item.hint && (
+                <kbd className="shrink-0 font-sans text-xs text-muted-foreground">
+                  {item.hint}
+                </kbd>
+              )}
             </button>
           </Fragment>
         ))}

@@ -12,7 +12,7 @@ import { TextBubbleMenu } from "@/components/text-bubble-menu";
 import { SectionFocus } from "@/lib/section-focus";
 import { Sections } from "@/lib/sections";
 import { HeadingFold } from "@/lib/heading-fold";
-import { SlashCommand } from "@/components/slash-menu";
+import { IMAGE_TYPES, SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { usePersistedView } from "@/lib/view-persistence";
@@ -233,7 +233,11 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         SectionFocus,
         Sections,
         HeadingFold,
-        SlashCommand,
+        SlashCommand.configure({
+          insertImages: (currentEditor, files, position) => {
+            void insertImages(currentEditor, files, position);
+          },
+        }),
         LatexSuggest,
         TocExtension.configure({
           scrollParent: () =>
@@ -262,12 +266,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           },
         }),
         FileHandler.configure({
-          allowedMimeTypes: [
-            "image/png",
-            "image/jpeg",
-            "image/webp",
-            "image/gif",
-          ],
+          allowedMimeTypes: IMAGE_TYPES,
           consumePasteEvent: true,
           onPaste: (currentEditor, files) => {
             void insertImages(
