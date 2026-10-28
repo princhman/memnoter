@@ -174,17 +174,33 @@ with confirmation or transform geometry; they must not reuse unchanged masks on
 unrelated pixels.
 
 Review resolves the managed file id through Tauri and the asset protocol, rather
-than saving URLs in cards. Copies can resolve/read the original module's managed
-asset. Missing files show a useful unavailable message in notes/review. Startup
-cleanup retains assets referenced by **any stored occlusion face, including
-soft-deleted cards**, so undo/history can recover them. This deliberately retains
-some disk space until source-module deletion; no history asset garbage collector
-is included. Source-module deletion retires all cards referencing its assets,
-including copies in other modules, before removing the files. A later sync cannot
-revive cards whose asset row is gone. Copied images are shared assets, so deleting
-the owning module also makes copies unavailable; their note must be repaired or
-the image removed. A physically missing file whose row remains is shown as
-unavailable rather than silently pretending it rendered.
+than saving URLs in cards. Copies share the managed asset. Before cleanup or
+module deletion, Rust replays **all persisted notes**, including unopened notes,
+with Yrs (Yjs v1 updates), and records foreign `fileId` references in the durable
+`shared_image_refs` table. This covers ordinary block/inline images before masks
+or card indexing, nested nodes, and incremental saved updates. The database lock
+serializes the scan and deletion against saves. Existing owner-snapshot revision
+checks still reject stale cleanup requests. Compaction records leases from every
+persisted intermediate revision before discarding updates, in the same transaction
+as snapshot replacement, and checks the replacement before committing.
+
+A foreign-note lease lasts until that note is deleted, including after image
+removal, crop, undo/redo, restart and compaction. Cleanup also retains **any stored
+occlusion face, including soft-deleted cards**, as before. These conservative
+policies preserve recoverable history and may retain unused disk space; no history
+asset garbage collector is included. Deleting the uploading note transfers shared
+assets to a surviving referencing note instead of breaking destination copies or
+retiring their cards. Repeated owner deletion transfers again, and deleting the
+last referencing note removes its managed files. Unshared unused uploads still
+use normal startup cleanup. Invalid or incomplete persisted Yjs notes prevent
+cleanup and module deletion until repaired, rather than guessing which files are
+safe. Missing physical files still display as unavailable.
+
+Limitations: scans replay note histories under the database lock and may delay
+writes in a large library. Only successfully persisted content can establish a
+reference; navigation must flush pending saves as before. References already
+removed and compacted before this migration cannot be reconstructed, and already
+deleted image bytes cannot be recovered. New leases protect future compaction.
 
 Phase 5 verification uses only synthetic editor documents and temporary SQLite
 fixtures. `pnpm build`, `pnpm test` (38 tests), `cargo test` (14 tests),
@@ -205,6 +221,7 @@ Manual macOS QA before release:
   then undo it. Confirm no silent geometry misalignment or unexpected retirement.
 - Exercise module/global review, immediate review after save, unavailable image
   UI, cleanup after relaunch, and deletion of a source module with copied masks.
-  Verify unavailable copies have retired cards, with no stale grading accepted.
+  Verify destination copies and their cards remain available, and deleting the
+  final referencing note reclaims the shared file.
 
 Export and AI remain out of scope. No push or PR is part of this phase handoff.

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 use uuid::Uuid;
 
+mod asset_refs;
 mod cards;
 use cards::migrate_flashcards;
 
@@ -190,6 +191,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
     )
     .map_err(db_err)?;
     migrate_flashcards(&conn)?;
+    asset_refs::migrate(&conn)?;
 
     Ok(Db {
         conn: Mutex::new(conn),
@@ -213,8 +215,8 @@ mod tests {
                 let conn = db.conn.lock().unwrap();
                 conn.execute_batch(
                     "insert into modules values ('note', 'Note'), ('other', 'Other');
-                     insert into contents values ('note', X'01'), ('other', X'02');
-                     insert into contents_updates values (7, 'note', X'03', 0);",
+                     insert into contents values ('note', X'0000'), ('other', X'0000');
+                     insert into contents_updates values (7, 'note', X'0000', 0);",
                 )
                 .unwrap();
             }
@@ -222,7 +224,10 @@ mod tests {
         }
 
         fn file(&self, module: &str) -> String {
-            let id = Uuid::new_v4().to_string();
+            self.file_with_id(module, Uuid::new_v4().to_string())
+        }
+
+        fn file_with_id(&self, module: &str, id: String) -> String {
             let path = self.dir.join("files").join(&id);
             std::fs::write(&path, b"image bytes").unwrap();
             self.db
@@ -305,7 +310,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(other_state, vec![2]);
+        assert_eq!(other_state, vec![0, 0]);
         drop(conn);
         assert!(!files_dir.join(image).exists());
         assert!(files_dir.join(&other_image).exists());
@@ -319,7 +324,7 @@ mod tests {
         let retained = f.file("note");
         let other = f.file("other");
         assert_eq!(
-            f.cleanup(&[unused.clone(), other.clone()], &[1], 7),
+            f.cleanup(&[unused.clone(), other.clone()], &[0, 0], 7),
             vec![unused.clone()]
         );
         assert!(!f.row_exists(&unused));
@@ -331,11 +336,11 @@ mod tests {
                 b"image bytes"
             );
         }
-        assert!(f.cleanup(&[unused], &[1], 7).is_empty());
+        assert!(f.cleanup(&[unused], &[0, 0], 7).is_empty());
     }
 
     #[test]
-    fn card_assets_survive_cleanup_and_source_deletion_retires_foreign_cards() {
+    fn card_assets_survive_cleanup_and_source_deletion_preserves_foreign_cards() {
         let f = Fixture::new();
         let id = f.file("note");
         let face = serde_json::json!({"version":1,"fileId":id,"imageId":"image","targetMaskId":"mask","masks":[]}).to_string();
@@ -348,22 +353,22 @@ mod tests {
             )
             .unwrap();
         }
-        assert!(f.cleanup(std::slice::from_ref(&id), &[1], 7).is_empty());
+        assert!(f.cleanup(std::slice::from_ref(&id), &[0, 0], 7).is_empty());
         assert!(f.row_exists(&id));
         f.db.conn
             .lock()
             .unwrap()
             .execute("update cards set deleted_at = 1", [])
             .unwrap();
-        assert!(f.cleanup(std::slice::from_ref(&id), &[1], 7).is_empty());
+        assert!(f.cleanup(std::slice::from_ref(&id), &[0, 0], 7).is_empty());
         f.db.conn
             .lock()
             .unwrap()
             .execute("update cards set deleted_at = null", [])
             .unwrap();
         delete_module_data(&mut f.db.conn.lock().unwrap(), &f.dir.join("files"), "note").unwrap();
-        assert!(!f.row_exists(&id));
-        assert!(!f.dir.join("files").join(id).exists());
+        assert!(f.row_exists(&id));
+        assert!(f.dir.join("files").join(id).exists());
         let retired: bool =
             f.db.conn
                 .lock()
@@ -374,14 +379,175 @@ mod tests {
                     |r| r.get(0),
                 )
                 .unwrap();
-        assert!(retired);
+        assert!(!retired);
+    }
+
+    #[test]
+    fn unopened_plain_copy_survives_owner_cleanup_after_restart() {
+        let f = Fixture::new();
+        // Real Yjs bytes guard the JS/Rust storage protocol, including nested
+        // inline masked images and an ordinary image with no card face.
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/shared-images-yjs.json"))
+                .unwrap();
+        let id = f.file_with_id("note", fixture["fileId"].as_str().unwrap().to_owned());
+        let state: Vec<u8> = serde_json::from_value(fixture["state"].clone()).unwrap();
+        let updates: Vec<Vec<u8>> = serde_json::from_value(fixture["updates"].clone()).unwrap();
+        {
+            let conn = f.db.conn.lock().unwrap();
+            conn.execute(
+                "update contents set state = ?1 where module_id = 'other'",
+                [state],
+            )
+            .unwrap();
+            for (i, bytes) in updates.iter().enumerate() {
+                conn.execute(
+                    "insert into contents_updates values (?1, 'other', ?2, 0)",
+                    params![8 + i as i64, bytes],
+                )
+                .unwrap();
+            }
+        }
+        // Reopen storage: no React document or card face has ever indexed B.
+        let restarted = open_db(&f.dir).unwrap();
+        assert!(cleanup_unused_files(
+            &restarted.conn.lock().unwrap(),
+            &f.dir.join("files"),
+            "note",
+            std::slice::from_ref(&id),
+            &[0, 0],
+            7
+        )
+        .unwrap()
+        .is_empty());
+        assert!(f.dir.join("files").join(&id).is_file());
+        assert!(f.row_exists(&id));
+        delete_module_data(
+            &mut restarted.conn.lock().unwrap(),
+            &f.dir.join("files"),
+            "note",
+        )
+        .unwrap();
+        assert!(f.row_exists(&id));
+        assert!(f.dir.join("files").join(&id).is_file());
+        delete_module_data(
+            &mut restarted.conn.lock().unwrap(),
+            &f.dir.join("files"),
+            "other",
+        )
+        .unwrap();
+        assert!(!f.row_exists(&id));
+        assert!(!f.dir.join("files").join(&id).exists());
+    }
+
+    #[test]
+    fn copied_image_lease_survives_removal_compaction_and_restart() {
+        use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
+        let f = Fixture::new();
+        let id = f.file("note");
+        let doc = yrs::Doc::new();
+        let root = doc.get_or_insert_xml_fragment("default");
+        let mut txn = doc.transact_mut();
+        let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("inlineImage"));
+        image.insert_attribute(&mut txn, "fileId", id.clone());
+        let inserted = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+        drop(txn);
+        root.remove_range(&mut doc.transact_mut(), 0, 1);
+        let removed = doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        {
+            let mut conn = f.db.conn.lock().unwrap();
+            conn.execute(
+                "insert into contents_updates values (8, 'other', ?1, 0)",
+                [&inserted],
+            )
+            .unwrap();
+            conn.execute(
+                "insert into contents_updates values (9, 'other', ?1, 0)",
+                [&removed],
+            )
+            .unwrap();
+            compact_content(&mut conn, "other", &removed, 9).unwrap();
+            let pending: i64 = conn
+                .query_row(
+                    "select count(*) from contents_updates where module_id='other'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(pending, 0);
+        }
+        let restarted = open_db(&f.dir).unwrap();
+        assert!(cleanup_unused_files(
+            &restarted.conn.lock().unwrap(),
+            &f.dir.join("files"),
+            "note",
+            std::slice::from_ref(&id),
+            &[0, 0],
+            7
+        )
+        .unwrap()
+        .is_empty());
+        // The persisted destination tree is empty, but its undo lease survives.
+        delete_module_data(
+            &mut restarted.conn.lock().unwrap(),
+            &f.dir.join("files"),
+            "note",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(f.dir.join("files").join(&id)).unwrap(),
+            b"image bytes"
+        );
+        delete_module_data(
+            &mut restarted.conn.lock().unwrap(),
+            &f.dir.join("files"),
+            "other",
+        )
+        .unwrap();
+        assert!(!f.row_exists(&id));
+    }
+
+    #[test]
+    fn invalid_or_incomplete_foreign_notes_cannot_authorize_destruction() {
+        use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
+        let f = Fixture::new();
+        let id = f.file("note");
+        let doc = yrs::Doc::new();
+        let root = doc.get_or_insert_xml_fragment("default");
+        let mut txn = doc.transact_mut();
+        let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("image"));
+        let before = txn.state_vector();
+        image.insert_attribute(&mut txn, "fileId", id.clone());
+        let partial = txn.encode_state_as_update_v1(&before);
+        for bytes in [vec![255], partial] {
+            let mut conn = f.db.conn.lock().unwrap();
+            conn.execute(
+                "update contents set state = ?1 where module_id='other'",
+                [bytes],
+            )
+            .unwrap();
+            assert!(cleanup_unused_files(
+                &conn,
+                &f.dir.join("files"),
+                "note",
+                std::slice::from_ref(&id),
+                &[0, 0],
+                7
+            )
+            .is_err());
+            assert!(delete_module_data(&mut conn, &f.dir.join("files"), "note").is_err());
+            assert!(f.dir.join("files").join(&id).is_file());
+        }
+        assert!(f.row_exists(&id));
     }
 
     #[test]
     fn stale_snapshots_never_remove_files() {
         let f = Fixture::new();
         let id = f.file("note");
-        for (state, update_id) in [(vec![0], 7), (vec![1], 6)] {
+        for (state, update_id) in [(vec![0], 7), (vec![0, 0], 6)] {
             assert!(f
                 .cleanup(std::slice::from_ref(&id), &state, update_id)
                 .is_empty());
@@ -398,11 +564,11 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         // A directory at the file path reliably fails remove_file, even as root.
         std::fs::create_dir(&path).unwrap();
-        assert!(f.cleanup(std::slice::from_ref(&id), &[1], 7).is_empty());
+        assert!(f.cleanup(std::slice::from_ref(&id), &[0, 0], 7).is_empty());
         assert!(f.row_exists(&id));
         std::fs::remove_dir(&path).unwrap();
         assert_eq!(
-            f.cleanup(std::slice::from_ref(&id), &[1], 7),
+            f.cleanup(std::slice::from_ref(&id), &[0, 0], 7),
             vec![id.clone()]
         );
         assert!(!f.row_exists(&id));
@@ -520,6 +686,26 @@ fn delete_module_data(
     module_id: &str,
 ) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
+    asset_refs::retain_all(&tx)?;
+    // Stored faces (including retired ones) also retain assets. Transfer shared
+    // files to a surviving note; deleting the uploader must not break copies.
+    tx.execute(
+        "insert or ignore into shared_image_refs(module_id, file_id)
+         select cards.module_id, files.id from cards join files
+         on files.id = json_extract(cards.front, '$.fileId')
+         or files.id = json_extract(cards.back, '$.fileId')
+         where cards.kind = 'occlusion' and cards.module_id <> ?1",
+        [module_id],
+    )
+    .map_err(db_err)?;
+    tx.execute(
+        "update files set module_id = (select min(module_id) from shared_image_refs
+         where file_id = files.id and module_id <> ?1)
+         where module_id = ?1 and exists(select 1 from shared_image_refs
+         where file_id = files.id and module_id <> ?1)",
+        [module_id],
+    )
+    .map_err(db_err)?;
     let files = {
         let mut stmt = tx
             .prepare("select id, path from files where module_id = ?1")
@@ -536,14 +722,6 @@ fn delete_module_data(
             return Err("Refusing to delete a file outside managed storage".into());
         }
     }
-    tx.execute(
-        "update cards set deleted_at = coalesce(deleted_at, ?2)
-        where kind = 'occlusion' and (json_extract(front, '$.fileId') in
-        (select id from files where module_id = ?1) or json_extract(back, '$.fileId') in
-        (select id from files where module_id = ?1))",
-        params![module_id, Utc::now().timestamp_millis()],
-    )
-    .map_err(db_err)?;
     tx.execute("delete from files where module_id = ?1", [module_id])
         .map_err(db_err)?;
     // Foreign keys cascade to the document snapshot and all pending updates.
@@ -653,21 +831,32 @@ fn save_compaction(
     new_state: Vec<u8>,
     update_id: i64,
 ) -> CommandResult<()> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let mut conn = db.conn.lock().map_err(db_err)?;
+    compact_content(&mut conn, &module_id, &new_state, update_id)
+}
 
-    conn.execute(
+fn compact_content(
+    conn: &mut Connection,
+    module_id: &str,
+    new_state: &[u8],
+    update_id: i64,
+) -> CommandResult<()> {
+    let tx = conn.transaction().map_err(db_err)?;
+    // Keep leases and snapshot replacement atomic. Capture intermediate saved
+    // revisions before discarding them, then validate/capture the new snapshot.
+    asset_refs::retain_module(&tx, module_id)?;
+    tx.execute(
         "update contents set state = ?1 where module_id = ?2",
         params![new_state, module_id],
     )
     .map_err(db_err)?;
-
-    conn.execute(
+    tx.execute(
         "delete from contents_updates where module_id = ?1 and id <= ?2",
         params![module_id, update_id],
     )
     .map_err(db_err)?;
-
-    Ok(())
+    asset_refs::retain_module(&tx, module_id)?;
+    tx.commit().map_err(db_err)
 }
 
 #[tauri::command(async)]
@@ -806,12 +995,15 @@ fn cleanup_unused_files(
         return Ok(Vec::new());
     }
 
+    // An invalid/incomplete persisted note cannot authorize asset destruction.
+    asset_refs::retain_all(conn)?;
     let mut deleted = Vec::new();
     for id in file_ids {
         // Retain even retired faces: undo restores their ids/history and assets.
         let referenced: bool = conn
             .query_one(
-                "select exists(select 1 from cards where kind = 'occlusion'
+                "select exists(select 1 from shared_image_refs where file_id = ?1)
+             or exists(select 1 from cards where kind = 'occlusion'
              and (json_extract(front, '$.fileId') = ?1 or json_extract(back, '$.fileId') = ?1))",
                 [id],
                 |row| row.get(0),
