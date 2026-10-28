@@ -30,6 +30,14 @@ export function LinkMenu({ editor }: { editor: Editor | null }) {
     },
   });
 
+  // The menu is shown before its content renders; place it for the content.
+  const editing = state?.editing;
+  const href = state?.href;
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dispatch(editor.state.tr.setMeta(LINK_MENU_KEY, "updatePosition"));
+  }, [editor, editing, href]);
+
   if (!editor || !state) return null;
 
   const close = () => {
