@@ -24,6 +24,9 @@ import { scrollCurrentResultIntoView } from "@/lib/find-highlights";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+// Dispatched on window to open the bar, e.g. by the app menu.
+export const FIND_EVENT = "memnoter:find";
+
 const inputClassName =
   "h-7 min-w-0 flex-1 rounded-md bg-input/50 px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-input/30";
 
@@ -111,34 +114,64 @@ export function FindBar() {
     revealCurrentResult(editor);
   }, [editor, isReady, search?.applied]);
 
+  const goToNext = () => {
+    if (!editor || editor.isDestroyed) return;
+    editor.commands.goToNextResult();
+    revealCurrentResult(editor);
+  };
+  const goToPrevious = () => {
+    if (!editor || editor.isDestroyed) return;
+    editor.commands.goToPreviousResult();
+    revealCurrentResult(editor);
+  };
+
+  const open = (withReplace: boolean) => {
+    // Seed the search with a short single-line selection, like most editors.
+    if (editor && !editor.isDestroyed) {
+      const { from, to, empty } = editor.state.selection;
+      const selected = empty ? "" : editor.state.doc.textBetween(from, to);
+      if (selected && !selected.includes("\n") && selected.length <= 200) {
+        setSearchTerm(selected);
+      }
+    }
+
+    if (withReplace) setShowReplace(true);
+    setIsOpen(true);
+    requestAnimationFrame(() => {
+      const input = withReplace ? replaceInput.current : searchInput.current;
+      input?.focus();
+      input?.select();
+    });
+  };
+
+  // Rebound every render, so the handlers see the current state.
+  const handlers = useRef({ open, goToNext, goToPrevious });
+  handlers.current = { open, goToNext, goToPrevious };
+  const canStep = isOpen && !!searchTerm;
+
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.code !== "KeyF")
-        return;
-      event.preventDefault();
-
-      // Seed the search with a short single-line selection, like most editors.
-      if (editor && !editor.isDestroyed) {
-        const { from, to, empty } = editor.state.selection;
-        const selected = empty ? "" : editor.state.doc.textBetween(from, to);
-        if (selected && !selected.includes("\n") && selected.length <= 200) {
-          setSearchTerm(selected);
-        }
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.code === "KeyF") {
+        event.preventDefault();
+        handlers.current.open(event.altKey);
+      } else if (event.code === "KeyG" && canStep) {
+        // Steps through matches from the editor, without going to the bar.
+        event.preventDefault();
+        if (event.shiftKey) handlers.current.goToPrevious();
+        else handlers.current.goToNext();
       }
-
-      if (event.altKey) setShowReplace(true);
-      setIsOpen(true);
-      requestAnimationFrame(() => {
-        const input =
-          event.altKey ? replaceInput.current : searchInput.current;
-        input?.focus();
-        input?.select();
-      });
     };
+    // The Find item of the app menu.
+    const handleFind = () => handlers.current.open(false);
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [editor]);
+    window.addEventListener(FIND_EVENT, handleFind);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener(FIND_EVENT, handleFind);
+    };
+  }, [canStep]);
 
   if (!isOpen || !editor || editor.isDestroyed) return null;
 
@@ -162,14 +195,6 @@ export function FindBar() {
     }
   };
 
-  const goToNext = () => {
-    editor.commands.goToNextResult();
-    revealCurrentResult(editor);
-  };
-  const goToPrevious = () => {
-    editor.commands.goToPreviousResult();
-    revealCurrentResult(editor);
-  };
   // Replace moves on to the next match, which may be hidden.
   const replace = () => {
     editor.commands.replace();
