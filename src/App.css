@@ -1065,3 +1065,6 @@ body {
   background-color: color-mix(in oklch, var(--primary) 40%, transparent);
   box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 60%, transparent);
 }
+
+/* Where supported, matches are painted without spans instead; their styles
+   live in src/lib/find-highlights.ts. */

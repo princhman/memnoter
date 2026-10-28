@@ -16,6 +16,7 @@ import { SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { usePersistedView } from "@/lib/view-persistence";
+import { FindHighlights } from "@/lib/find-highlights";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
 import {
@@ -30,7 +31,6 @@ import { MathBlock } from "@/lib/math-block";
 import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
 import { ItalicCaret } from "@/lib/italic-caret";
-import FindAndReplace from "@tiptap/extension-find-and-replace";
 import { TableOfContents as TocExtension } from "@tiptap/extension-table-of-contents";
 import {
   TableOfContents,
@@ -241,7 +241,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
             window,
           onUpdate: (content) => tocStore.setState(() => content),
         }),
-        FindAndReplace.configure({
+        FindHighlights.configure({
           searchDebounceMs: 100,
           injectCSS: false,
         }),

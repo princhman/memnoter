@@ -20,6 +20,7 @@ import type { Editor } from "@tiptap/core";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { getFoldedRanges, headingFoldKey } from "@/lib/heading-fold";
 import { getFocusedSectionRange } from "@/lib/section-focus";
+import { scrollCurrentResultIntoView } from "@/lib/find-highlights";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -46,9 +47,7 @@ function revealCurrentResult(editor: Editor) {
       editor.commands.setFolds(folded.filter((id) => !covering.has(id)));
     }
   }
-  editor.view.dom
-    .querySelector(".find-and-replace-result-current")
-    ?.scrollIntoView({ block: "nearest" });
+  scrollCurrentResultIntoView(editor.view);
 }
 
 export function FindBar() {
