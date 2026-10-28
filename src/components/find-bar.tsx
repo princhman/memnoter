@@ -54,6 +54,7 @@ function revealCurrentResult(editor: Editor) {
 export function FindBar() {
   const { activeEditor } = useActiveEditor();
   const editor = activeEditor?.editor ?? null;
+  const isReady = activeEditor?.isReady ?? false;
 
   const [isOpen, setIsOpen] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
@@ -102,13 +103,14 @@ export function FindBar() {
   }, [editor, isOpen, searchTerm]);
 
   // A fresh search marks the first match without selecting it, so reveal it here.
-  // Edits also change the results, but must not move the view or unfold. A
-  // note still loading has none yet, so its first results count as fresh.
-  const hasAnyResult = (search?.count ?? 0) > 0;
+  // Edits also change the results, but must not move the view or unfold. A note
+  // that finishes loading counts as fresh, once its saved view is restored.
   useEffect(() => {
-    if (!editor || editor.isDestroyed || search?.current == null) return;
+    if (!editor || editor.isDestroyed || !isReady || search?.current == null) {
+      return;
+    }
     revealCurrentResult(editor);
-  }, [editor, search?.applied, hasAnyResult]);
+  }, [editor, isReady, search?.applied]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {

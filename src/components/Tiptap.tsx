@@ -357,14 +357,14 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   useEffect(() => {
     if (!editor) return;
 
-    setActiveEditor({ moduleId, editor });
+    setActiveEditor({ moduleId, editor, isReady: isSuccess });
 
     return () => {
       setActiveEditor((current) =>
         current?.editor === editor ? null : current,
       );
     };
-  }, [editor, moduleId, setActiveEditor]);
+  }, [editor, moduleId, isSuccess, setActiveEditor]);
 
   // compaction listener
   useEffect(() => {
