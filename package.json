@@ -64,5 +64,10 @@
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@tanstack/history@1.162.0": "patches/@tanstack__history@1.162.0.patch"
+    }
   }
 }
