@@ -171,6 +171,36 @@ fn rewrite_file_paths(db_path: &Path, files_dir: &Path) -> CommandResult<()> {
     conn.close().map_err(|(_, error)| db_err(error))
 }
 
+// AUTOINCREMENT preserves the high-water mark even after compaction empties
+// the table. A stale read must never authorize deleting a newly reused id.
+fn migrate_update_ids(conn: &Connection) -> CommandResult<()> {
+    let schema: String = conn
+        .query_row(
+            "select sql from sqlite_master where type = 'table' and name = 'contents_updates'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_err)?;
+    if schema.to_uppercase().contains("AUTOINCREMENT") {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction().map_err(db_err)?;
+    tx.execute_batch(
+        "create table contents_updates_monotonic (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        module_id TEXT NOT NULL,
+        bytes BLOB NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
+    );
+    insert into contents_updates_monotonic select * from contents_updates;
+    drop table contents_updates;
+    alter table contents_updates_monotonic rename to contents_updates;",
+    )
+    .map_err(db_err)?;
+    tx.commit().map_err(db_err)
+}
+
 fn open_db(app_dir: &Path) -> CommandResult<Db> {
     std::fs::create_dir_all(app_dir).map_err(db_err)?;
 
@@ -198,7 +228,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
         );
 
         create table if not exists contents_updates (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             module_id TEXT NOT NULL,
             bytes BLOB NOT NULL,
             created_at INTEGER NOT NULL,
@@ -213,6 +243,8 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
         )",
     )
     .map_err(db_err)?;
+
+    migrate_update_ids(&conn)?;
 
     Ok(Db {
         conn: Mutex::new(conn),
@@ -406,6 +438,60 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![8]
         );
+    }
+
+    #[test]
+    fn legacy_update_id_migration_preserves_rows_and_their_high_watermark() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+            create table modules (id TEXT PRIMARY KEY);
+            insert into modules values ('note');
+            create table contents_updates (id INTEGER PRIMARY KEY, module_id TEXT NOT NULL,
+                bytes BLOB NOT NULL, created_at INTEGER NOT NULL,
+                FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE);
+            insert into contents_updates values (300, 'note', X'0102', 42);",
+        )
+        .unwrap();
+        migrate_update_ids(&conn).unwrap();
+        migrate_update_ids(&conn).unwrap();
+        let row: (i64, Vec<u8>, i64) = conn
+            .query_row(
+                "select id, bytes, created_at from contents_updates",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (300, vec![1, 2], 42));
+        conn.execute("delete from contents_updates", []).unwrap();
+        conn.execute("insert into contents_updates (module_id, bytes, created_at) values ('note', X'03', 43)", []).unwrap();
+        assert_eq!(conn.last_insert_rowid(), 301);
+        conn.execute("delete from modules where id = 'note'", [])
+            .unwrap();
+        assert_eq!(
+            conn.query_row("select count(*) from contents_updates", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn stale_compaction_watermark_cannot_delete_a_later_update() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        // A stale read can retain the old watermark after its rows are folded.
+        compact_content(&mut conn, "note", &[9], 7).unwrap();
+        conn.execute(
+            "insert into contents_updates (module_id, bytes, created_at) values ('note', X'05', 0)",
+            [],
+        )
+        .unwrap();
+        compact_content(&mut conn, "note", &[9], 7).unwrap();
+        let content = read_content(&conn, "note").unwrap();
+        assert_eq!(content.updates.len(), 1);
+        assert_eq!(content.updates[0].bytes, vec![5]);
+        assert!(content.updates[0].id > 7);
     }
 
     #[test]
