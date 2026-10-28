@@ -11,6 +11,7 @@ import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
+import { CommandPalette } from "@/components/command-palette";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
 
@@ -52,6 +53,7 @@ const RootLayout = () => {
               <UndoRedo />
             </div>
           </div>
+          <CommandPalette />
         </SidebarProvider>
       </ActiveEditorProvider>
 

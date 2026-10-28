@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   Dialog,
   DialogClose,
@@ -16,11 +16,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
 import { SidebarGroupAction } from "./ui/sidebar";
+import { useCommand } from "@/lib/commands";
 
 const CreateModule = () => {
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   const [sumbitted, setSubmitted] = useState(false);
+
+  const openDialog = useCallback(() => setOpen(true), []);
+  useCommand({
+    id: "module.new",
+    title: "New module",
+    keywords: ["create", "note"],
+    run: openDialog,
+  });
 
   const queryClient = useQueryClient();
   const mutation = useMutation({
