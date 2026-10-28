@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { Editor } from "@tiptap/core";
 import { useActiveEditor } from "@/lib/active-editor-context";
+import { getFoldedRanges } from "@/lib/heading-fold";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -25,13 +26,22 @@ import { cn } from "@/lib/utils";
 const inputClassName =
   "h-7 min-w-0 flex-1 rounded-md bg-input/50 px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-input/30";
 
-// A match outside the focused section is hidden, so show the whole note first.
+// A match outside the focused section or inside a fold is hidden, so show it first.
 function revealCurrentResult(editor: Editor) {
   const { results, currentIndex } = editor.storage.findAndReplace;
   const match = currentIndex == null ? undefined : results[currentIndex];
-  const focused = getFocusedSectionRange(editor.state);
-  if (match && focused && (match.from < focused.from || match.to > focused.to)) {
-    editor.commands.showDocument();
+  if (match) {
+    const focused = getFocusedSectionRange(editor.state);
+    if (focused && (match.from < focused.from || match.to > focused.to)) {
+      editor.commands.showDocument();
+    }
+    const folds = getFoldedRanges(editor.state);
+    const kept = folds.filter(
+      (range) => match.to <= range.from || match.from >= range.to,
+    );
+    if (kept.length < folds.length) {
+      editor.commands.setFolds(kept.map((range) => range.id));
+    }
   }
   editor.view.dom
     .querySelector(".find-and-replace-result-current")
@@ -54,9 +64,16 @@ export function FindBar() {
   const search = useEditorState({
     editor,
     selector: ({ editor }) => {
-      if (!editor || editor.isDestroyed) return { count: 0, current: null };
+      if (!editor || editor.isDestroyed) {
+        return { count: 0, current: null, applied: "" };
+      }
       const storage = editor.storage.findAndReplace;
-      return { count: storage.results.length, current: storage.currentIndex };
+      return {
+        count: storage.results.length,
+        current: storage.currentIndex,
+        // The search term is debounced; this changes once its results are in.
+        applied: `${storage.caseSensitive}:${storage.useRegex}:${storage.searchTerm}`,
+      };
     },
   });
 
@@ -80,7 +97,7 @@ export function FindBar() {
   useEffect(() => {
     if (!editor || editor.isDestroyed || search?.current == null) return;
     revealCurrentResult(editor);
-  }, [editor, search?.count, search?.current, searchTerm, caseSensitive, useRegex]);
+  }, [editor, search?.count, search?.current, search?.applied]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
