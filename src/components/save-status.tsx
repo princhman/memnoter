@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,21 +27,31 @@ const SaveStatus = () => {
 
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void getCurrentWindow()
-      .onCloseRequested(async (event) => {
-        if (saveQueue.isEmpty()) return;
-        if (await flushSaves(CLOSE_FLUSH_TIMEOUT_MS)) return;
+
+    let busy = false;
+    const requestExit = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        if (saveQueue.isEmpty() || await flushSaves(CLOSE_FLUSH_TIMEOUT_MS)) {
+          await invoke("confirm_exit");
+        } else setConfirmClose(true);
+      } finally { busy = false; }
+    };
+    const stops: (() => void)[] = [];
+    void Promise.all([
+      listen("request-safe-exit", () => void requestExit()),
+      getCurrentWindow().onCloseRequested((event) => {
         event.preventDefault();
-        setConfirmClose(true);
-      })
-      .then((stop) => {
-        if (disposed) stop();
-        else unlisten = stop;
-      });
+        void requestExit();
+      }),
+    ]).then((listeners) => {
+      if (disposed) listeners.forEach(stop => stop());
+      else stops.push(...listeners);
+    });
     return () => {
       disposed = true;
-      unlisten?.();
+      stops.forEach(stop => stop());
     };
   }, []);
 
@@ -78,7 +90,7 @@ const SaveStatus = () => {
             />
             <Button
               variant="destructive"
-              onClick={() => void getCurrentWindow().destroy()}
+              onClick={() => void invoke("confirm_exit")}
             >
               Quit anyway
             </Button>

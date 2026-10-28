@@ -15,6 +15,7 @@ const ID_FORMAT: &str = "%Y-%m-%dT%H-%M-%S%.3fZ";
 
 // A restore moves the live data here until the restored database is in place.
 const RESTORE_OLD: &str = "restore-old";
+const RESTORE_CLEANUP: &str = "restore-cleanup";
 const RESTORE_STAGING: &str = "restore-staging";
 // Moved before main.db, so main.db is the last file to leave or arrive.
 const DB_FILES: [&str; 3] = ["main.db-wal", "main.db-shm", "main.db"];
@@ -107,6 +108,12 @@ pub(crate) fn create(
     let dir = backups_dir(app_dir);
     std::fs::create_dir_all(&dir).map_err(db_err)?;
     let mut time = now;
+    if let Some(latest) = list(app_dir)?
+        .first()
+        .and_then(|backup| parse_id(&backup.id))
+    {
+        time = time.max(latest + TimeDelta::milliseconds(1));
+    }
     while dir.join(time.format(ID_FORMAT).to_string()).exists() {
         time += TimeDelta::milliseconds(1);
     }
@@ -137,7 +144,10 @@ pub(crate) fn create(
 
 pub(crate) fn prune(app_dir: &Path, keep: usize) -> CommandResult<()> {
     for backup in list(app_dir)?.into_iter().skip(keep) {
-        std::fs::remove_dir_all(backups_dir(app_dir).join(backup.id)).map_err(db_err)?;
+        let path = backups_dir(app_dir).join(backup.id);
+        let trash = backups_dir(app_dir).join(format!(".partial-prune-{}", Uuid::new_v4()));
+        std::fs::rename(path, &trash).map_err(db_err)?;
+        remove_if_exists(&trash)?;
     }
     // Left behind by a backup that was interrupted.
     for entry in std::fs::read_dir(backups_dir(app_dir)).map_err(db_err)? {
@@ -162,7 +172,7 @@ pub(crate) fn backup_if_due(
         }
     }
     let backup = create(conn, app_dir, now)?;
-    prune(app_dir, KEEP_BACKUPS)?;
+    maintenance(prune(app_dir, KEEP_BACKUPS));
     Ok(Some(backup))
 }
 
@@ -171,7 +181,16 @@ pub(crate) fn backup_if_due(
 // Runs on launch too, in case the app quit midway through a restore.
 pub(crate) fn settle_restore(app_dir: &Path) -> CommandResult<()> {
     let old = app_dir.join(RESTORE_OLD);
+    // This directory can only contain committed/fully rolled-back garbage.
+    maintenance(remove_if_exists(&app_dir.join(RESTORE_CLEANUP)));
     if old.exists() {
+        if !old.join("main.db").exists()
+            && old.join("files").exists()
+            && app_dir.join("main.db").exists()
+            && !app_dir.join(RESTORE_STAGING).exists()
+        {
+            return Err("Ambiguous legacy restore residue. Preserve the data directory and recover it before restarting.".into());
+        }
         let committed = old.join("main.db").exists() && app_dir.join("main.db").exists();
         if !committed {
             if old.join("files").exists() {
@@ -185,9 +204,18 @@ pub(crate) fn settle_restore(app_dir: &Path) -> CommandResult<()> {
                 }
             }
         }
-        std::fs::remove_dir_all(&old).map_err(db_err)?;
+        // Remove the recovery identity atomically before recursive deletion.
+        std::fs::rename(&old, app_dir.join(RESTORE_CLEANUP)).map_err(db_err)?;
     }
-    remove_if_exists(&app_dir.join(RESTORE_STAGING))
+    maintenance(remove_if_exists(&app_dir.join(RESTORE_CLEANUP)));
+    maintenance(remove_if_exists(&app_dir.join(RESTORE_STAGING)));
+    Ok(())
+}
+
+fn maintenance(result: CommandResult<()>) {
+    if let Err(error) = result {
+        eprintln!("Backup maintenance failed: {error}");
+    }
 }
 
 fn stage_restore(source: &Path, app_dir: &Path) -> CommandResult<PathBuf> {
@@ -227,6 +255,7 @@ pub(crate) fn restore(
     id: &str,
     now: DateTime<Utc>,
 ) -> CommandResult<()> {
+    settle_restore(app_dir)?;
     let source = backups_dir(app_dir).join(id);
     if parse_id(id).is_none() || !source.join("main.db").is_file() {
         return Err("Backup not found".into());
@@ -252,11 +281,26 @@ pub(crate) fn restore(
 
     let swapped = swap_in(&staging, app_dir);
     let settled = settle_restore(app_dir);
+    if swapped.is_err() && settled.is_err() {
+        return Err(
+            "Database unavailable. Restart required: restore rollback could not complete".into(),
+        );
+    }
     // Reopen whichever database is now in place, restored or rolled back.
-    *conn = open_db(app_dir)?.conn.into_inner().map_err(db_err)?;
+    if !app_dir.join("main.db").is_file() {
+        return Err(
+            "Database unavailable. Restart required: recovery did not leave a database".into(),
+        );
+    }
+    *conn = open_db(app_dir)
+        .map_err(|error| format!("Database unavailable. Restart required: {error}"))?
+        .conn
+        .into_inner()
+        .map_err(db_err)?;
     swapped?;
-    settled?;
-    prune(app_dir, KEEP_BACKUPS)
+    maintenance(settled);
+    maintenance(prune(app_dir, KEEP_BACKUPS));
+    Ok(())
 }
 
 fn app_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
@@ -269,7 +313,7 @@ pub(crate) fn spawn_daily_backup(app: &tauri::AppHandle) {
     std::thread::spawn(move || {
         let result = app_dir(&app).and_then(|dir| {
             let db = app.state::<Db>();
-            let conn = db.conn.lock().map_err(db_err)?;
+            let conn = db.lock()?;
             backup_if_due(&conn, &dir, Utc::now())
         });
         if let Err(error) = result {
@@ -286,9 +330,9 @@ pub(crate) fn list_backups(app: tauri::AppHandle) -> CommandResult<Vec<Backup>> 
 #[tauri::command(async)]
 pub(crate) fn backup_now(app: tauri::AppHandle, db: tauri::State<'_, Db>) -> CommandResult<Backup> {
     let dir = app_dir(&app)?;
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     let backup = create(&conn, &dir, Utc::now())?;
-    prune(&dir, KEEP_BACKUPS)?;
+    maintenance(prune(&dir, KEEP_BACKUPS));
     Ok(backup)
 }
 
@@ -299,8 +343,16 @@ pub(crate) fn restore_backup(
     id: String,
 ) -> CommandResult<()> {
     let dir = app_dir(&app)?;
-    let mut conn = db.conn.lock().map_err(db_err)?;
-    restore(&mut conn, &dir, &id, Utc::now())
+    let mut conn = db.lock()?;
+    let result = restore(&mut conn, &dir, &id, Utc::now());
+    if result
+        .as_ref()
+        .is_err_and(|error| error.starts_with("Database unavailable."))
+    {
+        db.unavailable
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -342,6 +394,62 @@ mod tests {
             |row| row.get(0),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn clock_rollback_keeps_fresh_and_pre_restore_snapshots() {
+        let dir = TempDir::new();
+        let mut conn = open_db(&dir.0).unwrap().conn.into_inner().unwrap();
+        conn.execute_batch("insert into modules values ('note', 'Note'); insert into contents values ('note', X'01');").unwrap();
+        let original = create(&conn, &dir.0, at(20)).unwrap();
+        for hour in 21..28 {
+            create(&conn, &dir.0, at(hour)).unwrap();
+        }
+        conn.execute("update contents set state = X'02'", [])
+            .unwrap();
+        restore(&mut conn, &dir.0, &original.id, at(0)).unwrap();
+        let undo = ids(&dir.0)[0].clone();
+        assert_eq!(ids(&dir.0).len(), KEEP_BACKUPS);
+        restore(&mut conn, &dir.0, &undo, at(0)).unwrap();
+        assert_eq!(state(&conn), vec![2]);
+    }
+
+    #[test]
+    fn committed_cleanup_leftovers_never_replace_live_images() {
+        let dir = TempDir::new();
+        let garbage = dir.0.join(RESTORE_CLEANUP);
+        std::fs::create_dir_all(garbage.join("files")).unwrap();
+        // Recursive cleanup already removed the old main.db, then the app quit.
+        std::fs::write(garbage.join("files/old"), b"old").unwrap();
+        std::fs::create_dir_all(dir.0.join("files")).unwrap();
+        std::fs::write(dir.0.join("files/new"), b"new").unwrap();
+        std::fs::write(dir.0.join("main.db"), b"restored").unwrap();
+        settle_restore(&dir.0).unwrap();
+        settle_restore(&dir.0).unwrap();
+        assert_eq!(std::fs::read(dir.0.join("main.db")).unwrap(), b"restored");
+        assert_eq!(std::fs::read(dir.0.join("files/new")).unwrap(), b"new");
+        assert!(!dir.0.join("files/old").exists());
+    }
+
+    #[test]
+    fn startup_recovers_before_considering_legacy_import() {
+        let root = TempDir::new();
+        let live = root.0.join("current");
+        let mut conn = open_db(&live).unwrap().conn.into_inner().unwrap();
+        conn.execute_batch("insert into modules values ('note', 'Note'); insert into contents values ('note', X'02');").unwrap();
+        conn.close().unwrap();
+        let legacy = root.0.join(super::super::LEGACY_IDENTIFIER);
+        conn = open_db(&legacy).unwrap().conn.into_inner().unwrap();
+        conn.execute_batch("insert into modules values ('note', 'Note'); insert into contents values ('note', X'01');").unwrap();
+        conn.close().unwrap();
+        std::fs::create_dir(live.join(RESTORE_OLD)).unwrap();
+        std::fs::rename(live.join("main.db"), live.join(RESTORE_OLD).join("main.db")).unwrap();
+        let recovered = super::super::initialize_data(&live).unwrap();
+        assert_eq!(state(&recovered.conn.lock().unwrap()), vec![2]);
+        recovered
+            .unavailable
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(recovered.lock().unwrap_err().contains("Restart"));
     }
 
     #[test]

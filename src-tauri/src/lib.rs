@@ -5,14 +5,34 @@ mod backups;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
 type CommandResult<T> = std::result::Result<T, String>;
 
 struct Db {
     conn: Mutex<Connection>,
+    unavailable: AtomicBool,
+}
+
+impl Db {
+    fn lock(&self) -> CommandResult<std::sync::MutexGuard<'_, Connection>> {
+        let conn = self.conn.lock().map_err(db_err)?;
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err("Database unavailable. Restart the app to recover.".into());
+        }
+        Ok(conn)
+    }
+}
+
+#[derive(Default)]
+struct ExitGate(AtomicBool);
+#[tauri::command]
+fn confirm_exit(app: tauri::AppHandle) {
+    app.state::<ExitGate>().0.store(true, Ordering::SeqCst);
+    app.exit(0);
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -56,9 +76,13 @@ const LEGACY_IDENTIFIER: &str = "com.vladyslavnalyvaiko.notes";
 
 fn init_db(app: &tauri::App) -> CommandResult<Db> {
     let app_dir = app.path().app_data_dir().map_err(db_err)?;
-    migrate_legacy_data(&app_dir)?;
-    backups::settle_restore(&app_dir)?;
-    open_db(&app_dir)
+    initialize_data(&app_dir)
+}
+
+fn initialize_data(app_dir: &Path) -> CommandResult<Db> {
+    backups::settle_restore(app_dir)?;
+    migrate_legacy_data(app_dir)?;
+    open_db(app_dir)
 }
 
 // One-time copy of the pre-rename data dir into the new one. The legacy dir is
@@ -192,6 +216,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
 
     Ok(Db {
         conn: Mutex::new(conn),
+        unavailable: AtomicBool::new(false),
     })
 }
 
@@ -456,7 +481,7 @@ mod tests {
 
 #[tauri::command]
 fn create_module(db: tauri::State<Db>, name: String) -> CommandResult<String> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     let id = Uuid::new_v4().to_string();
 
     conn.execute(
@@ -478,7 +503,7 @@ fn create_module(db: tauri::State<Db>, name: String) -> CommandResult<String> {
 
 #[tauri::command]
 fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     let mut stmt = conn.prepare("select * from modules").map_err(db_err)?;
     let rows = stmt
         .query_map([], |row| {
@@ -496,7 +521,7 @@ fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
 
 #[tauri::command]
 fn rename_module(db: tauri::State<Db>, module_id: String, name: String) -> CommandResult<()> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
 
     conn.execute(
         "update modules set name = ?2 where id = ?1",
@@ -554,14 +579,14 @@ fn delete_module(
     module_id: String,
 ) -> CommandResult<()> {
     let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
-    let mut conn = db.conn.lock().map_err(db_err)?;
+    let mut conn = db.lock()?;
     delete_module_data(&mut conn, &files_dir, &module_id)
 }
 
 // Reading and serializing a long edit history must not block the native UI.
 #[tauri::command(async)]
 fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetContentResponse> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     read_content(&conn, &module_id)
 }
 
@@ -620,7 +645,7 @@ fn add_update(
     module_id: String,
     bytes: Vec<u8>,
 ) -> CommandResult<ContentUpdate> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
 
     conn.execute(
         "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
@@ -641,7 +666,7 @@ fn save_compaction(
     new_state: Vec<u8>,
     update_id: i64,
 ) -> CommandResult<()> {
-    let mut conn = db.conn.lock().map_err(db_err)?;
+    let mut conn = db.lock()?;
     compact_content(&mut conn, &module_id, &new_state, update_id)
 }
 
@@ -687,7 +712,7 @@ fn save_file(
         .to_str()
         .ok_or_else(|| "File path is not valid UTF-8".to_string())?;
 
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     // Serialize uploads with deletion so a pending paste cannot recreate files
     // for a module that has already been removed.
     conn.query_one(
@@ -739,7 +764,7 @@ fn read_file(
         .map_err(db_err)?
         .join("files")
         .join(&file_id);
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     let (path, file_type): (String, String) = conn
         .query_row(
             "select path, file_type from files where id = ?1 and module_id = ?2",
@@ -823,7 +848,7 @@ fn cleanup_files(
     expected_update_id: i64,
 ) -> CommandResult<Vec<String>> {
     let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     cleanup_unused_files(
         &conn,
         &files_dir,
@@ -843,10 +868,12 @@ pub fn run() {
         .setup(|app| {
             let db = init_db(app).expect("Failed to init db.");
             app.manage(db);
+            app.manage(ExitGate::default());
             backups::spawn_daily_backup(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            confirm_exit,
             create_module,
             modules,
             get_content,
@@ -861,6 +888,16 @@ pub fn run() {
             backups::backup_now,
             backups::restore_backup
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if !app.state::<ExitGate>().0.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    if let Err(error) = app.emit("request-safe-exit", ()) {
+                        eprintln!("Unable to request safe exit: {error}");
+                    }
+                }
+            }
+        });
 }
