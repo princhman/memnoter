@@ -1,5 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+mod backups;
+
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use std::path::Path;
@@ -55,6 +57,7 @@ const LEGACY_IDENTIFIER: &str = "com.vladyslavnalyvaiko.notes";
 fn init_db(app: &tauri::App) -> CommandResult<Db> {
     let app_dir = app.path().app_data_dir().map_err(db_err)?;
     migrate_legacy_data(&app_dir)?;
+    backups::settle_restore(&app_dir)?;
     open_db(&app_dir)
 }
 
@@ -713,7 +716,7 @@ fn save_file(
     }
 
     Ok(FileType {
-        id: id,
+        id,
         path: path_str.to_owned(),
         file_type: mime_type,
     })
@@ -840,6 +843,7 @@ pub fn run() {
         .setup(|app| {
             let db = init_db(app).expect("Failed to init db.");
             app.manage(db);
+            backups::spawn_daily_backup(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -852,7 +856,10 @@ pub fn run() {
             save_compaction,
             save_file,
             read_file,
-            cleanup_files
+            cleanup_files,
+            backups::list_backups,
+            backups::backup_now,
+            backups::restore_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
