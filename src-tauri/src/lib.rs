@@ -419,8 +419,16 @@ mod tests {
     fn search_ranks_titles_first_and_marks_matches() {
         let f = Fixture::new();
         let mut conn = f.db.conn.lock().unwrap();
-        index_note_text(&mut conn, "note", "about the integral sign", "", 1).unwrap();
-        index_note_text(&mut conn, "other", "nothing here", r"\int_0^1 f(x)\,dx", 1).unwrap();
+        index_note_text(&mut conn, "note", "about the integral sign", "", 1, false).unwrap();
+        index_note_text(
+            &mut conn,
+            "other",
+            "nothing here",
+            r"\int_0^1 f(x)\,dx",
+            1,
+            false,
+        )
+        .unwrap();
         conn.execute(
             "update search_index set title = 'Integrals' where module_id = 'other'",
             [],
@@ -447,7 +455,15 @@ mod tests {
     fn search_never_fails_on_fts_syntax() {
         let f = Fixture::new();
         let mut conn = f.db.conn.lock().unwrap();
-        index_note_text(&mut conn, "note", "and or not near title body", "", 1).unwrap();
+        index_note_text(
+            &mut conn,
+            "note",
+            "and or not near title body",
+            "",
+            1,
+            false,
+        )
+        .unwrap();
         for query in [
             "\"",
             "\"\"",
@@ -496,10 +512,17 @@ mod tests {
         migrate_search(&conn).unwrap();
         assert_eq!(search_ids(&conn, "Note"), ["note"]);
 
-        index_note_text(&mut conn, "note", "first", "", 1).unwrap();
-        index_note_text(&mut conn, "note", "second", "", 2).unwrap();
+        index_note_text(&mut conn, "note", "first", "", 1, false).unwrap();
+        index_note_text(&mut conn, "note", "second", "", 2, false).unwrap();
         assert_eq!(search_ids(&conn, "first"), Vec::<String>::new());
         assert_eq!(search_ids(&conn, "second"), ["note"]);
+        // A delayed backfill read must not replace a newer live index write.
+        index_note_text(&mut conn, "note", "stale", "", 2, true).unwrap();
+        assert_eq!(search_ids(&conn, "second"), ["note"]);
+        assert!(search_ids(&conn, "stale").is_empty());
+        // An extractor upgrade can still backfill an older index.
+        index_note_text(&mut conn, "note", "second upgraded", "", 3, true).unwrap();
+        assert_eq!(search_ids(&conn, "upgraded"), ["note"]);
         let rows: i64 = conn
             .query_one(
                 "select count(*) from search_index where module_id = 'note'",
@@ -519,7 +542,7 @@ mod tests {
         assert_eq!(states, 0);
 
         // A late save for a deleted module must not bring it back.
-        index_note_text(&mut conn, "note", "revived", "", 1).unwrap();
+        index_note_text(&mut conn, "note", "revived", "", 1, false).unwrap();
         assert_eq!(search_ids(&conn, "revived"), Vec::<String>::new());
     }
 
@@ -996,8 +1019,17 @@ fn index_note_text(
     body: &str,
     math: &str,
     version: i64,
+    backfill: bool,
 ) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
+    // Backfill may have read its snapshot before a live index write. Never
+    // replace an index already refreshed by this extractor (or a newer one).
+    if backfill && tx.query_row(
+        "select exists(select 1 from search_index_state where module_id = ?1 and version >= ?2)",
+        params![module_id, version], |row| row.get::<_, bool>(0),
+    ).map_err(db_err)? {
+        return Ok(());
+    }
     // A debounced save can land after the module was deleted; never revive it.
     let Some(name) = tx
         .query_row(
@@ -1075,9 +1107,10 @@ fn index_note(
     body: String,
     math: String,
     version: i64,
+    backfill: bool,
 ) -> CommandResult<()> {
     let mut conn = db.conn.lock().map_err(db_err)?;
-    index_note_text(&mut conn, &module_id, &body, &math, version)
+    index_note_text(&mut conn, &module_id, &body, &math, version, backfill)
 }
 
 // Modules whose text was never indexed, or indexed by an older extractor.

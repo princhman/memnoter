@@ -13,9 +13,9 @@ import {
 
 const INDEX_DEBOUNCE_MS = 1_000;
 
-async function indexNote(moduleId: string, text: SearchText) {
+async function indexNote(moduleId: string, text: SearchText, backfill = false) {
   try {
-    await invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION });
+    await invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill });
   } catch (error) {
     console.error("Failed to index note for search:", error);
   }
@@ -85,7 +85,7 @@ export async function indexStoredNote(moduleId: string) {
   const doc = new Y.Doc();
   try {
     applySavedContent(doc, content);
-    await indexNote(moduleId, extractFromYDoc(doc));
+    await indexNote(moduleId, extractFromYDoc(doc), true);
   } finally {
     doc.destroy();
   }

@@ -5,6 +5,8 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { FindAndReplacePluginKey } from "@tiptap/extension-find-and-replace";
 import { useEditorState } from "@tiptap/react";
 import { useSelector } from "@tanstack/react-store";
 import {
@@ -54,14 +56,23 @@ function revealCurrentResult(editor: Editor) {
 }
 
 // Terms from a find request still to try, the first being the one searched.
-type PendingFind = { terms: string[] };
+type PendingFind = { terms: string[]; editor: Editor; request: NonNullable<typeof findRequestStore.state> };
 
 export function FindBar() {
+  const router = useRouter();
   const { activeEditor } = useActiveEditor();
   const editor = activeEditor?.editor ?? null;
   const isReady = activeEditor?.isReady ?? false;
   const findRequest = useSelector(findRequestStore, (request) => request);
   const pendingFind = useRef<PendingFind | null>(null);
+  useEffect(() => router.subscribe("onBeforeNavigate", ({ toLocation }) => {
+    const request = findRequestStore.state;
+    if (request && (!request.moduleId || toLocation.pathname !== `/${encodeURIComponent(request.moduleId)}`)) {
+      clearFindRequest();
+      if (pendingFind.current) setSearchTerm("");
+      pendingFind.current = null;
+    }
+  }), [router]);
   // Changes per request, so asking again for the applied term still reveals.
   const [requestCount, setRequestCount] = useState(0);
 
@@ -118,16 +129,23 @@ export function FindBar() {
     if (!editor || editor.isDestroyed || !isReady) return;
 
     const pending = pendingFind.current;
+    if (pending && (pending.editor !== editor || pending.request !== findRequestStore.state)) {
+      pendingFind.current = null;
+      return;
+    }
     if (pending) {
       // Wait for the requested term's results, then fall back to the next term.
       if (search?.applied !== `false:false:${pending.terms[0]}`) return;
       if (search.current == null) {
         const [, ...rest] = pending.terms;
-        pendingFind.current = rest.length ? { terms: rest } : null;
+        pendingFind.current = rest.length ? { ...pending, terms: rest } : null;
         if (rest.length) setSearchTerm(rest[0]);
+        else clearFindRequest();
         return;
       }
       pendingFind.current = null;
+      clearFindRequest();
+      editor.view.dispatch(editor.state.tr.setMeta(FindAndReplacePluginKey, { currentIndex: 0 }));
       // The match, not the restored scroll position, is what to show now.
       stopScrollRestore();
       revealCurrentResult(editor);
@@ -179,7 +197,7 @@ export function FindBar() {
     if (findRequest.moduleId && findRequest.moduleId !== activeEditor?.moduleId) {
       return;
     }
-    clearFindRequest();
+    if (pendingFind.current?.request === findRequest) return;
 
     const terms = findRequest.terms.filter(Boolean);
     if (terms.length) {
@@ -187,8 +205,10 @@ export function FindBar() {
       setCaseSensitive(false);
       setUseRegex(false);
       setSearchTerm(terms[0]);
-      pendingFind.current = { terms };
+      pendingFind.current = { terms, editor, request: findRequest };
       setRequestCount((count) => count + 1);
+    } else {
+      clearFindRequest();
     }
     open(false);
   }, [findRequest, editor, isReady, activeEditor?.moduleId]);
@@ -199,6 +219,7 @@ export function FindBar() {
 
   const close = () => {
     pendingFind.current = null;
+    clearFindRequest();
     setIsOpen(false);
     if (!editor.isDestroyed) editor.commands.focus();
   };
