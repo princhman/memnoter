@@ -9,6 +9,7 @@ import {
 import type { Node as PMNode } from "@tiptap/pm/model";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
+import { getFocusedSectionRange, sectionFocusKey } from "./section-focus.ts";
 
 type HeadingFoldState = {
   // Folded headings by their table-of-contents id. Positions would not do: the
@@ -224,6 +225,10 @@ function foldTransaction(state: EditorState, action: FoldAction): Transaction {
     tr.setSelection(
       TextSelection.create(state.doc, covering.heading + heading.nodeSize - 1),
     );
+    const focus = getFocusedSectionRange(state);
+    if (focus && (tr.selection.head < focus.from || tr.selection.head >= focus.to)) {
+      tr.setMeta(sectionFocusKey, { type: "clear" });
+    }
   }
   return tr;
 }

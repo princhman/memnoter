@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
 import { redo as yRedo, undo as yUndo } from "@tiptap/y-tiptap";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
@@ -39,6 +40,17 @@ import {
   TableOfContents,
   createTocStore,
 } from "@/components/table-of-contents";
+
+let nativeHistoryUpdates = Promise.resolve();
+function setNativeEditorHistory(editorFocused: boolean) {
+  nativeHistoryUpdates = nativeHistoryUpdates
+    .then(() => invoke<void>("set_editor_history", { editorFocused }))
+    .catch((error) => {
+      if ("__TAURI_INTERNALS__" in window) {
+        console.error("Failed to route native history", error);
+      }
+    });
+}
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -287,23 +299,6 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         }),
       ],
       editorProps: {
-        handleDOMEvents: {
-          // The menu bar's Undo and Redo, and ⌘Z when the editor has nothing
-          // to undo, reach the page as native undo. WebKit's own history does
-          // not know the editor's changes, so route it to the Yjs history.
-          beforeinput: (view, event) => {
-            const command =
-              event.inputType === "historyUndo"
-                ? yUndo
-                : event.inputType === "historyRedo"
-                  ? yRedo
-                  : null;
-            if (!command) return false;
-            event.preventDefault();
-            command(view.state);
-            return true;
-          },
-        },
         handleScrollToSelection: (view) => {
           if (!view.state.selection.empty) return false;
           const container = view.dom.closest<HTMLElement>(".app-scroll-container");
@@ -357,6 +352,38 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     },
     [yDoc],
   );
+
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    // Serialize transitions, including unmount, so a delayed focus command
+    // cannot replace native text-field history after a newer blur.
+    let ready = false;
+    let disposed = false;
+    const update = () => {
+      if (ready) setNativeEditorHistory(document.activeElement === dom);
+    };
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    const unlisten = listen<string>("menu", ({ payload }) => {
+      if (disposed || document.activeElement !== dom) return;
+      if (payload === "editor-undo") yUndo(editor.state);
+      if (payload === "editor-redo") yRedo(editor.state);
+    }).then((stop) => {
+      ready = true;
+      if (!disposed) update();
+      return stop;
+    });
+    void unlisten.catch(console.error);
+    return () => {
+      disposed = true;
+      ready = false;
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+      setNativeEditorHistory(false);
+      void unlisten.then((stop) => stop()).catch(console.error);
+    };
+  }, [editor]);
 
   useEffect(() => {
     editor?.setEditable(isSuccess, false);

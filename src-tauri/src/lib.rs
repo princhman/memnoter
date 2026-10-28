@@ -797,6 +797,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")]
+            menu::set_editor_history,
             create_module,
             modules,
             get_content,
