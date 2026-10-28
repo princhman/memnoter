@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import type { Editor } from "@tiptap/core";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { getFoldedRanges } from "@/lib/heading-fold";
+import { getFoldedRanges, headingFoldKey } from "@/lib/heading-fold";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -35,12 +35,15 @@ function revealCurrentResult(editor: Editor) {
     if (focused && (match.from < focused.from || match.to > focused.to)) {
       editor.commands.showDocument();
     }
-    const folds = getFoldedRanges(editor.state);
-    const kept = folds.filter(
-      (range) => match.to <= range.from || match.from >= range.to,
+    // Unfold only what covers the match; other ids stay, even ones kept for undo.
+    const covering = new Set(
+      getFoldedRanges(editor.state)
+        .filter((range) => match.from < range.to && match.to > range.from)
+        .map((range) => range.id),
     );
-    if (kept.length < folds.length) {
-      editor.commands.setFolds(kept.map((range) => range.id));
+    if (covering.size) {
+      const folded = headingFoldKey.getState(editor.state)?.folded ?? [];
+      editor.commands.setFolds(folded.filter((id) => !covering.has(id)));
     }
   }
   editor.view.dom
@@ -90,14 +93,20 @@ export function FindBar() {
       .setUseRegex(useRegex)
       .setReplaceTerm(replaceTerm)
       .run();
+  }, [editor, isOpen, replaceTerm, caseSensitive, useRegex]);
+
+  // Resubmitting the same term would reset the current match, so only send changes.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !isOpen) return;
     editor.commands.setSearchTerm(searchTerm);
-  }, [editor, isOpen, searchTerm, replaceTerm, caseSensitive, useRegex]);
+  }, [editor, isOpen, searchTerm]);
 
   // A fresh search marks the first match without selecting it, so reveal it here.
+  // Edits also change the results, but must not move the view or unfold.
   useEffect(() => {
     if (!editor || editor.isDestroyed || search?.current == null) return;
     revealCurrentResult(editor);
-  }, [editor, search?.count, search?.current, search?.applied]);
+  }, [editor, search?.applied]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
