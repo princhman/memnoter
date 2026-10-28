@@ -11,6 +11,8 @@ import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
+import { IconTooltip } from "@/components/icon-tooltip";
+import { MOD_KEY } from "@/lib/utils";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
 
@@ -48,7 +50,9 @@ const RootLayout = () => {
           <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
             {!isFullScrean && <div className="w-18" />}
             <div className="flex items-center pl-2 gap-1.5">
-              <SidebarTrigger />
+              <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
+                <SidebarTrigger aria-label="Toggle sidebar" />
+              </IconTooltip>
               <UndoRedo />
             </div>
           </div>

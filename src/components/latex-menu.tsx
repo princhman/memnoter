@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -19,6 +20,7 @@ import Suggestion, {
 } from "@tiptap/suggestion";
 import katex from "katex";
 import { searchLatex, type LatexEntry } from "@/lib/latex-symbols";
+import { useActiveDescendant } from "@/hooks/use-active-descendant";
 import { cn } from "@/lib/utils";
 
 const MATH_NODES = new Set(["inlineMath", "mathBlock"]);
@@ -292,6 +294,9 @@ const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
     const [detailsLeft, setDetailsLeft] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
+    const listboxId = useId();
+    const optionId = (index: number) => `${listboxId}-${index}`;
+    useActiveDescendant(editor, listboxId, items.length ? optionId(selected) : null);
     // Last pointer position over the selected row, the safe triangle's tip.
     const apex = useRef<Point | null>(null);
     const pending = useRef<number | undefined>(undefined);
@@ -382,7 +387,9 @@ const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
       >
         <div
           ref={listRef}
+          id={listboxId}
           role="listbox"
+          aria-label="LaTeX commands"
           onMouseMove={handlePointerMove}
           onMouseLeave={cancelPending}
           className="max-h-72 w-64 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md [scrollbar-width:none]"
@@ -392,6 +399,8 @@ const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
               key={item.label}
               type="button"
               role="option"
+              id={optionId(index)}
+              tabIndex={-1}
               data-index={index}
               aria-selected={index === selected}
               className={cn(
@@ -401,6 +410,7 @@ const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
               onClick={() => command(item)}
             >
               <span
+                aria-hidden="true"
                 className="flex h-6 w-8 shrink-0 items-center justify-center overflow-hidden text-[0.7rem]"
                 dangerouslySetInnerHTML={{ __html: renderIcon(item.preview) }}
               />

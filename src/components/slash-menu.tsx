@@ -2,6 +2,7 @@ import {
   forwardRef,
   Fragment,
   useEffect,
+  useId,
   useImperativeHandle,
   useRef,
   useState,
@@ -14,6 +15,7 @@ import Suggestion, {
   type SuggestionProps,
 } from "@tiptap/suggestion";
 import { cn, MOD_KEY } from "@/lib/utils";
+import { useActiveDescendant } from "@/hooks/use-active-descendant";
 
 export type SlashCommandOptions = {
   // Saves picked images and inserts them at a position, as pasting does.
@@ -218,9 +220,12 @@ type SlashMenuHandle = {
 };
 
 const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
-  ({ items, command }, ref) => {
+  ({ items, command, editor }, ref) => {
     const [selected, setSelected] = useState(0);
     const listRef = useRef<HTMLDivElement>(null);
+    const listboxId = useId();
+    const optionId = (index: number) => `${listboxId}-${index}`;
+    useActiveDescendant(editor, listboxId, items.length ? optionId(selected) : null);
 
     useEffect(() => setSelected(0), [items]);
 
@@ -260,7 +265,9 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
       >
         <div
           ref={listRef}
+          id={listboxId}
           role="listbox"
+          aria-label="Insert"
           // A stable gutter keeps the rows the same width whether or not
           // filtering leaves enough items to scroll.
           className="max-h-72 overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
@@ -268,7 +275,9 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
         {items.map((item, index) => (
           <Fragment key={item.title}>
             {item.group !== items[index - 1]?.group && (
+              // Each option's name says what it is; the label is visual only.
               <div
+                aria-hidden="true"
                 className={cn(
                   "px-2 pb-0.5 text-xs text-muted-foreground",
                   index === 0 ? "pt-1" : "mt-1 border-t pt-1.5",
@@ -280,6 +289,8 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
             <button
               type="button"
               role="option"
+              id={optionId(index)}
+              tabIndex={-1}
               data-index={index}
               aria-selected={index === selected}
               className={cn(

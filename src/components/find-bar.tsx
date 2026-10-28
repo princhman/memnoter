@@ -23,7 +23,11 @@ import { getFocusedSectionRange } from "@/lib/section-focus";
 import { scrollCurrentResultIntoView } from "@/lib/find-highlights";
 import { FIND_EVENT } from "@/lib/app-events";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { IconTooltip } from "@/components/icon-tooltip";
+import { cn, MOD_KEY } from "@/lib/utils";
+
+const ALT_KEY = MOD_KEY === "⌘" ? "⌥" : "Alt+";
+const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
 
 const inputClassName =
   "h-7 min-w-0 flex-1 rounded-md bg-input/50 px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-input/30";
@@ -202,17 +206,24 @@ export function FindBar() {
   return (
     <div className="absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 rounded-lg bg-popover p-1 text-popover-foreground shadow-md">
       <div className="flex items-center gap-1">
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Toggle replace"
-          aria-expanded={showReplace}
-          onClick={() => setShowReplace((value) => !value)}
+        <IconTooltip
+          label="Toggle replace"
+          hint={`${MOD_KEY}${ALT_KEY}F`}
+          side="bottom"
         >
-          {showReplace ? <ChevronDown /> : <ChevronRight />}
-        </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Toggle replace"
+            aria-expanded={showReplace}
+            onClick={() => setShowReplace((value) => !value)}
+          >
+            {showReplace ? <ChevronDown /> : <ChevronRight />}
+          </Button>
+        </IconTooltip>
         <input
           ref={searchInput}
+          aria-label="Find"
           className={inputClassName}
           placeholder="Find"
           value={searchTerm}
@@ -224,11 +235,22 @@ export function FindBar() {
             handleKeyDown(event, event.shiftKey ? goToPrevious : goToNext)
           }
         />
-        <span className="w-12 shrink-0 text-center text-xs text-muted-foreground tabular-nums">
+        <span
+          aria-hidden="true"
+          className="w-12 shrink-0 text-center text-xs text-muted-foreground tabular-nums"
+        >
           {searchTerm
             ? hasResults
               ? `${(search?.current ?? 0) + 1}/${search?.count}`
               : "0/0"
+            : ""}
+        </span>
+        {/* The count read out as it changes, in words rather than "3/10". */}
+        <span aria-live="polite" aria-atomic="true" className="sr-only">
+          {searchTerm
+            ? hasResults
+              ? `Match ${(search?.current ?? 0) + 1} of ${search?.count}`
+              : "No matches"
             : ""}
         </span>
         <ToggleButton
@@ -245,32 +267,43 @@ export function FindBar() {
         >
           <Regex />
         </ToggleButton>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Previous match"
-          disabled={!hasResults}
-          onClick={goToPrevious}
+        <IconTooltip
+          label="Previous match"
+          hint={`${MOD_KEY}${SHIFT_KEY}G`}
+          side="bottom"
         >
-          <ChevronUp />
-        </Button>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Next match"
-          disabled={!hasResults}
-          onClick={goToNext}
-        >
-          <ChevronDown />
-        </Button>
-        <Button size="icon-xs" variant="ghost" aria-label="Close" onClick={close}>
-          <X />
-        </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Previous match"
+            disabled={!hasResults}
+            onClick={goToPrevious}
+          >
+            <ChevronUp />
+          </Button>
+        </IconTooltip>
+        <IconTooltip label="Next match" hint={`${MOD_KEY}G`} side="bottom">
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Next match"
+            disabled={!hasResults}
+            onClick={goToNext}
+          >
+            <ChevronDown />
+          </Button>
+        </IconTooltip>
+        <IconTooltip label="Close" hint="Esc" side="bottom">
+          <Button size="icon-xs" variant="ghost" aria-label="Close" onClick={close}>
+            <X />
+          </Button>
+        </IconTooltip>
       </div>
       {showReplace && (
         <div className="flex items-center gap-1 pl-7">
           <input
             ref={replaceInput}
+            aria-label="Replace with"
             className={inputClassName}
             placeholder="Replace"
             value={replaceTerm}
@@ -282,24 +315,28 @@ export function FindBar() {
               handleKeyDown(event, replace)
             }
           />
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Replace"
-            disabled={!hasResults}
-            onClick={replace}
-          >
-            <Replace />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Replace all"
-            disabled={!hasResults}
-            onClick={() => editor.commands.replaceAll()}
-          >
-            <ReplaceAll />
-          </Button>
+          <IconTooltip label="Replace" hint="Enter" side="bottom">
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Replace"
+              disabled={!hasResults}
+              onClick={replace}
+            >
+              <Replace />
+            </Button>
+          </IconTooltip>
+          <IconTooltip label="Replace all" side="bottom">
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Replace all"
+              disabled={!hasResults}
+              onClick={() => editor.commands.replaceAll()}
+            >
+              <ReplaceAll />
+            </Button>
+          </IconTooltip>
         </div>
       )}
     </div>
@@ -318,15 +355,17 @@ function ToggleButton({
   children: ReactNode;
 }) {
   return (
-    <Button
-      size="icon-xs"
-      variant="ghost"
-      aria-label={label}
-      aria-pressed={pressed}
-      className={cn(pressed && "bg-primary/15 text-primary hover:bg-primary/20")}
-      onClick={onToggle}
-    >
-      {children}
-    </Button>
+    <IconTooltip label={label} side="bottom">
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        aria-label={label}
+        aria-pressed={pressed}
+        className={cn(pressed && "bg-primary/15 text-primary hover:bg-primary/20")}
+        onClick={onToggle}
+      >
+        {children}
+      </Button>
+    </IconTooltip>
   );
 }

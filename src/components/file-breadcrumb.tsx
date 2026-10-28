@@ -121,9 +121,12 @@ export function FileBreadcrumb() {
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       render={
-                        <Button size="icon-sm" variant="ghost">
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label="Show parent sections"
+                        >
                           <BreadcrumbEllipsis />
-                          <span className="sr-only">Toggle menu</span>
                         </Button>
                       }
                     />
