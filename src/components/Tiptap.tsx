@@ -16,6 +16,7 @@ import { SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { usePersistedView } from "@/lib/view-persistence";
+import { useSearchIndexing } from "@/lib/search-index";
 import { FindHighlights } from "@/lib/find-highlights";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
@@ -352,6 +353,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   // restore where the reader left off; runs after the empty-note content above
   usePersistedView(editor, moduleId, isSuccess);
+  useSearchIndexing(editor, moduleId, isSuccess);
 
   // pass editor into the context
   useEffect(() => {
