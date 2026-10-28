@@ -335,6 +335,49 @@ mod tests {
     }
 
     #[test]
+    fn card_assets_survive_cleanup_and_source_deletion_retires_foreign_cards() {
+        let f = Fixture::new();
+        let id = f.file("note");
+        let face = serde_json::json!({"version":1,"fileId":id,"imageId":"image","targetMaskId":"mask","masks":[]}).to_string();
+        {
+            let conn = f.db.conn.lock().unwrap();
+            conn.execute(
+                "insert into cards (id,module_id,kind,front,back,due_at,created_at,updated_at)
+                values ('image:o:mask','other','occlusion',?1,?1,0,0,0)",
+                [&face],
+            )
+            .unwrap();
+        }
+        assert!(f.cleanup(std::slice::from_ref(&id), &[1], 7).is_empty());
+        assert!(f.row_exists(&id));
+        f.db.conn
+            .lock()
+            .unwrap()
+            .execute("update cards set deleted_at = 1", [])
+            .unwrap();
+        assert!(f.cleanup(std::slice::from_ref(&id), &[1], 7).is_empty());
+        f.db.conn
+            .lock()
+            .unwrap()
+            .execute("update cards set deleted_at = null", [])
+            .unwrap();
+        delete_module_data(&mut f.db.conn.lock().unwrap(), &f.dir.join("files"), "note").unwrap();
+        assert!(!f.row_exists(&id));
+        assert!(!f.dir.join("files").join(id).exists());
+        let retired: bool =
+            f.db.conn
+                .lock()
+                .unwrap()
+                .query_one(
+                    "select deleted_at is not null from cards where id = 'image:o:mask'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+        assert!(retired);
+    }
+
+    #[test]
     fn stale_snapshots_never_remove_files() {
         let f = Fixture::new();
         let id = f.file("note");
@@ -493,6 +536,14 @@ fn delete_module_data(
             return Err("Refusing to delete a file outside managed storage".into());
         }
     }
+    tx.execute(
+        "update cards set deleted_at = coalesce(deleted_at, ?2)
+        where kind = 'occlusion' and (json_extract(front, '$.fileId') in
+        (select id from files where module_id = ?1) or json_extract(back, '$.fileId') in
+        (select id from files where module_id = ?1))",
+        params![module_id, Utc::now().timestamp_millis()],
+    )
+    .map_err(db_err)?;
     tx.execute("delete from files where module_id = ?1", [module_id])
         .map_err(db_err)?;
     // Foreign keys cascade to the document snapshot and all pending updates.
@@ -677,6 +728,7 @@ fn read_file(
     module_id: String,
     file_id: String,
 ) -> CommandResult<FileContents> {
+    let _ = module_id; // Copied images may refer to another note's managed asset.
     if Uuid::parse_str(&file_id).is_err() {
         return Err("Invalid file ID".to_string());
     }
@@ -690,8 +742,8 @@ fn read_file(
     let conn = db.conn.lock().map_err(db_err)?;
     let (path, file_type): (String, String) = conn
         .query_row(
-            "select path, file_type from files where id = ?1 and module_id = ?2",
-            params![file_id, module_id],
+            "select path, file_type from files where id = ?1",
+            params![file_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(db_err)?;
@@ -702,6 +754,33 @@ fn read_file(
 
     let bytes = std::fs::read(expected_path).map_err(db_err)?;
     Ok(FileContents { bytes, file_type })
+}
+
+#[tauri::command]
+fn resolve_card_image(
+    app: tauri::AppHandle,
+    db: tauri::State<Db>,
+    file_id: String,
+) -> CommandResult<String> {
+    if Uuid::parse_str(&file_id).is_err() {
+        return Err("Invalid image ID".into());
+    }
+    let conn = db.conn.lock().map_err(db_err)?;
+    let path: String = conn
+        .query_row("select path from files where id = ?1", [&file_id], |r| {
+            r.get(0)
+        })
+        .map_err(db_err)?;
+    let expected = app
+        .path()
+        .app_data_dir()
+        .map_err(db_err)?
+        .join("files")
+        .join(file_id);
+    if Path::new(&path) != expected || !expected.is_file() {
+        return Err("Image is unavailable".into());
+    }
+    Ok(path)
 }
 
 // The caller reconstructs the persisted Yjs document before supplying unused
@@ -729,6 +808,18 @@ fn cleanup_unused_files(
 
     let mut deleted = Vec::new();
     for id in file_ids {
+        // Retain even retired faces: undo restores their ids/history and assets.
+        let referenced: bool = conn
+            .query_one(
+                "select exists(select 1 from cards where kind = 'occlusion'
+             and (json_extract(front, '$.fileId') = ?1 or json_extract(back, '$.fileId') = ?1))",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if referenced {
+            continue;
+        }
         let path: Option<String> = conn
             .query_row(
                 "select path from files where id = ?1 and module_id = ?2",
@@ -804,6 +895,7 @@ pub fn run() {
             save_file,
             read_file,
             cleanup_files,
+            resolve_card_image,
             cards::sync_cards,
             cards::unindexed_card_modules,
             cards::due_cards,

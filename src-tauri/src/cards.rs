@@ -164,6 +164,7 @@ fn sync_module_cards(
         return Ok(Vec::new());
     }
     let mut conflicts = Vec::new();
+    let mut unavailable = Vec::new();
     {
         let mut upsert = tx
             .prepare(
@@ -186,6 +187,23 @@ fn sync_module_cards(
             )
             .map_err(db_err)?;
         for card in cards {
+            if card.kind == "occlusion" {
+                let front_id = card.front.get("fileId").and_then(|v| v.as_str());
+                let back_id = card.back.get("fileId").and_then(|v| v.as_str());
+                let exists = front_id.is_some()
+                    && front_id == back_id
+                    && tx
+                        .query_row(
+                            "select exists(select 1 from files where id = ?1)",
+                            [front_id],
+                            |r| r.get::<_, bool>(0),
+                        )
+                        .map_err(db_err)?;
+                if !exists {
+                    unavailable.push(card.id.clone());
+                    continue;
+                }
+            }
             let changed = upsert
                 .execute(params![
                     card.id,
@@ -204,7 +222,7 @@ fn sync_module_cards(
     let kept = serde_json::to_string(
         &cards
             .iter()
-            .filter(|card| !conflicts.contains(&card.id))
+            .filter(|card| !conflicts.contains(&card.id) && !unavailable.contains(&card.id))
             .map(|card| card.id.as_str())
             .collect::<Vec<_>>(),
     )
@@ -523,6 +541,50 @@ mod tests {
             &reviewed(due_at, expected_reps + 1),
             &log(3),
         )
+    }
+
+    #[test]
+    fn occlusion_edit_restore_and_missing_asset_share_the_review_lifecycle() {
+        let f = Fixture::new();
+        f.db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into files values ('asset','a','/synthetic/asset','image/png')",
+                [],
+            )
+            .unwrap();
+        let mut card = CardContent {
+            id: "image:o:mask".into(),
+            kind: "occlusion".into(),
+            front: json!({"fileId":"asset","revealed":false}),
+            back: json!({"fileId":"asset","revealed":true}),
+        };
+        f.sync("a", std::slice::from_ref(&card), 10);
+        review(&f, &card.id, 0, 500).unwrap();
+        card.front["masks"] = json!([{"id":"mask","shape":"rectangle","x":0.1}]);
+        f.sync("a", std::slice::from_ref(&card), 110);
+        f.sync("a", &[], 120);
+        assert!(f.due(None, 1000).is_empty());
+        f.sync("a", std::slice::from_ref(&card), 130);
+        let due = f.due(None, 1000);
+        assert_eq!(due[0].reps, 1);
+        assert_eq!(due[0].fsrs.due_at, 500);
+        assert_eq!(due[0].front, card.front);
+        f.db.conn
+            .lock()
+            .unwrap()
+            .execute("delete from files where id = 'asset'", [])
+            .unwrap();
+        f.sync("a", &[card], 140);
+        assert!(f.due(None, 1000).is_empty());
+        assert_eq!(
+            f.column::<i64>(
+                "select count(*) from review_log where card_id = ?1",
+                "image:o:mask"
+            ),
+            1
+        );
     }
 
     #[test]
