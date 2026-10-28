@@ -90,3 +90,34 @@ export async function loadContent(
     if (!document) doc.destroy();
   }
 }
+
+// Receipts outlive reads and cache eviction. A query may publish a disk snapshot
+// taken before add_update completed, even after onSaved patched the cache.
+const checkpoints = new Map<string, number[]>();
+const acknowledgements = new Map<string, Map<number, ContentUpdate>>();
+export function acknowledgeContent(moduleId: string, update: ContentUpdate) {
+  let receipts = acknowledgements.get(moduleId);
+  if (!receipts) acknowledgements.set(moduleId, receipts = new Map());
+  receipts.set(update.id, update);
+}
+export function acknowledgeCompaction(moduleId: string, state: number[], represented: ContentUpdate[]) {
+  checkpoints.set(moduleId, state);
+  const receipts = acknowledgements.get(moduleId);
+  for (const update of represented) {
+    if (receipts?.get(update.id) === update) receipts.delete(update.id);
+  }
+}
+export function reconcileContent(moduleId: string, content: GetContentResponse): GetContentResponse {
+  const updates = new Map(content.updates.map(update => [update.id, update]));
+  for (const update of acknowledgements.get(moduleId)?.values() ?? []) updates.set(update.id, update);
+  const checkpoint = checkpoints.get(moduleId);
+  const state = checkpoint ? Array.from(Y.mergeUpdates([new Uint8Array(content.state.length ? content.state : [0, 0]), new Uint8Array(checkpoint)])) : content.state;
+  return { ...content, state, updates: [...updates.values()].sort((a, b) => a.id - b.id) };
+}
+export function contentQueryOptions(moduleId: string) {
+  return {
+    queryKey: ["content", moduleId],
+    // Runs at QueryClient publication, including after an outstanding read.
+    structuralSharing: (_old: unknown, incoming: unknown) => reconcileContent(moduleId, incoming as GetContentResponse),
+  };
+}

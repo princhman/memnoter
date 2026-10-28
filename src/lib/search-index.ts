@@ -3,7 +3,7 @@ import type { Editor } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
 import { invoke } from "@tauri-apps/api/core";
 import * as Y from "yjs";
-import { applySavedContent, type GetContentResponse } from "@/lib/content";
+import { applySavedContent, reconcileContent, type GetContentResponse } from "@/lib/content";
 import {
   EXTRACTOR_VERSION,
   extractFromDoc,
@@ -11,11 +11,20 @@ import {
   type SearchText,
 } from "@/lib/search-text";
 
+import { queryClient } from "@/lib/query-client";
+import { saveQueue } from "@/lib/saves";
+
 const INDEX_DEBOUNCE_MS = 1_000;
 
 async function indexNote(moduleId: string, text: SearchText, backfill = false) {
   try {
-    await invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill });
+    if (saveQueue.isSuspended()) return;
+    // Restore drains this mutation before replacing the database.
+    await queryClient.getMutationCache().build(queryClient, {
+      mutationKey: ["search-index", moduleId],
+      gcTime: 0,
+      mutationFn: () => invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill }),
+    }).execute(undefined);
   } catch (error) {
     console.error("Failed to index note for search:", error);
   }
@@ -84,7 +93,7 @@ export async function indexStoredNote(moduleId: string) {
   const content = await invoke<GetContentResponse>("get_content", { moduleId });
   const doc = new Y.Doc();
   try {
-    applySavedContent(doc, content);
+    applySavedContent(doc, reconcileContent(moduleId, content));
     await indexNote(moduleId, extractFromYDoc(doc), true);
   } finally {
     doc.destroy();

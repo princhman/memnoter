@@ -20,6 +20,9 @@ import {
   useCommands,
   type Command,
 } from "@/lib/commands";
+import { queryClient } from "@/lib/query-client";
+import { saveQueue } from "@/lib/saves";
+import { FIND_EVENT, requestApp } from "@/lib/app-events";
 import { requestFind } from "@/lib/find-request";
 import { getRecentModuleIds } from "@/lib/recent-modules";
 import { backfillSearchIndex } from "@/lib/search-index";
@@ -97,7 +100,7 @@ function useBuiltinCommands() {
       title: "Find in note",
       shortcut: "⌘F",
       keywords: ["search"],
-      run: () => requestFind({ moduleId: null, terms: [] }),
+      run: () => requestApp(FIND_EVENT),
     });
   }, [hasEditor]);
 }
@@ -134,6 +137,8 @@ export function CommandPalette() {
       }
       event.preventDefault();
       event.stopPropagation();
+      // Keep the restore modal in control throughout its flush and DB swap.
+      if (saveQueue.isSuspended() || queryClient.isMutating({ mutationKey: ["restore-backup"] })) return;
       restoreFocus.current = true;
       setOpen((value) => !value);
     };

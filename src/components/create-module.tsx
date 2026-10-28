@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { NEW_MODULE_EVENT } from "@/lib/app-events";
 import {
   Dialog,
   DialogClose,
@@ -31,16 +33,24 @@ const CreateModule = () => {
     run: openDialog,
   });
 
+  // The app menu and the welcome screen ask for the dialog too.
+  useEffect(() => {
+    const handleOpen = openDialog;
+    window.addEventListener(NEW_MODULE_EVENT, handleOpen);
+    return () => window.removeEventListener(NEW_MODULE_EVENT, handleOpen);
+  }, [openDialog]);
+
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const mutation = useMutation({
-    mutationFn: async (name: string) => {
-      await invoke("create_module", { name });
-    },
-    onSuccess: () => {
+    mutationFn: async (name: string) =>
+      invoke<string>("create_module", { name }),
+    onSuccess: (moduleId) => {
       queryClient.invalidateQueries({ queryKey: ["modules"] });
       setName("");
       setSubmitted(false);
       setOpen(false);
+      void navigate({ to: "/$moduleId", params: { moduleId } });
     },
   });
 

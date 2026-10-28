@@ -1,4 +1,4 @@
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
 import {
@@ -12,12 +12,46 @@ import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
 import { CommandPalette } from "@/components/command-palette";
+import { IconTooltip } from "@/components/icon-tooltip";
+import { MOD_KEY } from "@/lib/utils";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
+import SaveStatus from "@/components/save-status";
+import { useEffect } from "react";
+import { useCommand } from "@/lib/commands";
+import { useBackupNow } from "@/lib/backups";
+import { OPEN_SETTINGS_EVENT, requestApp } from "@/lib/app-events";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
+  const navigate = useNavigate();
+
+  const backupNow = useBackupNow();
+  useCommand({
+    id: "settings.open",
+    title: "Settings",
+    shortcut: `${MOD_KEY},`,
+    run: () => requestApp(OPEN_SETTINGS_EVENT),
+  });
+  useCommand({
+    id: "backup.now",
+    title: "Back up now",
+    keywords: ["backup", "save"],
+    run: async () => {
+      await navigate({ to: "/settings" });
+      backupNow.mutate();
+    },
+  });
+
+  // Dispatched by the app menu.
+  useEffect(() => {
+    const openSettings = () => void navigate({ to: "/settings" });
+    window.addEventListener(OPEN_SETTINGS_EVENT, openSettings);
+    return () =>
+      window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);
+  }, [navigate]);
+
   return (
     <>
       <ActiveEditorProvider>
@@ -49,13 +83,22 @@ const RootLayout = () => {
           <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
             {!isFullScrean && <div className="w-18" />}
             <div className="flex items-center pl-2 gap-1.5">
-              <SidebarTrigger />
+              <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
+                <SidebarTrigger aria-label="Toggle sidebar" />
+              </IconTooltip>
               <UndoRedo />
             </div>
           </div>
           <CommandPalette />
         </SidebarProvider>
       </ActiveEditorProvider>
+
+      {backupNow.isError && (
+        <p role="alert" className="fixed bottom-12 left-4 z-50 rounded-md bg-popover p-3 text-sm text-destructive">
+          {String(backupNow.error)}
+        </p>
+      )}
+      <SaveStatus />
 
       <TanStackRouterDevtools />
     </>

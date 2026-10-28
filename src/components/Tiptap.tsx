@@ -4,15 +4,20 @@ import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
+import { redo as yRedo, undo as yUndo } from "@tiptap/y-tiptap";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { applyPendingSaves, saveQueue } from "@/lib/saves";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
+import { LinkMenu } from "@/components/link-menu";
+import { LinkEditor } from "@/lib/link-editor";
 import { SectionFocus } from "@/lib/section-focus";
 import { Sections } from "@/lib/sections";
 import { HeadingFold } from "@/lib/heading-fold";
-import { SlashCommand } from "@/components/slash-menu";
+import { IMAGE_TYPES, SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { usePersistedView } from "@/lib/view-persistence";
@@ -22,8 +27,10 @@ import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image"
 import FileHandler from "@tiptap/extension-file-handler";
 import {
   applySavedContent,
-  loadContent,
+  contentQueryOptions,
+  acknowledgeCompaction,
   type ContentUpdate,
+  loadContent,
   type FileType,
   type GetContentResponse,
 } from "@/lib/content";
@@ -38,6 +45,17 @@ import {
   createTocStore,
 } from "@/components/table-of-contents";
 
+let nativeHistoryUpdates = Promise.resolve();
+function setNativeEditorHistory(editorFocused: boolean) {
+  nativeHistoryUpdates = nativeHistoryUpdates
+    .then(() => invoke<void>("set_editor_history", { editorFocused }))
+    .catch((error) => {
+      if ("__TAURI_INTERNALS__" in window) {
+        console.error("Failed to route native history", error);
+      }
+    });
+}
+
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
 
@@ -51,14 +69,15 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   // TOC updates on scroll; a store keeps those from re-rendering the editor.
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
-  const hasAppliedRemoteContent = useRef(false);
   const hasInsertedInitialContent = useRef(false);
 
   const { isSuccess, data } = useQuery({
-    queryKey: ["content", moduleId],
+    ...contentQueryOptions(moduleId),
     queryFn: async () => {
+      // Taken before reading, so an edit saved meanwhile is in one or the other.
+      const pending = saveQueue.pending(moduleId);
       const content = await loadContent(moduleId, yDoc);
-      hasAppliedRemoteContent.current = true;
+      applyPendingSaves(yDoc, pending);
       return content;
     },
     // local mutations keep this cache current; focus/remount needs no disk read.
@@ -77,30 +96,6 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   const { setActiveEditor } = useActiveEditor();
 
-  const addUpdateMutation = useMutation({
-    mutationKey: ["add-content-update", moduleId],
-    mutationFn: async (bytes: number[]) =>
-      invoke<ContentUpdate>("add_update", { moduleId, bytes }),
-
-    onSuccess: (update) => {
-      queryClient.setQueryData<GetContentResponse>(
-        ["content", moduleId],
-        (oldContent) => {
-          if (!oldContent) return oldContent;
-
-          return {
-            state: oldContent.state,
-            updates: [...oldContent.updates, update],
-            files: oldContent.files,
-          };
-        },
-      );
-    },
-    onError: (error) => {
-      console.error("Failed to save Tiptap update:", error);
-    },
-  });
-
   const compactionMutation = useMutation({
     mutationKey: ["compact-content", moduleId],
     mutationFn: async ({
@@ -109,10 +104,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     }: {
       newState: number[];
       updateId: number;
+      representedUpdates: ContentUpdate[];
     }) => {
       await invoke("save_compaction", { moduleId, newState, updateId });
     },
-    onSuccess: (_, { newState, updateId }) => {
+    onSuccess: (_, { newState, updateId, representedUpdates }) => {
+      acknowledgeCompaction(moduleId, newState, representedUpdates);
       queryClient.setQueryData<GetContentResponse>(
         ["content", moduleId],
         (oldContent) => {
@@ -160,12 +157,13 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   // applying updates; before paint, so a switched-to note never shows empty
   useLayoutEffect(() => {
-    if (!data || hasAppliedRemoteContent.current) return;
+    if (!data) return;
 
-    // a cached note has not gone through this editor's query function.
+    // Publication reconciles save receipts, including reads that finished late.
+    // Apply that reconciled data even if the raw read already seeded this doc.
     applySavedContent(yDoc, data);
-    hasAppliedRemoteContent.current = true;
-  }, [data, yDoc]);
+    applyPendingSaves(yDoc, saveQueue.pending(moduleId));
+  }, [data, moduleId, yDoc]);
 
   // attaching updater
   useEffect(() => {
@@ -173,14 +171,16 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
     const handleUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin === "tauri-load") return;
-      addUpdateMutation.mutate(Array.from(update));
+      saveQueue.enqueue(moduleId, Array.from(update));
     };
 
     yDoc.on("update", handleUpdate);
     return () => {
       yDoc.off("update", handleUpdate);
+      // Leaving the note: retry any failed saves now rather than after backoff.
+      saveQueue.retryNow();
     };
-  }, [isSuccess, yDoc, addUpdateMutation.mutate]);
+  }, [isSuccess, moduleId, yDoc]);
 
   async function insertImages(
     currentEditor: Editor,
@@ -224,7 +224,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       extensions: [
         StarterKit.configure({
           undoRedo: false,
+          // Links open in the browser on ⌘-click, through LinkEditor.
+          link: { openOnClick: false },
         }),
+        LinkEditor,
         Arrows,
         MoveLines,
         ItalicCaret,
@@ -234,7 +237,11 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         SectionFocus,
         Sections,
         HeadingFold,
-        SlashCommand,
+        SlashCommand.configure({
+          insertImages: (currentEditor, files, position) => {
+            void insertImages(currentEditor, files, position);
+          },
+        }),
         LatexSuggest,
         TocExtension.configure({
           scrollParent: () =>
@@ -263,12 +270,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           },
         }),
         FileHandler.configure({
-          allowedMimeTypes: [
-            "image/png",
-            "image/jpeg",
-            "image/webp",
-            "image/gif",
-          ],
+          allowedMimeTypes: IMAGE_TYPES,
           consumePasteEvent: true,
           onPaste: (currentEditor, files) => {
             void insertImages(
@@ -338,6 +340,38 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   );
 
   useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    // Serialize transitions, including unmount, so a delayed focus command
+    // cannot replace native text-field history after a newer blur.
+    let ready = false;
+    let disposed = false;
+    const update = () => {
+      if (ready) setNativeEditorHistory(document.activeElement === dom);
+    };
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    const unlisten = listen<string>("menu", ({ payload }) => {
+      if (disposed || document.activeElement !== dom) return;
+      if (payload === "editor-undo") yUndo(editor.state);
+      if (payload === "editor-redo") yRedo(editor.state);
+    }).then((stop) => {
+      ready = true;
+      if (!disposed) update();
+      return stop;
+    });
+    void unlisten.catch(console.error);
+    return () => {
+      disposed = true;
+      ready = false;
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+      setNativeEditorHistory(false);
+      void unlisten.then((stop) => stop()).catch(console.error);
+    };
+  }, [editor]);
+
+  useEffect(() => {
     editor?.setEditable(isSuccess, false);
   }, [editor, isSuccess]);
 
@@ -392,12 +426,9 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         return;
       }
 
-      // do not compact while an older update is still being persisted.
-      const pendingUpdates = queryClient.isMutating({
-        mutationKey: ["add-content-update", moduleId],
-      });
-
-      if (pendingUpdates > 0) {
+      // do not compact while an update is still queued or being persisted;
+      // compaction drops saved updates by id, which a queued one lacks yet.
+      if (!saveQueue.isIdle(moduleId)) {
         return;
       }
 
@@ -405,11 +436,14 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         ...currentContent.updates.map((update) => update.id),
       );
 
+      // Every receipt below the watermark must be represented in this doc.
+      applySavedContent(yDoc, currentContent);
       const newState = Array.from(Y.encodeStateAsUpdate(yDoc));
 
       compactionMutation.mutate({
         newState,
         updateId,
+        representedUpdates: currentContent.updates,
       });
     }, COMPACTION_IDLE_MS);
 
@@ -449,6 +483,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
+      <LinkMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} />
     </FilesContext.Provider>
   );
