@@ -5,7 +5,7 @@ import type { Node } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { changedRanges, clozeIdsOf, parseBlock, planCardIds, type ClozeId } from "./cards.ts";
+import { changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, type ClozeId, type Range } from "./cards.ts";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -67,28 +67,47 @@ function collectBlocks(doc: Node, from: number, to: number) {
   return blocks;
 }
 
+// Expand at boundaries to include the two sides of joins and splits, and
+// deduplicate blocks when several steps touched the same paragraph.
+function collectChangedBlocks(doc: Node, ranges: Range[]) {
+  const blocks = new Map<number, { node: Node; pos: number }>();
+  for (const { from, to } of ranges) {
+    for (const block of collectBlocks(doc, from, to)) blocks.set(block.pos, block);
+  }
+  return [...blocks.values()];
+}
+
 // A backward join keeps the first block's attributes. Recover the identity of
 // the merged card from a surviving character before assigning any new ids.
-function carryMergedCardIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
+function carryMergedCardIds(
+  tr: Transaction, oldDoc: Node, mapping: Mapping, oldBlocks: ReturnType<typeof collectBlocks>,
+) {
   const ids = new Set(collectBlocks(tr.doc, 0, tr.doc.content.size).map(({ node }) => node.attrs.cardId));
-  for (const { node, pos } of collectBlocks(oldDoc, 0, oldDoc.content.size)) {
+  for (const { node, pos } of oldBlocks) {
     const id = node.attrs.cardId;
     if (!id || ids.has(id) || parseBlock(node).cards.length === 0) continue;
     const mapped = mapping.mapResult(pos + 2);
     if (mapped.deletedAcross) continue;
     const $pos = tr.doc.resolve(mapped.pos);
-    if (!$pos.depth || !isCardBlock($pos.parent) || $pos.parent.attrs.cardId) continue;
+    if (!$pos.depth || !isCardBlock($pos.parent)) continue;
+    if ($pos.parent.attrs.cardId) {
+      const oldDestination = oldDoc.resolve(mapping.invert().map($pos.before() + 1, -1)).parent;
+      if (isCardBlock(oldDestination) && parseBlock(oldDestination).cards.length > 0) continue;
+    }
     if (parseBlock($pos.parent).cards.length === 0) continue;
+    ids.delete($pos.parent.attrs.cardId);
     tr.setNodeAttribute($pos.before(), "cardId", id);
     ids.add(id);
   }
 }
 
-function repairClozeIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
-  const previous = new Map(collectBlocks(oldDoc, 0, oldDoc.content.size)
+function repairClozeIds(
+  tr: Transaction, mapping: Mapping, oldBlocks: ReturnType<typeof collectBlocks>, ranges: Range[],
+) {
+  const previous = new Map(oldBlocks
     .filter(({ node }) => node.attrs.cardId)
     .map((block) => [block.node.attrs.cardId, block]));
-  for (const { node, pos } of collectBlocks(tr.doc, 0, tr.doc.content.size)) {
+  for (const { node, pos } of collectChangedBlocks(tr.doc, ranges)) {
     if (!node.attrs.cardId) continue;
     const syntax = parseBlock(node);
     const old = previous.get(node.attrs.cardId);
@@ -113,13 +132,15 @@ function repairClozeIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
     if (old && oldSyntax) {
       // Anchor inside both brace pairs: inserting at a cloze boundary moves
       // it, editing the answer keeps it, and deleting the cloze removes it.
-      oldSyntax.clozes.forEach((cloze, index) => {
+      oldSyntax.clozes.forEach((cloze) => {
         const from = mapping.mapResult(old.pos + 2 + cloze.open.from, 1);
         const to = mapping.mapResult(old.pos + cloze.close.to, -1);
         if (from.deletedAcross || to.deletedAcross) return;
         const target = syntax.clozes.findIndex((current) =>
           pos + 2 + current.open.from === from.pos && pos + current.close.to === to.pos);
-        if (target !== -1) claim(target, oldIds[index].id);
+        const entry = oldIds.find((entry) => entry.from >= 0 &&
+          entry.from === cloze.inner.from && entry.to === cloze.inner.to);
+        if (target !== -1 && entry) claim(target, entry.id);
       });
       // Cut/paste and whole-block replacements lose their mapped positions.
       // Match remaining answers only after surviving anchors have claimed ids,
@@ -134,13 +155,12 @@ function repairClozeIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
     syntax.clozes.forEach((_, index) => {
       // Only the initial assignment uses cN. Later additions never reuse a
       // deleted id, including after all clozes have been removed and saved.
-      const initial = !oldIds.length && node.attrs.clozeIds == null && old?.node.attrs.clozeIds == null;
+      const initial = !oldIds.length && validatedClozeIds(node.attrs.clozeIds) === null && validatedClozeIds(old?.node.attrs.clozeIds) === null;
       claim(index, initial ? `c${index + 1}` : `c${crypto.randomUUID()}`);
     });
-    // Keep removed identities in the block so a later paste or repairing
-    // temporarily incomplete braces can restore the same card. They are not
-    // extracted or synced while absent, so backend soft deletion is unchanged.
-    const retired = oldIds.filter(({ id }) => !used.has(id))
+    // Newly retired active entries precede older retirees. Keep a bounded
+    // window for cut/paste and temporarily incomplete braces.
+    const retired = oldIds.filter(({ id }) => !used.has(id)).slice(0, 20)
       .map((entry) => ({ ...entry, from: -1, to: -1 }));
     const identities = [...next, ...retired];
     if (!identities.length && node.attrs.clozeIds == null) continue;
@@ -181,11 +201,16 @@ export const Flashcards = Extension.create({
             default: null,
             keepOnSplit: false,
             parseHTML: (element) => {
-              try { return JSON.parse(element.getAttribute("data-cloze-ids") ?? "null"); }
+              try { return validatedClozeIds(JSON.parse(element.getAttribute("data-cloze-ids") ?? "null")); }
               catch { return null; }
             },
-            renderHTML: (attributes) => attributes.clozeIds
-              ? { "data-cloze-ids": JSON.stringify(attributes.clozeIds) } : {},
+            renderHTML: (attributes) => {
+              const ids = validatedClozeIds(attributes.clozeIds);
+              // Empty arrays preserve initialization without copying deleted answers.
+              return ids === null ? {} : {
+                "data-cloze-ids": JSON.stringify(ids.filter(({ from, to }) => from >= 0 && to >= from)),
+              };
+            },
           },
           // Stable block identity, including outside card syntax.
           cardId: {
@@ -267,7 +292,12 @@ export const Flashcards = Extension.create({
           if (ranges.length === 0) return null;
           const tr = state.tr;
           const mapping = new Mapping(transactions.flatMap((transaction) => transaction.mapping.maps));
-          carryMergedCardIds(tr, oldState.doc, mapping);
+          const inverse = mapping.invert();
+          const oldRanges = ranges.map(({ from, to }) => ({
+            from: inverse.map(from, -1), to: inverse.map(to, 1),
+          }));
+          const oldBlocks = collectChangedBlocks(oldState.doc, oldRanges);
+          carryMergedCardIds(tr, oldState.doc, mapping, oldBlocks);
           const plan = planCardIds(tr.doc, ranges, () => crypto.randomUUID());
           const images: { pos: number; attrs: Record<string, unknown>; touched: boolean }[] = [];
           tr.doc.descendants((node, pos) => {
@@ -279,7 +309,7 @@ export const Flashcards = Extension.create({
             else seen.add(image.attrs.imageId);
           }
           for (const { pos, cardId } of plan) tr.setNodeAttribute(pos, "cardId", cardId);
-          repairClozeIds(tr, oldState.doc, mapping);
+          repairClozeIds(tr, mapping, oldBlocks, ranges);
           return tr.docChanged ? tr : null;
         },
         props: {

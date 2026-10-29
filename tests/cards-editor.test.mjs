@@ -18,9 +18,9 @@ function editorFor(content) {
   return editor;
 }
 
-const paragraph = (text, cardId = null) => ({
+const paragraph = (text, cardId = null, clozeIds = null) => ({
   type: "paragraph",
-  attrs: { cardId },
+  attrs: { cardId, clozeIds },
   content: [{ type: "text", text }],
 });
 
@@ -192,6 +192,136 @@ test("cutting and pasting a cloze within its block keeps its review identity", (
       { type: "text", text: " and {{Paris}}" });
     assert.deepEqual(clozeCards(editor), new Map([["France", "reviewed:c2"], ["Paris", "reviewed:c1"]]));
   } finally {
+    editor.destroy();
+  }
+});
+
+
+test("editing malformed or incomplete cloze metadata repairs it without borrowing retired ids", () => {
+  const first = { id: "first", from: 2, to: 7, answer: "Paris" };
+  const retired = { id: "retired", from: -1, to: -1, answer: "deleted" };
+  for (const metadata of [{}, [null], [{ from: 2, to: 7, answer: "Paris" }],
+    [], [first], [retired, first]]) {
+    const editor = editorFor([paragraph("{{Paris}} and {{France}}", "reviewed", metadata)]);
+    try {
+      editor.commands.insertContentAt(5, { type: "text", text: "!" });
+      const cards = clozeCards(editor);
+      assert.equal(cards.size, 2);
+      assert.ok([...cards.values()].every((id) => !id.endsWith(":undefined") && id !== "reviewed:retired"));
+      if (Array.isArray(metadata) && metadata.includes(first)) {
+        assert.equal(cards.get("Pa!ris"), "reviewed:first");
+      }
+      assert.equal(new Set(cards.values()).size, 2);
+    } finally {
+      editor.destroy();
+    }
+  }
+});
+
+test("HTML cloze metadata parsing rejects valid JSON with an invalid shape", () => {
+  const editor = editorFor([paragraph("{{Paris}}", "reviewed")]);
+  try {
+    const rule = editor.schema.nodes.paragraph.spec.parseDOM.find(({ tag }) => tag === "p");
+    for (const value of ["{}", "[null]", '[{"from":2,"to":7,"answer":"Paris"}]', "broken-json"]) {
+      const attrs = rule.getAttrs({ getAttribute: (name) => name === "data-cloze-ids" ? value : null });
+      assert.equal(attrs.clozeIds ?? null, null, value);
+    }
+    const attrs = rule.getAttrs({ getAttribute: (name) => name === "data-cloze-ids" ? "[]" : null });
+    assert.deepEqual(attrs.clozeIds, []);
+  } finally {
+    editor.destroy();
+  }
+});
+
+for (const source of ["Q :: A", "{{Paris}} and {{France}}"])
+  test(`joining a ${source.includes("{{") ? "cloze" : "basic"} replaces a plain destination's stale id but preserves an active card's id`, () => {
+    for (const destinationIsCard of [false, true]) {
+      const editor = editorFor([paragraph("Context :: answer ", "former"), paragraph(source, "reviewed")]);
+      try {
+        if (!destinationIsCard) {
+          editor.commands.insertContentAt({ from: 1, to: editor.state.doc.firstChild.nodeSize - 1 },
+            { type: "text", text: "Context " });
+          assert.equal(editor.state.doc.firstChild.attrs.cardId, "former");
+        }
+        const original = extractCards(editor.state.doc).map(({ id }) => id);
+        editor.view.dispatch(closeHistory(editor.state.tr));
+        editor.commands.setTextSelection(editor.state.doc.firstChild.nodeSize + 1);
+        assert.equal(joinBackward(editor.state, editor.view.dispatch), true);
+        const cards = extractCards(editor.state.doc);
+        assert.ok(cards.length > 0);
+        assert.ok(cards.every(({ blockId }) => blockId === (destinationIsCard ? "former" : "reviewed")));
+        if (!destinationIsCard) assert.deepEqual(cards.map(({ id }) => id), original);
+        editor.commands.undo();
+        assert.deepEqual(extractCards(editor.state.doc).map(({ id }) => id), original);
+      } finally {
+        editor.destroy();
+      }
+    }
+  });
+
+test("local edits leave distant legacy cloze metadata untouched while repairing every edited block", () => {
+  const editor = editorFor([
+    paragraph("{{Paris}}", "first"),
+    paragraph("Spacer one"),
+    paragraph("{{Untouched}}", "distant"),
+    paragraph("Spacer two"),
+    paragraph("{{France}}", "last"),
+  ]);
+  try {
+    const last = editor.state.doc.content.size - editor.state.doc.lastChild.nodeSize;
+    // Two disjoint changes in one transaction exercise both mapped range sets.
+    editor.view.dispatch(editor.state.tr.insertText("!", last + 5).insertText("!", 5));
+    assert.equal(editor.state.doc.child(2).attrs.clozeIds, null);
+    assert.equal(editor.state.doc.firstChild.attrs.clozeIds[0].answer, "Pa!ris");
+    assert.equal(editor.state.doc.lastChild.attrs.clozeIds[0].answer, "Fr!ance");
+    assert.deepEqual([...clozeCards(editor).values()], ["first:c1", "distant:c1", "last:c1"]);
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("cloze repair retains only the 20 most recently retired identities", () => {
+  const editor = editorFor([paragraph("{{answer-0}}", "reviewed")]);
+  try {
+    const ids = new Set(["reviewed:c1"]);
+    for (let i = 1; i <= 25; i++) {
+      editor.commands.insertContentAt({ from: 1, to: editor.state.doc.firstChild.nodeSize - 1 },
+        { type: "text", text: `{{answer-${i}}}` });
+      const [card] = extractCards(editor.state.doc);
+      assert.ok(!ids.has(card.id));
+      ids.add(card.id);
+    }
+    const entries = editor.state.doc.firstChild.attrs.clozeIds;
+    assert.equal(entries.length, 21);
+    assert.equal(entries[0].answer, "answer-25");
+    assert.deepEqual(entries.slice(1).map(({ answer, from, to }) => [answer, from, to]),
+      Array.from({ length: 20 }, (_, i) => [`answer-${24 - i}`, -1, -1]));
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("copied HTML excludes retired answers and preserves the initialized empty marker", () => {
+  const active = { id: "active", from: 2, to: 7, answer: "Paris" };
+  const retired = { id: "retired", from: -1, to: -1, answer: "deleted private answer" };
+  const editor = editorFor([paragraph("{{Paris}}", "reviewed", [active, retired])]);
+  let reloaded;
+  try {
+    const type = editor.schema.nodes.paragraph;
+    const [, attrs] = type.spec.toDOM(editor.state.doc.firstChild);
+    assert.deepEqual(JSON.parse(attrs["data-cloze-ids"]), [active]);
+    assert.ok(!JSON.stringify(attrs).includes(retired.answer));
+    const [, emptyAttrs] = type.spec.toDOM(type.create({ cardId: "reviewed", clozeIds: [retired] }));
+    assert.equal(emptyAttrs["data-cloze-ids"], "[]");
+    const rule = type.spec.parseDOM.find(({ tag }) => tag === "p");
+    const parsed = rule.getAttrs({ getAttribute: (name) => emptyAttrs[name] ?? null });
+    reloaded = editorFor([{ ...paragraph("plain"), attrs: parsed }]);
+    reloaded.commands.insertContentAt(1, { type: "text", text: "{{Earth}} " });
+    const [card] = extractCards(reloaded.state.doc);
+    assert.equal(card.blockId, "reviewed");
+    assert.notEqual(card.id, "reviewed:c1");
+  } finally {
+    reloaded?.destroy();
     editor.destroy();
   }
 });

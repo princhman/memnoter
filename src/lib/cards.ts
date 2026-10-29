@@ -216,10 +216,21 @@ function isCardBlock(node: Node) {
   return node.isTextblock && !node.type.spec.code && "cardId" in node.attrs;
 }
 
+// Attributes can come from pasted HTML or persisted documents, not just us.
+export function validatedClozeIds(value: unknown): ClozeId[] | null {
+  if (!Array.isArray(value) || !value.every((entry) =>
+    entry !== null && typeof entry === "object" &&
+    typeof entry.id === "string" &&
+    typeof entry.from === "number" && Number.isFinite(entry.from) &&
+    typeof entry.to === "number" && Number.isFinite(entry.to) &&
+    typeof entry.answer === "string")) return null;
+  return value;
+}
+
 // Legacy documents start with their existing positional ids. Once persisted,
 // these ids follow the cloze instead of its index in the paragraph.
 export function clozeIdsOf(node: Node, syntax = parseBlock(node)): ClozeId[] {
-  return node.attrs.clozeIds ?? syntax.clozes.map(({ inner }, index) => ({
+  return validatedClozeIds(node.attrs.clozeIds) ?? syntax.clozes.map(({ inner }, index) => ({
     ...inner, id: `c${index + 1}`, answer: node.cut(inner.from, inner.to).textContent,
   }));
 }
@@ -248,11 +259,12 @@ export function extractCards(doc: Node): ExtractedCard[] {
     const syntax = parseBlock(node);
     const clozeIds = clozeIdsOf(node, syntax);
     syntax.cards.forEach((card, index) => {
-      cards.push({
-        ...card,
-        blockId,
-        id: card.kind === "cloze" ? `${blockId}:${clozeIds[index].id}` : blockId,
-      });
+      const inner = syntax.clozes[index]?.inner;
+      const clozeId = inner && clozeIds.find((entry) =>
+        entry.from >= 0 && entry.from === inner.from && entry.to === inner.to)?.id;
+      // Initialized metadata may lag a text edit until the repair transaction.
+      if (card.kind === "cloze" && clozeId === undefined) return;
+      cards.push({ ...card, blockId, id: card.kind === "cloze" ? `${blockId}:${clozeId}` : blockId });
     });
     return true;
   });
