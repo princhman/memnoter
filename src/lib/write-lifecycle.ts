@@ -2,6 +2,7 @@ import { createStore } from "@tanstack/react-store";
 import { queryClient } from "@/lib/query-client";
 import { flushSaves, saveQueue } from "@/lib/saves";
 import { flushCardSyncs } from "@/lib/card-sync";
+import { flushSearchIndexing } from "@/lib/search-index";
 
 let exclusive = false;
 const listeners = new Set<(blocked: boolean) => void>();
@@ -121,6 +122,9 @@ export async function exclusiveWrite<T>(
     }
     if (!discard) {
       await flushCardSyncs();
+      // Editing is closed, so this indexes the final text. Launch only
+      // backfills notes never indexed by the current extractor.
+      await flushSearchIndexing(3_000);
       if (!await flushSaves(3_000)) throw new Error("Pending edits could not be saved. Please retry saving first.");
     }
     await saveQueue.suspend();
