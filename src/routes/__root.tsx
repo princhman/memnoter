@@ -1,6 +1,7 @@
 import { createRootRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
+import CreateModule from "@/components/create-module";
 import {
   SidebarInset,
   SidebarProvider,
@@ -41,6 +42,7 @@ const RootLayout = () => {
           className="h-dvh overflow-hidden overscroll-none"
         >
           <AppSidebar />
+          <CreateModule global />
 
           <SidebarInset className="min-h-0 overflow-hidden">
             <div

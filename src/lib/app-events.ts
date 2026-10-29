@@ -1,10 +1,10 @@
 import { listen } from "@tauri-apps/api/event";
-import { appStore, setSidebarOpen } from "@/lib/store";
 
 // App-wide requests, dispatched on window so any part of the UI can make them.
 export const OPEN_SETTINGS_EVENT = "memnoter:open-settings";
 export const NEW_MODULE_EVENT = "memnoter:new-module";
 export const FIND_EVENT = "memnoter:find";
+export const TOGGLE_SIDEBAR_EVENT = "memnoter:toggle-sidebar";
 
 export function requestApp(event: string) {
   window.dispatchEvent(new CustomEvent(event));
@@ -15,7 +15,7 @@ const MENU_ACTIONS: Record<string, () => void> = {
   settings: () => requestApp(OPEN_SETTINGS_EVENT),
   "new-module": () => requestApp(NEW_MODULE_EVENT),
   find: () => requestApp(FIND_EVENT),
-  "toggle-sidebar": () => setSidebarOpen(!appStore.state.sidebarOpen),
+  "toggle-sidebar": () => requestApp(TOGGLE_SIDEBAR_EVENT),
 };
 
 export function listenToMenu() {

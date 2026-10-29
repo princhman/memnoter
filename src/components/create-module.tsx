@@ -19,17 +19,21 @@ import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
 import { SidebarGroupAction } from "./ui/sidebar";
 
-const CreateModule = () => {
+// The sidebar's copy has the + button. In narrow windows the sidebar is a sheet
+// that unmounts when closed, so the copy answering the app menu and the welcome
+// screen lives outside it and has no button.
+const CreateModule = ({ global = false }: { global?: boolean }) => {
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   const [sumbitted, setSubmitted] = useState(false);
 
   // The app menu and the welcome screen ask for the dialog too.
   useEffect(() => {
+    if (!global) return;
     const handleOpen = () => setOpen(true);
     window.addEventListener(NEW_MODULE_EVENT, handleOpen);
     return () => window.removeEventListener(NEW_MODULE_EVENT, handleOpen);
-  }, []);
+  }, [global]);
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -65,16 +69,18 @@ const CreateModule = () => {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger
-        render={
-          <SidebarGroupAction
-            aria-label="Add Module"
-            className="invisible group-hover:visible"
-          />
-        }
-      >
-        <Plus className="size-3" />
-      </DialogTrigger>
+      {!global && (
+        <DialogTrigger
+          render={
+            <SidebarGroupAction
+              aria-label="Add Module"
+              className="invisible group-hover:visible"
+            />
+          }
+        >
+          <Plus className="size-3" />
+        </DialogTrigger>
+      )}
       <DialogContent>
         <form onSubmit={handleSubmit}>
           <DialogHeader>
