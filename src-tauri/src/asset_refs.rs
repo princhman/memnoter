@@ -87,11 +87,11 @@ pub fn retain_module(conn: &Connection, module_id: &str) -> CommandResult<()> {
 
 // Also bootstraps older notes that have never been opened by this version.
 // Caller holds the same DB lock used by saves/deletion for the entire operation.
-pub fn retain_all(conn: &Connection) -> CommandResult<()> {
+pub fn retain_all(conn: &Connection, excluded_module: Option<&str>) -> CommandResult<()> {
     let modules = conn
-        .prepare("select module_id from contents")
+        .prepare("select module_id from contents where ?1 is null or module_id <> ?1")
         .map_err(db_err)?
-        .query_map([], |r| r.get::<_, String>(0))
+        .query_map([excluded_module], |r| r.get::<_, String>(0))
         .map_err(db_err)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(db_err)?;

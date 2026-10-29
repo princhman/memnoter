@@ -415,6 +415,57 @@ mod tests {
     }
 
     #[test]
+    fn deleting_corrupt_note_skips_its_history_and_preserves_surviving_image_references() {
+        use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
+        for corrupt_snapshot in [true, false] {
+            let f = Fixture::new();
+            let shared = f.file("note");
+            let unused = f.file("note");
+            let doc = yrs::Doc::new();
+            let root = doc.get_or_insert_xml_fragment("default");
+            let mut txn = doc.transact_mut();
+            let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("image"));
+            image.insert_attribute(&mut txn, "fileId", shared.clone());
+            let state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+            let mut conn = f.db.conn.lock().unwrap();
+            conn.execute(
+                "update contents set state = ?1 where module_id = 'other'",
+                [state],
+            )
+            .unwrap();
+            conn.execute_batch(if corrupt_snapshot {
+                "update contents set state = X'FF' where module_id = 'note'"
+            } else {
+                "update contents_updates set bytes = X'FF' where module_id = 'note'"
+            })
+            .unwrap();
+
+            delete_module_data(&mut conn, &f.dir.join("files"), "note").unwrap();
+            let owner: String = conn
+                .query_row(
+                    "select module_id from files where id = ?1",
+                    [&shared],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(owner, "other");
+            let note_exists: bool = conn
+                .query_row(
+                    "select exists(select 1 from modules where id = 'note')",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(!note_exists);
+            drop(conn);
+            assert!(f.row_exists(&shared));
+            assert!(!f.row_exists(&unused));
+            assert!(f.dir.join("files").join(shared).is_file());
+            assert!(!f.dir.join("files").join(unused).exists());
+        }
+    }
+
+    #[test]
     fn cleanup_removes_only_requested_files_owned_by_the_note() {
         let f = Fixture::new();
         let unused = f.file("note");
@@ -1095,7 +1146,8 @@ fn delete_module_data(
     module_id: &str,
 ) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
-    asset_refs::retain_all(&tx)?;
+    // Only surviving notes can retain files; the deleted history may be corrupt.
+    asset_refs::retain_all(&tx, Some(module_id))?;
     // Stored faces (including retired ones) also retain assets. Transfer shared
     // files to a surviving note; deleting the uploader must not break copies.
     tx.execute(
@@ -1413,7 +1465,7 @@ fn cleanup_unused_files(
     }
 
     // An invalid/incomplete persisted note cannot authorize asset destruction.
-    asset_refs::retain_all(conn)?;
+    asset_refs::retain_all(conn, None)?;
     let mut deleted = Vec::new();
     for id in file_ids {
         // Retain even retired faces: undo restores their ids/history and assets.
