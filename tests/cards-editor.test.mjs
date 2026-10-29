@@ -258,3 +258,24 @@ for (const source of ["Q :: A", "{{Paris}} and {{France}}"])
       }
     }
   });
+
+test("local edits leave distant legacy cloze metadata untouched while repairing every edited block", () => {
+  const editor = editorFor([
+    paragraph("{{Paris}}", "first"),
+    paragraph("Spacer one"),
+    paragraph("{{Untouched}}", "distant"),
+    paragraph("Spacer two"),
+    paragraph("{{France}}", "last"),
+  ]);
+  try {
+    const last = editor.state.doc.content.size - editor.state.doc.lastChild.nodeSize;
+    // Two disjoint changes in one transaction exercise both mapped range sets.
+    editor.view.dispatch(editor.state.tr.insertText("!", last + 5).insertText("!", 5));
+    assert.equal(editor.state.doc.child(2).attrs.clozeIds, null);
+    assert.equal(editor.state.doc.firstChild.attrs.clozeIds[0].answer, "Pa!ris");
+    assert.equal(editor.state.doc.lastChild.attrs.clozeIds[0].answer, "Fr!ance");
+    assert.deepEqual([...clozeCards(editor).values()], ["first:c1", "distant:c1", "last:c1"]);
+  } finally {
+    editor.destroy();
+  }
+});

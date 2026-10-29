@@ -3,7 +3,7 @@ import type { Node } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, type ClozeId } from "./cards.ts";
+import { changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, type ClozeId, type Range } from "./cards.ts";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -65,11 +65,23 @@ function collectBlocks(doc: Node, from: number, to: number) {
   return blocks;
 }
 
+// Expand at boundaries to include the two sides of joins and splits, and
+// deduplicate blocks when several steps touched the same paragraph.
+function collectChangedBlocks(doc: Node, ranges: Range[]) {
+  const blocks = new Map<number, { node: Node; pos: number }>();
+  for (const { from, to } of ranges) {
+    for (const block of collectBlocks(doc, from, to)) blocks.set(block.pos, block);
+  }
+  return [...blocks.values()];
+}
+
 // A backward join keeps the first block's attributes. Recover the identity of
 // the merged card from a surviving character before assigning any new ids.
-function carryMergedCardIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
+function carryMergedCardIds(
+  tr: Transaction, oldDoc: Node, mapping: Mapping, oldBlocks: ReturnType<typeof collectBlocks>,
+) {
   const ids = new Set(collectBlocks(tr.doc, 0, tr.doc.content.size).map(({ node }) => node.attrs.cardId));
-  for (const { node, pos } of collectBlocks(oldDoc, 0, oldDoc.content.size)) {
+  for (const { node, pos } of oldBlocks) {
     const id = node.attrs.cardId;
     if (!id || ids.has(id) || parseBlock(node).cards.length === 0) continue;
     const mapped = mapping.mapResult(pos + 2);
@@ -87,11 +99,13 @@ function carryMergedCardIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
   }
 }
 
-function repairClozeIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
-  const previous = new Map(collectBlocks(oldDoc, 0, oldDoc.content.size)
+function repairClozeIds(
+  tr: Transaction, mapping: Mapping, oldBlocks: ReturnType<typeof collectBlocks>, ranges: Range[],
+) {
+  const previous = new Map(oldBlocks
     .filter(({ node }) => node.attrs.cardId)
     .map((block) => [block.node.attrs.cardId, block]));
-  for (const { node, pos } of collectBlocks(tr.doc, 0, tr.doc.content.size)) {
+  for (const { node, pos } of collectChangedBlocks(tr.doc, ranges)) {
     if (!node.attrs.cardId) continue;
     const syntax = parseBlock(node);
     const old = previous.get(node.attrs.cardId);
@@ -267,10 +281,15 @@ export const Flashcards = Extension.create({
           if (ranges.length === 0) return null;
           const tr = state.tr;
           const mapping = new Mapping(transactions.flatMap((transaction) => transaction.mapping.maps));
-          carryMergedCardIds(tr, oldState.doc, mapping);
+          const inverse = mapping.invert();
+          const oldRanges = ranges.map(({ from, to }) => ({
+            from: inverse.map(from, -1), to: inverse.map(to, 1),
+          }));
+          const oldBlocks = collectChangedBlocks(oldState.doc, oldRanges);
+          carryMergedCardIds(tr, oldState.doc, mapping, oldBlocks);
           const plan = planCardIds(tr.doc, ranges, () => crypto.randomUUID());
           for (const { pos, cardId } of plan) tr.setNodeAttribute(pos, "cardId", cardId);
-          repairClozeIds(tr, oldState.doc, mapping);
+          repairClozeIds(tr, mapping, oldBlocks, ranges);
           return tr.docChanged ? tr : null;
         },
       }),
