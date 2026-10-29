@@ -383,6 +383,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         return;
       }
 
+      // isPending is per editor; a compaction started by an earlier editor of
+      // this note may still be running, and the later one must not overtake it.
+      if (queryClient.isMutating({ mutationKey: ["compact-content", moduleId] }) > 0) {
+        return;
+      }
+
       const updateId = Math.max(
         ...currentContent.updates.map((update) => update.id),
       );

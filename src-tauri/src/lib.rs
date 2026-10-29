@@ -35,6 +35,14 @@ fn confirm_exit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+// Restarts skip ExitRequested's prevent_exit, so the frontend must have
+// finished its save checks before calling this.
+#[tauri::command]
+fn confirm_restart(app: tauri::AppHandle) {
+    app.state::<ExitGate>().0.store(true, Ordering::SeqCst);
+    app.restart();
+}
+
 #[derive(Debug, serde::Serialize)]
 struct Module {
     id: String,
@@ -960,6 +968,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             confirm_exit,
+            confirm_restart,
             create_module,
             modules,
             get_content,

@@ -1,6 +1,5 @@
 import { createStore } from "@tanstack/react-store";
 import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 
 export type UpdateStatus =
   | { state: "idle" }
@@ -75,6 +74,9 @@ export async function checkForUpdates({ manual = false } = {}) {
   }
 }
 
+export const RESTART_REQUEST_EVENT = "memnoter:request-restart";
+
+// Goes through the same unsaved-edits checks as Quit; see SaveStatus.
 export function restartToUpdate() {
-  return relaunch();
+  window.dispatchEvent(new Event(RESTART_REQUEST_EVENT));
 }
