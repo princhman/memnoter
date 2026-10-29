@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Editor } from "@tiptap/core";
 import { closeHistory } from "@tiptap/pm/history";
+import { joinBackward } from "@tiptap/pm/commands";
 import StarterKit from "@tiptap/starter-kit";
 import { Flashcards } from "../src/lib/flashcards.ts";
 import { blockIdOf, extractCards } from "../src/lib/cards.ts";
@@ -131,6 +132,24 @@ test("mapped cloze identity survives answer edits and duplicate answers get sepa
   }
 });
 
+for (const source of ["Q :: A", "{{Paris}} and {{France}}"])
+  test(`joining a reviewed ${source.includes("{{") ? "cloze" : "basic"} into a plain paragraph retains its identity`, () => {
+    const editor = editorFor([paragraph("Context "), paragraph(source, "reviewed")]);
+    try {
+      const original = extractCards(editor.state.doc).map(({ id }) => id);
+      editor.commands.setTextSelection(editor.state.doc.firstChild.nodeSize + 1);
+      assert.equal(joinBackward(editor.state, editor.view.dispatch), true);
+      assert.equal(editor.state.doc.childCount, 1);
+      assert.equal(editor.state.doc.textContent, `Context ${source}`);
+      assert.deepEqual(extractCards(editor.state.doc).map(({ id }) => id), original);
+      editor.commands.undo();
+      assert.deepEqual(extractCards(editor.state.doc).map(({ id }) => id), original);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+
 test("removing legacy clozes never reuses their ids for later additions", () => {
   const editor = editorFor([paragraph("{{Paris}} and {{France}}", "reviewed")]);
   try {
@@ -147,6 +166,23 @@ test("removing legacy clozes never reuses their ids for later additions", () => 
     editor.destroy();
   }
 });
+
+test("a persisted cloze keeps its identity across a split and backward join", () => {
+  const editor = editorFor([paragraph("{{Paris}} and {{France}}", "reviewed")]);
+  try {
+    editor.commands.insertContentAt(1, { type: "text", text: "{{Earth}} and " });
+    const original = clozeCards(editor);
+    editor.commands.setTextSelection(1);
+    editor.commands.splitBlock();
+    assert.deepEqual(clozeCards(editor), original);
+    editor.commands.setTextSelection(3);
+    assert.equal(joinBackward(editor.state, editor.view.dispatch), true);
+    assert.deepEqual(clozeCards(editor), original);
+  } finally {
+    editor.destroy();
+  }
+});
+
 
 test("cutting and pasting a cloze within its block keeps its review identity", () => {
   const editor = editorFor([paragraph("{{Paris}} and {{France}}", "reviewed")]);

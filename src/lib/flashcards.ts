@@ -65,6 +65,23 @@ function collectBlocks(doc: Node, from: number, to: number) {
   return blocks;
 }
 
+// A backward join keeps the first block's attributes. Recover the identity of
+// the merged card from a surviving character before assigning any new ids.
+function carryMergedCardIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
+  const ids = new Set(collectBlocks(tr.doc, 0, tr.doc.content.size).map(({ node }) => node.attrs.cardId));
+  for (const { node, pos } of collectBlocks(oldDoc, 0, oldDoc.content.size)) {
+    const id = node.attrs.cardId;
+    if (!id || ids.has(id) || parseBlock(node).cards.length === 0) continue;
+    const mapped = mapping.mapResult(pos + 2);
+    if (mapped.deletedAcross) continue;
+    const $pos = tr.doc.resolve(mapped.pos);
+    if (!$pos.depth || !isCardBlock($pos.parent) || $pos.parent.attrs.cardId) continue;
+    if (parseBlock($pos.parent).cards.length === 0) continue;
+    tr.setNodeAttribute($pos.before(), "cardId", id);
+    ids.add(id);
+  }
+}
+
 function repairClozeIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
   const previous = new Map(collectBlocks(oldDoc, 0, oldDoc.content.size)
     .filter(({ node }) => node.attrs.cardId)
@@ -243,6 +260,7 @@ export const Flashcards = Extension.create({
           if (ranges.length === 0) return null;
           const tr = state.tr;
           const mapping = new Mapping(transactions.flatMap((transaction) => transaction.mapping.maps));
+          carryMergedCardIds(tr, oldState.doc, mapping);
           const plan = planCardIds(tr.doc, ranges, () => crypto.randomUUID());
           for (const { pos, cardId } of plan) tr.setNodeAttribute(pos, "cardId", cardId);
           repairClozeIds(tr, oldState.doc, mapping);
