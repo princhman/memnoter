@@ -13,8 +13,8 @@ import {
 const schema = new Schema({
   nodes: {
     doc: { content: "block+" },
-    paragraph: { group: "block", content: "inline*", attrs: { cardId: { default: null } } },
-    heading: { group: "block", content: "inline*", attrs: { cardId: { default: null } } },
+    paragraph: { group: "block", content: "inline*", attrs: { cardId: { default: null }, clozeIds: { default: null } } },
+    heading: { group: "block", content: "inline*", attrs: { cardId: { default: null }, clozeIds: { default: null } } },
     codeBlock: { group: "block", content: "text*", code: true, marks: "" },
     blockquote: { group: "block", content: "block+" },
     inlineMath: { group: "inline", inline: true, content: "text*" },
@@ -206,4 +206,30 @@ test("linked delimiters stay literal content rather than creating cards", () => 
     [schema.text("{"), schema.text("{", [link]), schema.text("answer}}")],
     [schema.text("{{answer}"), schema.text("}", [link])],
   ]) assert.deepEqual(parseBlock(paragraph.create(null, content)).cards, []);
+});
+
+
+test("cloze extraction validates metadata and uses only matching active ranges", () => {
+  const first = { id: "stable-first", from: 2, to: 7, answer: "Paris" };
+  const second = { id: "stable-second", from: 16, to: 22, answer: "France" };
+  const retired = { id: "retired", from: -1, to: -1, answer: "Paris" };
+  const cases = [
+    [null, ["c1", "c2"]],
+    [{}, ["c1", "c2"]],
+    [[null], ["c1", "c2"]],
+    [[{ from: 2, to: 7, answer: "Paris" }], ["c1", "c2"]],
+    [[{ ...first, from: "2" }], ["c1", "c2"]],
+    [[{ ...first, to: Infinity }], ["c1", "c2"]],
+    [[{ ...first, answer: null }], ["c1", "c2"]],
+    [[], []],
+    [[first], ["stable-first"]],
+    [[retired, second, first], ["stable-first", "stable-second"]],
+    [[retired, second], ["stable-second"]],
+    [[{ ...first, from: 3 }], []],
+  ];
+  for (const [clozeIds, expected] of cases) {
+    const block = paragraph.create({ cardId: "reviewed", clozeIds }, inline("{{Paris}} and {{France}}"));
+    assert.deepEqual(extractCards(doc.create(null, block)).map(({ id }) => id),
+      expected.map((id) => `reviewed:${id}`), JSON.stringify(clozeIds));
+  }
 });

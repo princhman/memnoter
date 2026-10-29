@@ -3,7 +3,7 @@ import type { Node } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { changedRanges, clozeIdsOf, parseBlock, planCardIds, type ClozeId } from "./cards.ts";
+import { changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, type ClozeId } from "./cards.ts";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -111,13 +111,15 @@ function repairClozeIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
     if (old && oldSyntax) {
       // Anchor inside both brace pairs: inserting at a cloze boundary moves
       // it, editing the answer keeps it, and deleting the cloze removes it.
-      oldSyntax.clozes.forEach((cloze, index) => {
+      oldSyntax.clozes.forEach((cloze) => {
         const from = mapping.mapResult(old.pos + 2 + cloze.open.from, 1);
         const to = mapping.mapResult(old.pos + cloze.close.to, -1);
         if (from.deletedAcross || to.deletedAcross) return;
         const target = syntax.clozes.findIndex((current) =>
           pos + 2 + current.open.from === from.pos && pos + current.close.to === to.pos);
-        if (target !== -1) claim(target, oldIds[index].id);
+        const entry = oldIds.find((entry) => entry.from >= 0 &&
+          entry.from === cloze.inner.from && entry.to === cloze.inner.to);
+        if (target !== -1 && entry) claim(target, entry.id);
       });
       // Cut/paste and whole-block replacements lose their mapped positions.
       // Match remaining answers only after surviving anchors have claimed ids,
@@ -132,7 +134,7 @@ function repairClozeIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
     syntax.clozes.forEach((_, index) => {
       // Only the initial assignment uses cN. Later additions never reuse a
       // deleted id, including after all clozes have been removed and saved.
-      const initial = !oldIds.length && node.attrs.clozeIds == null && old?.node.attrs.clozeIds == null;
+      const initial = !oldIds.length && validatedClozeIds(node.attrs.clozeIds) === null && validatedClozeIds(old?.node.attrs.clozeIds) === null;
       claim(index, initial ? `c${index + 1}` : `c${crypto.randomUUID()}`);
     });
     // Keep removed identities in the block so a later paste or repairing
@@ -179,7 +181,7 @@ export const Flashcards = Extension.create({
             default: null,
             keepOnSplit: false,
             parseHTML: (element) => {
-              try { return JSON.parse(element.getAttribute("data-cloze-ids") ?? "null"); }
+              try { return validatedClozeIds(JSON.parse(element.getAttribute("data-cloze-ids") ?? "null")); }
               catch { return null; }
             },
             renderHTML: (attributes) => attributes.clozeIds

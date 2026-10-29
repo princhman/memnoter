@@ -18,9 +18,9 @@ function editorFor(content) {
   return editor;
 }
 
-const paragraph = (text, cardId = null) => ({
+const paragraph = (text, cardId = null, clozeIds = null) => ({
   type: "paragraph",
-  attrs: { cardId },
+  attrs: { cardId, clozeIds },
   content: [{ type: "text", text }],
 });
 
@@ -191,6 +191,43 @@ test("cutting and pasting a cloze within its block keeps its review identity", (
     editor.commands.insertContentAt(editor.state.doc.firstChild.nodeSize - 1,
       { type: "text", text: " and {{Paris}}" });
     assert.deepEqual(clozeCards(editor), new Map([["France", "reviewed:c2"], ["Paris", "reviewed:c1"]]));
+  } finally {
+    editor.destroy();
+  }
+});
+
+
+test("editing malformed or incomplete cloze metadata repairs it without borrowing retired ids", () => {
+  const first = { id: "first", from: 2, to: 7, answer: "Paris" };
+  const retired = { id: "retired", from: -1, to: -1, answer: "deleted" };
+  for (const metadata of [{}, [null], [{ from: 2, to: 7, answer: "Paris" }],
+    [], [first], [retired, first]]) {
+    const editor = editorFor([paragraph("{{Paris}} and {{France}}", "reviewed", metadata)]);
+    try {
+      editor.commands.insertContentAt(5, { type: "text", text: "!" });
+      const cards = clozeCards(editor);
+      assert.equal(cards.size, 2);
+      assert.ok([...cards.values()].every((id) => !id.endsWith(":undefined") && id !== "reviewed:retired"));
+      if (Array.isArray(metadata) && metadata.includes(first)) {
+        assert.equal(cards.get("Pa!ris"), "reviewed:first");
+      }
+      assert.equal(new Set(cards.values()).size, 2);
+    } finally {
+      editor.destroy();
+    }
+  }
+});
+
+test("HTML cloze metadata parsing rejects valid JSON with an invalid shape", () => {
+  const editor = editorFor([paragraph("{{Paris}}", "reviewed")]);
+  try {
+    const rule = editor.schema.nodes.paragraph.spec.parseDOM.find(({ tag }) => tag === "p");
+    for (const value of ["{}", "[null]", '[{"from":2,"to":7,"answer":"Paris"}]', "broken-json"]) {
+      const attrs = rule.getAttrs({ getAttribute: (name) => name === "data-cloze-ids" ? value : null });
+      assert.equal(attrs.clozeIds ?? null, null, value);
+    }
+    const attrs = rule.getAttrs({ getAttribute: (name) => name === "data-cloze-ids" ? "[]" : null });
+    assert.deepEqual(attrs.clozeIds, []);
   } finally {
     editor.destroy();
   }
