@@ -28,6 +28,8 @@ import {
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
@@ -150,18 +152,24 @@ const AppSidebar = () => {
       </SidebarContent>
 
       <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              isActive={!!matchRoute({ to: "/settings" })}
-              render={<Link to="/settings" />}
+        <UpdateStatus>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground aria-[current=page]:text-foreground"
+                  aria-label="Settings"
+                  render={<Link to="/settings" />}
+                />
+              }
             >
               <Settings />
-              <span>Settings</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-        <UpdateStatus />
+            </TooltipTrigger>
+            <TooltipContent side="top">Settings</TooltipContent>
+          </Tooltip>
+        </UpdateStatus>
       </SidebarFooter>
     </Sidebar>
   );
