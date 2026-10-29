@@ -54,7 +54,7 @@ function unitsOf(block: Node): Unit[] {
   block.forEach((child, offset) => {
     if (child.isText) {
       const marks = child.marks.map((mark) => mark.type.name).filter((name) => KEPT_MARKS.has(name));
-      const syntax = !child.marks.some((mark) => mark.type.spec.code);
+      const syntax = !child.marks.some((mark) => mark.type.spec.code || mark.type.name === "link");
       // Iterate code points so surrogate pairs stay whole; positions count
       // UTF-16 units, as ProseMirror does.
       let at = offset;
