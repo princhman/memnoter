@@ -61,45 +61,49 @@ const RootLayout = () => {
   const reviewing = !!matchRoute({ to: "/review" });
   return (
     <>
-      {reviewing ? <Outlet /> : <ActiveEditorProvider>
-        <SidebarProvider
-          open={sidebarOpen}
-          onOpenChange={setSidebarOpen}
-          className="h-dvh overflow-hidden overscroll-none"
-        >
-          <AppSidebar />
-          <CreateModule global />
+      {/* Outside the switch: leaving review renders the note route for a
+          moment before `reviewing` turns false, and its editor needs this. */}
+      <ActiveEditorProvider>
+        {reviewing ? <Outlet /> : (
+          <SidebarProvider
+            open={sidebarOpen}
+            onOpenChange={setSidebarOpen}
+            className="h-dvh overflow-hidden overscroll-none"
+          >
+            <AppSidebar />
+            <CreateModule global />
 
-          <SidebarInset className="min-h-0 overflow-hidden">
-            <div
-              data-tauri-drag-region
-              className="absolute inset-x-0 top-0 z-50 h-4"
-            />
+            <SidebarInset className="min-h-0 overflow-hidden">
+              <div
+                data-tauri-drag-region
+                className="absolute inset-x-0 top-0 z-50 h-4"
+              />
 
-            <header className="relative z-40 flex h-8 items-center bg-background">
-              <div className="flex items-center">
-                <FileBreadcrumb />
+              <header className="relative z-40 flex h-8 items-center bg-background">
+                <div className="flex items-center">
+                  <FileBreadcrumb />
+                </div>
+              </header>
+
+              <FindBar />
+
+              <main className="app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">
+                <Outlet />
+              </main>
+            </SidebarInset>
+            <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
+              {!isFullScrean && <div className="w-18" />}
+              <div className="flex items-center pl-2 gap-1.5">
+                <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
+                  <SidebarTrigger aria-label="Toggle sidebar" />
+                </IconTooltip>
+                <UndoRedo />
               </div>
-            </header>
-
-            <FindBar />
-
-            <main className="app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">
-              <Outlet />
-            </main>
-          </SidebarInset>
-          <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
-            {!isFullScrean && <div className="w-18" />}
-            <div className="flex items-center pl-2 gap-1.5">
-              <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
-                <SidebarTrigger aria-label="Toggle sidebar" />
-              </IconTooltip>
-              <UndoRedo />
             </div>
-          </div>
-          <CommandPalette />
-        </SidebarProvider>
-      </ActiveEditorProvider>}
+            <CommandPalette />
+          </SidebarProvider>
+        )}
+      </ActiveEditorProvider>
 
       {backupNow.isError && (
         <p role="alert" className="fixed bottom-12 left-4 z-50 rounded-md bg-popover p-3 text-sm text-destructive">
