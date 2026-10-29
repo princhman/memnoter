@@ -156,10 +156,9 @@ function repairClozeIds(
       const initial = !oldIds.length && validatedClozeIds(node.attrs.clozeIds) === null && validatedClozeIds(old?.node.attrs.clozeIds) === null;
       claim(index, initial ? `c${index + 1}` : `c${crypto.randomUUID()}`);
     });
-    // Keep removed identities in the block so a later paste or repairing
-    // temporarily incomplete braces can restore the same card. They are not
-    // extracted or synced while absent, so backend soft deletion is unchanged.
-    const retired = oldIds.filter(({ id }) => !used.has(id))
+    // Newly retired active entries precede older retirees. Keep a bounded
+    // window for cut/paste and temporarily incomplete braces.
+    const retired = oldIds.filter(({ id }) => !used.has(id)).slice(0, 20)
       .map((entry) => ({ ...entry, from: -1, to: -1 }));
     const identities = [...next, ...retired];
     if (!identities.length && node.attrs.clozeIds == null) continue;
@@ -203,8 +202,13 @@ export const Flashcards = Extension.create({
               try { return validatedClozeIds(JSON.parse(element.getAttribute("data-cloze-ids") ?? "null")); }
               catch { return null; }
             },
-            renderHTML: (attributes) => attributes.clozeIds
-              ? { "data-cloze-ids": JSON.stringify(attributes.clozeIds) } : {},
+            renderHTML: (attributes) => {
+              const ids = validatedClozeIds(attributes.clozeIds);
+              // Empty arrays preserve initialization without copying deleted answers.
+              return ids === null ? {} : {
+                "data-cloze-ids": JSON.stringify(ids.filter(({ from, to }) => from >= 0 && to >= from)),
+              };
+            },
           },
           // Stable block identity, including outside card syntax.
           cardId: {

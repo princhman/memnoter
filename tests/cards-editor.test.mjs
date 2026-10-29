@@ -279,3 +279,49 @@ test("local edits leave distant legacy cloze metadata untouched while repairing 
     editor.destroy();
   }
 });
+
+test("cloze repair retains only the 20 most recently retired identities", () => {
+  const editor = editorFor([paragraph("{{answer-0}}", "reviewed")]);
+  try {
+    const ids = new Set(["reviewed:c1"]);
+    for (let i = 1; i <= 25; i++) {
+      editor.commands.insertContentAt({ from: 1, to: editor.state.doc.firstChild.nodeSize - 1 },
+        { type: "text", text: `{{answer-${i}}}` });
+      const [card] = extractCards(editor.state.doc);
+      assert.ok(!ids.has(card.id));
+      ids.add(card.id);
+    }
+    const entries = editor.state.doc.firstChild.attrs.clozeIds;
+    assert.equal(entries.length, 21);
+    assert.equal(entries[0].answer, "answer-25");
+    assert.deepEqual(entries.slice(1).map(({ answer, from, to }) => [answer, from, to]),
+      Array.from({ length: 20 }, (_, i) => [`answer-${24 - i}`, -1, -1]));
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("copied HTML excludes retired answers and preserves the initialized empty marker", () => {
+  const active = { id: "active", from: 2, to: 7, answer: "Paris" };
+  const retired = { id: "retired", from: -1, to: -1, answer: "deleted private answer" };
+  const editor = editorFor([paragraph("{{Paris}}", "reviewed", [active, retired])]);
+  let reloaded;
+  try {
+    const type = editor.schema.nodes.paragraph;
+    const [, attrs] = type.spec.toDOM(editor.state.doc.firstChild);
+    assert.deepEqual(JSON.parse(attrs["data-cloze-ids"]), [active]);
+    assert.ok(!JSON.stringify(attrs).includes(retired.answer));
+    const [, emptyAttrs] = type.spec.toDOM(type.create({ cardId: "reviewed", clozeIds: [retired] }));
+    assert.equal(emptyAttrs["data-cloze-ids"], "[]");
+    const rule = type.spec.parseDOM.find(({ tag }) => tag === "p");
+    const parsed = rule.getAttrs({ getAttribute: (name) => emptyAttrs[name] ?? null });
+    reloaded = editorFor([{ ...paragraph("plain"), attrs: parsed }]);
+    reloaded.commands.insertContentAt(1, { type: "text", text: "{{Earth}} " });
+    const [card] = extractCards(reloaded.state.doc);
+    assert.equal(card.blockId, "reviewed");
+    assert.notEqual(card.id, "reviewed:c1");
+  } finally {
+    reloaded?.destroy();
+    editor.destroy();
+  }
+});
