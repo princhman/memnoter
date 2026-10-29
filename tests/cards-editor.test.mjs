@@ -232,3 +232,29 @@ test("HTML cloze metadata parsing rejects valid JSON with an invalid shape", () 
     editor.destroy();
   }
 });
+
+for (const source of ["Q :: A", "{{Paris}} and {{France}}"])
+  test(`joining a ${source.includes("{{") ? "cloze" : "basic"} replaces a plain destination's stale id but preserves an active card's id`, () => {
+    for (const destinationIsCard of [false, true]) {
+      const editor = editorFor([paragraph("Context :: answer ", "former"), paragraph(source, "reviewed")]);
+      try {
+        if (!destinationIsCard) {
+          editor.commands.insertContentAt({ from: 1, to: editor.state.doc.firstChild.nodeSize - 1 },
+            { type: "text", text: "Context " });
+          assert.equal(editor.state.doc.firstChild.attrs.cardId, "former");
+        }
+        const original = extractCards(editor.state.doc).map(({ id }) => id);
+        editor.view.dispatch(closeHistory(editor.state.tr));
+        editor.commands.setTextSelection(editor.state.doc.firstChild.nodeSize + 1);
+        assert.equal(joinBackward(editor.state, editor.view.dispatch), true);
+        const cards = extractCards(editor.state.doc);
+        assert.ok(cards.length > 0);
+        assert.ok(cards.every(({ blockId }) => blockId === (destinationIsCard ? "former" : "reviewed")));
+        if (!destinationIsCard) assert.deepEqual(cards.map(({ id }) => id), original);
+        editor.commands.undo();
+        assert.deepEqual(extractCards(editor.state.doc).map(({ id }) => id), original);
+      } finally {
+        editor.destroy();
+      }
+    }
+  });

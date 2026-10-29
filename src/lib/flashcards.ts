@@ -75,8 +75,13 @@ function carryMergedCardIds(tr: Transaction, oldDoc: Node, mapping: Mapping) {
     const mapped = mapping.mapResult(pos + 2);
     if (mapped.deletedAcross) continue;
     const $pos = tr.doc.resolve(mapped.pos);
-    if (!$pos.depth || !isCardBlock($pos.parent) || $pos.parent.attrs.cardId) continue;
+    if (!$pos.depth || !isCardBlock($pos.parent)) continue;
+    if ($pos.parent.attrs.cardId) {
+      const oldDestination = oldDoc.resolve(mapping.invert().map($pos.before() + 1, -1)).parent;
+      if (isCardBlock(oldDestination) && parseBlock(oldDestination).cards.length > 0) continue;
+    }
     if (parseBlock($pos.parent).cards.length === 0) continue;
+    ids.delete($pos.parent.attrs.cardId);
     tr.setNodeAttribute($pos.before(), "cardId", id);
     ids.add(id);
   }
