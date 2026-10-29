@@ -5,8 +5,10 @@ import { AlertCircle, Check, Download, Loader2, RefreshCw, RotateCw } from "luci
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { checkForUpdates, restartToUpdate, updateStore } from "@/lib/updater";
+import type { ReactNode } from "react";
 
-const UpdateStatus = () => {
+// `children` sit beside the update button, e.g. the Settings button.
+const UpdateStatus = ({ children }: { children?: ReactNode }) => {
   const status = useSelector(updateStore, (state) => state);
   const { data: currentVersion } = useQuery({
     queryKey: ["app-version"],
@@ -54,28 +56,31 @@ const UpdateStatus = () => {
       <span className="text-xs text-muted-foreground">
         {currentVersion && `Memnoter v${currentVersion}`}
       </span>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="relative text-muted-foreground"
-              aria-label={label}
-              aria-disabled={!onClick}
-              onClick={onClick}
-            />
-          }
-        >
-          {icon}
-          {status.state === "ready" && (
-            <span className="absolute top-1 right-1 size-1.5 rounded-full bg-sidebar-primary" />
-          )}
-        </TooltipTrigger>
-        <TooltipContent side="top" align="end">
-          {label}
-        </TooltipContent>
-      </Tooltip>
+      <div className="flex items-center">
+        {children}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="relative text-muted-foreground"
+                aria-label={label}
+                aria-disabled={!onClick}
+                onClick={onClick}
+              />
+            }
+          >
+            {icon}
+            {status.state === "ready" && (
+              <span className="absolute top-1 right-1 size-1.5 rounded-full bg-sidebar-primary" />
+            )}
+          </TooltipTrigger>
+          <TooltipContent side="top" align="end">
+            {label}
+          </TooltipContent>
+        </Tooltip>
+      </div>
     </div>
   );
 };
