@@ -1,3 +1,4 @@
+import type { Node } from "@tiptap/pm/model";
 import { createStore } from "@tanstack/react-store";
 
 // A request for the find bar, from outside it (the ⌘K palette, the "Find in
@@ -18,4 +19,23 @@ export function requestFind(request: FindRequest) {
 
 export function clearFindRequest() {
   findRequestStore.setState(() => null);
+}
+
+// The find bar skips inline formulas, but search indexes their source. The
+// first case-insensitive occurrence of a term inside one, best term first.
+export function findInInlineMath(doc: Node, terms: readonly string[]) {
+  for (const term of terms) {
+    const needle = term.toLowerCase();
+    if (!needle) continue;
+    let found: { from: number; to: number } | null = null;
+    doc.descendants((node, pos) => {
+      if (found) return false;
+      if (node.type.name !== "inlineMath") return true;
+      const index = node.textContent.toLowerCase().indexOf(needle);
+      if (index !== -1) found = { from: pos + 1 + index, to: pos + 1 + index + needle.length };
+      return false;
+    });
+    if (found) return found;
+  }
+  return null;
 }

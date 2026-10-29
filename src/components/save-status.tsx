@@ -17,6 +17,7 @@ import {
 import { queryClient } from "@/lib/query-client";
 import { flushSaves, saveQueue, saveStatusStore } from "@/lib/saves";
 import { RESTART_REQUEST_EVENT } from "@/lib/updater";
+import { flushSearchIndexing } from "@/lib/search-index";
 
 const CLOSE_FLUSH_TIMEOUT_MS = 3_000;
 
@@ -61,6 +62,8 @@ const SaveStatus = () => {
       try {
         await waitForRestore();
         if (disposed || restorePending()) return;
+        // Search text is rebuilt on launch only for unindexed notes.
+        await flushSearchIndexing(CLOSE_FLUSH_TIMEOUT_MS);
         if (saveQueue.isEmpty() || await flushSaves(CLOSE_FLUSH_TIMEOUT_MS)) {
           await confirmExitAfterRestore();
         } else setConfirmClose(true);
