@@ -16,6 +16,27 @@ import { saveQueue } from "@/lib/saves";
 
 const INDEX_DEBOUNCE_MS = 1_000;
 
+// Each open editor's "index now"; quitting runs them and waits for the writes,
+// since a note indexed by the current extractor is not backfilled on launch.
+const activeFlushes = new Set<() => void>();
+const indexing = () => queryClient.isMutating({ mutationKey: ["search-index"] }) > 0;
+
+export async function flushSearchIndexing(timeoutMs: number) {
+  for (const flush of activeFlushes) flush();
+  if (!indexing()) return;
+  await new Promise<void>((resolve) => {
+    const timer = window.setTimeout(done, timeoutMs);
+    const stop = queryClient.getMutationCache().subscribe(() => {
+      if (!indexing()) done();
+    });
+    function done() {
+      window.clearTimeout(timer);
+      stop();
+      resolve();
+    }
+  });
+}
+
 async function indexNote(moduleId: string, text: SearchText, backfill = false) {
   try {
     if (saveQueue.isSuspended()) return;
@@ -25,6 +46,8 @@ async function indexNote(moduleId: string, text: SearchText, backfill = false) {
       gcTime: 0,
       mutationFn: () => invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill }),
     }).execute(undefined);
+    // An open palette keeps its results; let it see the new text.
+    void queryClient.invalidateQueries({ queryKey: ["search-notes"] });
   } catch (error) {
     console.error("Failed to index note for search:", error);
   }
@@ -68,9 +91,11 @@ export function useSearchIndexing(
     };
 
     schedule();
+    activeFlushes.add(flush);
     editor.on("transaction", handleTransaction);
     window.addEventListener("pagehide", flush);
     return () => {
+      activeFlushes.delete(flush);
       editor.off("transaction", handleTransaction);
       window.removeEventListener("pagehide", flush);
       flush();

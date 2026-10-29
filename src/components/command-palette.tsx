@@ -247,6 +247,9 @@ export function CommandPalette() {
       return;
     }
 
+    // Results still on screen from the previous query are not this query's.
+    if (trimmed && (trimmed !== debouncedQuery || search.isPlaceholderData)) return;
+
     const terms = trimmed ? findTermsFor(trimmed, item.snippet ?? "") : [];
     const isOpenNote = activeEditor?.moduleId === item.moduleId;
     // The find bar or the opened note takes focus instead.
