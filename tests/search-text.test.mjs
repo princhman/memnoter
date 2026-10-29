@@ -83,3 +83,14 @@ test("an empty document extracts nothing", () => {
   assert.deepEqual(extractFromDoc(n.doc.create(null, n.paragraph.create())), { body: "", math: "" });
   assert.deepEqual(extractFromYDoc(new Y.Doc()), { body: "", math: "" });
 });
+
+test("find falls back to the source of inline formulas", async () => {
+  const { findInInlineMath } = await import("../src/lib/find-request.ts");
+  const note = n.doc.create(null, [
+    n.paragraph.create(null, [text("see "), n.inlineMath.create(null, text("\\int_0^1"))]),
+  ]);
+  const found = findInInlineMath(note, ["missing", "INT_0"]);
+  assert.deepEqual(found, { from: 7, to: 12 });
+  assert.equal(note.textBetween(found.from, found.to), "int_0");
+  assert.equal(findInInlineMath(note, ["nope"]), null);
+});

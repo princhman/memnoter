@@ -17,6 +17,10 @@ import {
 } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/query-client";
 import { saveQueue, saveStatusStore } from "@/lib/saves";
+import { RESTART_REQUEST_EVENT } from "@/lib/updater";
+import { flushSearchIndexing } from "@/lib/search-index";
+
+const SEARCH_FLUSH_TIMEOUT_MS = 3_000;
 
 const restorePending = () => queryClient.isMutating({ mutationKey: ["restore-backup"] }) > 0;
 
@@ -32,10 +36,13 @@ async function waitForRestore() {
   });
 }
 
+// Set by whichever request (Quit/close or Restart to update) is in progress.
+let exitCommand: "confirm_exit" | "confirm_restart" = "confirm_exit";
+
 async function confirmExitAfterRestore(discard = false, retryImages = false) {
   await waitForRestore();
   if (restorePending()) throw new Error("Restore is in progress.");
-  await exclusiveWrite(() => invoke("confirm_exit"), { discard, retain: true, retryImages });
+  await exclusiveWrite(() => invoke(exitCommand), { discard, retain: true, retryImages });
 }
 
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and
@@ -54,12 +61,15 @@ const SaveStatus = () => {
     let disposed = false;
 
     let busy = false;
-    const requestExit = async () => {
+    const requestExit = async (command: typeof exitCommand) => {
       if (busy) return;
       busy = true;
+      exitCommand = command;
       try {
         await waitForRestore();
         if (disposed || restorePending()) return;
+        // Search text is rebuilt on launch only for unindexed notes.
+        await flushSearchIndexing(SEARCH_FLUSH_TIMEOUT_MS);
         await confirmExitAfterRestore();
       } catch (error) {
         setExitError(error instanceof Error ? error.message : String(error));
@@ -68,17 +78,20 @@ const SaveStatus = () => {
     };
     const stops: (() => void)[] = [];
     void Promise.all([
-      listen("request-safe-exit", () => void requestExit()),
+      listen("request-safe-exit", () => void requestExit("confirm_exit")),
       getCurrentWindow().onCloseRequested((event) => {
         event.preventDefault();
-        void requestExit();
+        void requestExit("confirm_exit");
       }),
     ]).then((listeners) => {
       if (disposed) listeners.forEach(stop => stop());
       else stops.push(...listeners);
     });
+    const requestRestart = () => void requestExit("confirm_restart");
+    window.addEventListener(RESTART_REQUEST_EVENT, requestRestart);
     return () => {
       disposed = true;
+      window.removeEventListener(RESTART_REQUEST_EVENT, requestRestart);
       stops.forEach(stop => stop());
     };
   }, []);

@@ -9,7 +9,9 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Module } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
@@ -26,7 +28,7 @@ import {
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDueCounts } from "@/lib/card-sync";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
@@ -84,6 +86,13 @@ const AppSidebar = () => {
   });
   const matchRoute = useMatchRoute();
   const { total } = useDueCounts();
+
+  // Narrow windows show the sidebar as a sheet with its own open state.
+  const { toggleSidebar } = useSidebar();
+  useEffect(() => {
+    window.addEventListener(TOGGLE_SIDEBAR_EVENT, toggleSidebar);
+    return () => window.removeEventListener(TOGGLE_SIDEBAR_EVENT, toggleSidebar);
+  }, [toggleSidebar]);
 
   return (
     <Sidebar>

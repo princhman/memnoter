@@ -26,7 +26,7 @@ export type Segment =
 export type CardPayload = Segment[] | OcclusionFace;
 
 export type ExtractedCard = {
-  // `<cardId>` for basic cards, `<cardId>:c<n>` for the n-th cloze (from 1).
+  // `<cardId>` for basic cards, `<cardId>:<stable cloze id>` for clozes.
   id: string;
   blockId: string;
   kind: CardKind;
@@ -36,6 +36,7 @@ export type ExtractedCard = {
 
 // Offsets are relative to the start of the block's content.
 export type Range = { from: number; to: number };
+export type ClozeId = Range & { id: string; answer: string };
 
 export type BlockSyntax = {
   separator: Range | null;
@@ -56,7 +57,7 @@ function unitsOf(block: Node): Unit[] {
   block.forEach((child, offset) => {
     if (child.isText) {
       const marks = child.marks.map((mark) => mark.type.name).filter((name) => KEPT_MARKS.has(name));
-      const syntax = !child.marks.some((mark) => mark.type.spec.code);
+      const syntax = !child.marks.some((mark) => mark.type.spec.code || mark.type.name === "link");
       // Iterate code points so surrogate pairs stay whole; positions count
       // UTF-16 units, as ProseMirror does.
       let at = offset;
@@ -215,6 +216,14 @@ function isCardBlock(node: Node) {
   return node.isTextblock && !node.type.spec.code && "cardId" in node.attrs;
 }
 
+// Legacy documents start with their existing positional ids. Once persisted,
+// these ids follow the cloze instead of its index in the paragraph.
+export function clozeIdsOf(node: Node, syntax = parseBlock(node)): ClozeId[] {
+  return node.attrs.clozeIds ?? syntax.clozes.map(({ inner }, index) => ({
+    ...inner, id: `c${index + 1}`, answer: node.cut(inner.from, inner.to).textContent,
+  }));
+}
+
 export function extractCards(doc: Node): ExtractedCard[] {
   const cards: ExtractedCard[] = [];
   const seen = new Set<string>();
@@ -236,11 +245,13 @@ export function extractCards(doc: Node): ExtractedCard[] {
     const blockId = node.attrs.cardId;
     if (!isCardBlock(node) || typeof blockId !== "string" || seen.has(blockId)) return true;
     seen.add(blockId);
-    parseBlock(node).cards.forEach((card, index) => {
+    const syntax = parseBlock(node);
+    const clozeIds = clozeIdsOf(node, syntax);
+    syntax.cards.forEach((card, index) => {
       cards.push({
         ...card,
         blockId,
-        id: card.kind === "cloze" ? `${blockId}:c${index + 1}` : blockId,
+        id: card.kind === "cloze" ? `${blockId}:${clozeIds[index].id}` : blockId,
       });
     });
     return true;
@@ -249,7 +260,7 @@ export function extractCards(doc: Node): ExtractedCard[] {
 }
 
 export function blockIdOf(cardId: string) {
-  return cardId.replace(/:o:.*$|:c\d+$/, "");
+  return cardId.replace(/:o:.*$|:c[^:]+$/, "");
 }
 
 // The ranges of the final document touched by a series of step maps.

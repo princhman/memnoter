@@ -188,3 +188,22 @@ test("a whole-document replace (loading) dedupes in document order", () => {
     { pos: 20, cardId: "new2" },
   ]);
 });
+
+
+test("linked delimiters stay literal content rather than creating cards", () => {
+  const link = schema.marks.link.create();
+  for (const source of ["https://example.com/{{slug}}", "C++ :: std"]) {
+    const linked = schema.text(source, [link]);
+    assert.deepEqual(parseBlock(paragraph.create(null, linked)).cards, [], source);
+    const block = paragraph.create(null, [schema.text("Question :: "), linked]);
+    assert.deepEqual(parseBlock(block).cards, [{
+      kind: "basic", front: [text("Question")], back: [text(source)],
+    }]);
+  }
+  // Even one linked character prevents a delimiter spanning mark boundaries.
+  for (const content of [
+    [schema.text("Q :"), schema.text(":", [link]), schema.text(" A")],
+    [schema.text("{"), schema.text("{", [link]), schema.text("answer}}")],
+    [schema.text("{{answer}"), schema.text("}", [link])],
+  ]) assert.deepEqual(parseBlock(paragraph.create(null, content)).cards, []);
+});

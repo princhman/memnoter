@@ -24,7 +24,7 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { getFoldedRanges, headingFoldKey } from "@/lib/heading-fold";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { scrollCurrentResultIntoView } from "@/lib/find-highlights";
-import { clearFindRequest, findRequestStore } from "@/lib/find-request";
+import { clearFindRequest, findInInlineMath, findRequestStore } from "@/lib/find-request";
 import { stopScrollRestore } from "@/lib/view-persistence";
 import { FIND_EVENT, usesNativeMenuShortcuts } from "@/lib/app-events";
 import { Button } from "@/components/ui/button";
@@ -41,23 +41,25 @@ const inputClassName =
 function revealCurrentResult(editor: Editor) {
   const { results, currentIndex } = editor.storage.findAndReplace;
   const match = currentIndex == null ? undefined : results[currentIndex];
-  if (match) {
-    const focused = getFocusedSectionRange(editor.state);
-    if (focused && (match.from < focused.from || match.to > focused.to)) {
-      editor.commands.showDocument();
-    }
-    // Unfold only what covers the match; other ids stay, even ones kept for undo.
-    const covering = new Set(
-      getFoldedRanges(editor.state)
-        .filter((range) => match.from < range.to && match.to > range.from)
-        .map((range) => range.id),
-    );
-    if (covering.size) {
-      const folded = headingFoldKey.getState(editor.state)?.folded ?? [];
-      editor.commands.setFolds(folded.filter((id) => !covering.has(id)));
-    }
-  }
+  if (match) unhide(editor, match);
   scrollCurrentResultIntoView(editor.view);
+}
+
+function unhide(editor: Editor, match: { from: number; to: number }) {
+  const focused = getFocusedSectionRange(editor.state);
+  if (focused && (match.from < focused.from || match.to > focused.to)) {
+    editor.commands.showDocument();
+  }
+  // Unfold only what covers the match; other ids stay, even ones kept for undo.
+  const covering = new Set(
+    getFoldedRanges(editor.state)
+      .filter((range) => match.from < range.to && match.to > range.from)
+      .map((range) => range.id),
+  );
+  if (covering.size) {
+    const folded = headingFoldKey.getState(editor.state)?.folded ?? [];
+    editor.commands.setFolds(folded.filter((id) => !covering.has(id)));
+  }
 }
 
 // Terms from a find request still to try, the first being the one searched.
@@ -144,8 +146,17 @@ export function FindBar() {
       if (search.current == null) {
         const [, ...rest] = pending.terms;
         pendingFind.current = rest.length ? { ...pending, terms: rest } : null;
-        if (rest.length) setSearchTerm(rest[0]);
-        else clearFindRequest();
+        if (rest.length) {
+          setSearchTerm(rest[0]);
+          return;
+        }
+        clearFindRequest();
+        const formula = findInInlineMath(editor.state.doc, pending.request.terms);
+        if (formula) {
+          stopScrollRestore();
+          unhide(editor, formula);
+          editor.chain().focus().setTextSelection(formula).scrollIntoView().run();
+        }
         return;
       }
       pendingFind.current = null;
