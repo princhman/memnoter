@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { register } from 'node:module';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
 import { invoke } from '@tauri-apps/api/core';
+import { onlineManager } from '@tanstack/react-query';
 import * as Y from 'yjs';
 const src = new URL('../src/', import.meta.url).href;
 register(`data:text/javascript,${encodeURIComponent(`
@@ -17,6 +18,68 @@ const { saveQueue } = await import('../src/lib/saves.ts');
 const { queryClient } = await import('../src/lib/query-client.ts');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+
+for (const discard of [false, true]) {
+  test(`offline ${discard ? 'discard' : 'quit'} drains local uploads without pausing`, async () => {
+    const uploaded = deferred();
+    let started = false;
+    let exited = false;
+    onlineManager.setOnline(false);
+    const mutation = queryClient.getMutationCache().build(queryClient, {
+      gcTime: 0, mutationKey: ['upload-file'], mutationFn: () => invoke('upload_file'),
+    });
+    mockIPC(async command => {
+      assert.equal(command, 'upload_file');
+      started = true;
+      await uploaded.promise;
+      return 'saved-image';
+    });
+    const insertion = imageOperation(() => mutation.execute());
+    await tick();
+    const quit = exclusiveWrite(async () => { exited = true; }, { discard });
+    try {
+      await tick();
+      assert.equal(started, true, 'local IPC must start while QueryClient is offline');
+      assert.equal(mutation.state.isPaused, false);
+      assert.equal(exited, false, 'quit still drains the running upload');
+      uploaded.resolve();
+      await insertion;
+      await quit;
+      assert.equal(exited, true);
+      assert.equal(onlineManager.isOnline(), false, 'exit needs no online transition');
+    } finally {
+      uploaded.resolve();
+      onlineManager.setOnline(true);
+      await queryClient.resumePausedMutations();
+      await Promise.allSettled([insertion, quit]);
+      queryClient.clear(); clearMocks();
+    }
+  });
+}
+
+test('local queries read through IPC while QueryClient is offline', async () => {
+  let reads = 0;
+  onlineManager.setOnline(false);
+  mockIPC(command => {
+    assert.equal(command, 'get_content');
+    reads++;
+    return { state: [0, 0], updates: [] };
+  });
+  const read = queryClient.fetchQuery({
+    queryKey: ['content', 'offline-note'], gcTime: 0,
+    queryFn: () => invoke('get_content', { moduleId: 'offline-note' }),
+  });
+  read.catch(() => {});
+  try {
+    await tick();
+    assert.equal(reads, 1, 'local reads must not pause before IPC');
+    assert.deepEqual(await read, { state: [0, 0], updates: [] });
+  } finally {
+    onlineManager.setOnline(true);
+    queryClient.clear(); clearMocks();
+    await Promise.allSettled([read]);
+  }
+});
 
 test('source deletion retries foreign Yjs references before scanning and preserves failed edits', async () => {
   const doc = new Y.Doc();
