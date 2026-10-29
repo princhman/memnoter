@@ -23,7 +23,7 @@ export type Segment =
   | { type: "blank" };
 
 export type ExtractedCard = {
-  // `<cardId>` for basic cards, `<cardId>:c<n>` for the n-th cloze (from 1).
+  // `<cardId>` for basic cards, `<cardId>:<stable cloze id>` for clozes.
   id: string;
   blockId: string;
   kind: CardKind;
@@ -33,6 +33,7 @@ export type ExtractedCard = {
 
 // Offsets are relative to the start of the block's content.
 export type Range = { from: number; to: number };
+export type ClozeId = Range & { id: string; answer: string };
 
 export type BlockSyntax = {
   separator: Range | null;
@@ -212,6 +213,14 @@ function isCardBlock(node: Node) {
   return node.isTextblock && !node.type.spec.code && "cardId" in node.attrs;
 }
 
+// Legacy documents start with their existing positional ids. Once persisted,
+// these ids follow the cloze instead of its index in the paragraph.
+export function clozeIdsOf(node: Node, syntax = parseBlock(node)): ClozeId[] {
+  return node.attrs.clozeIds ?? syntax.clozes.map(({ inner }, index) => ({
+    ...inner, id: `c${index + 1}`, answer: node.cut(inner.from, inner.to).textContent,
+  }));
+}
+
 export function extractCards(doc: Node): ExtractedCard[] {
   const cards: ExtractedCard[] = [];
   const seen = new Set<string>();
@@ -220,11 +229,13 @@ export function extractCards(doc: Node): ExtractedCard[] {
     const blockId = node.attrs.cardId;
     if (!isCardBlock(node) || typeof blockId !== "string" || seen.has(blockId)) return false;
     seen.add(blockId);
-    parseBlock(node).cards.forEach((card, index) => {
+    const syntax = parseBlock(node);
+    const clozeIds = clozeIdsOf(node, syntax);
+    syntax.cards.forEach((card, index) => {
       cards.push({
         ...card,
         blockId,
-        id: card.kind === "cloze" ? `${blockId}:c${index + 1}` : blockId,
+        id: card.kind === "cloze" ? `${blockId}:${clozeIds[index].id}` : blockId,
       });
     });
     return false;
@@ -233,7 +244,7 @@ export function extractCards(doc: Node): ExtractedCard[] {
 }
 
 export function blockIdOf(cardId: string) {
-  return cardId.replace(/:c\d+$/, "");
+  return cardId.replace(/:c[^:]+$/, "");
 }
 
 // The ranges of the final document touched by a series of step maps.
