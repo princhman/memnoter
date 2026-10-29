@@ -1124,12 +1124,13 @@ body {
 }
 
 .tiptap .cloze-brace {
-    color: var(--muted-foreground);
-    opacity: 0.5;
+    color: transparent;
+    caret-color: var(--foreground);
     font-size: 0.72em;
 }
 
 .tiptap .cloze-text {
+    background-color: color-mix(in oklch, var(--primary) 7%, transparent);
     text-decoration-line: underline;
     text-decoration-style: dotted;
     text-decoration-thickness: 1.5px;

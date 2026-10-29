@@ -20,7 +20,7 @@ const decorationsKey = new PluginKey<DecorationSet>("flashcardDecorations");
 
 // Card syntax stays real, editable text: decorations only restyle it, and
 // nothing is hidden from the caret. A faint `::` reads as an arrow until the
-// caret enters its block, cloze braces are faint and small, and the hidden
+// caret enters its block, cloze braces are transparent, and the hidden
 // text gets a dotted underline. Card blocks get a faint margin marker.
 function blockDecorations(node: Node, pos: number): Decoration[] {
   const syntax = parseBlock(node);
