@@ -22,6 +22,39 @@ function editorFor(content) {
   return editor;
 }
 
+for (const type of ["image", "inlineImage"]) {
+  for (const operation of ["move", "move after copy dragstart", "paste", "copy-drop", "copy-drop after move dragstart"]) {
+    test(`${type} ${operation} preserves existing reviews and gives copies fresh identities`, () => {
+      const reviewed = { ...image, type, attrs: { ...image.attrs, imageId: "reviewed-image", masks: [{ ...rectangle, id: "reviewed-mask" }] } };
+      const block = type === "image" ? reviewed : { type: "paragraph", content: [reviewed] };
+      const editor = editorFor([block, { type: "paragraph", content: [{ type: "text", text: "Drop before or after me" }] }]);
+      try {
+        const moving = operation.startsWith("move");
+        const view = editor.view;
+        let slice = new Slice(Fragment.from(editor.state.doc.firstChild), 0, 0);
+        view.dragging = operation === "paste" ? null : {
+          slice, move: operation === "move" || operation === "copy-drop after move dragstart",
+        };
+        for (const plugin of editor.state.plugins) {
+          if (plugin.props.transformPasted) slice = plugin.props.transformPasted(slice, view, false);
+        }
+        const tr = editor.state.tr;
+        if (moving) tr.delete(0, editor.state.doc.firstChild.nodeSize);
+        tr.insert(tr.doc.content.size, slice.content).setMeta("uiEvent", operation === "paste" ? "paste" : "drop");
+        view.dispatch(tr);
+        const cards = extractCards(editor.state.doc);
+        assert.equal(cards[0].id, "reviewed-image:o:reviewed-mask");
+        assert.equal(cards.length, moving ? 1 : 2);
+        if (!moving) {
+          assert.notEqual(cards[1].blockId, "reviewed-image");
+          assert.notEqual(cards[1].front.targetMaskId, "reviewed-mask");
+          assert.equal(cards[1].front.fileId, "asset");
+        }
+      } finally { editor.destroy(); }
+    });
+  }
+}
+
 test("coordinates align across viewport sizes; reverse drags and all closed shapes validate", () => {
   const p = normalizedPoint(150, 100, {left:50,top:50,width:200,height:100});
   assert.deepEqual(p, {x:.5,y:.5});

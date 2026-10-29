@@ -185,7 +185,10 @@ export const Flashcards = Extension.create({
           return tr.docChanged ? tr : null;
         },
         props: {
-          transformPasted(slice) {
+          transformPasted(slice, view) {
+            // Internal drops keep the dragged slice: move/copy modifiers can
+            // change after dragstart. Duplicate repair above renews copy ids.
+            if (slice === view.dragging?.slice) return slice;
             const map = (fragment: import("@tiptap/pm/model").Fragment): import("@tiptap/pm/model").Fragment => Fragment.fromArray(Array.from({ length: fragment.childCount }, (_, i) => {
               const node = fragment.child(i);
               return ["image", "inlineImage"].includes(node.type.name)
