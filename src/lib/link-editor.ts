@@ -28,7 +28,9 @@ export function isLinkEditorOpen(state: EditorState) {
 // Bare domains get https, bare addresses mailto; anything with a scheme stays.
 export function normalizeHref(input: string) {
   const href = input.trim();
-  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href)) return href;
+  // `example.com:8080/x` is a host and port, not a scheme.
+  const hostAndPort = /^(?:localhost|[^\s/:@]+\.[^\s/:@]+):\d+(?:[/?#]|$)/.test(href);
+  if (!href || (!hostAndPort && /^[a-z][a-z0-9+.-]*:/i.test(href))) return href;
   if (/^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(href)) return `mailto:${href}`;
   return `https://${href}`;
 }
