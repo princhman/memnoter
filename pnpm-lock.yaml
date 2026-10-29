@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@tanstack/history@1.162.0':
-    hash: 5715ee53ed0589f1c6718ab72761758d397bfe4c3a9a193c6f89cbf074e6a5dc
+    hash: 80a4783b3989311a7bdd29986dc9511606bc8ee771d45ceee691d1d9a814130f
     path: patches/@tanstack__history@1.162.0.patch
 
 importers:
@@ -3542,7 +3542,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@tanstack/history@1.162.0(patch_hash=5715ee53ed0589f1c6718ab72761758d397bfe4c3a9a193c6f89cbf074e6a5dc)': {}
+  '@tanstack/history@1.162.0(patch_hash=80a4783b3989311a7bdd29986dc9511606bc8ee771d45ceee691d1d9a814130f)': {}
 
   '@tanstack/query-core@5.101.2': {}
 
@@ -3564,7 +3564,7 @@ snapshots:
 
   '@tanstack/react-router@1.170.17(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@tanstack/history': 1.162.0(patch_hash=5715ee53ed0589f1c6718ab72761758d397bfe4c3a9a193c6f89cbf074e6a5dc)
+      '@tanstack/history': 1.162.0(patch_hash=80a4783b3989311a7bdd29986dc9511606bc8ee771d45ceee691d1d9a814130f)
       '@tanstack/react-store': 0.9.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@tanstack/router-core': 1.171.14
       isbot: 5.2.0
@@ -3587,7 +3587,7 @@ snapshots:
 
   '@tanstack/router-core@1.171.14':
     dependencies:
-      '@tanstack/history': 1.162.0(patch_hash=5715ee53ed0589f1c6718ab72761758d397bfe4c3a9a193c6f89cbf074e6a5dc)
+      '@tanstack/history': 1.162.0(patch_hash=80a4783b3989311a7bdd29986dc9511606bc8ee771d45ceee691d1d9a814130f)
       cookie-es: 3.1.1
       seroval: 1.5.4
       seroval-plugins: 1.5.4(seroval@1.5.4)
