@@ -491,7 +491,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   return (
     <FilesContext.Provider value={filesContext}>
       <HeadingActionOverlay editor={editor}>
-        <EditorContent editor={editor} />
+        {/* Loading fills the editor a few frames before the saved folds and
+            scroll are restored, so it stays hidden until then. */}
+        <EditorContent
+          editor={editor}
+          style={isSuccess ? undefined : { visibility: "hidden" }}
+        />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
       <LinkMenu editor={editor} />
