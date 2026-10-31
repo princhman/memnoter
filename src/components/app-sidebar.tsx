@@ -17,7 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
-import { Ellipsis, Pencil, Settings, Trash2 } from "lucide-react";
+import { Ellipsis, House, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -99,21 +99,19 @@ const AppSidebar = () => {
   return (
     <Sidebar>
       <SidebarContent className="pt-6">
-        {/*<SidebarHeader>
-        <div className="flex justify-between">
-          <div className="px-2 text-md font-semibold pt-8">Notes</div>
-        </div>
-      </SidebarHeader>
-
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton>
+              <SidebarMenuButton
+                isActive={!!matchRoute({ to: "/" })}
+                render={<Link to="/" />}
+              >
+                <House />
                 <span>Home</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-        </SidebarGroup>*/}
+        </SidebarGroup>
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
