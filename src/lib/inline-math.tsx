@@ -161,7 +161,7 @@ export const InlineMath = Node.create({
         );
         if (editing !== wasEditing) {
           contentDOM.style.display = editing ? "" : "none";
-          rendered.style.display = editing ? "none" : "inline-block";
+          rendered.style.display = editing ? "none" : "";
           // Rendered formulas must not expose hidden source to caret movement.
           dom.contentEditable = editing ? "true" : "false";
           wasEditing = editing;

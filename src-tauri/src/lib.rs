@@ -1,16 +1,46 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+mod backups;
+
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
 type CommandResult<T> = std::result::Result<T, String>;
 
 struct Db {
     conn: Mutex<Connection>,
+    unavailable: AtomicBool,
+}
+
+impl Db {
+    fn lock(&self) -> CommandResult<std::sync::MutexGuard<'_, Connection>> {
+        let conn = self.conn.lock().map_err(db_err)?;
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err("Database unavailable. Restart the app to recover.".into());
+        }
+        Ok(conn)
+    }
+}
+
+#[derive(Default)]
+struct ExitGate(AtomicBool);
+#[tauri::command]
+fn confirm_exit(app: tauri::AppHandle) {
+    app.state::<ExitGate>().0.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+// Restarts skip ExitRequested's prevent_exit, so the frontend must have
+// finished its save checks before calling this.
+#[tauri::command]
+fn confirm_restart(app: tauri::AppHandle) {
+    app.state::<ExitGate>().0.store(true, Ordering::SeqCst);
+    app.restart();
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -54,8 +84,13 @@ const LEGACY_IDENTIFIER: &str = "com.vladyslavnalyvaiko.notes";
 
 fn init_db(app: &tauri::App) -> CommandResult<Db> {
     let app_dir = app.path().app_data_dir().map_err(db_err)?;
-    migrate_legacy_data(&app_dir)?;
-    open_db(&app_dir)
+    initialize_data(&app_dir)
+}
+
+fn initialize_data(app_dir: &Path) -> CommandResult<Db> {
+    backups::settle_restore(app_dir)?;
+    migrate_legacy_data(app_dir)?;
+    open_db(app_dir)
 }
 
 // One-time copy of the pre-rename data dir into the new one. The legacy dir is
@@ -144,6 +179,36 @@ fn rewrite_file_paths(db_path: &Path, files_dir: &Path) -> CommandResult<()> {
     conn.close().map_err(|(_, error)| db_err(error))
 }
 
+// AUTOINCREMENT preserves the high-water mark even after compaction empties
+// the table. A stale read must never authorize deleting a newly reused id.
+fn migrate_update_ids(conn: &Connection) -> CommandResult<()> {
+    let schema: String = conn
+        .query_row(
+            "select sql from sqlite_master where type = 'table' and name = 'contents_updates'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_err)?;
+    if schema.to_uppercase().contains("AUTOINCREMENT") {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction().map_err(db_err)?;
+    tx.execute_batch(
+        "create table contents_updates_monotonic (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        module_id TEXT NOT NULL,
+        bytes BLOB NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
+    );
+    insert into contents_updates_monotonic select * from contents_updates;
+    drop table contents_updates;
+    alter table contents_updates_monotonic rename to contents_updates;",
+    )
+    .map_err(db_err)?;
+    tx.commit().map_err(db_err)
+}
+
 fn open_db(app_dir: &Path) -> CommandResult<Db> {
     std::fs::create_dir_all(app_dir).map_err(db_err)?;
 
@@ -171,7 +236,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
         );
 
         create table if not exists contents_updates (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             module_id TEXT NOT NULL,
             bytes BLOB NOT NULL,
             created_at INTEGER NOT NULL,
@@ -187,8 +252,11 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
     )
     .map_err(db_err)?;
 
+    migrate_update_ids(&conn)?;
+
     Ok(Db {
         conn: Mutex::new(conn),
+        unavailable: AtomicBool::new(false),
     })
 }
 
@@ -362,6 +430,97 @@ mod tests {
     }
 
     #[test]
+    fn compaction_writes_state_and_drops_updates_together() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        conn.execute_batch("insert into contents_updates values (8, 'note', X'04', 0);")
+            .unwrap();
+        compact_content(&mut conn, "note", &[9], 7).unwrap();
+        let content = read_content(&conn, "note").unwrap();
+        assert_eq!(content.state, vec![9]);
+        assert_eq!(
+            content
+                .updates
+                .iter()
+                .map(|update| update.id)
+                .collect::<Vec<_>>(),
+            vec![8]
+        );
+    }
+
+    #[test]
+    fn legacy_update_id_migration_preserves_rows_and_their_high_watermark() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+            create table modules (id TEXT PRIMARY KEY);
+            insert into modules values ('note');
+            create table contents_updates (id INTEGER PRIMARY KEY, module_id TEXT NOT NULL,
+                bytes BLOB NOT NULL, created_at INTEGER NOT NULL,
+                FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE);
+            insert into contents_updates values (300, 'note', X'0102', 42);",
+        )
+        .unwrap();
+        migrate_update_ids(&conn).unwrap();
+        migrate_update_ids(&conn).unwrap();
+        let row: (i64, Vec<u8>, i64) = conn
+            .query_row(
+                "select id, bytes, created_at from contents_updates",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (300, vec![1, 2], 42));
+        conn.execute("delete from contents_updates", []).unwrap();
+        conn.execute("insert into contents_updates (module_id, bytes, created_at) values ('note', X'03', 43)", []).unwrap();
+        assert_eq!(conn.last_insert_rowid(), 301);
+        conn.execute("delete from modules where id = 'note'", [])
+            .unwrap();
+        assert_eq!(
+            conn.query_row("select count(*) from contents_updates", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn stale_compaction_watermark_cannot_delete_a_later_update() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        // A stale read can retain the old watermark after its rows are folded.
+        compact_content(&mut conn, "note", &[9], 7).unwrap();
+        conn.execute(
+            "insert into contents_updates (module_id, bytes, created_at) values ('note', X'05', 0)",
+            [],
+        )
+        .unwrap();
+        compact_content(&mut conn, "note", &[9], 7).unwrap();
+        let content = read_content(&conn, "note").unwrap();
+        assert_eq!(content.updates.len(), 1);
+        assert_eq!(content.updates[0].bytes, vec![5]);
+        assert!(content.updates[0].id > 7);
+    }
+
+    #[test]
+    fn failed_compaction_leaves_content_unchanged() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        let before = serde_json::to_value(read_content(&conn, "note").unwrap()).unwrap();
+        // Fail the second statement, after the state has already been written.
+        conn.execute_batch(
+            "create temp trigger fail_delete before delete on contents_updates
+             begin select raise(abort, 'disk full'); end;",
+        )
+        .unwrap();
+        assert!(compact_content(&mut conn, "note", &[9], 7).is_err());
+        conn.execute_batch("drop trigger fail_delete;").unwrap();
+        let after = serde_json::to_value(read_content(&conn, "note").unwrap()).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(after["state"], serde_json::json!([1]));
+    }
+
+    #[test]
     fn legacy_data_is_copied_with_rewritten_paths_and_left_intact() {
         let root = std::env::temp_dir().join(format!("notes-migrate-{}", Uuid::new_v4()));
         let legacy = Fixture {
@@ -416,7 +575,7 @@ mod tests {
 
 #[tauri::command]
 fn create_module(db: tauri::State<Db>, name: String) -> CommandResult<String> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     let id = Uuid::new_v4().to_string();
 
     conn.execute(
@@ -438,7 +597,7 @@ fn create_module(db: tauri::State<Db>, name: String) -> CommandResult<String> {
 
 #[tauri::command]
 fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     let mut stmt = conn.prepare("select * from modules").map_err(db_err)?;
     let rows = stmt
         .query_map([], |row| {
@@ -456,7 +615,7 @@ fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
 
 #[tauri::command]
 fn rename_module(db: tauri::State<Db>, module_id: String, name: String) -> CommandResult<()> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
 
     conn.execute(
         "update modules set name = ?2 where id = ?1",
@@ -514,15 +673,18 @@ fn delete_module(
     module_id: String,
 ) -> CommandResult<()> {
     let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
-    let mut conn = db.conn.lock().map_err(db_err)?;
+    let mut conn = db.lock()?;
     delete_module_data(&mut conn, &files_dir, &module_id)
 }
 
 // Reading and serializing a long edit history must not block the native UI.
 #[tauri::command(async)]
 fn get_content(db: tauri::State<Db>, module_id: String) -> CommandResult<GetContentResponse> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
+    read_content(&conn, &module_id)
+}
 
+fn read_content(conn: &Connection, module_id: &str) -> CommandResult<GetContentResponse> {
     let state = conn
         .query_one(
             "select state from contents where module_id = ?1",
@@ -577,7 +739,7 @@ fn add_update(
     module_id: String,
     bytes: Vec<u8>,
 ) -> CommandResult<ContentUpdate> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
 
     conn.execute(
         "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
@@ -598,21 +760,34 @@ fn save_compaction(
     new_state: Vec<u8>,
     update_id: i64,
 ) -> CommandResult<()> {
-    let conn = db.conn.lock().map_err(db_err)?;
+    let mut conn = db.lock()?;
+    compact_content(&mut conn, &module_id, &new_state, update_id)
+}
 
-    conn.execute(
+// The new state already contains the folded updates. Writing it and dropping
+// them must happen together, or a failure in between would lose or duplicate
+// history.
+fn compact_content(
+    conn: &mut Connection,
+    module_id: &str,
+    new_state: &[u8],
+    update_id: i64,
+) -> CommandResult<()> {
+    let tx = conn.transaction().map_err(db_err)?;
+
+    tx.execute(
         "update contents set state = ?1 where module_id = ?2",
         params![new_state, module_id],
     )
     .map_err(db_err)?;
 
-    conn.execute(
+    tx.execute(
         "delete from contents_updates where module_id = ?1 and id <= ?2",
         params![module_id, update_id],
     )
     .map_err(db_err)?;
 
-    Ok(())
+    tx.commit().map_err(db_err)
 }
 
 #[tauri::command(async)]
@@ -631,7 +806,7 @@ fn save_file(
         .to_str()
         .ok_or_else(|| "File path is not valid UTF-8".to_string())?;
 
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     // Serialize uploads with deletion so a pending paste cannot recreate files
     // for a module that has already been removed.
     conn.query_one(
@@ -660,7 +835,7 @@ fn save_file(
     }
 
     Ok(FileType {
-        id: id,
+        id,
         path: path_str.to_owned(),
         file_type: mime_type,
     })
@@ -683,7 +858,7 @@ fn read_file(
         .map_err(db_err)?
         .join("files")
         .join(&file_id);
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     let (path, file_type): (String, String) = conn
         .query_row(
             "select path, file_type from files where id = ?1 and module_id = ?2",
@@ -767,7 +942,7 @@ fn cleanup_files(
     expected_update_id: i64,
 ) -> CommandResult<Vec<String>> {
     let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
-    let conn = db.conn.lock().map_err(db_err)?;
+    let conn = db.lock()?;
     cleanup_unused_files(
         &conn,
         &files_dir,
@@ -787,9 +962,13 @@ pub fn run() {
         .setup(|app| {
             let db = init_db(app).expect("Failed to init db.");
             app.manage(db);
+            app.manage(ExitGate::default());
+            backups::spawn_daily_backup(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            confirm_exit,
+            confirm_restart,
             create_module,
             modules,
             get_content,
@@ -799,8 +978,21 @@ pub fn run() {
             save_compaction,
             save_file,
             read_file,
-            cleanup_files
+            cleanup_files,
+            backups::list_backups,
+            backups::backup_now,
+            backups::restore_backup
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if !app.state::<ExitGate>().0.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    if let Err(error) = app.emit("request-safe-exit", ()) {
+                        eprintln!("Unable to request safe exit: {error}");
+                    }
+                }
+            }
+        });
 }

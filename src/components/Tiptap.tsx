@@ -6,6 +6,7 @@ import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { applyPendingSaves, saveQueue } from "@/lib/saves";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
@@ -21,8 +22,10 @@ import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image"
 import FileHandler from "@tiptap/extension-file-handler";
 import {
   applySavedContent,
-  loadContent,
+  contentQueryOptions,
+  acknowledgeCompaction,
   type ContentUpdate,
+  loadContent,
   type FileType,
   type GetContentResponse,
 } from "@/lib/content";
@@ -54,9 +57,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   const hasInsertedInitialContent = useRef(false);
 
   const { isSuccess, data } = useQuery({
-    queryKey: ["content", moduleId],
+    ...contentQueryOptions(moduleId),
     queryFn: async () => {
+      // Taken before reading, so an edit saved meanwhile is in one or the other.
+      const pending = saveQueue.pending(moduleId);
       const content = await loadContent(moduleId, yDoc);
+      applyPendingSaves(yDoc, pending);
       hasAppliedRemoteContent.current = true;
       return content;
     },
@@ -76,30 +82,6 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   const { setActiveEditor } = useActiveEditor();
 
-  const addUpdateMutation = useMutation({
-    mutationKey: ["add-content-update", moduleId],
-    mutationFn: async (bytes: number[]) =>
-      invoke<ContentUpdate>("add_update", { moduleId, bytes }),
-
-    onSuccess: (update) => {
-      queryClient.setQueryData<GetContentResponse>(
-        ["content", moduleId],
-        (oldContent) => {
-          if (!oldContent) return oldContent;
-
-          return {
-            state: oldContent.state,
-            updates: [...oldContent.updates, update],
-            files: oldContent.files,
-          };
-        },
-      );
-    },
-    onError: (error) => {
-      console.error("Failed to save Tiptap update:", error);
-    },
-  });
-
   const compactionMutation = useMutation({
     mutationKey: ["compact-content", moduleId],
     mutationFn: async ({
@@ -108,10 +90,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     }: {
       newState: number[];
       updateId: number;
+      representedUpdates: ContentUpdate[];
     }) => {
       await invoke("save_compaction", { moduleId, newState, updateId });
     },
-    onSuccess: (_, { newState, updateId }) => {
+    onSuccess: (_, { newState, updateId, representedUpdates }) => {
+      acknowledgeCompaction(moduleId, newState, representedUpdates);
       queryClient.setQueryData<GetContentResponse>(
         ["content", moduleId],
         (oldContent) => {
@@ -163,8 +147,9 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
     // a cached note has not gone through this editor's query function.
     applySavedContent(yDoc, data);
+    applyPendingSaves(yDoc, saveQueue.pending(moduleId));
     hasAppliedRemoteContent.current = true;
-  }, [data, yDoc]);
+  }, [data, moduleId, yDoc]);
 
   // attaching updater
   useEffect(() => {
@@ -172,14 +157,16 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
     const handleUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin === "tauri-load") return;
-      addUpdateMutation.mutate(Array.from(update));
+      saveQueue.enqueue(moduleId, Array.from(update));
     };
 
     yDoc.on("update", handleUpdate);
     return () => {
       yDoc.off("update", handleUpdate);
+      // Leaving the note: retry any failed saves now rather than after backoff.
+      saveQueue.retryNow();
     };
-  }, [isSuccess, yDoc, addUpdateMutation.mutate]);
+  }, [isSuccess, moduleId, yDoc]);
 
   async function insertImages(
     currentEditor: Editor,
@@ -390,12 +377,15 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         return;
       }
 
-      // do not compact while an older update is still being persisted.
-      const pendingUpdates = queryClient.isMutating({
-        mutationKey: ["add-content-update", moduleId],
-      });
+      // do not compact while an update is still queued or being persisted;
+      // compaction drops saved updates by id, which a queued one lacks yet.
+      if (!saveQueue.isIdle(moduleId)) {
+        return;
+      }
 
-      if (pendingUpdates > 0) {
+      // isPending is per editor; a compaction started by an earlier editor of
+      // this note may still be running, and the later one must not overtake it.
+      if (queryClient.isMutating({ mutationKey: ["compact-content", moduleId] }) > 0) {
         return;
       }
 
@@ -403,11 +393,14 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         ...currentContent.updates.map((update) => update.id),
       );
 
+      // Every receipt below the watermark must be represented in this doc.
+      applySavedContent(yDoc, currentContent);
       const newState = Array.from(Y.encodeStateAsUpdate(yDoc));
 
       compactionMutation.mutate({
         newState,
         updateId,
+        representedUpdates: currentContent.updates,
       });
     }, COMPACTION_IDLE_MS);
 

@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
-import { Ellipsis, Pencil, Trash2 } from "lucide-react";
+import { Ellipsis, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +26,8 @@ import {
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useState } from "react";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
@@ -141,7 +143,24 @@ const AppSidebar = () => {
       </SidebarContent>
 
       <SidebarFooter>
-        <UpdateStatus />
+        <UpdateStatus>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground aria-[current=page]:text-foreground"
+                  aria-label="Settings"
+                  render={<Link to="/settings" />}
+                />
+              }
+            >
+              <Settings />
+            </TooltipTrigger>
+            <TooltipContent side="top">Settings</TooltipContent>
+          </Tooltip>
+        </UpdateStatus>
       </SidebarFooter>
     </Sidebar>
   );
