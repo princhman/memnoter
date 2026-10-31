@@ -292,7 +292,7 @@ export function CommandPalette() {
         showCloseButton={false}
         initialFocus={inputRef}
         finalFocus={() => restoreFocus.current}
-        className="top-[18vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl data-open:zoom-in-100"
+        className="top-[18vh] translate-y-0 gap-0 overflow-hidden p-0 shadow-2xl ring-0 sm:max-w-xl data-open:zoom-in-100"
       >
         <DialogTitle className="sr-only">Search notes and commands</DialogTitle>
         <div className="flex items-center gap-2 border-b border-border px-3">

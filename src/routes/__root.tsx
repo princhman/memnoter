@@ -21,7 +21,6 @@ import { appStore, setSidebarOpen } from "@/lib/store";
 import SaveStatus from "@/components/save-status";
 import { useEffect } from "react";
 import { useCommand } from "@/lib/commands";
-import { useBackupNow } from "@/lib/backups";
 import { OPEN_SETTINGS_EVENT, requestApp } from "@/lib/app-events";
 
 const RootLayout = () => {
@@ -29,7 +28,6 @@ const RootLayout = () => {
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   const navigate = useNavigate();
 
-  const backupNow = useBackupNow();
   useCommand({ id: "review.all", title: "Review all cards", keywords: ["flashcards"],
     run: () => openReview(() => navigate({ to: "/review", search: {} })),
   });
@@ -38,15 +36,6 @@ const RootLayout = () => {
     title: "Settings",
     shortcut: `${MOD_KEY},`,
     run: () => requestApp(OPEN_SETTINGS_EVENT),
-  });
-  useCommand({
-    id: "backup.now",
-    title: "Back up now",
-    keywords: ["backup", "save"],
-    run: async () => {
-      await navigate({ to: "/settings" });
-      backupNow.mutate();
-    },
   });
 
   // Dispatched by the app menu.
@@ -105,11 +94,6 @@ const RootLayout = () => {
         )}
       </ActiveEditorProvider>
 
-      {backupNow.isError && (
-        <p role="alert" className="fixed bottom-12 left-4 z-50 rounded-md bg-popover p-3 text-sm text-destructive">
-          {String(backupNow.error)}
-        </p>
-      )}
       <SaveStatus />
 
       <TanStackRouterDevtools />
