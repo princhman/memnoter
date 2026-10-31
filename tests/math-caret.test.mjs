@@ -24,6 +24,8 @@ before(async () => {
   const { port } = server.httpServer.address();
   await page.goto(`http://localhost:${port}/tests/browser/editor.html`);
   await page.waitForFunction(() => "editor" in window);
+  // Lets caretX() find the drawn caret in a screenshot.
+  await page.addStyleTag({ content: ".tiptap { caret-color: rgb(255, 0, 0); }" });
 });
 
 after(async () => {
@@ -31,10 +33,40 @@ after(async () => {
   await server?.close();
 });
 
+// Where the browser draws the caret, which can differ from where ProseMirror
+// thinks it is. Read from a screenshot, retrying while the caret blinks off.
+async function caretX() {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const png = await page.screenshot({ caret: "initial" });
+    const x = await page.evaluate(async (base64) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${base64}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      let left = Infinity;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] > 200 && data[i + 1] < 60 && data[i + 2] < 60) {
+          left = Math.min(left, (i / 4) % canvas.width);
+        }
+      }
+      return left === Infinity ? null : left / devicePixelRatio;
+    }, png.toString("base64"));
+    if (x !== null) return x;
+    await page.waitForTimeout(150);
+  }
+  throw new Error("caret not found in screenshot");
+}
+
 const text = (value) => ({ type: "text", text: value });
 const p = (...content) => ({ type: "paragraph", content });
 const h1 = (value) => ({ type: "heading", attrs: { level: 1 }, content: [text(value)] });
-const math = (tex) => ({ type: "inlineMath", content: [text(tex)] });
+const math = (tex) =>
+  tex ? { type: "inlineMath", content: [text(tex)] } : { type: "inlineMath" };
 const block = (tex) => ({ type: "mathBlock", content: [text(tex)] });
 const KEYS = { L: "ArrowLeft", R: "ArrowRight", U: "ArrowUp", D: "ArrowDown" };
 
@@ -135,3 +167,23 @@ test("two math blocks in a row", async () => {
     "3p D8m D11m D15p D19p U12m U9m U3p U1p",
   );
 });
+
+// From inside a formula alone on its line, Left puts the caret in front of
+// it, and it must be drawn there too, not after the formula.
+for (const [name, formula] of [["an empty formula", math("")], ["a formula", math("x+y")]]) {
+  test(`left out of ${name} alone on its line draws the caret in front`, async () => {
+    const content = [p(text("above")), p(formula), p(text("below"))];
+    assert.equal(await walk(content, 9, "L"), "9i L8p");
+    const caret = await caretX();
+    const { left, right } = await page.evaluate(() =>
+      editor.view.dom.querySelector(".inline-math").getBoundingClientRect().toJSON(),
+    );
+    assert.ok(caret < left + (right - left) / 2, `caret drawn at ${caret}, formula spans ${left}-${right}`);
+
+    await page.keyboard.type("z");
+    assert.equal(
+      await page.evaluate(() => editor.state.doc.child(1).textContent),
+      `z${formula.content?.[0].text ?? ""}`,
+    );
+  });
+}
