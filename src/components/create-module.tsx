@@ -18,6 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
 import { SidebarGroupAction } from "./ui/sidebar";
+import { IconTooltip } from "./icon-tooltip";
+import { MOD_KEY } from "@/lib/utils";
 
 // The sidebar's copy has the + button. In narrow windows the sidebar is a sheet
 // that unmounts when closed, so the copy answering the app menu and the welcome
@@ -70,16 +72,18 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {!global && (
-        <DialogTrigger
-          render={
-            <SidebarGroupAction
-              aria-label="Add Module"
-              className="invisible group-hover:visible"
-            />
-          }
-        >
-          <Plus className="size-3" />
-        </DialogTrigger>
+        <IconTooltip label="New module" hint={`${MOD_KEY}N`} side="right">
+          <DialogTrigger
+            render={
+              <SidebarGroupAction
+                aria-label="New module"
+                className="invisible group-hover:visible"
+              />
+            }
+          >
+            <Plus className="size-3" />
+          </DialogTrigger>
+        </IconTooltip>
       )}
       <DialogContent>
         <form onSubmit={handleSubmit}>
