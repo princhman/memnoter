@@ -742,12 +742,15 @@ body {
 }
 
 /* ---------- Rendered widget (cursor outside) ---------- */
+/* Inline, not inline-block: a long formula wraps across lines like text, so
+   each line box grows to fit its part instead of the whole block overlapping
+   the line above. */
 .tiptap .inline-math-widget {
-    display: inline-block;
-    vertical-align: baseline;
+    display: inline;
     padding: 0 0.15em;
     border-radius: 0.35rem;
-    margin-block: calc(var(--inline-math-overflow, 0.5em) * -1);
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
     cursor: pointer;
     -webkit-user-select: none;
     user-select: none;
