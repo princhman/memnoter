@@ -22,7 +22,7 @@ type appState = {
   recentModuleIds: string[];
 };
 
-const RECENT_LIMIT = 5;
+const RECENT_LIMIT = 20;
 
 const STORAGE_KEY = "app-state";
 const SAVE_DEBOUNCE_MS = 250;

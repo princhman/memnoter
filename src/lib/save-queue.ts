@@ -191,6 +191,10 @@ export function createSaveQueue<Update, Saved>({
       return !queues.has(moduleId);
     },
 
+    isSuspended() {
+      return suspended;
+    },
+
     isEmpty() {
       return queues.size === 0;
     },

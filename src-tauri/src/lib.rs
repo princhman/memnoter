@@ -254,6 +254,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
         )",
     )
     .map_err(db_err)?;
+    migrate_search(&conn)?;
 
     migrate_update_ids(&conn)?;
 
@@ -261,6 +262,40 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
         conn: Mutex::new(conn),
         unavailable: AtomicBool::new(false),
     })
+}
+
+// Full-text search over every module: one row per module, with its title, the
+// plain text of the note and the LaTeX source of its formulas. unicode61 with
+// remove_diacritics folds case and accents; the prefix index keeps type-ahead
+// queries ("integ*") fast. search_index_state records which extractor version
+// produced each row, so the frontend can re-index after the extractor changes.
+fn migrate_search(conn: &Connection) -> CommandResult<()> {
+    conn.execute_batch(
+        "
+        create virtual table if not exists search_index using fts5(
+            module_id UNINDEXED,
+            title,
+            body,
+            math,
+            tokenize = 'unicode61 remove_diacritics 2',
+            prefix = '2 3'
+        );
+
+        create table if not exists search_index_state (
+            module_id TEXT PRIMARY KEY,
+            version INTEGER NOT NULL,
+            FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
+        );
+
+        -- Titles are known up front, so modules from before the index existed
+        -- are searchable by name straight away; their text is backfilled later.
+        delete from search_index
+            where module_id not in (select id from modules);
+        insert into search_index (module_id, title, body, math)
+            select id, name, '', '' from modules
+            where id not in (select module_id from search_index);",
+    )
+    .map_err(db_err)
 }
 
 #[cfg(test)]
@@ -432,6 +467,156 @@ mod tests {
         assert!(!f.row_exists(&id));
     }
 
+    fn search_ids(conn: &Connection, query: &str) -> Vec<String> {
+        search(conn, query, 20)
+            .unwrap()
+            .into_iter()
+            .map(|result| result.module_id)
+            .collect()
+    }
+
+    #[test]
+    fn search_query_quotes_terms_and_prefixes_the_last() {
+        assert_eq!(fts_query("foo bar").as_deref(), Some("\"foo\" \"bar\"*"));
+        assert_eq!(
+            fts_query(r#"say "hi""#).as_deref(),
+            Some(r#""say" """hi"""*"#)
+        );
+        assert_eq!(fts_query("  \t\n "), None);
+        assert_eq!(fts_query(r#"" - ( ) * ^ :"#), None);
+    }
+
+    #[test]
+    fn search_ranks_titles_first_and_marks_matches() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        index_note_text(&mut conn, "note", "about the integral sign", "", 1, false).unwrap();
+        index_note_text(
+            &mut conn,
+            "other",
+            "nothing here",
+            r"\int_0^1 f(x)\,dx",
+            1,
+            false,
+        )
+        .unwrap();
+        conn.execute(
+            "update search_index set title = 'Integrals' where module_id = 'other'",
+            [],
+        )
+        .unwrap();
+
+        let results = search(&conn, "integ", 10).unwrap();
+        let ids: Vec<_> = results.iter().map(|r| r.module_id.as_str()).collect();
+        assert_eq!(ids, ["other", "note"]);
+        assert_eq!(results[0].name_marked, "\u{2}Integrals\u{3}");
+        assert!(results[1].snippet.contains("\u{2}integral\u{3}"));
+
+        // LaTeX source is searchable, and the snippet comes from the math column.
+        let results = search(&conn, r"\int_0", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].snippet, "\\\u{2}int_0\u{3}^1 f(x)\\,dx");
+        // Every term must match.
+        assert_eq!(search_ids(&conn, "integral nothing"), Vec::<String>::new());
+        // Diacritics and case are folded.
+        assert_eq!(search_ids(&conn, "ÍNTEGRAL SÍGN"), ["note"]);
+    }
+
+    #[test]
+    fn search_never_fails_on_fts_syntax() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        index_note_text(
+            &mut conn,
+            "note",
+            "and or not near title body",
+            "",
+            1,
+            false,
+        )
+        .unwrap();
+        for query in [
+            "\"",
+            "\"\"",
+            "-",
+            "-foo",
+            "AND",
+            "foo AND",
+            "OR NOT",
+            "(",
+            ")",
+            "(foo",
+            "*",
+            "foo*",
+            "^",
+            "title:",
+            "title:foo",
+            "NEAR(a b)",
+            "{title body}: x",
+            "a + b",
+            "'",
+            "\\",
+            "\u{0}",
+            "😀",
+            "a\"b",
+            "and",
+            "not",
+            "x OR",
+            "",
+        ] {
+            assert!(search(&conn, query, 10).is_ok(), "query {query:?} failed");
+        }
+        assert_eq!(search_ids(&conn, "AND"), ["note"]);
+        assert_eq!(search_ids(&conn, "near"), ["note"]);
+        // A column filter is literal text, not a filter.
+        assert_eq!(search_ids(&conn, "title:"), ["note"]);
+    }
+
+    #[test]
+    fn search_index_follows_module_lifecycle() {
+        let f = Fixture::new();
+        let mut conn = f.db.conn.lock().unwrap();
+        // Modules that existed before the index are searchable by title once
+        // the app restarts.
+        assert_eq!(search_ids(&conn, "Note"), Vec::<String>::new());
+        migrate_search(&conn).unwrap();
+        migrate_search(&conn).unwrap();
+        assert_eq!(search_ids(&conn, "Note"), ["note"]);
+
+        index_note_text(&mut conn, "note", "first", "", 1, false).unwrap();
+        index_note_text(&mut conn, "note", "second", "", 2, false).unwrap();
+        assert_eq!(search_ids(&conn, "first"), Vec::<String>::new());
+        assert_eq!(search_ids(&conn, "second"), ["note"]);
+        // A delayed backfill read must not replace a newer live index write.
+        index_note_text(&mut conn, "note", "stale", "", 2, true).unwrap();
+        assert_eq!(search_ids(&conn, "second"), ["note"]);
+        assert!(search_ids(&conn, "stale").is_empty());
+        // An extractor upgrade can still backfill an older index.
+        index_note_text(&mut conn, "note", "second upgraded", "", 3, true).unwrap();
+        assert_eq!(search_ids(&conn, "upgraded"), ["note"]);
+        let rows: i64 = conn
+            .query_one(
+                "select count(*) from search_index where module_id = 'note'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+
+        delete_module_data(&mut conn, &f.dir.join("files"), "note").unwrap();
+        assert_eq!(search_ids(&conn, "second"), Vec::<String>::new());
+        let states: i64 = conn
+            .query_one("select count(*) from search_index_state", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(states, 0);
+
+        // A late save for a deleted module must not bring it back.
+        index_note_text(&mut conn, "note", "revived", "", 1, false).unwrap();
+        assert_eq!(search_ids(&conn, "revived"), Vec::<String>::new());
+    }
+
     #[test]
     fn compaction_writes_state_and_drops_updates_together() {
         let f = Fixture::new();
@@ -595,6 +780,13 @@ fn create_module(db: tauri::State<Db>, name: String) -> CommandResult<String> {
     )
     .map_err(db_err)?;
 
+    conn.execute(
+        "insert into search_index (module_id, title, body, math)
+             values (?1, ?2, '', '')",
+        params![id, name],
+    )
+    .map_err(db_err)?;
+
     Ok(id)
 }
 
@@ -626,6 +818,12 @@ fn rename_module(db: tauri::State<Db>, module_id: String, name: String) -> Comma
     )
     .map_err(db_err)?;
 
+    conn.execute(
+        "update search_index set title = ?2 where module_id = ?1",
+        params![&module_id, &name],
+    )
+    .map_err(db_err)?;
+
     Ok(())
 }
 
@@ -652,6 +850,8 @@ fn delete_module_data(
         }
     }
     tx.execute("delete from files where module_id = ?1", [module_id])
+        .map_err(db_err)?;
+    tx.execute("delete from search_index where module_id = ?1", [module_id])
         .map_err(db_err)?;
     // Foreign keys cascade to the document snapshot and all pending updates.
     tx.execute("delete from modules where id = ?1", [module_id])
@@ -956,6 +1156,168 @@ fn cleanup_files(
     )
 }
 
+#[derive(Debug, serde::Serialize)]
+struct SearchResult {
+    module_id: String,
+    name: String,
+    // The name and a short excerpt, with each match wrapped in
+    // SNIPPET_START and SNIPPET_END.
+    name_marked: String,
+    snippet: String,
+}
+
+const SNIPPET_START: &str = "\u{2}";
+const SNIPPET_END: &str = "\u{3}";
+const MAX_QUERY_TERMS: usize = 16;
+
+// Turns free text into an FTS5 query that cannot be a syntax error: every
+// whitespace-separated term becomes a quoted string, so operators, quotes,
+// parentheses and column filters are matched as text. Terms are ANDed, and the
+// last one is a prefix so results follow typing. Terms without any letter or
+// digit produce no tokens, so they are dropped rather than matching nothing.
+fn fts_query(input: &str) -> Option<String> {
+    let terms: Vec<String> = input
+        .split_whitespace()
+        .filter(|term| term.chars().any(char::is_alphanumeric))
+        .take(MAX_QUERY_TERMS)
+        .map(|term| {
+            let clean: String = term.chars().filter(|c| !c.is_control()).collect();
+            format!("\"{}\"", clean.replace('"', "\"\""))
+        })
+        .collect();
+    if terms.is_empty() {
+        return None;
+    }
+    Some(format!("{}*", terms.join(" ")))
+}
+
+fn index_note_text(
+    conn: &mut Connection,
+    module_id: &str,
+    body: &str,
+    math: &str,
+    version: i64,
+    backfill: bool,
+) -> CommandResult<()> {
+    let tx = conn.transaction().map_err(db_err)?;
+    // Backfill may have read its snapshot before a live index write. Never
+    // replace an index already refreshed by this extractor (or a newer one).
+    if backfill && tx.query_row(
+        "select exists(select 1 from search_index_state where module_id = ?1 and version >= ?2)",
+        params![module_id, version], |row| row.get::<_, bool>(0),
+    ).map_err(db_err)? {
+        return Ok(());
+    }
+    // A debounced save can land after the module was deleted; never revive it.
+    let Some(name) = tx
+        .query_row(
+            "select name from modules where id = ?1",
+            [module_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(db_err)?
+    else {
+        return Ok(());
+    };
+    tx.execute("delete from search_index where module_id = ?1", [module_id])
+        .map_err(db_err)?;
+    tx.execute(
+        "insert into search_index (module_id, title, body, math) values (?1, ?2, ?3, ?4)",
+        params![module_id, name, body, math],
+    )
+    .map_err(db_err)?;
+    tx.execute(
+        "insert into search_index_state (module_id, version) values (?1, ?2)
+         on conflict(module_id) do update set version = excluded.version",
+        params![module_id, version],
+    )
+    .map_err(db_err)?;
+    tx.commit().map_err(db_err)
+}
+
+fn search(conn: &Connection, query: &str, limit: i64) -> CommandResult<Vec<SearchResult>> {
+    let Some(query) = fts_query(query) else {
+        return Ok(Vec::new());
+    };
+    // bm25 weights follow the column order: module_id, title, body, math.
+    let mut stmt = conn
+        .prepare(
+            "select module_id, title,
+                 highlight(search_index, 1, ?3, ?4),
+                 snippet(search_index, 2, ?3, ?4, '…', 12),
+                 snippet(search_index, 3, ?3, ?4, '…', 12)
+             from search_index
+             where search_index match ?1
+             order by bm25(search_index, 0.0, 10.0, 1.0, 1.0)
+             limit ?2",
+        )
+        .map_err(db_err)?;
+    let rows = stmt
+        .query_map(
+            params![query, limit.clamp(1, 100), SNIPPET_START, SNIPPET_END],
+            |row| {
+                let body: String = row.get(3)?;
+                let math: String = row.get(4)?;
+                // Show the column that matched; a title-only match shows the
+                // start of the note.
+                let snippet = if !body.contains(SNIPPET_START) && math.contains(SNIPPET_START) {
+                    math
+                } else {
+                    body
+                };
+                Ok(SearchResult {
+                    module_id: row.get(0)?,
+                    name: row.get(1)?,
+                    name_marked: row.get(2)?,
+                    snippet,
+                })
+            },
+        )
+        .map_err(db_err)?;
+    rows.collect::<Result<Vec<_>>>().map_err(db_err)
+}
+
+#[tauri::command(async)]
+fn index_note(
+    db: tauri::State<Db>,
+    module_id: String,
+    body: String,
+    math: String,
+    version: i64,
+    backfill: bool,
+) -> CommandResult<()> {
+    let mut conn = db.lock()?;
+    index_note_text(&mut conn, &module_id, &body, &math, version, backfill)
+}
+
+// Modules whose text was never indexed, or indexed by an older extractor.
+#[tauri::command(async)]
+fn unindexed_modules(db: tauri::State<Db>, version: i64) -> CommandResult<Vec<String>> {
+    let conn = db.lock()?;
+    let mut stmt = conn
+        .prepare(
+            "select m.id from modules m
+             left join search_index_state s on s.module_id = m.id
+             where s.version is null or s.version < ?1",
+        )
+        .map_err(db_err)?;
+    let rows = stmt
+        .query_map([version], |row| row.get(0))
+        .map_err(db_err)?;
+    rows.collect::<Result<Vec<String>>>().map_err(db_err)
+}
+
+#[tauri::command(async)]
+fn search_notes(
+    db: tauri::State<Db>,
+    query: String,
+    limit: i64,
+) -> CommandResult<Vec<SearchResult>> {
+    let conn = db.lock()?;
+    search(&conn, &query, limit)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -988,6 +1350,9 @@ pub fn run() {
             save_file,
             read_file,
             cleanup_files,
+            index_note,
+            unindexed_modules,
+            search_notes,
             backups::list_backups,
             backups::backup_now,
             backups::restore_backup

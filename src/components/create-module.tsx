@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { NEW_MODULE_EVENT } from "@/lib/app-events";
 import {
@@ -18,8 +18,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
 import { SidebarGroupAction } from "./ui/sidebar";
+import { useCommand } from "@/lib/commands";
 import { IconTooltip } from "./icon-tooltip";
 import { MOD_KEY } from "@/lib/utils";
+
+// Registered by the global copy only, so it outlives the sidebar sheet.
+const NewModuleCommand = ({ run }: { run: () => void }) => {
+  useCommand({
+    id: "module.new",
+    title: "New module",
+    keywords: ["create", "note"],
+    run,
+  });
+  return null;
+};
 
 // The sidebar's copy has the + button. In narrow windows the sidebar is a sheet
 // that unmounts when closed, so the copy answering the app menu and the welcome
@@ -29,13 +41,15 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
   const [open, setOpen] = useState(false);
   const [sumbitted, setSubmitted] = useState(false);
 
+  const openDialog = useCallback(() => setOpen(true), []);
+
   // The app menu and the welcome screen ask for the dialog too.
   useEffect(() => {
     if (!global) return;
-    const handleOpen = () => setOpen(true);
+    const handleOpen = openDialog;
     window.addEventListener(NEW_MODULE_EVENT, handleOpen);
     return () => window.removeEventListener(NEW_MODULE_EVENT, handleOpen);
-  }, [global]);
+  }, [global, openDialog]);
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -71,6 +85,7 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
+      {global && <NewModuleCommand run={openDialog} />}
       {!global && (
         <IconTooltip label="New module" hint={`${MOD_KEY}N`} side="right">
           <DialogTrigger

@@ -1,4 +1,10 @@
+import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+
+// AppKit owns unmodified accelerators in the native macOS app.
+export function usesNativeMenuShortcuts() {
+  return isTauri() && /Mac/.test(navigator.platform);
+}
 
 // App-wide requests, dispatched on window so any part of the UI can make them.
 export const OPEN_SETTINGS_EVENT = "memnoter:open-settings";

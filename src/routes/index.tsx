@@ -18,6 +18,7 @@ const SHORTCUTS: [keys: string, action: string][] = [
   ["/", "Insert a block"],
   [`${MOD_KEY}N`, "New module"],
   [`${MOD_KEY}F`, "Find in the note"],
+  [`${MOD_KEY}K`, "Search notes and commands"],
   [`${MOD_KEY}L`, "Add a link"],
   [`${MOD_KEY}${ALT}S`, "New section"],
   [`${MOD_KEY}${ALT}[ / ${MOD_KEY}${ALT}]`, "Fold and unfold a section"],

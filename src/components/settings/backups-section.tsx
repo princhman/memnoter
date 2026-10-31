@@ -14,10 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { flushSaves, saveQueue, saveStatusStore } from "@/lib/saves";
 
-type Backup = {
-  id: string;
-  created_at: number;
-};
+import { useBackupNow, type Backup } from "@/lib/backups";
 
 const formatTime = (ms: number) =>
   new Date(ms).toLocaleString(undefined, {
@@ -110,16 +107,12 @@ const RestoreBackup = ({
 };
 
 const BackupsSection = () => {
-  const queryClient = useQueryClient();
   const [restoring, setRestoring] = useState<Backup | null>(null);
   const { data: backups, isPending, error } = useQuery({
     queryKey: ["backups"],
     queryFn: () => invoke<Backup[]>("list_backups"),
   });
-  const backupNow = useMutation({
-    mutationFn: () => invoke<Backup>("backup_now"),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["backups"] }),
-  });
+  const backupNow = useBackupNow();
 
   const latest = backups?.[0];
 

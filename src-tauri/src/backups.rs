@@ -498,7 +498,11 @@ mod tests {
             params![image, image_path.to_str().unwrap()],
         )
         .unwrap();
+        super::super::index_note_text(&mut conn, "note", "original searchable", "", 1, false)
+            .unwrap();
         let backup = create(&conn, &dir.0, at(0)).unwrap();
+        super::super::index_note_text(&mut conn, "note", "replacement searchable", "", 1, false)
+            .unwrap();
 
         conn.execute_batch(
             "update contents set state = X'02';
@@ -512,6 +516,13 @@ mod tests {
         restore(&mut conn, &dir.0, &backup.id, at(1)).unwrap();
 
         assert_eq!(state(&conn), vec![1]);
+        assert_eq!(
+            super::super::search(&conn, "original", 10).unwrap().len(),
+            1
+        );
+        assert!(super::super::search(&conn, "replacement", 10)
+            .unwrap()
+            .is_empty());
         let modules: i64 = conn
             .query_one("select count(*) from modules", [], |row| row.get(0))
             .unwrap();
@@ -529,6 +540,15 @@ mod tests {
             .unwrap();
         restore(&mut conn, &dir.0, &ids[0], at(2)).unwrap();
         assert_eq!(state(&conn), vec![2]);
+        assert_eq!(
+            super::super::search(&conn, "replacement", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(super::super::search(&conn, "original", 10)
+            .unwrap()
+            .is_empty());
         assert!(dir.0.join("files").join("later").exists());
     }
 

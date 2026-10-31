@@ -21,6 +21,7 @@ import { IMAGE_TYPES, SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { usePersistedView } from "@/lib/view-persistence";
+import { useSearchIndexing } from "@/lib/search-index";
 import { FindHighlights } from "@/lib/find-highlights";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
@@ -68,7 +69,6 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   // TOC updates on scroll; a store keeps those from re-rendering the editor.
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
-  const hasAppliedRemoteContent = useRef(false);
   const hasInsertedInitialContent = useRef(false);
 
   const { isSuccess, data } = useQuery({
@@ -78,7 +78,6 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       const pending = saveQueue.pending(moduleId);
       const content = await loadContent(moduleId, yDoc);
       applyPendingSaves(yDoc, pending);
-      hasAppliedRemoteContent.current = true;
       return content;
     },
     // local mutations keep this cache current; focus/remount needs no disk read.
@@ -158,12 +157,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   // applying updates; before paint, so a switched-to note never shows empty
   useLayoutEffect(() => {
-    if (!data || hasAppliedRemoteContent.current) return;
+    if (!data) return;
 
-    // a cached note has not gone through this editor's query function.
+    // Publication reconciles save receipts, including reads that finished late.
+    // Apply that reconciled data even if the raw read already seeded this doc.
     applySavedContent(yDoc, data);
     applyPendingSaves(yDoc, saveQueue.pending(moduleId));
-    hasAppliedRemoteContent.current = true;
   }, [data, moduleId, yDoc]);
 
   // attaching updater
@@ -388,6 +387,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   // restore where the reader left off; runs after the empty-note content above
   usePersistedView(editor, moduleId, isSuccess);
+  useSearchIndexing(editor, moduleId, isSuccess);
 
   // pass editor into the context
   useEffect(() => {
