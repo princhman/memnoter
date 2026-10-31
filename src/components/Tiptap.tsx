@@ -39,6 +39,8 @@ import { MathBlock } from "@/lib/math-block";
 import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
 import { ItalicCaret } from "@/lib/italic-caret";
+import { Flashcards } from "@/lib/flashcards";
+import { useCardSync } from "@/lib/card-sync";
 import { TableOfContents as TocExtension } from "@tiptap/extension-table-of-contents";
 import {
   TableOfContents,
@@ -233,6 +235,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         ItalicCaret,
         InlineMath,
         MathBlock,
+        Flashcards,
         HeadingHieararchy,
         SectionFocus,
         Sections,
@@ -388,6 +391,8 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   // restore where the reader left off; runs after the empty-note content above
   usePersistedView(editor, moduleId, isSuccess);
   useSearchIndexing(editor, moduleId, isSuccess);
+
+  useCardSync(editor, moduleId, isSuccess);
 
   // pass editor into the context
   useEffect(() => {

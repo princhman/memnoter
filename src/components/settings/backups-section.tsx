@@ -1,3 +1,4 @@
+import { flushCardSyncs } from "@/lib/card-sync";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
@@ -35,6 +36,7 @@ const RestoreBackup = ({
     mutationKey: ["restore-backup"],
     mutationFn: async (id: string) => {
       // Save what still can be, so the snapshot taken first includes it.
+      await flushCardSyncs();
       if (!await flushSaves(3_000)) throw new Error("Save pending edits before restoring. Please retry saving first.");
       // Suspend new writes and wait for any already-running IPC before swapping.
       await saveQueue.suspend();

@@ -4,6 +4,7 @@ import { BubbleMenu } from "@tiptap/react/menus";
 import { TextSelection } from "@tiptap/pm/state";
 import {
   Bold,
+  Braces,
   Code,
   Italic,
   Link,
@@ -43,6 +44,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         link: editor.isActive("link"),
         // Only a selection within one textblock converts to a math block.
         canMathBlock: editor.can().toggleMathBlock(),
+        canMakeCard: editor.can().makeCloze(),
       };
     },
   });
@@ -140,6 +142,15 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         onToggle={() => editor.chain().focus().toggleMathBlock().run()}
       >
         <Sigma />
+      </MarkButton>
+      <MarkButton
+        label="Make card"
+        hint="Wrap in {{…}} to hide it in review"
+        pressed={false}
+        disabled={!active.canMakeCard}
+        onToggle={() => editor.chain().focus().makeCloze().run()}
+      >
+        <Braces />
       </MarkButton>
     </BubbleMenu>
   );

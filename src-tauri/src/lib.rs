@@ -10,6 +10,8 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
+mod cards;
+use cards::migrate_flashcards;
 #[cfg(target_os = "macos")]
 mod menu;
 
@@ -254,6 +256,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
         )",
     )
     .map_err(db_err)?;
+    migrate_flashcards(&conn)?;
     migrate_search(&conn)?;
 
     migrate_update_ids(&conn)?;
@@ -1350,6 +1353,11 @@ pub fn run() {
             save_file,
             read_file,
             cleanup_files,
+            cards::sync_cards,
+            cards::unindexed_card_modules,
+            cards::due_cards,
+            cards::due_counts,
+            cards::review_card,
             index_note,
             unindexed_modules,
             search_notes,

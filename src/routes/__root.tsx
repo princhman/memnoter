@@ -1,4 +1,5 @@
-import { createRootRoute, Outlet, useNavigate } from "@tanstack/react-router";
+import { openReview } from "@/lib/card-sync";
+import { createRootRoute, Outlet, useNavigate, useMatchRoute } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
 import CreateModule from "@/components/create-module";
@@ -29,6 +30,9 @@ const RootLayout = () => {
   const navigate = useNavigate();
 
   const backupNow = useBackupNow();
+  useCommand({ id: "review.all", title: "Review all cards", keywords: ["flashcards"],
+    run: () => openReview(() => navigate({ to: "/review", search: {} })),
+  });
   useCommand({
     id: "settings.open",
     title: "Settings",
@@ -53,46 +57,52 @@ const RootLayout = () => {
       window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);
   }, [navigate]);
 
+  const matchRoute = useMatchRoute();
+  const reviewing = !!matchRoute({ to: "/review" });
   return (
     <>
+      {/* Outside the switch: leaving review renders the note route for a
+          moment before `reviewing` turns false, and its editor needs this. */}
       <ActiveEditorProvider>
-        <SidebarProvider
-          open={sidebarOpen}
-          onOpenChange={setSidebarOpen}
-          className="h-dvh overflow-hidden overscroll-none"
-        >
-          <AppSidebar />
-          <CreateModule global />
+        {reviewing ? <Outlet /> : (
+          <SidebarProvider
+            open={sidebarOpen}
+            onOpenChange={setSidebarOpen}
+            className="h-dvh overflow-hidden overscroll-none"
+          >
+            <AppSidebar />
+            <CreateModule global />
 
-          <SidebarInset className="min-h-0 overflow-hidden">
-            <div
-              data-tauri-drag-region
-              className="absolute inset-x-0 top-0 z-50 h-4"
-            />
+            <SidebarInset className="min-h-0 overflow-hidden">
+              <div
+                data-tauri-drag-region
+                className="absolute inset-x-0 top-0 z-50 h-4"
+              />
 
-            <header className="relative z-40 flex h-8 items-center bg-background">
-              <div className="flex items-center">
-                <FileBreadcrumb />
+              <header className="relative z-40 flex h-8 items-center bg-background">
+                <div className="flex items-center">
+                  <FileBreadcrumb />
+                </div>
+              </header>
+
+              <FindBar />
+
+              <main className="app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">
+                <Outlet />
+              </main>
+            </SidebarInset>
+            <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
+              {!isFullScrean && <div className="w-18" />}
+              <div className="flex items-center pl-2 gap-1.5">
+                <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
+                  <SidebarTrigger aria-label="Toggle sidebar" />
+                </IconTooltip>
+                <UndoRedo />
               </div>
-            </header>
-
-            <FindBar />
-
-            <main className="app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">
-              <Outlet />
-            </main>
-          </SidebarInset>
-          <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
-            {!isFullScrean && <div className="w-18" />}
-            <div className="flex items-center pl-2 gap-1.5">
-              <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
-                <SidebarTrigger aria-label="Toggle sidebar" />
-              </IconTooltip>
-              <UndoRedo />
             </div>
-          </div>
-          <CommandPalette />
-        </SidebarProvider>
+            <CommandPalette />
+          </SidebarProvider>
+        )}
       </ActiveEditorProvider>
 
       {backupNow.isError && (

@@ -1,3 +1,5 @@
+import { flushCardSyncs } from "@/lib/card-sync";
+import { drainCardWrites } from "@/lib/card-writes";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { invoke } from "@tauri-apps/api/core";
@@ -41,7 +43,11 @@ let exitCommand: "confirm_exit" | "confirm_restart" = "confirm_exit";
 async function confirmExitAfterRestore() {
   await waitForRestore();
   // Do not authorize an exit if another restore started during the await.
-  if (!restorePending()) await invoke(exitCommand);
+  if (!restorePending()) {
+    await saveQueue.suspend();
+    await drainCardWrites();
+    if (!restorePending()) await invoke(exitCommand);
+  }
 }
 
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and
@@ -62,11 +68,14 @@ const SaveStatus = () => {
       try {
         await waitForRestore();
         if (disposed || restorePending()) return;
+        await flushCardSyncs();
         // Search text is rebuilt on launch only for unindexed notes.
         await flushSearchIndexing(CLOSE_FLUSH_TIMEOUT_MS);
         if (saveQueue.isEmpty() || await flushSaves(CLOSE_FLUSH_TIMEOUT_MS)) {
           await confirmExitAfterRestore();
         } else setConfirmClose(true);
+      } catch {
+        setConfirmClose(true);
       } finally { busy = false; }
     };
     const stops: (() => void)[] = [];

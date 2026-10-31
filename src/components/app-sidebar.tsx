@@ -31,6 +31,7 @@ import UpdateStatus from "./update-status";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
+import { useDueCounts } from "@/lib/card-sync";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
   const [renameOpen, setRenameOpen] = useState(false);
@@ -86,6 +87,7 @@ const AppSidebar = () => {
     queryFn: async () => await invoke<Module[]>("modules"),
   });
   const matchRoute = useMatchRoute();
+  const { total } = useDueCounts();
 
   // Narrow windows show the sidebar as a sheet with its own open state.
   const { toggleSidebar } = useSidebar();
@@ -106,6 +108,15 @@ const AppSidebar = () => {
               >
                 <House />
                 <span>Home</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton render={<Link to="/review" search={{}} />}>
+                <span>Review ({total} due)</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
