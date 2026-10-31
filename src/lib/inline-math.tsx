@@ -650,7 +650,9 @@ export const InlineMath = Node.create({
                   return span;
                 };
                 decos.push(
-                  Decoration.widget(pos, anchor, { side: -1, key: "math-before" }),
+                  // side 1 keeps a caret before the formula in front of this
+                  // anchor. Between them, WebKit draws it after an empty one.
+                  Decoration.widget(pos, anchor, { side: 1, key: "math-before" }),
                   Decoration.widget(end, anchor, { side: 1, key: "math-after" }),
                 );
                 const selected = !empty && from <= pos && to >= end;
