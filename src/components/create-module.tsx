@@ -19,6 +19,8 @@ import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
 import { SidebarGroupAction } from "./ui/sidebar";
 import { useCommand } from "@/lib/commands";
+import { IconTooltip } from "./icon-tooltip";
+import { MOD_KEY } from "@/lib/utils";
 
 // Registered by the global copy only, so it outlives the sidebar sheet.
 const NewModuleCommand = ({ run }: { run: () => void }) => {
@@ -85,16 +87,18 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
     <Dialog open={open} onOpenChange={setOpen}>
       {global && <NewModuleCommand run={openDialog} />}
       {!global && (
-        <DialogTrigger
-          render={
-            <SidebarGroupAction
-              aria-label="Add Module"
-              className="invisible group-hover:visible"
-            />
-          }
-        >
-          <Plus className="size-3" />
-        </DialogTrigger>
+        <IconTooltip label="New module" hint={`${MOD_KEY}N`} side="right">
+          <DialogTrigger
+            render={
+              <SidebarGroupAction
+                aria-label="New module"
+                className="invisible group-hover:visible"
+              />
+            }
+          >
+            <Plus className="size-3" />
+          </DialogTrigger>
+        </IconTooltip>
       )}
       <DialogContent>
         <form onSubmit={handleSubmit}>
