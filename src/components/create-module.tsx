@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { NEW_MODULE_EVENT } from "@/lib/app-events";
 import {
   Dialog,
   DialogClose,
@@ -16,22 +18,36 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
 import { SidebarGroupAction } from "./ui/sidebar";
+import { IconTooltip } from "./icon-tooltip";
+import { MOD_KEY } from "@/lib/utils";
 
-const CreateModule = () => {
+// The sidebar's copy has the + button. In narrow windows the sidebar is a sheet
+// that unmounts when closed, so the copy answering the app menu and the welcome
+// screen lives outside it and has no button.
+const CreateModule = ({ global = false }: { global?: boolean }) => {
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   const [sumbitted, setSubmitted] = useState(false);
 
+  // The app menu and the welcome screen ask for the dialog too.
+  useEffect(() => {
+    if (!global) return;
+    const handleOpen = () => setOpen(true);
+    window.addEventListener(NEW_MODULE_EVENT, handleOpen);
+    return () => window.removeEventListener(NEW_MODULE_EVENT, handleOpen);
+  }, [global]);
+
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const mutation = useMutation({
-    mutationFn: async (name: string) => {
-      await invoke("create_module", { name });
-    },
-    onSuccess: () => {
+    mutationFn: async (name: string) =>
+      invoke<string>("create_module", { name }),
+    onSuccess: (moduleId) => {
       queryClient.invalidateQueries({ queryKey: ["modules"] });
       setName("");
       setSubmitted(false);
       setOpen(false);
+      void navigate({ to: "/$moduleId", params: { moduleId } });
     },
   });
 
@@ -55,16 +71,20 @@ const CreateModule = () => {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger
-        render={
-          <SidebarGroupAction
-            aria-label="Add Module"
-            className="invisible group-hover:visible"
-          />
-        }
-      >
-        <Plus className="size-3" />
-      </DialogTrigger>
+      {!global && (
+        <IconTooltip label="New module" hint={`${MOD_KEY}N`} side="right">
+          <DialogTrigger
+            render={
+              <SidebarGroupAction
+                aria-label="New module"
+                className="invisible group-hover:visible"
+              />
+            }
+          >
+            <Plus className="size-3" />
+          </DialogTrigger>
+        </IconTooltip>
+      )}
       <DialogContent>
         <form onSubmit={handleSubmit}>
           <DialogHeader>

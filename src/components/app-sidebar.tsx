@@ -9,13 +9,15 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Module } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
-import { Ellipsis, Pencil, Settings, Trash2 } from "lucide-react";
+import { Ellipsis, House, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,7 +30,7 @@ import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
   const [renameOpen, setRenameOpen] = useState(false);
@@ -85,24 +87,29 @@ const AppSidebar = () => {
   });
   const matchRoute = useMatchRoute();
 
+  // Narrow windows show the sidebar as a sheet with its own open state.
+  const { toggleSidebar } = useSidebar();
+  useEffect(() => {
+    window.addEventListener(TOGGLE_SIDEBAR_EVENT, toggleSidebar);
+    return () => window.removeEventListener(TOGGLE_SIDEBAR_EVENT, toggleSidebar);
+  }, [toggleSidebar]);
+
   return (
     <Sidebar>
       <SidebarContent className="pt-6">
-        {/*<SidebarHeader>
-        <div className="flex justify-between">
-          <div className="px-2 text-md font-semibold pt-8">Notes</div>
-        </div>
-      </SidebarHeader>
-
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton>
+              <SidebarMenuButton
+                isActive={!!matchRoute({ to: "/" })}
+                render={<Link to="/" />}
+              >
+                <House />
                 <span>Home</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-        </SidebarGroup>*/}
+        </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
           <CreateModule />

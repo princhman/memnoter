@@ -4,16 +4,20 @@ import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
+import { redo as yRedo, undo as yUndo } from "@tiptap/y-tiptap";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { applyPendingSaves, saveQueue } from "@/lib/saves";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
+import { LinkMenu } from "@/components/link-menu";
+import { LinkEditor } from "@/lib/link-editor";
 import { SectionFocus } from "@/lib/section-focus";
 import { Sections } from "@/lib/sections";
 import { HeadingFold } from "@/lib/heading-fold";
-import { SlashCommand } from "@/components/slash-menu";
+import { IMAGE_TYPES, SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { usePersistedView } from "@/lib/view-persistence";
@@ -39,6 +43,17 @@ import {
   TableOfContents,
   createTocStore,
 } from "@/components/table-of-contents";
+
+let nativeHistoryUpdates = Promise.resolve();
+function setNativeEditorHistory(editorFocused: boolean) {
+  nativeHistoryUpdates = nativeHistoryUpdates
+    .then(() => invoke<void>("set_editor_history", { editorFocused }))
+    .catch((error) => {
+      if ("__TAURI_INTERNALS__" in window) {
+        console.error("Failed to route native history", error);
+      }
+    });
+}
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -210,7 +225,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       extensions: [
         StarterKit.configure({
           undoRedo: false,
+          // Links open in the browser on ⌘-click, through LinkEditor.
+          link: { openOnClick: false },
         }),
+        LinkEditor,
         Arrows,
         MoveLines,
         ItalicCaret,
@@ -220,7 +238,11 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         SectionFocus,
         Sections,
         HeadingFold,
-        SlashCommand,
+        SlashCommand.configure({
+          insertImages: (currentEditor, files, position) => {
+            void insertImages(currentEditor, files, position);
+          },
+        }),
         LatexSuggest,
         TocExtension.configure({
           scrollParent: () =>
@@ -249,12 +271,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           },
         }),
         FileHandler.configure({
-          allowedMimeTypes: [
-            "image/png",
-            "image/jpeg",
-            "image/webp",
-            "image/gif",
-          ],
+          allowedMimeTypes: IMAGE_TYPES,
           consumePasteEvent: true,
           onPaste: (currentEditor, files) => {
             void insertImages(
@@ -322,6 +339,38 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     },
     [yDoc],
   );
+
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    // Serialize transitions, including unmount, so a delayed focus command
+    // cannot replace native text-field history after a newer blur.
+    let ready = false;
+    let disposed = false;
+    const update = () => {
+      if (ready) setNativeEditorHistory(document.activeElement === dom);
+    };
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    const unlisten = listen<string>("menu", ({ payload }) => {
+      if (disposed || document.activeElement !== dom) return;
+      if (payload === "editor-undo") yUndo(editor.state);
+      if (payload === "editor-redo") yRedo(editor.state);
+    }).then((stop) => {
+      ready = true;
+      if (!disposed) update();
+      return stop;
+    });
+    void unlisten.catch(console.error);
+    return () => {
+      disposed = true;
+      ready = false;
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+      setNativeEditorHistory(false);
+      void unlisten.then((stop) => stop()).catch(console.error);
+    };
+  }, [editor]);
 
   useEffect(() => {
     editor?.setEditable(isSuccess, false);
@@ -440,6 +489,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
+      <LinkMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} />
     </FilesContext.Provider>
   );

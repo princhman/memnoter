@@ -1,6 +1,7 @@
 import { createRootRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
+import CreateModule from "@/components/create-module";
 import {
   SidebarInset,
   SidebarProvider,
@@ -11,10 +12,13 @@ import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
+import { IconTooltip } from "@/components/icon-tooltip";
+import { MOD_KEY } from "@/lib/utils";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
 import SaveStatus from "@/components/save-status";
 import { useEffect } from "react";
+import { OPEN_SETTINGS_EVENT } from "@/lib/app-events";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
@@ -24,9 +28,9 @@ const RootLayout = () => {
   // Dispatched by the app menu.
   useEffect(() => {
     const openSettings = () => void navigate({ to: "/settings" });
-    window.addEventListener("memnoter:open-settings", openSettings);
+    window.addEventListener(OPEN_SETTINGS_EVENT, openSettings);
     return () =>
-      window.removeEventListener("memnoter:open-settings", openSettings);
+      window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);
   }, [navigate]);
 
   return (
@@ -38,6 +42,7 @@ const RootLayout = () => {
           className="h-dvh overflow-hidden overscroll-none"
         >
           <AppSidebar />
+          <CreateModule global />
 
           <SidebarInset className="min-h-0 overflow-hidden">
             <div
@@ -60,7 +65,9 @@ const RootLayout = () => {
           <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
             {!isFullScrean && <div className="w-18" />}
             <div className="flex items-center pl-2 gap-1.5">
-              <SidebarTrigger />
+              <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
+                <SidebarTrigger aria-label="Toggle sidebar" />
+              </IconTooltip>
               <UndoRedo />
             </div>
           </div>
