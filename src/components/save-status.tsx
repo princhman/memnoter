@@ -1,5 +1,4 @@
-import { flushCardSyncs } from "@/lib/card-sync";
-import { drainCardWrites } from "@/lib/card-writes";
+import { exclusiveWrite, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { invoke } from "@tauri-apps/api/core";
@@ -17,11 +16,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/query-client";
-import { flushSaves, saveQueue, saveStatusStore } from "@/lib/saves";
+import { saveQueue, saveStatusStore } from "@/lib/saves";
 import { RESTART_REQUEST_EVENT } from "@/lib/updater";
-import { flushSearchIndexing } from "@/lib/search-index";
-
-const CLOSE_FLUSH_TIMEOUT_MS = 3_000;
 
 const restorePending = () => queryClient.isMutating({ mutationKey: ["restore-backup"] }) > 0;
 
@@ -40,19 +36,20 @@ async function waitForRestore() {
 // Set by whichever request (Quit/close or Restart to update) is in progress.
 let exitCommand: "confirm_exit" | "confirm_restart" = "confirm_exit";
 
-async function confirmExitAfterRestore() {
+async function confirmExitAfterRestore(discard = false, retryImages = false) {
   await waitForRestore();
-  // Do not authorize an exit if another restore started during the await.
-  if (!restorePending()) {
-    await saveQueue.suspend();
-    await drainCardWrites();
-    if (!restorePending()) await invoke(exitCommand);
-  }
+  if (restorePending()) throw new Error("Restore is in progress.");
+  await exclusiveWrite(() => invoke(exitCommand), { discard, retain: true, retryImages });
 }
 
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and
 // the queue keeps retrying in the background.
 const SaveStatus = () => {
+  const imageErrors = useSelector(imageStatusStore, state => state.errors);
+  const [exitError, setExitError] = useState("");
+  const [retrying, setRetrying] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  useEffect(() => watchWriteAdmission(setBlocked), []);
   const failing = useSelector(saveStatusStore, (state) => state.failing);
   const lastError = useSelector(saveStatusStore, (state) => state.lastError);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -68,13 +65,9 @@ const SaveStatus = () => {
       try {
         await waitForRestore();
         if (disposed || restorePending()) return;
-        await flushCardSyncs();
-        // Search text is rebuilt on launch only for unindexed notes.
-        await flushSearchIndexing(CLOSE_FLUSH_TIMEOUT_MS);
-        if (saveQueue.isEmpty() || await flushSaves(CLOSE_FLUSH_TIMEOUT_MS)) {
-          await confirmExitAfterRestore();
-        } else setConfirmClose(true);
-      } catch {
+        await confirmExitAfterRestore();
+      } catch (error) {
+        setExitError(error instanceof Error ? error.message : String(error));
         setConfirmClose(true);
       } finally { busy = false; }
     };
@@ -100,6 +93,12 @@ const SaveStatus = () => {
 
   return (
     <>
+      {imageErrors.length > 0 && (
+        <div role="alert" className="fixed left-4 bottom-4 z-50 max-w-md rounded-lg border bg-background p-3 text-sm shadow-sm">
+          {imageErrors.map((error, index) => <p key={index}>{error}</p>)}
+          <Button variant="outline" disabled={blocked} onClick={() => discardFailedImages()}>Discard failed image operations</Button>
+        </div>
+      )}
       {failing && (
         <div
           role="status"
@@ -125,15 +124,24 @@ const SaveStatus = () => {
             <DialogDescription>
               Some changes could not be saved. If you quit now, unsaved changes
               will be lost.
+              {exitError && <span role="alert" className="block">{exitError}</span>}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose
               render={<Button variant="outline">Keep editing</Button>}
             />
+            <Button disabled={retrying || blocked} onClick={() => {
+              setRetrying(true);
+              void confirmExitAfterRestore(false, true).catch(error => {
+                setExitError(error instanceof Error ? error.message : String(error));
+                setConfirmClose(true);
+              }).finally(() => setRetrying(false));
+            }}>{retrying ? "Saving…" : "Retry saving"}</Button>
             <Button
               variant="destructive"
-              onClick={() => void confirmExitAfterRestore()}
+              disabled={retrying || blocked}
+              onClick={() => void confirmExitAfterRestore(true).catch(() => setConfirmClose(true))}
             >
               Quit anyway
             </Button>

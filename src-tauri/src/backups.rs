@@ -552,6 +552,81 @@ mod tests {
         assert!(dir.0.join("files").join("later").exists());
     }
 
+    // This crosses the snapshot/reopen boundary: a compacted-away foreign
+    // reference must survive independently of both the visible tree and cards.
+    #[test]
+    fn restore_retains_compacted_image_leases_and_occlusion_cards() {
+        use crate::{compact_content, delete_module_data};
+        use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
+        let dir = TempDir::new();
+        let mut conn = open_db(&dir.0).unwrap().conn.into_inner().unwrap();
+        conn.execute_batch(
+            "insert into modules values ('source', 'Source'), ('copy', 'Copy');
+             insert into contents values ('source', X'0000'), ('copy', X'0000');",
+        )
+        .unwrap();
+        let image = Uuid::new_v4().to_string();
+        let path = dir.0.join("files").join(&image);
+        std::fs::write(&path, b"shared pixels").unwrap();
+        conn.execute(
+            "insert into files values (?1, 'source', ?2, 'image/png')",
+            params![image, path.to_str().unwrap()],
+        )
+        .unwrap();
+        let doc = yrs::Doc::new();
+        let root = doc.get_or_insert_xml_fragment("default");
+        let mut txn = doc.transact_mut();
+        let node = root.insert(&mut txn, 0, XmlElementPrelim::empty("image"));
+        node.insert_attribute(&mut txn, "fileId", image.clone());
+        let inserted = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+        drop(txn);
+        root.remove_range(&mut doc.transact_mut(), 0, 1);
+        let removed = doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        conn.execute(
+            "insert into contents_updates (module_id,bytes,created_at) values ('copy',?1,0)",
+            [&inserted],
+        )
+        .unwrap();
+        conn.execute(
+            "insert into contents_updates (module_id,bytes,created_at) values ('copy',?1,0)",
+            [&removed],
+        )
+        .unwrap();
+        let watermark = conn.last_insert_rowid();
+        compact_content(&mut conn, "copy", &removed, watermark).unwrap();
+        let front = serde_json::json!({"version":1,"fileId":image,"imageId":"image","targetMaskId":"mask","revealed":false,"masks":[{"id":"mask","shape":"rectangle","x":0.1,"y":0.1,"width":0.2,"height":0.2}]}).to_string();
+        let mut back: serde_json::Value = serde_json::from_str(&front).unwrap();
+        back["revealed"] = true.into();
+        conn.execute("insert into cards (id,module_id,kind,front,back,due_at,created_at,updated_at,reps) values ('image:o:mask','copy','occlusion',?1,?2,123,0,0,4)", params![front,back.to_string()]).unwrap();
+        let backup = create(&conn, &dir.0, at(0)).unwrap();
+        conn.execute_batch("delete from cards; delete from shared_image_refs;")
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        restore(&mut conn, &dir.0, &backup.id, at(1)).unwrap();
+        let restored: (String, String, i64, i64) = conn
+            .query_row(
+                "select front,back,due_at,reps from cards where id='image:o:mask'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(restored, (front, back.to_string(), 123, 4));
+        // Remove cards so they cannot accidentally mask a lost lease.
+        conn.execute("delete from cards", []).unwrap();
+        delete_module_data(&mut conn, &dir.0.join("files"), "source").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"shared pixels");
+        let owner: String = conn
+            .query_row("select module_id from files where id=?1", [&image], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(owner, "copy");
+        delete_module_data(&mut conn, &dir.0.join("files"), "copy").unwrap();
+        assert!(!path.exists());
+    }
+
     #[test]
     fn restore_rejects_unknown_ids() {
         let dir = TempDir::new();

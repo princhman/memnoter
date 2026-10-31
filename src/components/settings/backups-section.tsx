@@ -1,6 +1,6 @@
-import { flushCardSyncs } from "@/lib/card-sync";
+import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { flushSaves, saveQueue, saveStatusStore } from "@/lib/saves";
+import { saveQueue, saveStatusStore } from "@/lib/saves";
 
 import { useBackupNow, type Backup } from "@/lib/backups";
 
@@ -30,33 +30,14 @@ const RestoreBackup = ({
   backup: Backup | null;
   onOpenChange: (open: boolean) => void;
 }) => {
-  const queryClient = useQueryClient();
   const pending = useSelector(saveStatusStore, (state) => state.pending);
   const mutation = useMutation({
     mutationKey: ["restore-backup"],
     mutationFn: async (id: string) => {
-      // Save what still can be, so the snapshot taken first includes it.
-      await flushCardSyncs();
-      if (!await flushSaves(3_000)) throw new Error("Save pending edits before restoring. Please retry saving first.");
-      // Suspend new writes and wait for any already-running IPC before swapping.
-      await saveQueue.suspend();
-      try {
-        // Existing image uploads/compactions also belong to the old database.
-        const writesPending = () => queryClient.isMutating({
-          predicate: mutation => mutation.options.mutationKey?.[0] !== "restore-backup",
-        }) > 0;
-        if (writesPending()) await new Promise<void>(resolve => {
-          const stop = queryClient.getMutationCache().subscribe(() => {
-            if (!writesPending()) { stop(); resolve(); }
-          });
-          if (!writesPending()) { stop(); resolve(); }
-        });
+      await exclusiveWrite(async () => {
         await invoke("restore_backup", { id });
         saveQueue.clear();
-      } catch (error) {
-        saveQueue.resume();
-        throw error;
-      }
+      }, { excludedMutation: "restore-backup", retain: true });
     },
     // Every cache and open document belongs to the replaced data.
     onSuccess: () => window.location.reload(),

@@ -1,3 +1,4 @@
+import { validMasks, type OcclusionFace } from "./occlusion.ts";
 import type { Node } from "@tiptap/pm/model";
 import type { StepMap } from "@tiptap/pm/transform";
 
@@ -22,13 +23,15 @@ export type Segment =
   // The hidden cloze on the front.
   | { type: "blank" };
 
+export type CardPayload = Segment[] | OcclusionFace;
+
 export type ExtractedCard = {
   // `<cardId>` for basic cards, `<cardId>:<stable cloze id>` for clozes.
   id: string;
   blockId: string;
   kind: CardKind;
-  front: Segment[];
-  back: Segment[];
+  front: CardPayload;
+  back: CardPayload;
 };
 
 // Offsets are relative to the start of the block's content.
@@ -236,9 +239,22 @@ export function extractCards(doc: Node): ExtractedCard[] {
   const cards: ExtractedCard[] = [];
   const seen = new Set<string>();
   doc.descendants((node) => {
+    if (["image", "inlineImage"].includes(node.type.name)) {
+      const { imageId, fileId } = node.attrs;
+      if (typeof imageId === "string" && typeof fileId === "string" && !seen.has(imageId)) {
+        seen.add(imageId);
+        const masks = validMasks(node.attrs.masks);
+        for (const mask of masks) {
+          const front: OcclusionFace = { version: 1, fileId, imageId, targetMaskId: mask.id, revealed: false, masks };
+          cards.push({ id: `${imageId}:o:${mask.id}`, blockId: imageId, kind: "occlusion", front, back: { ...front, revealed: true } });
+        }
+      }
+      return false;
+    }
+    // Inline images can live inside a text card block.
     if (!node.isTextblock) return true;
     const blockId = node.attrs.cardId;
-    if (!isCardBlock(node) || typeof blockId !== "string" || seen.has(blockId)) return false;
+    if (!isCardBlock(node) || typeof blockId !== "string" || seen.has(blockId)) return true;
     seen.add(blockId);
     const syntax = parseBlock(node);
     const clozeIds = clozeIdsOf(node, syntax);
@@ -250,13 +266,13 @@ export function extractCards(doc: Node): ExtractedCard[] {
       if (card.kind === "cloze" && clozeId === undefined) return;
       cards.push({ ...card, blockId, id: card.kind === "cloze" ? `${blockId}:${clozeId}` : blockId });
     });
-    return false;
+    return true;
   });
   return cards;
 }
 
 export function blockIdOf(cardId: string) {
-  return cardId.replace(/:c[^:]+$/, "");
+  return cardId.replace(/:o:.*$|:c[^:]+$/, "");
 }
 
 // The ranges of the final document touched by a series of step maps.
