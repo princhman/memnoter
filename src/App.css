@@ -1076,12 +1076,21 @@ body {
   pointer-events: none;
 }
 
+/* Amber like other apps' find, which stands out from the indigo selection. */
 .find-highlight {
   position: absolute;
   border-radius: 2px;
-  background-color: color-mix(in oklch, var(--primary) 18%, transparent);
+  background-color: oklch(0.88 0.16 90 / 0.55);
 }
 
 .find-highlight-current {
-  background-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  background-color: oklch(0.8 0.17 65);
+}
+
+.dark .find-highlight {
+  background-color: oklch(0.78 0.15 85 / 0.4);
+}
+
+.dark .find-highlight-current {
+  background-color: oklch(0.72 0.17 60 / 0.75);
 }
