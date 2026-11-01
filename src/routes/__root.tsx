@@ -21,7 +21,7 @@ import { MOD_KEY } from "@/lib/utils";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
 import SaveStatus from "@/components/save-status";
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useCommand } from "@/lib/commands";
 import { OPEN_SETTINGS_EVENT, requestApp } from "@/lib/app-events";
 
@@ -53,6 +53,18 @@ const RootLayout = () => {
     void backfillCards();
   }, []);
 
+  // The breadcrumbs start after the toolbar while the sidebar is closed, and
+  // the toolbar's buttons depend on the page.
+  const toolbar = useRef<HTMLDivElement>(null);
+  const [toolbarWidth, setToolbarWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const element = toolbar.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => setToolbarWidth(element.offsetWidth));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <>
       <ActiveEditorProvider>
@@ -60,6 +72,11 @@ const RootLayout = () => {
           open={sidebarOpen}
           onOpenChange={setSidebarOpen}
           className="h-dvh overflow-hidden overscroll-none"
+          style={
+            toolbarWidth === null
+              ? undefined
+              : ({ "--toolbar-width": `${toolbarWidth}px` } as CSSProperties)
+          }
         >
           <AppSidebar />
           <CreateModule global />
@@ -85,7 +102,7 @@ const RootLayout = () => {
               <Outlet />
             </main>
           </SidebarInset>
-          <div className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
+          <div ref={toolbar} className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
             {!isFullScrean && <div className="w-18" />}
             <div className="flex items-center pl-2 gap-1.5">
               <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">

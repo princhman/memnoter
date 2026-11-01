@@ -1,13 +1,18 @@
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { Button } from "./ui/button";
-import { Redo2, Undo2 } from "lucide-react";
+import { Pencil, Redo2, Undo2 } from "lucide-react";
 import { useEditorState } from "@tiptap/react";
+import { useSelector } from "@tanstack/react-store";
 import { IconTooltip } from "./icon-tooltip";
 import { MOD_KEY } from "@/lib/utils";
+import { reviewActionsStore } from "@/lib/review-actions";
 
+// Undo and redo for the open note, or for grades while reviewing, where an
+// Edit button also opens the shown card in its note.
 export function UndoRedo() {
   const { activeEditor } = useActiveEditor();
   const editor = activeEditor?.editor ?? null;
+  const review = useSelector(reviewActionsStore, (state) => state);
   const history = useEditorState({
     editor,
     selector: ({ editor }) => {
@@ -21,8 +26,58 @@ export function UndoRedo() {
     },
   });
 
-  if (!editor || editor.isDestroyed) return null;
+  if (editor && !editor.isDestroyed) {
+    return (
+      <HistoryButtons
+        canUndo={!!history?.canUndo}
+        canRedo={!!history?.canRedo}
+        onUndo={() => {
+          if (!editor.isDestroyed) editor.chain().focus().undo().run();
+        }}
+        onRedo={() => {
+          if (!editor.isDestroyed) editor.chain().focus().redo().run();
+        }}
+      />
+    );
+  }
 
+  if (!review) return null;
+
+  return (
+    <HistoryButtons
+      canUndo={review.canUndo}
+      canRedo={review.canRedo}
+      onUndo={review.undo}
+      onRedo={review.redo}
+    >
+      <IconTooltip label="Edit card" side="bottom">
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="Edit card"
+          disabled={!review.edit}
+          onClick={() => review.edit?.()}
+        >
+          <Pencil />
+        </Button>
+      </IconTooltip>
+    </HistoryButtons>
+  );
+}
+
+function HistoryButtons({
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  children,
+}: {
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  children?: React.ReactNode;
+}) {
   return (
     <div>
       <IconTooltip label="Undo" hint={`${MOD_KEY}Z`} side="bottom">
@@ -30,10 +85,8 @@ export function UndoRedo() {
           size={"icon-sm"}
           variant={"ghost"}
           aria-label="Undo"
-          disabled={!history?.canUndo}
-          onClick={() => {
-            if (!editor.isDestroyed) editor.chain().focus().undo().run();
-          }}
+          disabled={!canUndo}
+          onClick={onUndo}
         >
           <Undo2 />
         </Button>
@@ -47,14 +100,13 @@ export function UndoRedo() {
           size={"icon-sm"}
           variant={"ghost"}
           aria-label="Redo"
-          disabled={!history?.canRedo}
-          onClick={() => {
-            if (!editor.isDestroyed) editor.chain().focus().redo().run();
-          }}
+          disabled={!canRedo}
+          onClick={onRedo}
         >
           <Redo2 />
         </Button>
       </IconTooltip>
+      {children}
     </div>
   );
 }

@@ -21,6 +21,11 @@ import {
   type StoredCard,
 } from "@/lib/fsrs";
 import { cn } from "@/lib/utils";
+import { listen } from "@tauri-apps/api/event";
+import { blockIdOf } from "@/lib/cards";
+import { requestCardReveal } from "@/lib/card-reveal";
+import { setNativeEditorHistory } from "@/lib/native-history";
+import { reviewActionsStore } from "@/lib/review-actions";
 
 type ReviewSearch = { module?: string };
 
@@ -30,6 +35,29 @@ export const Route = createFileRoute("/review")({
     typeof search.module === "string" ? { module: search.module } : {},
   component: Review,
 });
+
+// A grade made this session, kept so it can be taken back and redone.
+type GradeStep = {
+  before: StoredCard;
+  result: ReturnType<typeof scheduleReview>;
+  queueBefore: StoredCard[];
+  queueAfter: StoredCard[];
+};
+
+// A card's scheduling state, as review_card and undo_review take it.
+function reviewedFields(card: StoredCard) {
+  const { dueAt, stability, stabilityFast, difficulty, scheduledDays, learningStep,
+    state, scheduleStatus, lastReviewAt, reps, lapses } = card;
+  return { dueAt, stability, stabilityFast, difficulty, scheduledDays, learningStep,
+    state, scheduleStatus, lastReviewAt, reps, lapses };
+}
+
+// Fields, such as the command palette's search, keep their own undo.
+function isTypingInField() {
+  return !!(document.activeElement as HTMLElement | null)?.closest?.(
+    "input, textarea, [contenteditable='true']",
+  );
+}
 
 const GRADE_STYLES: Record<Grade, string> = {
   1: "text-destructive",
@@ -51,6 +79,8 @@ function Review() {
   const [revealed, setRevealed] = useState(false);
   const [now, setNow] = useState(Date.now);
   const [reviewed, setReviewed] = useState(0);
+  const [undoSteps, setUndoSteps] = useState<GradeStep[]>([]);
+  const [redoSteps, setRedoSteps] = useState<GradeStep[]>([]);
   const pending = useRef(false);
   const shownAt = useRef(Date.now());
 
@@ -60,6 +90,8 @@ function Review() {
     setError(null);
     setRevealed(false);
     setReviewed(0);
+    setUndoSteps([]);
+    setRedoSteps([]);
     Promise.all([
       getScheduler(),
       // Notes never checked for cards are checked first, in the background.
@@ -120,15 +152,17 @@ function Review() {
           card: result.card,
           log: result.log,
         });
+        const queueBefore = queue ?? [];
+        const rest = queueBefore.filter((queued) => queued.id !== card.id);
+        // Learning steps come back in this session; the rest are done.
+        const queueAfter = result.card.dueAt <= reviewTime + LEARN_AHEAD_MS
+          ? [...rest, { ...card, ...result.card }]
+          : rest;
         setError(null);
         setReviewed((count) => count + 1);
-        setQueue((queue) => {
-          const rest = (queue ?? []).filter((queued) => queued.id !== card.id);
-          // Learning steps come back in this session; the rest are done.
-          return result.card.dueAt <= reviewTime + LEARN_AHEAD_MS
-            ? [...rest, { ...card, ...result.card }]
-            : rest;
-        });
+        setQueue(queueAfter);
+        setUndoSteps((steps) => [...steps, { before: card, result, queueBefore, queueAfter }]);
+        setRedoSteps([]);
       } catch (error) {
         // Keep the card available to retry after a transient storage failure.
         setError(String(error));
@@ -139,8 +173,104 @@ function Review() {
         void queryClient.invalidateQueries({ queryKey: dueCountsKey });
       }
     },
-    [scheduler, card, revealed, queryClient],
+    [scheduler, card, revealed, queue, queryClient],
   );
+
+  // Takes back the last grade: the card returns to its state before it, and
+  // to the queue, to be graded again.
+  const undo = useCallback(async () => {
+    const step = undoSteps[undoSteps.length - 1];
+    if (!step || pending.current) return;
+    pending.current = true;
+    try {
+      await writeCards("undo_review", {
+        cardId: step.before.id,
+        expectedReps: step.result.card.reps,
+        previous: reviewedFields(step.before),
+        previousFsrsModel: step.before.fsrsModel,
+        reviewTime: step.result.log.reviewTime,
+      });
+      setError(null);
+      setUndoSteps((steps) => steps.slice(0, -1));
+      setRedoSteps((steps) => [...steps, step]);
+      setQueue(step.queueBefore);
+      setReviewed((count) => count - 1);
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      pending.current = false;
+      setRevealed(false);
+      setNow(Date.now());
+      void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+    }
+  }, [undoSteps, queryClient]);
+
+  // Grades the card again as it was graded before the undo.
+  const redo = useCallback(async () => {
+    const step = redoSteps[redoSteps.length - 1];
+    if (!step || pending.current) return;
+    pending.current = true;
+    try {
+      await writeCards("review_card", {
+        cardId: step.before.id,
+        expectedReps: step.before.reps,
+        card: step.result.card,
+        log: step.result.log,
+      });
+      setError(null);
+      setRedoSteps((steps) => steps.slice(0, -1));
+      setUndoSteps((steps) => [...steps, step]);
+      setQueue(step.queueAfter);
+      setReviewed((count) => count + 1);
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      pending.current = false;
+      setRevealed(false);
+      setNow(Date.now());
+      void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+    }
+  }, [redoSteps, queryClient]);
+
+  // The toolbar's undo, redo and edit buttons act on this review.
+  const actions = useRef({ undo, redo });
+  actions.current = { undo, redo };
+  useEffect(() => {
+    reviewActionsStore.setState(() => ({
+      canUndo: undoSteps.length > 0,
+      canRedo: redoSteps.length > 0,
+      undo: () => void undo(),
+      redo: () => void redo(),
+      edit: card
+        ? () => {
+            requestCardReveal({ moduleId: card.moduleId, blockId: blockIdOf(card.id) });
+            void router.navigate({ to: "/$moduleId", params: { moduleId: card.moduleId } });
+          }
+        : null,
+    }));
+  }, [undoSteps.length, redoSteps.length, undo, redo, card, router]);
+  useEffect(() => () => reviewActionsStore.setState(() => null), []);
+
+  // The app menu's Undo and Redo, and ⌘Z and ⌘⇧Z, act on grades here.
+  useEffect(() => {
+    const update = () => setNativeEditorHistory(!isTypingInField());
+    update();
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    let disposed = false;
+    const unlisten = listen<string>("menu", ({ payload }) => {
+      if (disposed || isTypingInField()) return;
+      if (payload === "editor-undo") void actions.current.undo();
+      if (payload === "editor-redo") void actions.current.redo();
+    });
+    return () => {
+      disposed = true;
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+      setNativeEditorHistory(false);
+      void unlisten.then((stop) => stop()).catch(console.error);
+    };
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { applyPendingSaves, saveQueue } from "@/lib/saves";
+import { setNativeEditorHistory } from "@/lib/native-history";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
 import { LinkMenu } from "@/components/link-menu";
@@ -26,21 +27,11 @@ import {
   type GetContentResponse,
 } from "@/lib/content";
 import { useCardSync } from "@/lib/card-sync";
+import { useCardReveal } from "@/lib/card-reveal";
 import {
   TableOfContents,
   createTocStore,
 } from "@/components/table-of-contents";
-
-let nativeHistoryUpdates = Promise.resolve();
-function setNativeEditorHistory(editorFocused: boolean) {
-  nativeHistoryUpdates = nativeHistoryUpdates
-    .then(() => invoke<void>("set_editor_history", { editorFocused }))
-    .catch((error) => {
-      if ("__TAURI_INTERNALS__" in window) {
-        console.error("Failed to route native history", error);
-      }
-    });
-}
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -356,6 +347,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   useSearchIndexing(editor, moduleId, isSuccess);
 
   useCardSync(editor, moduleId, isSuccess);
+  useCardReveal(editor, moduleId, isSuccess);
 
   // pass editor into the context
   useEffect(() => {
