@@ -1358,6 +1358,7 @@ pub fn run() {
             cards::due_cards,
             cards::due_counts,
             cards::review_card,
+            cards::undo_review,
             index_note,
             unindexed_modules,
             search_notes,

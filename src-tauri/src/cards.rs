@@ -301,17 +301,16 @@ fn query_due_counts(conn: &Connection, now: i64) -> CommandResult<Vec<DueCount>>
     rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }
 
-// Stores a review computed by ts-fsrs. `expected_reps` is the repetition count
-// the review was computed from: a stale or repeated submission (a double key
-// press, two windows) is rejected rather than applied twice.
-fn save_review(
-    conn: &mut Connection,
+// Sets a card's scheduling state, only if its repetition count is still
+// `expected_reps`: a stale or repeated write (a double key press, two windows)
+// is rejected rather than applied twice.
+fn write_card_state(
+    tx: &rusqlite::Transaction,
     card_id: &str,
     expected_reps: i64,
     card: &ReviewedCard,
-    log: &ReviewLog,
+    fsrs_model: Option<&str>,
 ) -> CommandResult<()> {
-    let tx = conn.transaction().map_err(db_err)?;
     let fsrs = &card.fsrs;
     let updated = tx
         .execute(
@@ -334,7 +333,7 @@ fn save_review(
                 fsrs.last_review_at,
                 card.reps,
                 card.lapses,
-                log.fsrs_model
+                fsrs_model
             ],
         )
         .map_err(db_err)?;
@@ -352,6 +351,20 @@ fn save_review(
             None => "The card no longer exists".into(),
         });
     }
+    Ok(())
+}
+
+// Stores a review computed by ts-fsrs. `expected_reps` is the repetition count
+// the review was computed from.
+fn save_review(
+    conn: &mut Connection,
+    card_id: &str,
+    expected_reps: i64,
+    card: &ReviewedCard,
+    log: &ReviewLog,
+) -> CommandResult<()> {
+    let tx = conn.transaction().map_err(db_err)?;
+    write_card_state(&tx, card_id, expected_reps, card, Some(&log.fsrs_model))?;
     let before = &log.before;
     tx.execute(
         "insert into review_log (card_id, rating, review_time, duration_ms, fsrs_model,
@@ -376,6 +389,34 @@ fn save_review(
         ],
     )
     .map_err(db_err)?;
+    tx.commit().map_err(db_err)
+}
+
+// Takes back a card's latest review, made at `review_time`: the card returns
+// to `previous`, its state before that review, and the review leaves the log.
+// `expected_reps` is the count that review left, so a card reviewed again
+// since is not rolled back.
+fn undo_last_review(
+    conn: &mut Connection,
+    card_id: &str,
+    expected_reps: i64,
+    previous: &ReviewedCard,
+    previous_fsrs_model: Option<&str>,
+    review_time: i64,
+) -> CommandResult<()> {
+    let tx = conn.transaction().map_err(db_err)?;
+    let removed = tx
+        .execute(
+            "delete from review_log
+             where id = (select max(id) from review_log where card_id = ?1)
+               and review_time = ?2",
+            params![card_id, review_time],
+        )
+        .map_err(db_err)?;
+    if removed == 0 {
+        return Err("The review to undo is no longer the card's latest".into());
+    }
+    write_card_state(&tx, card_id, expected_reps, previous, previous_fsrs_model)?;
     tx.commit().map_err(db_err)
 }
 
@@ -415,6 +456,26 @@ pub(crate) fn review_card(
 ) -> CommandResult<()> {
     let mut conn = db.lock()?;
     save_review(&mut conn, &card_id, expected_reps, &card, &log)
+}
+
+#[tauri::command(async)]
+pub(crate) fn undo_review(
+    db: tauri::State<'_, Db>,
+    card_id: String,
+    expected_reps: i64,
+    previous: ReviewedCard,
+    previous_fsrs_model: Option<String>,
+    review_time: i64,
+) -> CommandResult<()> {
+    let mut conn = db.lock()?;
+    undo_last_review(
+        &mut conn,
+        &card_id,
+        expected_reps,
+        &previous,
+        previous_fsrs_model.as_deref(),
+        review_time,
+    )
 }
 
 #[cfg(test)]
@@ -684,6 +745,39 @@ mod tests {
         assert!(review(&f, "missing", 0, 1)
             .unwrap_err()
             .contains("no longer exists"));
+    }
+
+    #[test]
+    fn undoing_a_review_restores_the_card_and_drops_its_log_entry() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A")], 10);
+        let before: (i64, i64, String) = f.db.conn.lock().unwrap().query_one(
+            "select due_at, reps, schedule_status from cards where id = '1'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        review(&f, "1", 0, 5_000).unwrap();
+        let mut previous = reviewed(before.0, before.1);
+        previous.fsrs.schedule_status = before.2.clone();
+        previous.fsrs.last_review_at = None;
+
+        // Only the review that left the card at this count can be undone.
+        let error = undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 0, &previous, None, 100)
+            .unwrap_err();
+        assert!(error.contains("reviewed elsewhere"), "{error}");
+        let error = undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 1, &previous, None, 99)
+            .unwrap_err();
+        assert!(error.contains("no longer the card's latest"), "{error}");
+
+        undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 1, &previous, None, 100).unwrap();
+        let after: (i64, i64, String) = f.db.conn.lock().unwrap().query_one(
+            "select due_at, reps, schedule_status from cards where id = '1'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(after, before);
+        let logs: i64 = f.column("select count(*) from review_log where card_id = ?1", "1");
+        assert_eq!(logs, 0);
+        // Redo is the same review submitted again.
+        review(&f, "1", 0, 5_000).unwrap();
     }
 
     #[test]
