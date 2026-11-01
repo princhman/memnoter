@@ -94,7 +94,7 @@ const SaveStatus = () => {
   return (
     <>
       {imageErrors.length > 0 && (
-        <div role="alert" className="fixed left-4 bottom-4 z-50 max-w-md rounded-lg border bg-background p-3 text-sm shadow-sm">
+        <div role="alert" className="fixed left-4 bottom-4 z-50 max-w-md rounded-lg bg-background p-3 text-sm shadow-sm">
           {imageErrors.map((error, index) => <p key={index}>{error}</p>)}
           <Button variant="outline" disabled={blocked} onClick={() => discardFailedImages()}>Discard failed image operations</Button>
         </div>
