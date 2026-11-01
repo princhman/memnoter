@@ -14,15 +14,27 @@ const style = (selector) => {
   return declarations;
 };
 
-test("cloze braces are invisible with a visible caret and the answer has a faint tint", () => {
+test("cloze braces take no room until the caret's block shows them", () => {
   const braces = style(".tiptap .cloze-brace");
-  assert.equal(braces.get("color"), "transparent");
-  assert.ok(braces.get("caret-color") && braces.get("caret-color") !== "transparent");
+  assert.equal(Number.parseFloat(braces.get("font-size")), 0);
   assert.ok(!["none", "hidden"].includes(braces.get("display")));
-  assert.notEqual(braces.get("visibility"), "hidden");
-  assert.notEqual(Number.parseFloat(braces.get("font-size")), 0);
 
+  // Where the caret is, they are real text again and can be edited.
+  const active = style(".tiptap .card-block-active .cloze-brace");
+  assert.equal(active.get("font-size"), "inherit");
+  assert.notEqual(active.get("color"), "transparent");
+});
+
+test("the hidden answer is tinted and clearly underlined", () => {
   const answer = style(".tiptap .cloze-text");
-  assert.equal(answer.get("text-decoration-style"), "dotted");
+  assert.equal(answer.get("text-decoration-line"), "underline");
+  assert.ok(Number.parseFloat(answer.get("text-decoration-thickness")) >= 2);
   assert.ok(answer.get("background-color") && answer.get("background-color") !== "transparent");
+});
+
+test("the `::` arrow is drawn without a box behind it", () => {
+  const separator = style(".tiptap .card-sep");
+  assert.equal(separator.get("color"), "transparent");
+  assert.equal(separator.get("background-color"), undefined);
+  assert.equal(separator.get("mask"), undefined);
 });

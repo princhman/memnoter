@@ -13,6 +13,8 @@ declare module "@tiptap/core" {
     flashcards: {
       // Wrap the selection in {{…}}, making it a cloze card.
       makeCloze: () => ReturnType;
+      // Remove the braces of the cloze holding the selection, keeping its text.
+      removeCloze: () => ReturnType;
       // Give these blocks fresh card ids, e.g. when another note owns them.
       renewCardIds: (blockIds: string[]) => ReturnType;
     };
@@ -21,10 +23,10 @@ declare module "@tiptap/core" {
 
 const decorationsKey = new PluginKey<DecorationSet>("flashcardDecorations");
 
-// Card syntax stays real, editable text: decorations only restyle it, and
-// nothing is hidden from the caret. A faint `::` reads as an arrow until the
-// caret enters its block, cloze braces are transparent, and the hidden
-// text gets a dotted underline. Card blocks get a faint margin marker.
+// Card syntax stays real, editable text: decorations only restyle it. Until
+// the caret enters its block, a faint `::` reads as an arrow and cloze braces
+// take no room; there both show as typed. The hidden text is underlined, and
+// card blocks get a faint margin marker.
 function blockDecorations(node: Node, pos: number): Decoration[] {
   const syntax = parseBlock(node);
   const start = pos + 1;
@@ -41,14 +43,14 @@ function blockDecorations(node: Node, pos: number): Decoration[] {
     decorations.push(
       Decoration.inline(start + syntax.separator.from, start + syntax.separator.to, {
         class: "card-sep",
-      }, { separator: true }),
+      }, { syntax: true }),
     );
   }
   for (const { open, inner, close } of syntax.clozes) {
     decorations.push(
-      Decoration.inline(start + open.from, start + open.to, { class: "cloze-brace" }),
+      Decoration.inline(start + open.from, start + open.to, { class: "cloze-brace" }, { syntax: true }),
       Decoration.inline(start + inner.from, start + inner.to, { class: "cloze-text" }),
-      Decoration.inline(start + close.from, start + close.to, { class: "cloze-brace" }),
+      Decoration.inline(start + close.from, start + close.to, { class: "cloze-brace" }, { syntax: true }),
     );
   }
   return decorations;
@@ -56,6 +58,20 @@ function blockDecorations(node: Node, pos: number): Decoration[] {
 
 function isCardBlock(node: Node) {
   return node.isTextblock && !node.type.spec.code && "cardId" in node.attrs;
+}
+
+// The cloze around the selection, braces included, as document positions.
+export function clozeAt(state: EditorState) {
+  const { $from, $to } = state.selection;
+  if (!$from.sameParent($to) || !isCardBlock($from.parent)) return null;
+  const start = $from.start();
+  const cloze = parseBlock($from.parent).clozes.find(
+    ({ open, close }) => start + open.from <= $from.pos && $to.pos <= start + close.to,
+  );
+  return cloze && {
+    open: { from: start + cloze.open.from, to: start + cloze.open.to },
+    close: { from: start + cloze.close.from, to: start + cloze.close.to },
+  };
 }
 
 function collectBlocks(doc: Node, from: number, to: number) {
@@ -178,14 +194,14 @@ function buildDecorations(doc: Node) {
   );
 }
 
-// The textblock holding the caret shows its `::` as typed.
+// The textblock holding the caret shows its `::` and braces as typed.
 function activeBlock(state: EditorState, set: DecorationSet) {
   const { $head } = state.selection;
   if (!$head.parent.isTextblock || $head.depth === 0) return null;
   const from = $head.before();
   const to = from + $head.parent.nodeSize;
-  const hasSeparator = set.find(from, to, (spec) => spec.separator === true).length > 0;
-  return hasSeparator ? Decoration.node(from, to, { class: "card-block-active" }) : null;
+  const hasSyntax = set.find(from, to, (spec) => spec.syntax === true).length > 0;
+  return hasSyntax ? Decoration.node(from, to, { class: "card-block-active" }) : null;
 }
 
 export const Flashcards = Extension.create({
@@ -236,7 +252,8 @@ export const Flashcards = Extension.create({
           if (
             selection.empty ||
             !$from.sameParent($to) ||
-            !isCardBlock($from.parent)
+            !isCardBlock($from.parent) ||
+            clozeAt(state)
           ) {
             return false;
           }
@@ -253,6 +270,20 @@ export const Flashcards = Extension.create({
             tr.insert(to, state.schema.text("}}"));
             tr.insert(from, state.schema.text("{{"));
             tr.setSelection(TextSelection.create(tr.doc, from + 2, to + 2));
+          }
+          return true;
+        },
+      removeCloze:
+        () =>
+        ({ state, tr, dispatch }) => {
+          const cloze = clozeAt(state);
+          if (!cloze) return false;
+          if (dispatch) {
+            tr.delete(cloze.close.from, cloze.close.to);
+            tr.delete(cloze.open.from, cloze.open.to);
+            tr.setSelection(
+              TextSelection.create(tr.doc, cloze.open.from, cloze.close.from - 2),
+            );
           }
           return true;
         },

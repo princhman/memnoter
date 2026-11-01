@@ -45,6 +45,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         // Only a selection within one textblock converts to a math block.
         canMathBlock: editor.can().toggleMathBlock(),
         canMakeCard: editor.can().makeCloze(),
+        inCloze: editor.can().removeCloze(),
       };
     },
   });
@@ -144,11 +145,15 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         <Sigma />
       </MarkButton>
       <MarkButton
-        label="Make card"
-        hint="Wrap in {{…}} to hide it in review"
-        pressed={false}
-        disabled={!active.canMakeCard}
-        onToggle={() => editor.chain().focus().makeCloze().run()}
+        label={active.inCloze ? "Remove card" : "Make card"}
+        hint={active.inCloze ? "Remove the {{…}} around it" : "Wrap in {{…}} to hide it in review"}
+        pressed={active.inCloze}
+        disabled={!active.canMakeCard && !active.inCloze}
+        onToggle={() =>
+          active.inCloze
+            ? editor.chain().focus().removeCloze().run()
+            : editor.chain().focus().makeCloze().run()
+        }
       >
         <Braces />
       </MarkButton>

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useIsFullscreen } from "@/hooks/use-fullscreen";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
+import { ModuleReviewButton } from "@/components/module-review-button";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
@@ -70,8 +71,11 @@ const RootLayout = () => {
             />
 
             <header className="relative z-40 flex h-8 items-center bg-background">
-              <div className="flex items-center">
+              <div className="flex min-w-0 items-center">
                 <FileBreadcrumb />
+              </div>
+              <div className="ml-auto shrink-0 pr-3">
+                <ModuleReviewButton />
               </div>
             </header>
 
