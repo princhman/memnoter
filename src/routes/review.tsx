@@ -1,9 +1,9 @@
 import { writeCards } from "@/lib/card-writes";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createFileRoute, useCanGoBack, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { CheckCircle2, X } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardFace } from "@/components/card-face";
 import { dueCountsKey, flushCardSyncs } from "@/lib/card-sync";
@@ -41,7 +41,6 @@ const GRADE_STYLES: Record<Grade, string> = {
 function Review() {
   const { module: moduleId } = Route.useSearch();
   const router = useRouter();
-  const canGoBack = useCanGoBack();
   const queryClient = useQueryClient();
 
   const [unindexed, setUnindexed] = useState<{ id: string; name: string }[]>([]);
@@ -96,12 +95,6 @@ function Review() {
     [scheduler, card, revealed, now],
   );
 
-  const close = useCallback(() => {
-    if (canGoBack) router.history.back();
-    else if (moduleId) void router.navigate({ to: "/$moduleId", params: { moduleId } });
-    else void router.navigate({ to: "/" });
-  }, [canGoBack, moduleId, router]);
-
   const reveal = useCallback(() => {
     if (!card) return;
     setNow(Date.now());
@@ -152,13 +145,11 @@ function Review() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        close();
-        return;
-      }
+      const target = event.target as HTMLElement | null;
+      // Typing in the command palette or another field is not reviewing.
+      if (target?.closest("input, textarea, [contenteditable='true'], [role='dialog']")) return;
       // A focused button handles Space and Enter itself.
-      const onButton = (event.target as HTMLElement | null)?.closest("button");
+      const onButton = target?.closest("button");
       if ((event.key === " " || event.key === "Enter") && !onButton) {
         event.preventDefault();
         if (!revealed) reveal();
@@ -172,116 +163,95 @@ function Review() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [close, reveal, rate, revealed]);
+  }, [reveal, rate, revealed]);
 
   const remaining = queue?.length ?? 0;
   const scope = moduleId ? (card?.moduleName ?? queue?.[0]?.moduleName) : "All modules";
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background">
-      <header
-        data-tauri-drag-region
-        className="flex h-11 shrink-0 items-center gap-3 pr-3 pl-22 text-sm text-muted-foreground"
-      >
-        <span data-tauri-drag-region className="truncate">
-          Review{scope ? ` · ${scope}` : ""}
-        </span>
+    <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col">
+      <header className="flex items-center gap-3 text-sm text-muted-foreground">
+        {scope && <span className="truncate">{scope}</span>}
         {queue && remaining > 0 && (
-          <span data-tauri-drag-region className="tabular-nums">
-            {remaining} left
-          </span>
+          <span className="tabular-nums">{remaining} left</span>
         )}
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          className="ml-auto"
-          aria-label="Close review (Esc)"
-          onClick={close}
-        >
-          <X />
-        </Button>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-8">
-        <div className="flex w-full max-w-2xl flex-1 flex-col justify-center gap-8 py-8">
-          {unindexed.length > 0 && (
-            <section className="rounded-lg border p-4 text-sm" aria-label="Notes awaiting card indexing">
-              <p>Review is incomplete: {unindexed.length} {unindexed.length === 1 ? "note" : "notes"} could not be checked for cards. Open each note below to include its cards, then return to review.</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {unindexed.map((note) => (
-                  <Button key={note.id} variant="outline" onClick={() => void router.navigate({ to: "/$moduleId", params: { moduleId: note.id } })}>
-                    Open {note.name || "Untitled note"}
-                  </Button>
-                ))}
-              </div>
-            </section>
-          )}
-          {error && (
-            <p role="alert" className="text-center text-sm text-destructive">
-              {error}
-            </p>
-          )}
-          {queue === null && !error && (
-            <p className="text-center text-muted-foreground">Loading cards…</p>
-          )}
-          {queue !== null && !card && (
-            <div className="grid justify-items-center gap-3 text-center">
-              <CheckCircle2 className="size-10 text-emerald-600 dark:text-emerald-400" />
-              <h1 className="text-2xl font-semibold">{unindexed.length ? "No due cards in checked notes" : "All caught up"}</h1>
-              <p className="text-muted-foreground">
-                {reviewed > 0
-                  ? `You reviewed ${reviewed} ${reviewed === 1 ? "card" : "cards"}.`
-                  : "No cards are due right now."}
-              </p>
-              <Button variant="outline" className="mt-2" onClick={close}>
-                Back to notes
-              </Button>
-            </div>
-          )}
-          {card && (
-            <>
-              {!moduleId && (
-                <p className="text-center text-xs tracking-wide text-muted-foreground uppercase">
-                  {card.moduleName}
-                </p>
-              )}
-              <CardFace
-                key={card.id}
-                kind={card.kind}
-                front={card.front}
-                back={card.back}
-                revealed={revealed}
-              />
-            </>
-          )}
-        </div>
-
-        {card && (
-          <div className="flex w-full max-w-2xl justify-center gap-2">
-            {!revealed ? (
-              <Button size="lg" className="min-w-48" onClick={reveal}>
-                Show answer
-                <kbd className="ml-1 text-xs opacity-70">Space</kbd>
-              </Button>
-            ) : (
-              GRADES.map(({ rating, label, key }) => (
-                <Button
-                  key={rating}
-                  variant="outline"
-                  className="h-auto min-w-24 flex-col gap-0.5 py-2"
-                  onClick={() => void rate(rating)}
-                >
-                  <span className="text-xs tabular-nums text-muted-foreground">
-                    {preview ? formatInterval(preview[rating] - now) : ""}
-                  </span>
-                  <span className={cn("font-medium", GRADE_STYLES[rating])}>{label}</span>
-                  <kbd className="text-[0.65rem] text-muted-foreground">{key}</kbd>
+      <div className="flex flex-1 flex-col justify-center gap-8 py-8">
+        {unindexed.length > 0 && (
+          <section className="rounded-lg border p-4 text-sm" aria-label="Notes awaiting card indexing">
+            <p>Review is incomplete: {unindexed.length} {unindexed.length === 1 ? "note" : "notes"} could not be checked for cards. Open each note below to include its cards, then return to review.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {unindexed.map((note) => (
+                <Button key={note.id} variant="outline" onClick={() => void router.navigate({ to: "/$moduleId", params: { moduleId: note.id } })}>
+                  Open {note.name || "Untitled note"}
                 </Button>
-              ))
-            )}
+              ))}
+            </div>
+          </section>
+        )}
+        {error && (
+          <p role="alert" className="text-center text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {queue === null && !error && (
+          <p className="text-center text-muted-foreground">Loading cards…</p>
+        )}
+        {queue !== null && !card && (
+          <div className="grid justify-items-center gap-3 text-center">
+            <CheckCircle2 className="size-10 text-emerald-600 dark:text-emerald-400" />
+            <h1 className="text-2xl font-semibold">{unindexed.length ? "No due cards in checked notes" : "All caught up"}</h1>
+            <p className="text-muted-foreground">
+              {reviewed > 0
+                ? `You reviewed ${reviewed} ${reviewed === 1 ? "card" : "cards"}.`
+                : "No cards are due right now."}
+            </p>
           </div>
         )}
-      </main>
+        {card && (
+          <>
+            {!moduleId && (
+              <p className="text-center text-xs tracking-wide text-muted-foreground uppercase">
+                {card.moduleName}
+              </p>
+            )}
+            <CardFace
+              key={card.id}
+              kind={card.kind}
+              front={card.front}
+              back={card.back}
+              revealed={revealed}
+            />
+          </>
+        )}
+      </div>
+
+      {card && (
+        <div className="flex w-full max-w-2xl justify-center gap-2">
+          {!revealed ? (
+            <Button size="lg" className="min-w-48" onClick={reveal}>
+              Show answer
+              <kbd className="ml-1 text-xs opacity-70">Space</kbd>
+            </Button>
+          ) : (
+            GRADES.map(({ rating, label, key }) => (
+              <Button
+                key={rating}
+                variant="outline"
+                className="h-auto min-w-24 flex-col gap-0.5 py-2"
+                onClick={() => void rate(rating)}
+              >
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {preview ? formatInterval(preview[rating] - now) : ""}
+                </span>
+                <span className={cn("font-medium", GRADE_STYLES[rating])}>{label}</span>
+                <kbd className="text-[0.65rem] text-muted-foreground">{key}</kbd>
+              </Button>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

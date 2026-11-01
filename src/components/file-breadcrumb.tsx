@@ -41,9 +41,11 @@ export function FileBreadcrumb() {
   });
 
   const matchRoute = useMatchRoute();
+  // These pages also match the module id pattern.
   const isSettings = !!matchRoute({ to: "/settings" });
+  const isReview = !!matchRoute({ to: "/review" });
   const match = matchRoute({ to: "/$moduleId" });
-  const moduleId = match && !isSettings ? match.moduleId : null;
+  const moduleId = match && !isSettings && !isReview ? match.moduleId : null;
   const moduleName = modules.find((module) => module.id === moduleId)?.name;
   const { activeEditor } = useActiveEditor();
   const editor =
@@ -93,7 +95,7 @@ export function FileBreadcrumb() {
             {!moduleId ? (
               <BreadcrumbItem>
                 <BreadcrumbPage>
-                  {isSettings ? "Settings" : "Home"}
+                  {isSettings ? "Settings" : isReview ? "Review" : "Home"}
                 </BreadcrumbPage>
               </BreadcrumbItem>
             ) : (

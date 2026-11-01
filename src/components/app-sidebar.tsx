@@ -7,6 +7,7 @@ import {
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuAction,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
@@ -17,7 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
-import { Ellipsis, House, Pencil, Settings, Trash2 } from "lucide-react";
+import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -110,14 +111,17 @@ const AppSidebar = () => {
                 <span>Home</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton render={<Link to="/review" search={{}} />}>
-                <span>Review ({total} due)</span>
+              <SidebarMenuButton
+                isActive={!!matchRoute({ to: "/review" })}
+                render={<Link to="/review" search={{}} />}
+              >
+                <Layers />
+                <span>Review</span>
               </SidebarMenuButton>
+              {total > 0 && (
+                <SidebarMenuBadge aria-label={`${total} due`}>{total}</SidebarMenuBadge>
+              )}
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
