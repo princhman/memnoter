@@ -41,7 +41,7 @@ test("each rule is reported with its file and line", () => {
 test("clean files and allowed lines pass", () => {
   const { status, stderr } = lint({
     "a.ts": 'const a = "f(\u2022)"; // lint-allow: middle-dot\n',
-    "c.css": ".menu-popup {\n  border: none;\n  border-top: 1px solid red;\n}\n",
+    "c.css": ".menu-popup {\n  border: none;\n  border-top: 1px solid red;\n}\n.menu-popup input {\n  border: 1px solid red;\n}\n",
     "d.tsx": 'const header = "rounded-lg border-b border-0 px-3";\n',
   });
   assert.equal(status, 0, stderr);
