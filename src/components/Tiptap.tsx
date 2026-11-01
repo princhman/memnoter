@@ -4,6 +4,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { applyPendingSaves, saveQueue } from "@/lib/saves";
@@ -16,7 +17,7 @@ import { HeadingFold } from "@/lib/heading-fold";
 import { SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { usePersistedView } from "@/lib/view-persistence";
+import { restoreView, usePersistedView } from "@/lib/view-persistence";
 import { FindHighlights } from "@/lib/find-highlights";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
 import FileHandler from "@tiptap/extension-file-handler";
@@ -54,6 +55,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
   const hasAppliedRemoteContent = useRef(false);
+  const editorRef = useRef<Editor | null>(null);
   const hasInsertedInitialContent = useRef(false);
 
   const { isSuccess, data } = useQuery({
@@ -64,6 +66,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       const content = await loadContent(moduleId, yDoc);
       applyPendingSaves(yDoc, pending);
       hasAppliedRemoteContent.current = true;
+      // Still in the task that filled the editor, so the note is never
+      // painted unfolded or at the top first.
+      const editor = editorRef.current;
+      if (editor && ySyncPluginKey.getState(editor.state)?.doc === yDoc) {
+        restoreView(editor, moduleId);
+      }
       return content;
     },
     // local mutations keep this cache current; focus/remount needs no disk read.
@@ -323,6 +331,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     [yDoc],
   );
 
+  useLayoutEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
   useEffect(() => {
     editor?.setEditable(isSuccess, false);
   }, [editor, isSuccess]);
@@ -437,12 +449,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   return (
     <FilesContext.Provider value={filesContext}>
       <HeadingActionOverlay editor={editor}>
-        {/* Loading fills the editor a few frames before the saved folds and
-            scroll are restored, so it stays hidden until then. */}
-        <EditorContent
-          editor={editor}
-          style={isSuccess ? undefined : { visibility: "hidden" }}
-        />
+        <EditorContent editor={editor} />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} />

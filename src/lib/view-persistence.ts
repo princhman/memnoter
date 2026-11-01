@@ -117,6 +117,40 @@ function restoreScroll(
   return stop;
 }
 
+// Stops holding each restored editor's scroll position.
+const restoredViews = new WeakMap<Editor, (() => void) | undefined>();
+
+// Puts back the module's saved scroll position, cursor and focused and folded
+// sections, once per editor. Call it in the task that fills the editor, so the
+// note is first painted the way it was left.
+export function restoreView(editor: Editor, moduleId: string) {
+  if (editor.isDestroyed || restoredViews.has(editor)) return;
+
+  const container = editor.view.dom.closest<HTMLElement>(SCROLL_CONTAINER);
+  if (!container) return;
+
+  const saved = appStore.state.viewByModule[moduleId];
+  let stopRestoring: (() => void) | undefined;
+
+  if (saved) {
+    if (saved.focusedSection != null) {
+      editor.commands.showSection(saved.focusedSection);
+    }
+    restoreSelection(editor, saved);
+    if (saved.foldedSections?.length) {
+      // Views saved before folds were keyed by heading id hold positions.
+      editor.commands.setFolds(
+        saved.foldedSections.filter((id) => typeof id === "string"),
+      );
+    }
+    editor.commands.focus(undefined, { scrollIntoView: false });
+    stopRestoring = restoreScroll(editor, container, saved);
+  } else {
+    container.scrollTop = 0;
+  }
+  restoredViews.set(editor, stopRestoring);
+}
+
 // Remembers the open module and, per module, the scroll position, cursor and
 // focused and folded sections, then restores them when the module is opened again.
 export function usePersistedView(
@@ -135,25 +169,8 @@ export function usePersistedView(
     const container = editor.view.dom.closest<HTMLElement>(SCROLL_CONTAINER);
     if (!container) return;
 
-    const saved = appStore.state.viewByModule[moduleId];
-    let stopRestoring: (() => void) | undefined;
-
-    if (saved) {
-      if (saved.focusedSection != null) {
-        editor.commands.showSection(saved.focusedSection);
-      }
-      restoreSelection(editor, saved);
-      if (saved.foldedSections?.length) {
-        // Views saved before folds were keyed by heading id hold positions.
-        editor.commands.setFolds(
-          saved.foldedSections.filter((id) => typeof id === "string"),
-        );
-      }
-      editor.commands.focus(undefined, { scrollIntoView: false });
-      stopRestoring = restoreScroll(editor, container, saved);
-    } else {
-      container.scrollTop = 0;
-    }
+    // Loading usually restored it already.
+    restoreView(editor, moduleId);
 
     let saveTimeout: number | undefined;
 
@@ -183,7 +200,9 @@ export function usePersistedView(
     container.addEventListener("scroll", scheduleSave, { passive: true });
 
     return () => {
-      stopRestoring?.();
+      restoredViews.get(editor)?.();
+      // A rerun of this effect for the same editor restores again.
+      restoredViews.delete(editor);
       // Switching notes right after a change must not lose it.
       if (saveTimeout !== undefined) {
         window.clearTimeout(saveTimeout);
