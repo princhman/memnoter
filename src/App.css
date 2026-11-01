@@ -1168,7 +1168,6 @@ body {
     width: max-content;
     max-width: 16rem;
     padding: 0.4rem 0.6rem;
-    border: 1px solid var(--border);
     border-radius: 0.5rem;
     background: var(--popover);
     color: var(--popover-foreground);
