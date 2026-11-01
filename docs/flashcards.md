@@ -5,9 +5,10 @@ paragraph and heading `cardId` attributes are persisted in Yjs. Math blocks do
 not create cards. Cards are indexed when a module is opened, after 800 ms of
 idle editing, and on editor cleanup. All in-app navigation flushes pending writes
 before leaving the editor, including cross-module copy conflict repairs.
-Existing modules must be opened once to index their cards; there is no background
-scan of unopened Yjs documents. Review displays the unindexed notes with Open
-buttons and does not claim the whole library is caught up until they are checked.
+Notes never checked for cards are checked in the background at launch: each is
+loaded into an editor that is never shown, with the same extensions, so card
+text gets ids exactly as opening the note would give them. Review waits for
+this check and lists any note it could not check, with an Open button.
 The card_indexed_modules table tracks successful complete syncs, including empty
 notes; unresolved cross-module conflicts leave a note marked incomplete.
 
@@ -75,7 +76,9 @@ IPC contracts (camelCase arguments):
   output atomically. Reject missing/deleted cards and stale repetition counts.
 
 `/review?module=<id>` limits scope; `/review` reviews all indexed modules.
-Space reveals; 1–4 grade Again/Hard/Good/Easy; Escape closes. Buttons preview
+Review is a page in the app layout, listed under Home in the sidebar. Space
+reveals; 1–4 grade Again/Hard/Good/Easy, except while typing in a field or
+dialog such as the command palette. Buttons preview
 FSRS intervals. The session begins with a due snapshot and requeues learning
 steps within 20 minutes, showing them early when nothing older remains. Other
 newly due cards require another session. Counts refresh every minute and after
@@ -137,5 +140,5 @@ rejection, and cascade deletion also have automated coverage.
 No GUI was run. Manually verify macOS WebKit caret/selection around decorations,
 bubble selection with inline math, typing/undo/copy across modules, immediately
 opening review after an edit, due counts after deletion, reopen persistence,
-keyboard/button focus, KaTeX rendering, full-screen chrome, and the done/error
+keyboard/button focus, KaTeX rendering, and the done/error
 states. Test first-time indexing by opening an older module. No push or PR.
