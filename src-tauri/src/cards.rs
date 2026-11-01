@@ -138,8 +138,10 @@ pub(crate) struct DueCount {
     new: i64,
     learning: i64,
     review: i64,
-    // Not due yet, but due before the day ends.
-    later_today: i64,
+    // Not due yet, but due before the day ends, split the same way.
+    later_new: i64,
+    later_learning: i64,
+    later_review: i64,
 }
 
 // When a live card is next due and when it was last reviewed, for the info
@@ -305,7 +307,8 @@ fn query_due_counts(conn: &Connection, now: i64, day_end: i64) -> CommandResult<
             // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
             "select module_id, sum(due_at <= ?1), sum(due_at <= ?1 and state = 0),
                  sum(due_at <= ?1 and state in (1, 3)), sum(due_at <= ?1 and state = 2),
-                 sum(due_at > ?1)
+                 sum(due_at > ?1 and state = 0), sum(due_at > ?1 and state in (1, 3)),
+                 sum(due_at > ?1 and state = 2)
              from cards
              where deleted_at is null and due_at <= max(?1, ?2)
              group by module_id order by module_id",
@@ -319,7 +322,9 @@ fn query_due_counts(conn: &Connection, now: i64, day_end: i64) -> CommandResult<
                 new: row.get(2)?,
                 learning: row.get(3)?,
                 review: row.get(4)?,
-                later_today: row.get(5)?,
+                later_new: row.get(5)?,
+                later_learning: row.get(6)?,
+                later_review: row.get(7)?,
             })
         })
         .map_err(db_err)?;
@@ -702,7 +707,9 @@ mod tests {
                     new: 1,
                     learning: 0,
                     review: 1,
-                    later_today: 0,
+                    later_new: 0,
+                    later_learning: 0,
+                    later_review: 0,
                 },
                 DueCount {
                     module_id: "b".into(),
@@ -710,7 +717,9 @@ mod tests {
                     new: 1,
                     learning: 0,
                     review: 0,
-                    later_today: 0,
+                    later_new: 0,
+                    later_learning: 0,
+                    later_review: 0,
                 },
             ]
         );
@@ -723,10 +732,12 @@ mod tests {
                 new: 1,
                 learning: 0,
                 review: 0,
-                later_today: 1,
+                later_new: 0,
+                later_learning: 0,
+                later_review: 1,
             }
         );
-        assert_eq!(query_due_counts(&f.db.conn.lock().unwrap(), 12, 14).unwrap()[0].later_today, 0);
+        assert_eq!(query_due_counts(&f.db.conn.lock().unwrap(), 12, 14).unwrap()[0].later_review, 0);
     }
 
     #[test]

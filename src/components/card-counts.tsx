@@ -8,13 +8,13 @@ const PARTS = [
 ] as const;
 
 // Cards due now as Anki shows them: new, learning and to review, each in its
-// own colour, with zeros faded. Cards due later today follow as a faded +n.
+// own colour, with zeros faded. Each count carries a faded superscript +n for
+// its cards due later today.
 export function CardCounts({ counts, className }: { counts: Counts; className?: string }) {
-  const later = counts.laterToday ?? 0;
-  const label = [
-    ...PARTS.map(({ key, label }) => `${counts[key]} ${label}`),
-    ...(later > 0 ? [`${later} more due later today`] : []),
-  ].join(", ");
+  const later = (key: (typeof PARTS)[number]["key"]) => counts.laterToday?.[key] ?? 0;
+  const label = PARTS.map(({ key, label }) =>
+    `${counts[key]} ${label}${later(key) > 0 ? ` (+${later(key)} later today)` : ""}`,
+  ).join(", ");
   return (
     <span className={cn("inline-flex gap-1.5 tabular-nums", className)} aria-label={label} title={label}>
       {PARTS.map(({ key, className }) => (
@@ -24,13 +24,11 @@ export function CardCounts({ counts, className }: { counts: Counts; className?: 
           className={counts[key] > 0 ? className : "text-muted-foreground/50"}
         >
           {counts[key]}
+          {later(key) > 0 && (
+            <sup className="ml-px text-[0.65em] text-muted-foreground">+{later(key)}</sup>
+          )}
         </span>
       ))}
-      {later > 0 && (
-        <span aria-hidden className="text-muted-foreground">
-          +{later}
-        </span>
-      )}
     </span>
   );
 }
