@@ -17,6 +17,7 @@ import { useEditorState } from "@tiptap/react";
 import { getFocusedSectionPath } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { Fragment } from "react";
+import { ReviewScopeMenu } from "./review-scope-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -90,12 +91,21 @@ export function FileBreadcrumb() {
       <div className={cn("shrink-0 md:hidden", TOOLBAR_OFFSET)} />
       <div className="min-w-0">
         <Breadcrumb>
-          <BreadcrumbList>
-            {!moduleId ? (
-              <BreadcrumbItem>
-                <BreadcrumbPage>
-                  {isSettings ? "Settings" : isReview ? "Review" : "Home"}
-                </BreadcrumbPage>
+          <BreadcrumbList className={isReview ? "flex-nowrap" : undefined}>
+            {isReview ? (
+              <>
+                {/* The module under review comes first, as it will for a module's other pages. */}
+                <BreadcrumbItem className="min-w-0">
+                  <ReviewScopeMenu />
+                </BreadcrumbItem>
+                <BreadcrumbSeparator>/</BreadcrumbSeparator>
+                <BreadcrumbItem className="shrink-0">
+                  <BreadcrumbPage>Review</BreadcrumbPage>
+                </BreadcrumbItem>
+              </>
+            ) : !moduleId ? (
+              <BreadcrumbItem className="shrink-0">
+                <BreadcrumbPage>{isSettings ? "Settings" : "Home"}</BreadcrumbPage>
               </BreadcrumbItem>
             ) : (
               <BreadcrumbItem>
@@ -189,3 +199,4 @@ export function FileBreadcrumb() {
     </>
   );
 }
+

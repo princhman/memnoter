@@ -19,6 +19,8 @@ pub(crate) fn migrate_flashcards(conn: &Connection) -> CommandResult<()> {
             kind TEXT NOT NULL,
             front TEXT NOT NULL,
             back TEXT NOT NULL,
+            -- JSON array of the heading titles above the card, outermost first.
+            section TEXT NOT NULL DEFAULT '[]',
             due_at INTEGER NOT NULL,
             stability REAL NOT NULL DEFAULT 0,
             stability_fast REAL NOT NULL DEFAULT 0,
@@ -67,7 +69,22 @@ pub(crate) fn migrate_flashcards(conn: &Connection) -> CommandResult<()> {
 
         create index if not exists review_log_card on review_log(card_id, review_time);",
     )
-    .map_err(db_err)
+    .map_err(db_err)?;
+
+    // Cards stored before sections existed: add the column, and check every
+    // note again so each card gets its section.
+    let has_section = conn
+        .prepare("select 1 from pragma_table_info('cards') where name = 'section'")
+        .and_then(|mut stmt| stmt.exists([]))
+        .map_err(db_err)?;
+    if !has_section {
+        conn.execute_batch(
+            "alter table cards add column section TEXT NOT NULL DEFAULT '[]';
+             delete from card_indexed_modules;",
+        )
+        .map_err(db_err)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -76,6 +93,8 @@ pub(crate) struct CardContent {
     kind: String,
     front: serde_json::Value,
     back: serde_json::Value,
+    #[serde(default)]
+    section: Vec<String>,
 }
 
 // The scheduling fields shared by a stored card and a review log row.
@@ -99,6 +118,7 @@ pub(crate) struct Card {
     id: String,
     module_id: String,
     module_name: String,
+    section: Vec<String>,
     kind: String,
     front: serde_json::Value,
     back: serde_json::Value,
@@ -186,8 +206,8 @@ fn sync_module_cards(
     {
         let mut upsert = tx
             .prepare(
-                "insert into cards (id, module_id, kind, front, back, due_at, created_at, updated_at)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6)
+                "insert into cards (id, module_id, kind, front, back, section, due_at, created_at, updated_at)
+                 values (?1, ?2, ?3, ?4, ?5, ?7, ?6, ?6, ?6)
                  on conflict(id) do update set
                      updated_at = case
                          when cards.deleted_at is not null
@@ -200,6 +220,7 @@ fn sync_module_cards(
                      kind = excluded.kind,
                      front = excluded.front,
                      back = excluded.back,
+                     section = excluded.section,
                      deleted_at = null
                  where cards.module_id = excluded.module_id or cards.deleted_at is not null",
             )
@@ -212,7 +233,8 @@ fn sync_module_cards(
                     card.kind,
                     json_text(&card.front)?,
                     json_text(&card.back)?,
-                    now
+                    now,
+                    serde_json::to_string(&card.section).map_err(db_err)?
                 ])
                 .map_err(db_err)?;
             if changed == 0 {
@@ -265,7 +287,7 @@ fn query_due_cards(
             "select c.id, c.module_id, m.name, c.kind, c.front, c.back, c.due_at,
                     c.stability, c.stability_fast, c.difficulty, c.scheduled_days,
                     c.learning_step, c.state, c.schedule_status, c.last_review_at,
-                    c.reps, c.lapses, c.fsrs_model
+                    c.reps, c.lapses, c.fsrs_model, c.section
              from cards c join modules m on m.id = c.module_id
              where c.deleted_at is null and c.due_at <= ?1
                and (?2 is null or c.module_id = ?2)
@@ -278,6 +300,7 @@ fn query_due_cards(
                 id: row.get(0)?,
                 module_id: row.get(1)?,
                 module_name: row.get(2)?,
+                section: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_default(),
                 kind: row.get(3)?,
                 front: json_column(row.get(4)?),
                 back: json_column(row.get(5)?),
@@ -598,6 +621,7 @@ mod tests {
             kind: "basic".into(),
             front: json!([{ "type": "text", "text": front }]),
             back: json!([{ "type": "text", "text": back }]),
+            section: Vec::new(),
         }
     }
 
@@ -672,6 +696,38 @@ mod tests {
         assert!(!indexed("b"));
         f.sync("b", &[basic("repaired", "Q", "A")], 30);
         assert!(indexed("b"));
+    }
+
+    #[test]
+    fn a_card_keeps_the_latest_section_it_was_synced_with() {
+        let f = Fixture::new();
+        let mut card = basic("1", "Q", "A");
+        card.section = vec!["Logic".into(), "Quantifiers".into()];
+        f.sync("a", std::slice::from_ref(&card), 10);
+        assert_eq!(f.due(None, 10)[0].section, ["Logic", "Quantifiers"]);
+        card.section = vec!["Proofs".into()];
+        f.sync("a", &[card], 20);
+        assert_eq!(f.due(None, 20)[0].section, ["Proofs"]);
+    }
+
+    #[test]
+    fn adding_sections_checks_every_note_again() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A")], 10);
+        let conn = f.db.conn.lock().unwrap();
+        // The database as it was before sections.
+        conn.execute_batch("alter table cards drop column section;").unwrap();
+        migrate_flashcards(&conn).unwrap();
+        let indexed: i64 = conn
+            .query_row("select count(*) from card_indexed_modules", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(indexed, 0);
+        drop(conn);
+        assert_eq!(f.due(None, 10)[0].section, Vec::<String>::new());
+        // Opening the migrated database again leaves the index alone.
+        f.sync("a", &[basic("1", "Q", "A")], 20);
+        migrate_flashcards(&f.db.conn.lock().unwrap()).unwrap();
+        assert!(f.column::<bool>("select exists(select 1 from card_indexed_modules where module_id = ?1)", "a"));
     }
 
     #[test]

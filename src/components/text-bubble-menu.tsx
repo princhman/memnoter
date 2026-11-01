@@ -5,6 +5,7 @@ import { TextSelection } from "@tiptap/pm/state";
 import {
   Bold,
   Braces,
+  Combine,
   Code,
   Italic,
   Link,
@@ -45,6 +46,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         // Only a selection within one textblock converts to a math block.
         canMathBlock: editor.can().toggleMathBlock(),
         canMakeCard: editor.can().makeCloze(),
+        canJoinClozes: editor.can().joinClozes(),
         inCloze: editor.can().removeCloze(),
       };
     },
@@ -146,7 +148,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label={active.inCloze ? "Remove card" : "Make card"}
-        hint={active.inCloze ? "Remove the {{…}} around it" : "Wrap in {{…}} to hide it in review"}
+        hint={`${MOD_KEY}${MOD_KEY === "⌘" ? "⇧" : "Shift+"}C`}
         pressed={active.inCloze}
         disabled={!active.canMakeCard && !active.inCloze}
         onToggle={() =>
@@ -157,6 +159,16 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       >
         <Braces />
       </MarkButton>
+      {active.canJoinClozes && (
+        <MarkButton
+          label="Join clozes"
+          hint="Hide selected answers together on one card"
+          pressed={false}
+          onToggle={() => editor.chain().focus().joinClozes().run()}
+        >
+          <Combine />
+        </MarkButton>
+      )}
     </BubbleMenu>
   );
 }

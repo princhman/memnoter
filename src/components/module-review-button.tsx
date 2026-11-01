@@ -1,5 +1,4 @@
 import { Link, useMatchRoute } from "@tanstack/react-router";
-import { Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
@@ -21,7 +20,6 @@ export function ModuleReviewButton() {
       nativeButton={false}
       render={<Link to="/review" search={{ module: match.moduleId }} />}
     >
-      <Layers />
       Review
       <CardCounts counts={forModule(match.moduleId)} />
     </Button>

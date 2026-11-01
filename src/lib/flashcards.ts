@@ -4,7 +4,7 @@ import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } 
 import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
-import { cardIdsOf, changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, type ClozeId, type Range } from "./cards.ts";
+import { cardIdsOf, changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, type ClozeId, type Range } from "./cards.ts";
 import { formatInterval } from "./fsrs.ts";
 
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
@@ -14,6 +14,7 @@ declare module "@tiptap/core" {
     flashcards: {
       // Wrap the selection in {{…}}, making it a cloze card.
       makeCloze: () => ReturnType;
+      joinClozes: () => ReturnType;
       // Remove the braces of the cloze holding the selection, keeping its text.
       removeCloze: () => ReturnType;
       // Show when the note's cards are due and were last reviewed, as of `now`.
@@ -37,62 +38,78 @@ const decorationsKey = new PluginKey<{ set: DecorationSet; schedules: Schedules 
   "flashcardDecorations",
 );
 
-const INFO_ICON =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>';
-
-// The icon beside a card block, with when each of its cards is due and was
-// last reviewed in a popup shown on hover.
+// A small margin dot with each card's schedule shown on hover.
 function cardInfo(
   entries: { answer: string | null; schedule: CardSchedule | undefined }[],
   due: boolean,
   now: number,
+  onJoin: (() => void) | null,
 ) {
   const info = document.createElement("span");
   info.className = "card-info";
   info.contentEditable = "false";
+  info.tabIndex = 0;
+  info.setAttribute("role", "group");
+  info.setAttribute("aria-label", "Card details");
   if (due) info.dataset.due = "";
-  info.innerHTML = INFO_ICON;
+  // A block may contain several cards; its dot follows the next one due.
+  const next = entries.flatMap(({ schedule }) => schedule ? [schedule] : [])
+    .reduce<CardSchedule | undefined>((first, card) => !first || card.dueAt < first.dueAt ? card : first, undefined);
+  const stateName = (state: number) => state === 0 ? "New" : state === 1 ? "Learning" : state === 3 ? "Relearning" : "Review";
+  info.dataset.state = next ? stateName(next.state).toLowerCase() : "unsaved";
 
   const popup = document.createElement("span");
   popup.className = "card-info-popup";
-  popup.setAttribute("role", "tooltip");
+  popup.setAttribute("role", onJoin ? "dialog" : "tooltip");
+  if (onJoin) popup.setAttribute("aria-label", "Card details");
   for (const { answer, schedule } of entries) {
     const row = document.createElement("span");
     row.className = "card-info-row";
-    // A block with several clozes names each by its answer.
-    if (entries.length > 1 && answer !== null) {
-      const name = document.createElement("span");
-      name.className = "card-info-answer";
-      name.textContent = answer;
-      row.append(name);
-    }
-    const lines = [
-      !schedule
-        ? "Not saved yet"
-        : schedule.dueAt <= now
-          ? "Due now"
-          : `Due in ${formatInterval(schedule.dueAt - now)}`,
-      ...(schedule
-        ? [schedule.lastReviewAt === null
-            ? "Never reviewed"
-            : `Last reviewed ${formatInterval(now - schedule.lastReviewAt)} ago`]
-        : []),
-    ];
-    for (const line of lines) {
-      const text = document.createElement("span");
-      text.textContent = line;
-      row.append(text);
+    const heading = document.createElement("span");
+    heading.className = "card-info-heading";
+    const name = document.createElement("span");
+    name.className = "card-info-answer";
+    name.textContent = answer ?? "Card";
+    name.title = answer ?? "Card";
+    const badge = document.createElement("span");
+    badge.className = "card-info-state";
+    badge.dataset.state = schedule ? stateName(schedule.state).toLowerCase() : "unsaved";
+    badge.textContent = schedule ? stateName(schedule.state) : "Unsaved";
+    heading.append(name, badge);
+    row.append(heading);
+    const dueText = document.createElement("span");
+    dueText.className = "card-info-due";
+    dueText.textContent = !schedule ? "Not saved yet" : schedule.dueAt <= now
+      ? "Due now" : `Due in ${formatInterval(schedule.dueAt - now)}`;
+    row.append(dueText);
+    if (schedule) {
+      const reviewed = document.createElement("span");
+      reviewed.className = "card-info-reviewed";
+      reviewed.textContent = schedule.lastReviewAt === null ? "Never reviewed"
+        : `Last reviewed ${formatInterval(now - schedule.lastReviewAt)} ago`;
+      row.append(reviewed);
     }
     popup.append(row);
+  }
+  if (onJoin) {
+    const join = document.createElement("button");
+    join.type = "button";
+    join.className = "card-info-join";
+    join.textContent = "Join into one card";
+    join.addEventListener("mousedown", (event) => event.preventDefault());
+    join.addEventListener("click", onJoin);
+    const footer = document.createElement("span");
+    footer.className = "card-info-footer";
+    footer.append(join);
+    popup.append(footer);
   }
   info.append(popup);
   return info;
 }
 
-// Card syntax stays real, editable text: decorations only restyle it. Until
-// the caret enters its block, a faint `::` reads as an arrow and cloze braces
-// take no room; there both show as typed. The hidden text is underlined, and
-// card blocks get a faint margin marker.
+// Card syntax stays real, editable text: decorations only restyle it.
+// A faint `::` reads as an arrow until the caret enters its block. Cloze
+// braces always take no room; their answer text stays highlighted and underlined.
 function blockDecorations(node: Node, pos: number, schedules: Schedules): Decoration[] {
   const syntax = parseBlock(node);
   const start = pos + 1;
@@ -105,9 +122,17 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules): Decora
     const due = entries.some(({ schedule }) => schedule && schedule.dueAt <= schedules.now);
     // Redrawn when what it shows changes.
     const key = JSON.stringify([due, entries.map(({ answer, schedule }) =>
-      [answer, schedule?.dueAt ?? null, schedule?.lastReviewAt ?? null])]);
+      [answer, schedule?.state ?? null, schedule?.dueAt ?? null, schedule?.lastReviewAt ?? null])]);
     decorations.push(
-      Decoration.widget(start, () => cardInfo(entries, due, schedules.now), {
+      Decoration.widget(start, (view, getPos) => cardInfo(entries, due, schedules.now,
+        syntax.clozes.length > 1 && entries.length > 1 ? () => {
+          // Resolve the widget's current position: edits above it can move it.
+          const position = getPos();
+          if (position === undefined) return;
+          const $pos = view.state.doc.resolve(position);
+          const groups = joinedClozeGroups($pos.parent, 0, $pos.parent.content.size);
+          if (groups) view.dispatch(view.state.tr.setNodeAttribute($pos.before(), "clozeGroups", groups));
+        } : null), {
         side: -1,
         ignoreSelection: true,
         stopEvent: () => true,
@@ -138,6 +163,16 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules): Decora
     );
   }
   return decorations;
+}
+
+// Shared by the selected-cloze action and the block's dot menu.
+function joinedClozeGroups(node: Node, from: number, to: number) {
+  const entries = clozeIdsOf(node).filter((entry) => entry.from >= 0 && entry.from < to && entry.to > from);
+  const groups = validatedClozeGroups(node.attrs.clozeGroups);
+  const owners = new Set(entries.map(({ id }) => groups.find((group) => group.includes(id))?.[0] ?? id));
+  if (owners.size < 2) return null;
+  const members = [...new Set(entries.flatMap(({ id }) => groups.find((group) => group.includes(id)) ?? [id]))];
+  return [...groups.filter((group) => !group.some((id) => members.includes(id))), members];
 }
 
 function isCardBlock(node: Node) {
@@ -314,6 +349,18 @@ export const Flashcards = Extension.create({
               };
             },
           },
+          clozeGroups: {
+            default: null,
+            keepOnSplit: false,
+            parseHTML: (element) => {
+              try { return validatedClozeGroups(JSON.parse(element.getAttribute("data-cloze-groups") ?? "null")); }
+              catch { return null; }
+            },
+            renderHTML: (attributes) => {
+              const groups = validatedClozeGroups(attributes.clozeGroups);
+              return groups.length ? { "data-cloze-groups": JSON.stringify(groups) } : {};
+            },
+          },
           // Stable block identity, including outside card syntax.
           cardId: {
             default: null,
@@ -329,6 +376,17 @@ export const Flashcards = Extension.create({
 
   addCommands() {
     return {
+      joinClozes:
+        () =>
+        ({ state, tr, dispatch }) => {
+          const { $from, $to, empty } = state.selection;
+          if (empty || !$from.sameParent($to) || !isCardBlock($from.parent)) return false;
+          const node = $from.parent;
+          const groups = joinedClozeGroups(node, $from.parentOffset, $to.parentOffset);
+          if (!groups) return false;
+          if (dispatch) tr.setNodeAttribute($from.before(), "clozeGroups", groups);
+          return true;
+        },
       makeCloze:
         () =>
         ({ state, tr, dispatch }) => {
@@ -401,6 +459,14 @@ export const Flashcards = Extension.create({
     };
   },
 
+  addKeyboardShortcuts() {
+    return {
+      "Mod-Shift-c": () => clozeAt(this.editor.state)
+        ? this.editor.commands.removeCloze()
+        : this.editor.commands.makeCloze(),
+    };
+  },
+
   addProseMirrorPlugins() {
     return [
       // Ids appear with the first complete card in a block, and copies made
@@ -467,6 +533,9 @@ export const Flashcards = Extension.create({
             if (update) return { set: buildDecorations(tr.doc, update), schedules: update };
             if (!tr.docChanged) return value;
             const { schedules } = value;
+            // Attribute-only edits (joining clozes, assigning ids, undo) have
+            // no mapped text ranges, but change the cards and their info dot.
+            if (!changedRanges(tr.mapping.maps).length) return { set: buildDecorations(tr.doc, schedules), schedules };
             let next = value.set.map(tr.mapping, tr.doc);
             const seen = new Set<number>();
             for (const { from, to } of changedRanges(tr.mapping.maps)) {
@@ -484,6 +553,37 @@ export const Flashcards = Extension.create({
           },
         },
         props: {
+          handleKeyDown(view, event) {
+            if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return false;
+            const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+            if (!direction) return false;
+            const { selection } = view.state;
+            if (!(selection instanceof TextSelection) || (!selection.empty && !event.shiftKey)) return false;
+            const { $head } = selection;
+            if (!isCardBlock($head.parent)) return false;
+            const start = $head.start();
+            const markers = parseBlock($head.parent).clozes.flatMap(({ open, close }) => [open, close]);
+            let offset = $head.parentOffset;
+            // These positions draw at the same place as the adjacent visible
+            // text. Cross the marker and then move by one visible character.
+            for (const { from, to } of markers) {
+              if (direction > 0 && offset >= from && offset < to) offset = to;
+              if (direction < 0 && offset > from && offset <= to) offset = from;
+            }
+            let target = offset + direction;
+            for (const { from, to } of markers) {
+              if (target > from && target < to) target = direction > 0 ? to : from;
+            }
+            const atMarkerBoundary = markers.some(({ from, to }) => target === from || target === to);
+            if (target === $head.parentOffset + direction && !atMarkerBoundary) return false;
+            target = Math.max(0, Math.min($head.parent.content.size, target)) + start;
+            // Avoid native cursor movement through zero-size text, which can
+            // scroll the entire page to the hidden marker's caret rectangle.
+            view.dispatch(view.state.tr.setSelection(TextSelection.create(
+              view.state.doc, event.shiftKey ? selection.anchor : target, target,
+            )));
+            return true;
+          },
           decorations(state) {
             const set = decorationsKey.getState(state)?.set;
             if (!set) return null;

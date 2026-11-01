@@ -14,7 +14,7 @@ const schema = new Schema({
   nodes: {
     doc: { content: "block+" },
     paragraph: { group: "block", content: "inline*", attrs: { cardId: { default: null }, clozeIds: { default: null } } },
-    heading: { group: "block", content: "inline*", attrs: { cardId: { default: null }, clozeIds: { default: null } } },
+    heading: { group: "block", content: "inline*", attrs: { level: { default: 1 }, cardId: { default: null }, clozeIds: { default: null } } },
     codeBlock: { group: "block", content: "text*", code: true, marks: "" },
     blockquote: { group: "block", content: "block+" },
     inlineMath: { group: "inline", inline: true, content: "text*" },
@@ -116,6 +116,31 @@ test("marks are kept in card content", () => {
     front: [{ type: "text", text: "Q", marks: ["bold"] }],
     back: [{ type: "text", text: "A", marks: ["bold"] }],
   });
+});
+
+test("each card records the headings it sits under", () => {
+  const h = (level, text, cardId = null) => heading.create({ level, cardId }, inline(text));
+  const document = doc.create(null, [
+    p("Top :: card", "t"),
+    h(1, "Logic"),
+    h(2, "Predicate logic"),
+    blockquote.create(null, p("Nested :: card", "n")),
+    h(2, "Term :: definition", "hc"),
+    p("Under :: heading card", "u"),
+    h(1, "Sets"),
+    p("Next :: chapter", "s"),
+  ]);
+  assert.deepEqual(
+    Object.fromEntries(extractCards(document).map(({ id, section }) => [id, section])),
+    {
+      t: [],
+      n: ["Logic", "Predicate logic"],
+      // A heading card belongs to its parents, and titles the blocks below it.
+      hc: ["Logic"],
+      u: ["Logic", "Term :: definition"],
+      s: ["Sets"],
+    },
+  );
 });
 
 test("extraction needs a card id, skips code blocks and numbers clozes", () => {

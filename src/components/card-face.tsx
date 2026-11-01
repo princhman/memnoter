@@ -64,21 +64,23 @@ export function CardFace({
   back: Segment[];
   revealed: boolean;
 }) {
-  const text = "card-face whitespace-pre-wrap text-xl leading-relaxed";
+  const text = "card-face min-w-0 whitespace-pre-wrap break-words text-xl leading-relaxed sm:text-2xl";
   switch (kind) {
     case "basic":
       return (
-        <div className="grid gap-6">
-          <div className={text}>
-            <Segments segments={front} />
+        <div className="grid gap-7">
+          <div className="grid gap-3">
+            <div className={text}>
+              <Segments segments={front} />
+            </div>
           </div>
           {revealed && (
-            <>
-              <hr className="border-border" />
+            <div className="grid gap-7">
+              <hr className="mx-auto w-1/3 border-border/70" />
               <div className={text}>
                 <Segments segments={back} />
               </div>
-            </>
+            </div>
           )}
         </div>
       );

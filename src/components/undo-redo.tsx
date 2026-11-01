@@ -1,6 +1,6 @@
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { Button } from "./ui/button";
-import { Pencil, Redo2, Undo2 } from "lucide-react";
+import { LocateFixed, Pencil, Redo2, Undo2 } from "lucide-react";
 import { useEditorState } from "@tiptap/react";
 import { useSelector } from "@tanstack/react-store";
 import { IconTooltip } from "./icon-tooltip";
@@ -59,6 +59,17 @@ export function UndoRedo() {
           onClick={() => review.edit?.()}
         >
           <Pencil />
+        </Button>
+      </IconTooltip>
+      <IconTooltip label="Go to card in note" side="bottom">
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="Go to card in note"
+          disabled={!review.edit}
+          onClick={() => review.edit?.()}
+        >
+          <LocateFixed />
         </Button>
       </IconTooltip>
     </HistoryButtons>

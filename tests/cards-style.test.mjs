@@ -14,15 +14,14 @@ const style = (selector) => {
   return declarations;
 };
 
-test("cloze braces take no room until the caret's block shows them", () => {
+test("cloze braces stay hidden while editing their block", () => {
   const braces = style(".tiptap .cloze-brace");
   assert.equal(Number.parseFloat(braces.get("font-size")), 0);
   assert.ok(!["none", "hidden"].includes(braces.get("display")));
 
-  // Where the caret is, they are real text again and can be edited.
+  // The active-block rule must not make the braces visible again.
   const active = style(".tiptap .card-block-active .cloze-brace");
-  assert.equal(active.get("font-size"), "inherit");
-  assert.notEqual(active.get("color"), "transparent");
+  assert.equal(Number.parseFloat(active.get("font-size") ?? braces.get("font-size")), 0);
 });
 
 test("the hidden answer is tinted and clearly underlined", () => {

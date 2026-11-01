@@ -47,6 +47,8 @@ export type StoredCard = FsrsFields & {
   id: string;
   moduleId: string;
   moduleName: string;
+  // Titles of the headings the card sits under, outermost first.
+  section: string[];
   kind: CardKind;
   front: Segment[];
   back: Segment[];
