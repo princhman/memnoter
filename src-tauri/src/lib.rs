@@ -1743,6 +1743,7 @@ pub fn run() {
             cards::due_counts,
             cards::review_card,
             cards::undo_review,
+            cards::card_schedules,
             index_note,
             unindexed_modules,
             search_notes,

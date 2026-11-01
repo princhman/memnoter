@@ -235,6 +235,26 @@ export function clozeIdsOf(node: Node, syntax = parseBlock(node)): ClozeId[] {
   }));
 }
 
+// The card each of a block's parsed cards is stored as, with a cloze's answer;
+// null where a cloze's metadata lags a text edit until the repair transaction.
+function blockCardIds(node: Node, blockId: string, syntax: BlockSyntax) {
+  const clozeIds = clozeIdsOf(node, syntax);
+  return syntax.cards.map((card, index) => {
+    if (card.kind !== "cloze") return { id: blockId, answer: null };
+    const inner = syntax.clozes[index]?.inner;
+    const entry = inner && clozeIds.find((entry) =>
+      entry.from >= 0 && entry.from === inner.from && entry.to === inner.to);
+    return entry ? { id: `${blockId}:${entry.id}`, answer: entry.answer } : null;
+  });
+}
+
+// The cards stored for a block, as `extractCards` names them.
+export function cardIdsOf(node: Node): { id: string; answer: string | null }[] {
+  const blockId = node.attrs.cardId;
+  if (!isCardBlock(node) || typeof blockId !== "string") return [];
+  return blockCardIds(node, blockId, parseBlock(node)).filter((entry) => entry !== null);
+}
+
 export function extractCards(doc: Node): ExtractedCard[] {
   const cards: ExtractedCard[] = [];
   const seen = new Set<string>();
@@ -257,14 +277,10 @@ export function extractCards(doc: Node): ExtractedCard[] {
     if (!isCardBlock(node) || typeof blockId !== "string" || seen.has(blockId)) return true;
     seen.add(blockId);
     const syntax = parseBlock(node);
-    const clozeIds = clozeIdsOf(node, syntax);
+    const ids = blockCardIds(node, blockId, syntax);
     syntax.cards.forEach((card, index) => {
-      const inner = syntax.clozes[index]?.inner;
-      const clozeId = inner && clozeIds.find((entry) =>
-        entry.from >= 0 && entry.from === inner.from && entry.to === inner.to)?.id;
-      // Initialized metadata may lag a text edit until the repair transaction.
-      if (card.kind === "cloze" && clozeId === undefined) return;
-      cards.push({ ...card, blockId, id: card.kind === "cloze" ? `${blockId}:${clozeId}` : blockId });
+      const entry = ids[index];
+      if (entry) cards.push({ ...card, blockId, id: entry.id });
     });
     return true;
   });

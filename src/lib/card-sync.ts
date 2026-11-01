@@ -6,6 +6,7 @@ import type { Editor } from "@tiptap/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { blockIdOf, extractCards } from "@/lib/cards";
+import type { CardSchedule } from "@/lib/flashcards";
 
 const SYNC_DEBOUNCE_MS = 800;
 const DUE_REFRESH_MS = 60_000;
@@ -148,6 +149,25 @@ export function useCardSync(editor: Editor | null, moduleId: string, ready: bool
 
 export function isModuleOpen(moduleId: string) {
   return openModules.has(moduleId);
+}
+
+// When the module's cards are due and were last reviewed, shown beside each
+// card in the editor. Under the due counts' key, so every change that
+// refreshes the counts (syncs, grades, deletions) refreshes these too.
+export function useCardSchedules(editor: Editor | null, moduleId: string, ready: boolean) {
+  const { data, dataUpdatedAt } = useQuery({
+    queryKey: [...dueCountsKey, "schedules", moduleId],
+    queryFn: () => invoke<CardSchedule[]>("card_schedules", { moduleId }),
+    enabled: ready,
+    // Cards fall due as time passes.
+    refetchInterval: DUE_REFRESH_MS,
+  });
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !data) return;
+    // As of the fetch, which repeats every minute.
+    editor.commands.setCardSchedules(data, dataUpdatedAt);
+  }, [editor, data, dataUpdatedAt]);
 }
 
 // Due cards, split like Anki: never reviewed, in (re)learning steps, and

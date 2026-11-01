@@ -1116,6 +1116,83 @@ body {
     pointer-events: none;
 }
 
+/* Card info sits where headings keep their fold toggle. It shows on hover,
+   in the caret's block, and always while one of the block's cards is due. */
+.tiptap .card-info {
+    position: absolute;
+    top: 0;
+    right: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1lh;
+    margin-right: 0.15rem;
+    color: var(--muted-foreground);
+    font-size: 1rem;
+    font-weight: 400;
+    cursor: default;
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+    user-select: none;
+}
+
+/* A heading's fold toggle keeps its place; the info goes before it. */
+.tiptap :is(h1, h2, h3, h4, h5, h6) > .card-info {
+    right: calc(100% + 1.4rem);
+}
+
+.tiptap .card-info svg {
+    width: 0.95rem;
+    height: 0.95rem;
+}
+
+.tiptap .card-block:hover > .card-info,
+.tiptap .card-block-active > .card-info {
+    opacity: 1;
+}
+
+.tiptap .card-info[data-due] {
+    color: var(--foreground);
+    opacity: 1;
+}
+
+.tiptap .card-info-popup {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    z-index: 50;
+    display: none;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: max-content;
+    max-width: 16rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    white-space: normal;
+    /* Closes once the pointer leaves the icon, never covering the next one. */
+    pointer-events: none;
+}
+
+.tiptap .card-info:hover .card-info-popup {
+    display: flex;
+}
+
+.tiptap .card-info-row {
+    display: flex;
+    flex-direction: column;
+}
+
+.tiptap .card-info-answer {
+    font-weight: 500;
+}
+
 /* `::` reads as a subtle arrow. The characters stay in place, drawn
    transparent over an arrow image, and show as typed in the caret's block. */
 .tiptap .card-sep {

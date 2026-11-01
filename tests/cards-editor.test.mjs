@@ -5,7 +5,7 @@ import { closeHistory } from "@tiptap/pm/history";
 import { joinBackward } from "@tiptap/pm/commands";
 import StarterKit from "@tiptap/starter-kit";
 import { Flashcards } from "../src/lib/flashcards.ts";
-import { blockIdOf, extractCards } from "../src/lib/cards.ts";
+import { blockIdOf, cardIdsOf, extractCards } from "../src/lib/cards.ts";
 
 // Exercise real Tiptap commands and appendTransaction without mounting a DOM.
 function editorFor(content) {
@@ -78,6 +78,18 @@ test("Remove card unwraps the cloze around the selection instead of nesting brac
     assert.equal(editor.commands.removeCloze(), false);
     editor.commands.undo();
     assert.equal(editor.state.doc.textContent, "A {{Paris}} B");
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("card info names the same cards that are synced", () => {
+  const editor = editorFor([paragraph("Q :: A", "basic"), paragraph("{{one}} and {{two}}", "cloze")]);
+  try {
+    const shown = [];
+    editor.state.doc.forEach((node) => shown.push(...cardIdsOf(node).map(({ id }) => id)));
+    assert.deepEqual(shown, extractCards(editor.state.doc).map(({ id }) => id));
+    assert.deepEqual(cardIdsOf(editor.state.doc.child(1)).map(({ answer }) => answer), ["one", "two"]);
   } finally {
     editor.destroy();
   }

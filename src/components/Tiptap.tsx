@@ -26,7 +26,7 @@ import {
   type FileType,
   type GetContentResponse,
 } from "@/lib/content";
-import { useCardSync } from "@/lib/card-sync";
+import { useCardSchedules, useCardSync } from "@/lib/card-sync";
 import { useCardReveal } from "@/lib/card-reveal";
 import {
   TableOfContents,
@@ -347,6 +347,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   useSearchIndexing(editor, moduleId, isSuccess);
 
   useCardSync(editor, moduleId, isSuccess);
+  useCardSchedules(editor, moduleId, isSuccess);
   useCardReveal(editor, moduleId, isSuccess);
 
   // pass editor into the context
