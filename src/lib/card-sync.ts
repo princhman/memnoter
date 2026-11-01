@@ -170,33 +170,45 @@ export function useCardSchedules(editor: Editor | null, moduleId: string, ready:
   }, [editor, data, dataUpdatedAt]);
 }
 
-// Due cards, split like Anki: never reviewed, in (re)learning steps, and
-// graduated cards due again.
-export type CardCounts = { new: number; learning: number; review: number };
+// Cards due now, split like Anki: never reviewed, in (re)learning steps, and
+// graduated cards due again. Unlike Anki, a card due later today is not due
+// yet; it is counted apart.
+export type CardCounts = { new: number; learning: number; review: number; laterToday?: number };
 
-const NO_CARDS: CardCounts = { new: 0, learning: 0, review: 0 };
+const NO_CARDS: CardCounts = { new: 0, learning: 0, review: 0, laterToday: 0 };
+
+// The next local midnight.
+function endOfDay(now: number) {
+  const end = new Date(now);
+  end.setHours(24, 0, 0, 0);
+  return end.getTime();
+}
 
 export function useDueCounts() {
   const { data } = useQuery({
     queryKey: dueCountsKey,
-    queryFn: () =>
-      invoke<({ moduleId: string; count: number } & CardCounts)[]>("due_counts", {
-        now: Date.now(),
-      }),
+    queryFn: () => {
+      const now = Date.now();
+      return invoke<({ moduleId: string; count: number } & Required<CardCounts>)[]>(
+        "due_counts",
+        { now, dayEnd: endOfDay(now) },
+      );
+    },
     // Cards fall due as time passes, not only after edits.
     refetchInterval: DUE_REFRESH_MS,
   });
   const byModule = new Map<string, CardCounts>(
-    data?.map(({ moduleId, new: fresh, learning, review }) => [
+    data?.map(({ moduleId, new: fresh, learning, review, laterToday }) => [
       moduleId,
-      { new: fresh, learning, review },
+      { new: fresh, learning, review, laterToday },
     ]),
   );
-  const total = { ...NO_CARDS };
+  const total = { ...NO_CARDS, laterToday: 0 };
   for (const counts of byModule.values()) {
     total.new += counts.new;
     total.learning += counts.learning;
     total.review += counts.review;
+    total.laterToday += counts.laterToday ?? 0;
   }
   return {
     total,

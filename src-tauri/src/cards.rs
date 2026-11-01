@@ -138,6 +138,8 @@ pub(crate) struct DueCount {
     new: i64,
     learning: i64,
     review: i64,
+    // Not due yet, but due before the day ends.
+    later_today: i64,
 }
 
 // When a live card is next due and when it was last reviewed, for the info
@@ -315,24 +317,27 @@ fn query_due_cards(
     rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }
 
-fn query_due_counts(conn: &Connection, now: i64) -> CommandResult<Vec<DueCount>> {
+fn query_due_counts(conn: &Connection, now: i64, day_end: i64) -> CommandResult<Vec<DueCount>> {
     let mut stmt = conn
         .prepare(
             // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
-            "select module_id, count(*), sum(state = 0), sum(state in (1, 3)), sum(state = 2)
+            "select module_id, sum(due_at <= ?1), sum(due_at <= ?1 and state = 0),
+                 sum(due_at <= ?1 and state in (1, 3)), sum(due_at <= ?1 and state = 2),
+                 sum(due_at > ?1)
              from cards
-             where deleted_at is null and due_at <= ?1
+             where deleted_at is null and due_at <= max(?1, ?2)
              group by module_id order by module_id",
         )
         .map_err(db_err)?;
     let rows = stmt
-        .query_map([now], |row| {
+        .query_map([now, day_end], |row| {
             Ok(DueCount {
                 module_id: row.get(0)?,
                 count: row.get(1)?,
                 new: row.get(2)?,
                 learning: row.get(3)?,
                 review: row.get(4)?,
+                later_today: row.get(5)?,
             })
         })
         .map_err(db_err)?;
@@ -508,9 +513,13 @@ pub(crate) fn card_schedules(
 }
 
 #[tauri::command(async)]
-pub(crate) fn due_counts(db: tauri::State<'_, Db>, now: i64) -> CommandResult<Vec<DueCount>> {
+pub(crate) fn due_counts(
+    db: tauri::State<'_, Db>,
+    now: i64,
+    day_end: i64,
+) -> CommandResult<Vec<DueCount>> {
     let conn = db.lock()?;
-    query_due_counts(&conn, now)
+    query_due_counts(&conn, now, day_end)
 }
 
 #[tauri::command(async)]
@@ -747,7 +756,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            query_due_counts(&f.db.conn.lock().unwrap(), 20).unwrap(),
+            query_due_counts(&f.db.conn.lock().unwrap(), 20, 20).unwrap(),
             vec![
                 DueCount {
                     module_id: "a".into(),
@@ -755,6 +764,7 @@ mod tests {
                     new: 1,
                     learning: 0,
                     review: 1,
+                    later_today: 0,
                 },
                 DueCount {
                     module_id: "b".into(),
@@ -762,9 +772,23 @@ mod tests {
                     new: 1,
                     learning: 0,
                     review: 0,
+                    later_today: 0,
                 },
             ]
         );
+        // Before card 2 is due it counts only as later today, until the day ends.
+        assert_eq!(
+            query_due_counts(&f.db.conn.lock().unwrap(), 12, 15).unwrap()[0],
+            DueCount {
+                module_id: "a".into(),
+                count: 1,
+                new: 1,
+                learning: 0,
+                review: 0,
+                later_today: 1,
+            }
+        );
+        assert_eq!(query_due_counts(&f.db.conn.lock().unwrap(), 12, 14).unwrap()[0].later_today, 0);
     }
 
     #[test]
