@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "lint": "node scripts/lint-style.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

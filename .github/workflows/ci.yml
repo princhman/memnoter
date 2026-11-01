@@ -33,6 +33,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
+      - run: pnpm lint
 
       # tests/math-caret.test.mjs drives the editor in WebKit.
       - run: pnpm exec playwright install webkit

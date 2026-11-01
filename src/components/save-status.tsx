@@ -104,7 +104,7 @@ const SaveStatus = () => {
         <div
           role="status"
           title={lastError ?? undefined}
-          className="fixed right-4 bottom-4 z-50 flex items-center gap-2 rounded-lg border bg-background py-1 pr-1 pl-2.5 text-sm shadow-sm"
+          className="fixed right-4 bottom-4 z-50 flex items-center gap-2 rounded-lg bg-background py-1 pr-1 pl-2.5 text-sm shadow-sm"
         >
           <AlertCircle className="size-4 text-destructive" />
           <span>Not saved</span>

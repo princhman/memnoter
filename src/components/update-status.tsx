@@ -29,7 +29,7 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
     case "downloading":
       icon = <Download className="animate-pulse" />;
       label = `Downloading v${status.version}${
-        status.progress !== null ? ` · ${Math.round(status.progress * 100)}%` : "…"
+        status.progress !== null ? ` (${Math.round(status.progress * 100)}%)` : "…"
       }`;
       onClick = undefined;
       break;
@@ -40,11 +40,11 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
       break;
     case "up-to-date":
       icon = <Check />;
-      label = "Up to date · Check again";
+      label = "Up to date. Check again";
       break;
     case "error":
       icon = <AlertCircle className="text-destructive" />;
-      label = `Update failed · Try again (${status.message})`;
+      label = `Update failed. Try again (${status.message})`;
       break;
     default:
       icon = <RefreshCw />;
