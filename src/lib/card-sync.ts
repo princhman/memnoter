@@ -47,11 +47,12 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
   let lastWrite = queue;
 
   const snapshot = () =>
-    extractCards(editor.state.doc).map(({ id, kind, front, back }) => ({
+    extractCards(editor.state.doc).map(({ id, kind, front, back, section }) => ({
       id,
       kind,
       front,
       back,
+      section,
     }));
 
   const sync = (): Promise<void> => {

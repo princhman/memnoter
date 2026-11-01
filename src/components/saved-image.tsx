@@ -562,9 +562,9 @@ const IMAGE_ALIGNMENTS = [
 ] as const;
 
 const IMAGE_SIZES = [
-  [0.25, "Small · 25%"],
-  [0.5, "Medium · 50%"],
-  [0.75, "Large · 75%"],
+  [0.25, "Small (25%)"],
+  [0.5, "Medium (50%)"],
+  [0.75, "Large (75%)"],
   [1, "Full width"],
 ] as const;
 

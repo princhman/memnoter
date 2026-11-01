@@ -6,7 +6,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardFace } from "@/components/card-face";
-import { CardCounts } from "@/components/card-counts";
 import { dueCountsKey, flushCardSyncs } from "@/lib/card-sync";
 import { backfillCards } from "@/lib/card-backfill";
 import {
@@ -72,12 +71,25 @@ function isTypingInField() {
   );
 }
 
+// A soft tint of each grade's colour, deepening on hover.
 const GRADE_STYLES: Record<Grade, string> = {
-  1: "text-destructive",
-  2: "text-amber-600 dark:text-amber-400",
-  3: "text-emerald-600 dark:text-emerald-400",
-  4: "text-sky-600 dark:text-sky-400",
+  1: "bg-red-500/10 text-red-600 hover:bg-red-500/20 dark:text-red-400",
+  2: "bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400",
+  3: "bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400",
+  4: "bg-sky-500/10 text-sky-700 hover:bg-sky-500/20 dark:text-sky-400",
 };
+
+const REVIEW_BUTTON =
+  "group relative flex h-12 items-center justify-center gap-1.5 rounded-xl px-2 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
+
+// The key that presses a button, shown inside its top-right corner on hover or focus.
+function KeyHint({ children }: { children: string }) {
+  return (
+    <kbd className="pointer-events-none absolute top-1 right-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded bg-foreground/5 px-1 font-sans text-[0.55rem] leading-none text-current opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+      {children}
+    </kbd>
+  );
+}
 
 function Review() {
   const { module: moduleId } = Route.useSearch();
@@ -96,12 +108,15 @@ function Review() {
   const [redoSteps, setRedoSteps] = useState<GradeStep[]>([]);
   const pending = useRef(false);
   const shownAt = useRef(Date.now());
+  const displayedCard = useRef<StoredCard | undefined>(undefined);
+  const scopeLoading = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    setQueue(null);
+    // Keep the mounted card while changing scope so shared cards do not flash.
+    const previousCard = displayedCard.current;
+    scopeLoading.current = true;
     setError(null);
-    setRevealed(false);
     setReviewed(0);
     setUndoSteps([]);
     setRedoSteps([]);
@@ -119,17 +134,26 @@ function Review() {
     ])
       .then(([scheduler, [unindexed, cards]]) => {
         if (cancelled) return;
+        const nextCard = nextInQueue(cards, Date.now());
+        if (nextCard?.id !== previousCard?.id || nextCard?.reps !== previousCard?.reps) {
+          setRevealed(false);
+          setNow(Date.now());
+        }
         setScheduler(() => scheduler);
         setQueue(cards);
         setUnindexed(unindexed.filter((note) => !moduleId || note.id === moduleId));
       })
-      .catch((error) => !cancelled && setError(String(error)));
+      .catch((error) => !cancelled && setError(String(error)))
+      .finally(() => { if (!cancelled) scopeLoading.current = false; });
     return () => {
       cancelled = true;
     };
   }, [moduleId]);
 
   const card = queue ? nextInQueue(queue, now) : undefined;
+  // The module is in the breadcrumb unless every module is under review.
+  const source = card ? [...(moduleId ? [] : [card.moduleName || "Untitled module"]), ...card.section] : [];
+  displayedCard.current = card;
 
   useEffect(() => {
     shownAt.current = Date.now();
@@ -148,7 +172,7 @@ function Review() {
 
   const rate = useCallback(
     async (rating: Grade) => {
-      if (!scheduler || !card || !revealed || pending.current) return;
+      if (!scheduler || !card || !revealed || pending.current || scopeLoading.current) return;
       pending.current = true;
       const reviewTime = Date.now();
       try {
@@ -193,7 +217,7 @@ function Review() {
   // to the queue, to be graded again.
   const undo = useCallback(async () => {
     const step = undoSteps[undoSteps.length - 1];
-    if (!step || pending.current) return;
+    if (!step || pending.current || scopeLoading.current) return;
     pending.current = true;
     try {
       await writeCards("undo_review", {
@@ -221,7 +245,7 @@ function Review() {
   // Grades the card again as it was graded before the undo.
   const redo = useCallback(async () => {
     const step = redoSteps[redoSteps.length - 1];
-    if (!step || pending.current) return;
+    if (!step || pending.current || scopeLoading.current) return;
     pending.current = true;
     try {
       await writeCards("review_card", {
@@ -250,6 +274,7 @@ function Review() {
   actions.current = { undo, redo };
   useEffect(() => {
     reviewActionsStore.setState(() => ({
+      counts: queue ? countByState(queue) : null,
       canUndo: undoSteps.length > 0,
       canRedo: redoSteps.length > 0,
       undo: () => void undo(),
@@ -261,7 +286,7 @@ function Review() {
           }
         : null,
     }));
-  }, [undoSteps.length, redoSteps.length, undo, redo, card, router]);
+  }, [undoSteps.length, redoSteps.length, undo, redo, card, router, queue]);
   useEffect(() => () => reviewActionsStore.setState(() => null), []);
 
   // The app menu's Undo and Redo, and ⌘Z and ⌘⇧Z, act on grades here.
@@ -308,19 +333,12 @@ function Review() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [reveal, rate, revealed]);
 
-  const remaining = queue?.length ?? 0;
-  const scope = moduleId ? (card?.moduleName ?? queue?.[0]?.moduleName) : "All modules";
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col">
-      <header className="flex items-center gap-3 text-sm text-muted-foreground">
-        {scope && <span className="truncate">{scope}</span>}
-        {queue && remaining > 0 && <CardCounts counts={countByState(queue)} />}
-      </header>
-
-      <div className="flex flex-1 flex-col justify-center gap-8 py-8">
+    <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-5 pb-2 pt-2 sm:pt-8">
+      <div className="flex flex-col gap-5">
         {unindexed.length > 0 && (
-          <section className="rounded-lg border p-4 text-sm" aria-label="Notes awaiting card indexing">
+          <section className="rounded-lg bg-muted/50 p-4 text-sm" aria-label="Notes awaiting card indexing">
             <p>Review is incomplete: {unindexed.length} {unindexed.length === 1 ? "note" : "notes"} could not be checked for cards. Open each note below to include its cards, then return to review.</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {unindexed.map((note) => (
@@ -351,11 +369,10 @@ function Review() {
           </div>
         )}
         {card && (
-          <>
-            {!moduleId && (
-              <p className="text-center text-xs tracking-wide text-muted-foreground uppercase">
-                {card.moduleName}
-              </p>
+          <section className="min-w-0 py-7 sm:py-8" aria-label="Review card">
+            {/* Where the card is written. */}
+            {source.length > 0 && (
+              <p className="mb-8 truncate text-xs text-muted-foreground">{source.join(" / ")}</p>
             )}
             <CardFace
               key={card.id}
@@ -364,31 +381,37 @@ function Review() {
               back={card.back}
               revealed={revealed}
             />
-          </>
+          </section>
         )}
       </div>
 
       {card && (
-        <div className="flex w-full max-w-2xl justify-center gap-2">
+        <div className="mt-auto grid w-full shrink-0 grid-cols-2 gap-2 pt-6 pb-2 sm:grid-cols-4">
           {!revealed ? (
-            <Button size="lg" className="min-w-48" onClick={reveal}>
+            <button
+              type="button"
+              className={cn(REVIEW_BUTTON, "col-span-full bg-foreground text-background hover:bg-foreground/90")}
+              onClick={reveal}
+            >
               Show answer
-              <kbd className="ml-1 text-xs opacity-70">Space</kbd>
-            </Button>
+              <KeyHint>Space</KeyHint>
+            </button>
           ) : (
             GRADES.map(({ rating, label, key }) => (
-              <Button
+              <button
                 key={rating}
-                variant="outline"
-                className="h-auto min-w-24 flex-col gap-0.5 py-2"
+                type="button"
+                className={cn(REVIEW_BUTTON, GRADE_STYLES[rating])}
                 onClick={() => void rate(rating)}
               >
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {preview ? formatInterval(preview[rating] - now) : ""}
-                </span>
-                <span className={cn("font-medium", GRADE_STYLES[rating])}>{label}</span>
-                <kbd className="text-[0.65rem] text-muted-foreground">{key}</kbd>
-              </Button>
+                {label}
+                {preview && (
+                  <span className="font-normal tabular-nums opacity-70">
+                    ({formatInterval(preview[rating] - now)})
+                  </span>
+                )}
+                <KeyHint>{key}</KeyHint>
+              </button>
             ))
           )}
         </div>

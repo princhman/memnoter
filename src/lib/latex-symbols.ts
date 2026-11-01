@@ -624,7 +624,7 @@ export const LOOKALIKES: [label: string, note: string][][] = [
     ["\\cdot", "Centered dot. Scalar or dot product."],
     ["\\times", "Cross. Cross product, dimensions, plain multiplication."],
     ["\\ast", "Centered asterisk. Convolution."],
-    ["\\bullet", "Large filled dot. A placeholder argument, f(•)."],
+    ["\\bullet", "Large filled dot. A placeholder argument, f(•)."], // lint-allow: middle-dot
     ["\\circ", "Small ring. Composition."],
   ],
   [

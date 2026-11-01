@@ -355,3 +355,92 @@ test("copied HTML excludes retired answers and preserves the initialized empty m
     editor.destroy();
   }
 });
+
+test("arrow keys cross hidden cloze markers in one step without requesting page scrolling", () => {
+  const editor = editorFor([paragraph("A {{word}} Z")]);
+  const handlers = Flashcards.config.addProseMirrorPlugins().filter((plugin) => plugin.props.handleKeyDown);
+  const arrow = (key, shiftKey = false) => handlers.some((plugin) =>
+    plugin.props.handleKeyDown.call(plugin, editor.view, {
+      key, shiftKey, altKey: false, ctrlKey: false, metaKey: false, isComposing: false,
+    }));
+  let scrolled = false;
+  editor.on("transaction", ({ transaction }) => { scrolled ||= transaction.scrolledIntoView; });
+  try {
+    // Positions are document offsets: A {{word}} Z.
+    for (const [from, key, to] of [
+      [3, "ArrowRight", 6], [5, "ArrowLeft", 2],
+      [9, "ArrowRight", 12], [11, "ArrowLeft", 8],
+      [4, "ArrowRight", 6], [10, "ArrowLeft", 8],
+      // Landing on a boundary must also bypass native caret scrolling.
+      [2, "ArrowRight", 3], [8, "ArrowRight", 9],
+      [6, "ArrowLeft", 5], [12, "ArrowLeft", 11],
+    ]) {
+      editor.commands.setTextSelection(from);
+      assert.equal(arrow(key), true);
+      assert.equal(editor.state.selection.head, to);
+    }
+    editor.commands.setTextSelection(3);
+    assert.equal(arrow("ArrowRight", true), true);
+    assert.equal(editor.state.selection.anchor, 3);
+    assert.equal(editor.state.selection.head, 6);
+    assert.equal(editor.state.doc.textContent, "A {{word}} Z");
+    assert.equal(scrolled, false);
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("joining selected clozes hides them together, preserves the first identity, and undoes", () => {
+  const editor = editorFor([paragraph("A {{one}} with {{two}} and {{three}}", "joined")]);
+  let reloaded;
+  try {
+    const original = extractCards(editor.state.doc);
+    editor.commands.setTextSelection({ from: 5, to: 20 });
+    assert.equal(editor.can().joinClozes(), true);
+    assert.equal(editor.commands.joinClozes(), true);
+    const joined = extractCards(editor.state.doc);
+    assert.equal(joined.length, 2);
+    assert.equal(joined[0].id, original[0].id);
+    assert.equal(joined[1].id, original[2].id);
+    assert.deepEqual(joined[0].front, [
+      { type: "text", text: "A " }, { type: "blank" },
+      { type: "text", text: " with " }, { type: "blank" },
+      { type: "text", text: " and three" },
+    ]);
+    assert.deepEqual(joined[0].back.filter((part) => part.type === "cloze").map((part) => part.children), [
+      [{ type: "text", text: "one" }], [{ type: "text", text: "two" }],
+    ]);
+    assert.equal(editor.state.doc.textContent, "A {{one}} with {{two}} and {{three}}");
+    assert.deepEqual(cardIdsOf(editor.state.doc.firstChild).map(({ id }) => id), joined.map(({ id }) => id));
+    assert.equal(editor.can().joinClozes(), false);
+    reloaded = editorFor(editor.getJSON().content);
+    reloaded.commands.insertContentAt(1, { type: "text", text: "Prefix " });
+    assert.deepEqual(extractCards(reloaded.state.doc).map(({ id }) => id), joined.map(({ id }) => id));
+    assert.equal(extractCards(reloaded.state.doc)[0].front.filter((part) => part.type === "blank").length, 2);
+    editor.commands.undo();
+    assert.deepEqual(extractCards(editor.state.doc), original);
+    editor.commands.redo();
+    assert.deepEqual(extractCards(editor.state.doc), joined);
+  } finally {
+    editor.destroy();
+    reloaded?.destroy();
+  }
+});
+
+test("joining an existing group with another cloze produces one card", () => {
+  const editor = editorFor([paragraph("{{one}} {{two}} {{three}}", "group")]);
+  try {
+    editor.commands.setTextSelection({ from: 3, to: 13 });
+    editor.commands.joinClozes();
+    editor.commands.setTextSelection({ from: 11, to: 22 });
+    assert.equal(editor.commands.joinClozes(), true);
+    const cards = extractCards(editor.state.doc);
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].id, "group:c1");
+    assert.equal(cards[0].front.filter((part) => part.type === "blank").length, 3);
+    editor.commands.setTextSelection(4);
+    assert.equal(editor.can().joinClozes(), false);
+  } finally {
+    editor.destroy();
+  }
+});

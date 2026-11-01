@@ -5,7 +5,7 @@ import { stopScrollRestore } from "@/lib/view-persistence";
 
 // A request to show a card's text in its note, from review's Edit action. It
 // waits until that note is open and has restored its view, then puts the
-// caret at the end of the card's block. Not persisted, like find requests.
+// caret at the start of the card's block. Not persisted, like find requests.
 export type CardRevealRequest = { moduleId: string; blockId: string };
 
 const cardRevealStore = createStore<CardRevealRequest | null>(null);
@@ -19,20 +19,35 @@ export function useCardReveal(editor: Editor | null, moduleId: string, ready: bo
 
   useEffect(() => {
     if (!editor || editor.isDestroyed || !ready || request?.moduleId !== moduleId) return;
-    cardRevealStore.setState(() => null);
-
-    let end: number | null = null;
+    let start: number | null = null;
     editor.state.doc.descendants((node, pos) => {
-      if (end !== null) return false;
+      if (start !== null) return false;
       if (!node.isTextblock) return true;
-      if (node.attrs.cardId === request.blockId) end = pos + node.nodeSize - 1;
+      if (node.attrs.cardId === request.blockId) start = pos + 1;
       return false;
     });
-    if (end === null) return;
+    if (start === null) return;
+    cardRevealStore.setState(() => null);
 
     // The saved scroll position would otherwise pull the view back.
     stopScrollRestore();
-    // A caret inside a folded section unfolds it.
-    editor.chain().focus().setTextSelection(end).scrollIntoView().run();
+    // Section focus can hide the target even after its caret moves there.
+    // Clear that filter; the caret also unfolds any folded ancestor.
+    editor.chain().showDocument().setTextSelection(start).focus(undefined, {
+      scrollIntoView: false,
+    }).run();
+
+    // Focus runs on the next frame. Position the block after that, rather
+    // than relying on caret scrolling, which only reveals the nearest edge.
+    const position = start;
+    requestAnimationFrame(() => {
+      if (editor.isDestroyed || !editor.view.dom.isConnected) return;
+      const container = editor.view.dom.closest<HTMLElement>(".app-scroll-container");
+      const block = editor.view.nodeDOM(position - 1);
+      if (!container || !(block instanceof HTMLElement)) return;
+      const top = container.getBoundingClientRect().top + container.clientTop;
+      container.scrollTop += block.getBoundingClientRect().top - top
+        - Math.min(96, container.clientHeight / 4);
+    });
   }, [editor, moduleId, ready, request]);
 }

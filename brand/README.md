@@ -1,4 +1,4 @@
-# Memnoter — consistent Paper Mark assets
+# Memnoter: consistent Paper Mark assets
 
 Every current asset is built programmatically from `icon-white.png`. The master is unchanged, with its SHA-256 recorded in `manifest.json`. No independent image generation is used for these exports.
 

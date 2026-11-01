@@ -134,7 +134,7 @@ const BackupsSection = () => {
       )}
 
       {backups && backups.length > 0 && (
-        <ul className="divide-y rounded-lg border">
+        <ul className="divide-y rounded-lg bg-muted/50">
           {backups.map((backup) => (
             <li
               key={backup.id}

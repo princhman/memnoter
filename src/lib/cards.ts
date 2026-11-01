@@ -32,6 +32,8 @@ export type ExtractedCard = {
   kind: CardKind;
   front: CardPayload;
   back: CardPayload;
+  // Titles of the headings the card sits under, outermost first.
+  section: string[];
 };
 
 // Offsets are relative to the start of the block's content.
@@ -42,7 +44,7 @@ export type BlockSyntax = {
   separator: Range | null;
   clozes: { open: Range; inner: Range; close: Range }[];
   // The cards this block yields once it has an id, without ids.
-  cards: Omit<ExtractedCard, "id" | "blockId">[];
+  cards: Omit<ExtractedCard, "id" | "blockId" | "section">[];
 };
 
 type Unit =
@@ -153,23 +155,8 @@ export function parseBlock(block: Node): BlockSyntax {
         close: span(units, close, close + 2),
       });
     }
-    // Other clozes in the block read as plain text, without their braces.
-    const braces = new Set(clozes.flatMap(({ open, close }) => [open, open + 1, close, close + 1]));
-    const side = (target: number, reveal: boolean) => {
-      const segments: Segment[] = [];
-      let start = 0;
-      const flush = (end: number) => {
-        segments.push(...segmentsOf(units.slice(start, end).filter((_, i) => !braces.has(start + i))));
-      };
-      const { open, close } = clozes[target];
-      flush(open);
-      segments.push(reveal ? { type: "cloze", children: segmentsOf(units.slice(open + 2, close)) } : { type: "blank" });
-      start = close + 2;
-      flush(units.length);
-      return mergeText(segments);
-    };
     clozes.forEach((_, index) => {
-      syntax.cards.push({ kind: "cloze", front: side(index, false), back: side(index, true) });
+      syntax.cards.push({ kind: "cloze", front: clozeSide(block, syntax, [index], false), back: clozeSide(block, syntax, [index], true) });
     });
     return syntax;
   }
@@ -216,6 +203,36 @@ function isCardBlock(node: Node) {
   return node.isTextblock && !node.type.spec.code && "cardId" in node.attrs;
 }
 
+// Group membership uses stable cloze ids, so edits before an answer do not
+// change which answers are reviewed together.
+export function validatedClozeGroups(value: unknown): string[][] {
+  if (!Array.isArray(value)) return [];
+  const used = new Set<string>();
+  return value.flatMap((group) => {
+    if (!Array.isArray(group) || !group.every((id) => typeof id === "string" && id.length > 0)) return [];
+    const ids = [...new Set<string>(group)].filter((id) => !used.has(id));
+    if (ids.length < 2) return [];
+    ids.forEach((id) => used.add(id));
+    return [ids];
+  });
+}
+
+function clozeSide(block: Node, syntax: BlockSyntax, targets: number[], reveal: boolean): Segment[] {
+  const units = unitsOf(block);
+  const selected = new Set(targets);
+  const segments: Segment[] = [];
+  let start = 0;
+  syntax.clozes.forEach(({ open, inner, close }, index) => {
+    segments.push(...segmentsOf(units.filter((unit) => unit.at >= start && unit.at < open.from)));
+    const answer = segmentsOf(units.filter((unit) => unit.at >= inner.from && unit.at < inner.to));
+    if (selected.has(index)) segments.push(reveal ? { type: "cloze", children: answer } : { type: "blank" });
+    else segments.push(...answer);
+    start = close.to;
+  });
+  segments.push(...segmentsOf(units.filter((unit) => unit.at >= start)));
+  return mergeText(segments);
+}
+
 // Attributes can come from pasted HTML or persisted documents, not just us.
 export function validatedClozeIds(value: unknown): ClozeId[] | null {
   if (!Array.isArray(value) || !value.every((entry) =>
@@ -248,17 +265,51 @@ function blockCardIds(node: Node, blockId: string, syntax: BlockSyntax) {
   });
 }
 
+function cardsOfBlock(node: Node, blockId: string) {
+  const syntax = parseBlock(node);
+  const ids = blockCardIds(node, blockId, syntax);
+  const groups = validatedClozeGroups(node.attrs.clozeGroups);
+  const consumed = new Set<number>();
+  return syntax.cards.flatMap((card, index) => {
+    const entry = ids[index];
+    if (!entry || consumed.has(index)) return [];
+    const localId = entry.id.slice(blockId.length + 1);
+    const group = card.kind === "cloze" ? groups.find((members) => members.includes(localId)) : undefined;
+    const targets = group ? ids.flatMap((member, i) => member && group.includes(member.id.slice(blockId.length + 1)) ? [i] : []) : [index];
+    targets.forEach((i) => consumed.add(i));
+    // The first member selected for joining owns the combined schedule.
+    const owner = group ? targets.find((i) => ids[i]?.id === `${blockId}:${group[0]}`) : undefined;
+    const identity = ids[typeof owner === "number" ? owner : index]!;
+    return [{
+      ...card, id: identity.id, blockId,
+      answer: targets.map((i) => ids[i]?.answer).filter((answer) => answer !== null).join(", ") || null,
+      ...(targets.length > 1 ? {
+        front: clozeSide(node, syntax, targets, false),
+        back: clozeSide(node, syntax, targets, true),
+      } : {}),
+    }];
+  });
+}
+
 // The cards stored for a block, as `extractCards` names them.
 export function cardIdsOf(node: Node): { id: string; answer: string | null }[] {
   const blockId = node.attrs.cardId;
   if (!isCardBlock(node) || typeof blockId !== "string") return [];
-  return blockCardIds(node, blockId, parseBlock(node)).filter((entry) => entry !== null);
+  return cardsOfBlock(node, blockId).map(({ id, answer }) => ({ id, answer }));
 }
 
 export function extractCards(doc: Node): ExtractedCard[] {
   const cards: ExtractedCard[] = [];
   const seen = new Set<string>();
-  doc.descendants((node) => {
+  // The open headings above the current block, as in the section breadcrumb.
+  const headings: { level: number; title: string }[] = [];
+  doc.descendants((node, _pos, parent) => {
+    const isHeading = parent === doc && node.type.name === "heading";
+    const level = Number(node.attrs.level);
+    if (isHeading) {
+      while (headings.length && headings[headings.length - 1].level >= level) headings.pop();
+    }
+    const section = headings.map(({ title }) => title);
     if (["image", "inlineImage"].includes(node.type.name)) {
       const { imageId, fileId } = node.attrs;
       if (typeof imageId === "string" && typeof fileId === "string" && !seen.has(imageId)) {
@@ -266,7 +317,7 @@ export function extractCards(doc: Node): ExtractedCard[] {
         const masks = validMasks(node.attrs.masks);
         for (const mask of masks) {
           const front: OcclusionFace = { version: 1, fileId, imageId, targetMaskId: mask.id, revealed: false, masks };
-          cards.push({ id: `${imageId}:o:${mask.id}`, blockId: imageId, kind: "occlusion", front, back: { ...front, revealed: true } });
+          cards.push({ id: `${imageId}:o:${mask.id}`, blockId: imageId, kind: "occlusion", front, back: { ...front, revealed: true }, section });
         }
       }
       return false;
@@ -274,14 +325,11 @@ export function extractCards(doc: Node): ExtractedCard[] {
     // Inline images can live inside a text card block.
     if (!node.isTextblock) return true;
     const blockId = node.attrs.cardId;
+    // A heading that is itself a card belongs to the headings above it.
+    if (isHeading) headings.push({ level, title: node.textContent.trim() || "Untitled section" });
     if (!isCardBlock(node) || typeof blockId !== "string" || seen.has(blockId)) return true;
     seen.add(blockId);
-    const syntax = parseBlock(node);
-    const ids = blockCardIds(node, blockId, syntax);
-    syntax.cards.forEach((card, index) => {
-      const entry = ids[index];
-      if (entry) cards.push({ ...card, blockId, id: entry.id });
-    });
+    cards.push(...cardsOfBlock(node, blockId).map((card) => ({ ...card, section })));
     return true;
   });
   return cards;

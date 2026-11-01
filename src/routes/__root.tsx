@@ -1,3 +1,5 @@
+import { CardCounts } from "@/components/card-counts";
+import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/lib/card-sync";
 import { backfillCards } from "@/lib/card-backfill";
 import { createRootRoute, Outlet, useNavigate } from "@tanstack/react-router";
@@ -29,6 +31,7 @@ const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   const navigate = useNavigate();
+  const reviewCounts = useSelector(reviewActionsStore, (state) => state?.counts);
 
   useCommand({ id: "review.all", title: "Review all cards", keywords: ["flashcards"],
     run: () => openReview(() => navigate({ to: "/review", search: {} })),
@@ -91,8 +94,8 @@ const RootLayout = () => {
               <div className="flex min-w-0 items-center">
                 <FileBreadcrumb />
               </div>
-              <div className="ml-auto shrink-0 pr-3">
-                <ModuleReviewButton />
+              <div className="ml-auto flex shrink-0 items-center gap-2 pr-3">
+                {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} /> : <ModuleReviewButton />}
               </div>
             </header>
 
