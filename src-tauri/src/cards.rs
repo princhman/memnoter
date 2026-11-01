@@ -134,6 +134,10 @@ pub(crate) struct ReviewLog {
 pub(crate) struct DueCount {
     module_id: String,
     count: i64,
+    // Split like Anki: never reviewed, in (re)learning steps, and graduated.
+    new: i64,
+    learning: i64,
+    review: i64,
 }
 
 fn json_text(value: &serde_json::Value) -> CommandResult<String> {
@@ -285,7 +289,9 @@ fn query_due_cards(
 fn query_due_counts(conn: &Connection, now: i64) -> CommandResult<Vec<DueCount>> {
     let mut stmt = conn
         .prepare(
-            "select module_id, count(*) from cards
+            // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
+            "select module_id, count(*), sum(state = 0), sum(state in (1, 3)), sum(state = 2)
+             from cards
              where deleted_at is null and due_at <= ?1
              group by module_id order by module_id",
         )
@@ -295,6 +301,9 @@ fn query_due_counts(conn: &Connection, now: i64) -> CommandResult<Vec<DueCount>>
             Ok(DueCount {
                 module_id: row.get(0)?,
                 count: row.get(1)?,
+                new: row.get(2)?,
+                learning: row.get(3)?,
+                review: row.get(4)?,
             })
         })
         .map_err(db_err)?;
@@ -626,16 +635,24 @@ mod tests {
         assert_eq!(due[0].front, json!([{ "type": "text", "text": "Q" }]));
         assert_eq!(due[0].fsrs.schedule_status, "new");
         assert_eq!(f.due(Some("b"), 20).len(), 1);
+        // A graduated card due again counts as review, not new.
+        review(&f, "2", 0, 15).unwrap();
         assert_eq!(
             query_due_counts(&f.db.conn.lock().unwrap(), 20).unwrap(),
             vec![
                 DueCount {
                     module_id: "a".into(),
-                    count: 2
+                    count: 2,
+                    new: 1,
+                    learning: 0,
+                    review: 1,
                 },
                 DueCount {
                     module_id: "b".into(),
-                    count: 1
+                    count: 1,
+                    new: 1,
+                    learning: 0,
+                    review: 0,
                 },
             ]
         );

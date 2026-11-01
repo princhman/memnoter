@@ -150,15 +150,36 @@ export function isModuleOpen(moduleId: string) {
   return openModules.has(moduleId);
 }
 
+// Due cards, split like Anki: never reviewed, in (re)learning steps, and
+// graduated cards due again.
+export type CardCounts = { new: number; learning: number; review: number };
+
+const NO_CARDS: CardCounts = { new: 0, learning: 0, review: 0 };
+
 export function useDueCounts() {
   const { data } = useQuery({
     queryKey: dueCountsKey,
     queryFn: () =>
-      invoke<{ moduleId: string; count: number }[]>("due_counts", { now: Date.now() }),
+      invoke<({ moduleId: string; count: number } & CardCounts)[]>("due_counts", {
+        now: Date.now(),
+      }),
     // Cards fall due as time passes, not only after edits.
     refetchInterval: DUE_REFRESH_MS,
   });
-  const byModule = new Map(data?.map(({ moduleId, count }) => [moduleId, count]));
-  const total = data?.reduce((sum, { count }) => sum + count, 0) ?? 0;
-  return { byModule, total };
+  const byModule = new Map<string, CardCounts>(
+    data?.map(({ moduleId, new: fresh, learning, review }) => [
+      moduleId,
+      { new: fresh, learning, review },
+    ]),
+  );
+  const total = { ...NO_CARDS };
+  for (const counts of byModule.values()) {
+    total.new += counts.new;
+    total.learning += counts.learning;
+    total.review += counts.review;
+  }
+  return {
+    total,
+    forModule: (moduleId: string) => byModule.get(moduleId) ?? NO_CARDS,
+  };
 }

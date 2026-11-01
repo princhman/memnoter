@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
 import { useDueCounts } from "@/lib/card-sync";
+import { CardCounts } from "@/components/card-counts";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
   const [renameOpen, setRenameOpen] = useState(false);
@@ -119,9 +120,9 @@ const AppSidebar = () => {
                 <Layers />
                 <span>Review</span>
               </SidebarMenuButton>
-              {total > 0 && (
-                <SidebarMenuBadge aria-label={`${total} due`}>{total}</SidebarMenuBadge>
-              )}
+              <SidebarMenuBadge>
+                <CardCounts counts={total} />
+              </SidebarMenuBadge>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
