@@ -172,10 +172,13 @@ export function useCardSchedules(editor: Editor | null, moduleId: string, ready:
 
 // Cards due now, split like Anki: never reviewed, in (re)learning steps, and
 // graduated cards due again. Unlike Anki, a card due later today is not due
-// yet; it is counted apart.
-export type CardCounts = { new: number; learning: number; review: number; laterToday?: number };
+// yet; those are counted apart, split the same way.
+type Split = { new: number; learning: number; review: number };
+export type CardCounts = Split & { laterToday?: Split };
 
-const NO_CARDS: CardCounts = { new: 0, learning: 0, review: 0, laterToday: 0 };
+const none = (): Required<CardCounts> => ({
+  new: 0, learning: 0, review: 0, laterToday: { new: 0, learning: 0, review: 0 },
+});
 
 // The next local midnight.
 function endOfDay(now: number) {
@@ -189,7 +192,8 @@ export function useDueCounts() {
     queryKey: dueCountsKey,
     queryFn: () => {
       const now = Date.now();
-      return invoke<({ moduleId: string; count: number } & Required<CardCounts>)[]>(
+      return invoke<({ moduleId: string; count: number; laterNew: number;
+        laterLearning: number; laterReview: number } & Split)[]>(
         "due_counts",
         { now, dayEnd: endOfDay(now) },
       );
@@ -197,21 +201,26 @@ export function useDueCounts() {
     // Cards fall due as time passes, not only after edits.
     refetchInterval: DUE_REFRESH_MS,
   });
-  const byModule = new Map<string, CardCounts>(
-    data?.map(({ moduleId, new: fresh, learning, review, laterToday }) => [
-      moduleId,
-      { new: fresh, learning, review, laterToday },
+  const byModule = new Map<string, Required<CardCounts>>(
+    data?.map((row) => [
+      row.moduleId,
+      {
+        new: row.new,
+        learning: row.learning,
+        review: row.review,
+        laterToday: { new: row.laterNew, learning: row.laterLearning, review: row.laterReview },
+      },
     ]),
   );
-  const total = { ...NO_CARDS, laterToday: 0 };
+  const total = none();
   for (const counts of byModule.values()) {
-    total.new += counts.new;
-    total.learning += counts.learning;
-    total.review += counts.review;
-    total.laterToday += counts.laterToday ?? 0;
+    for (const key of ["new", "learning", "review"] as const) {
+      total[key] += counts[key];
+      total.laterToday[key] += counts.laterToday[key];
+    }
   }
   return {
     total,
-    forModule: (moduleId: string) => byModule.get(moduleId) ?? NO_CARDS,
+    forModule: (moduleId: string) => byModule.get(moduleId) ?? none(),
   };
 }
