@@ -5,7 +5,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
-import { redo as yRedo, undo as yUndo } from "@tiptap/y-tiptap";
+import { redo as yRedo, undo as yUndo, ySyncPluginKey } from "@tiptap/y-tiptap";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,7 +21,7 @@ import { HeadingFold } from "@/lib/heading-fold";
 import { IMAGE_TYPES, SlashCommand } from "@/components/slash-menu";
 import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { usePersistedView } from "@/lib/view-persistence";
+import { restoreView, usePersistedView } from "@/lib/view-persistence";
 import { useSearchIndexing } from "@/lib/search-index";
 import { FindHighlights } from "@/lib/find-highlights";
 import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
@@ -73,6 +73,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   // TOC updates on scroll; a store keeps those from re-rendering the editor.
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
+  const editorRef = useRef<Editor | null>(null);
   const hasInsertedInitialContent = useRef(false);
 
   const { isSuccess, data } = useQuery({
@@ -82,6 +83,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       const pending = saveQueue.pending(moduleId);
       const content = await loadContent(moduleId, yDoc);
       applyPendingSaves(yDoc, pending);
+      // Still in the task that filled the editor, so the note is never
+      // painted unfolded or at the top first.
+      const editor = editorRef.current;
+      if (editor && ySyncPluginKey.getState(editor.state)?.doc === yDoc) {
+        restoreView(editor, moduleId);
+      }
       return content;
     },
     // local mutations keep this cache current; focus/remount needs no disk read.
@@ -346,6 +353,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     [yDoc],
   );
 
+  useLayoutEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
   useLayoutEffect(() => watchWriteAdmission(blocked => {
     if (editor && !editor.isDestroyed) editor.setEditable(isSuccess && !blocked, false);
   }), [editor, isSuccess]);
@@ -495,12 +506,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   return (
     <FilesContext.Provider value={filesContext}>
       <HeadingActionOverlay editor={editor}>
-        {/* Loading fills the editor a few frames before the saved folds and
-            scroll are restored, so it stays hidden until then. */}
-        <EditorContent
-          editor={editor}
-          style={isSuccess ? undefined : { visibility: "hidden" }}
-        />
+        <EditorContent editor={editor} />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
       <LinkMenu editor={editor} />
