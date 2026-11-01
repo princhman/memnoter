@@ -1117,37 +1117,47 @@ body {
 }
 
 /* `::` reads as a subtle arrow. The characters stay in place, drawn
-   transparent under an arrow mask, and show as typed in the caret's block. */
+   transparent over an arrow image, and show as typed in the caret's block. */
 .tiptap .card-sep {
     padding-inline: 0.12em;
     color: transparent;
-    background-color: var(--muted-foreground);
-    opacity: 0.75;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8h10.5M9.5 4.5 13 8l-3.5 3.5' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8h10.5M9.5 4.5 13 8l-3.5 3.5' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8h10.5M9.5 4.5 13 8l-3.5 3.5' fill='none' stroke='%23737373' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 1em no-repeat;
+}
+
+.dark .tiptap .card-sep {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8h10.5M9.5 4.5 13 8l-3.5 3.5' fill='none' stroke='%23a1a1a1' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 .tiptap .card-block-active .card-sep {
     color: var(--muted-foreground);
     background: none;
     opacity: 0.6;
-    -webkit-mask: none;
-    mask: none;
 }
 
+/* Braces take no room until the caret is in their block. */
 .tiptap .cloze-brace {
-    color: transparent;
-    caret-color: var(--foreground);
-    font-size: 0.72em;
+    font-size: 0;
+}
+
+.tiptap .card-block-active .cloze-brace {
+    font-size: inherit;
+    color: var(--muted-foreground);
+    opacity: 0.6;
 }
 
 .tiptap .cloze-text {
-    background-color: color-mix(in oklch, var(--primary) 7%, transparent);
+    border-radius: 2px;
+    background-color: color-mix(in oklch, var(--primary) 10%, transparent);
     text-decoration-line: underline;
-    text-decoration-style: dotted;
-    text-decoration-thickness: 1.5px;
-    text-decoration-color: color-mix(in oklch, var(--primary) 60%, transparent);
-    text-underline-offset: 0.22em;
+    text-decoration-thickness: 2px;
+    text-decoration-color: color-mix(in oklch, var(--primary) 70%, transparent);
+    text-underline-offset: 0.2em;
+}
+
+/* The dark primary is too dim on the dark background. */
+.dark .tiptap .cloze-text {
+    background-color: color-mix(in oklch, var(--chart-1) 14%, transparent);
+    text-decoration-color: var(--chart-1);
 }
 
 .card-face .katex {

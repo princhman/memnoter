@@ -65,6 +65,24 @@ test("Make card wraps the selection, assigns an id and undoes as a text edit", (
   }
 });
 
+test("Remove card unwraps the cloze around the selection instead of nesting braces", () => {
+  const editor = editorFor([paragraph("A {{Paris}} B")]);
+  try {
+    // Selecting the answer, as the bubble menu needs, offers removal only.
+    editor.commands.setTextSelection({ from: 5, to: 10 });
+    assert.equal(editor.can().makeCloze(), false);
+    assert.equal(editor.commands.removeCloze(), true);
+    assert.equal(editor.state.doc.textContent, "A Paris B");
+    assert.equal(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to), "Paris");
+    assert.deepEqual(extractCards(editor.state.doc), []);
+    assert.equal(editor.commands.removeCloze(), false);
+    editor.commands.undo();
+    assert.equal(editor.state.doc.textContent, "A {{Paris}} B");
+  } finally {
+    editor.destroy();
+  }
+});
+
 const clozeCards = (editor) => new Map(extractCards(editor.state.doc).map((card) => [
   card.back.find((segment) => segment.type === "cloze").children.map((segment) => segment.text).join(""),
   card.id,
