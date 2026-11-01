@@ -78,6 +78,8 @@ async function walk(content, start, keys) {
     editor.commands.focus();
     editor.commands.setTextSelection(start);
   }, { content, start });
+  // Tiptap focuses on the next frame; a key sent before that is lost.
+  await page.waitForFunction(() => editor.view.hasFocus());
   const caret = () =>
     page.evaluate(() => {
       const { head, $head } = editor.state.selection;
@@ -86,7 +88,10 @@ async function walk(content, start, keys) {
   const steps = [await caret()];
   for (const key of keys) {
     await page.keyboard.press(KEYS[key]);
-    await page.waitForTimeout(20);
+    // Two frames rather than a fixed delay, which a busy machine outlasts.
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     steps.push(key + (await caret()));
   }
   return steps.join(" ");
