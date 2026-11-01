@@ -205,7 +205,7 @@ export function CommandPalette() {
         command,
       }));
     return [
-      { id: "notes", label: trimmed ? "Notes" : "Recent notes", items: notes },
+      { id: "notes", label: "Modules", items: notes },
       { id: "commands", label: "Commands", items: commandItems },
     ].filter((group) => group.items.length > 0);
   }, [trimmed, debouncedQuery, search.data, modules.data, commands, open]);
@@ -294,7 +294,7 @@ export function CommandPalette() {
         finalFocus={() => restoreFocus.current}
         className="top-[18vh] translate-y-0 gap-0 overflow-hidden p-0 shadow-2xl ring-0 sm:max-w-xl data-open:zoom-in-100"
       >
-        <DialogTitle className="sr-only">Search notes and commands</DialogTitle>
+        <DialogTitle className="sr-only">Search modules and commands</DialogTitle>
         <div className="flex items-center gap-2 border-b border-border px-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
           <input
@@ -304,9 +304,9 @@ export function CommandPalette() {
             aria-controls={listId}
             aria-autocomplete="list"
             aria-activedescendant={active ? optionId(active) : undefined}
-            aria-label="Search notes and commands"
+            aria-label="Search modules and commands"
             className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            placeholder="Search notes and commands"
+            placeholder="Search modules and commands"
             value={query}
             spellCheck={false}
             autoCapitalize="off"
@@ -383,7 +383,7 @@ export function CommandPalette() {
           ))}
           {items.length === 0 && (
             <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-              {isSearching ? "Searching…" : trimmed ? "No matches" : "No notes yet"}
+              {isSearching ? "Searching…" : trimmed ? "No matches" : "No modules yet"}
             </div>
           )}
         </div>
