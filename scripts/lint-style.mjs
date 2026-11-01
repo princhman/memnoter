@@ -68,7 +68,9 @@ for (const file of files) {
 
   if (file.endsWith(".css")) {
     postcss.parse(source, { from: file }).walkRules((rule) => {
-      if (!SURFACE.test(rule.selector)) return;
+      // The surface itself, not a control inside it such as `.dialog input`.
+      const subjects = rule.selectors.map((selector) => selector.trim().split(/[\s>+~]+/).pop());
+      if (!subjects.some((subject) => SURFACE.test(subject))) return;
       rule.each((decl) => {
         if (decl.type !== "decl") return;
         const value = decl.value.trim();
