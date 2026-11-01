@@ -101,7 +101,7 @@ const AppSidebar = () => {
     <Sidebar>
       <SidebarContent className="pt-6">
         <SidebarGroup>
-          <SidebarMenu>
+          <SidebarMenu className="gap-0.5">
             <SidebarMenuItem>
               <SidebarMenuButton
                 isActive={!!matchRoute({ to: "/" })}
