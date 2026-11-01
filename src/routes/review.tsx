@@ -7,6 +7,7 @@ import { CheckCircle2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardFace } from "@/components/card-face";
 import { dueCountsKey, flushCardSyncs } from "@/lib/card-sync";
+import { backfillCards } from "@/lib/card-backfill";
 import {
   formatInterval,
   getScheduler,
@@ -62,12 +63,17 @@ function Review() {
     setReviewed(0);
     Promise.all([
       getScheduler(),
-      invoke<{ id: string; name: string }[]>("unindexed_card_modules"),
-      flushCardSyncs().then(() =>
-        invoke<StoredCard[]>("due_cards", { moduleId: moduleId ?? null, now: Date.now() }),
+      // Notes never checked for cards are checked first, in the background.
+      backfillCards().then(() =>
+        Promise.all([
+          invoke<{ id: string; name: string }[]>("unindexed_card_modules"),
+          flushCardSyncs().then(() =>
+            invoke<StoredCard[]>("due_cards", { moduleId: moduleId ?? null, now: Date.now() }),
+          ),
+        ]),
       ),
     ])
-      .then(([scheduler, unindexed, cards]) => {
+      .then(([scheduler, [unindexed, cards]]) => {
         if (cancelled) return;
         setScheduler(() => scheduler);
         setQueue(cards);
@@ -200,7 +206,7 @@ function Review() {
         <div className="flex w-full max-w-2xl flex-1 flex-col justify-center gap-8 py-8">
           {unindexed.length > 0 && (
             <section className="rounded-lg border p-4 text-sm" aria-label="Notes awaiting card indexing">
-              <p>Review is incomplete: {unindexed.length} {unindexed.length === 1 ? "note has" : "notes have"} not been checked for cards. Open each note below to include its cards, then return to review.</p>
+              <p>Review is incomplete: {unindexed.length} {unindexed.length === 1 ? "note" : "notes"} could not be checked for cards. Open each note below to include its cards, then return to review.</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {unindexed.map((note) => (
                   <Button key={note.id} variant="outline" onClick={() => void router.navigate({ to: "/$moduleId", params: { moduleId: note.id } })}>

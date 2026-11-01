@@ -1,31 +1,21 @@
 import { imageFilesOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
 // src/Tiptap.tsx
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
-import Collaboration from "@tiptap/extension-collaboration";
 import { redo as yRedo, undo as yUndo, ySyncPluginKey } from "@tiptap/y-tiptap";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { applyPendingSaves, saveQueue } from "@/lib/saves";
-import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
 import { LinkMenu } from "@/components/link-menu";
-import { LinkEditor } from "@/lib/link-editor";
-import { SectionFocus } from "@/lib/section-focus";
-import { Sections } from "@/lib/sections";
-import { HeadingFold } from "@/lib/heading-fold";
-import { IMAGE_TYPES, SlashCommand } from "@/components/slash-menu";
-import { LatexSuggest } from "@/components/latex-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { restoreView, usePersistedView } from "@/lib/view-persistence";
 import { useSearchIndexing } from "@/lib/search-index";
-import { FindHighlights } from "@/lib/find-highlights";
-import { FilesContext, InlineImage, SavedImage } from "@/components/saved-image";
-import FileHandler from "@tiptap/extension-file-handler";
+import { FilesContext } from "@/components/saved-image";
+import { noteExtensions } from "@/lib/note-extensions";
 import {
   applySavedContent,
   contentQueryOptions,
@@ -35,14 +25,7 @@ import {
   type FileType,
   type GetContentResponse,
 } from "@/lib/content";
-import { InlineMath } from "@/lib/inline-math";
-import { MathBlock } from "@/lib/math-block";
-import { Arrows } from "@/lib/arrows";
-import { MoveLines } from "@/lib/move-lines";
-import { ItalicCaret } from "@/lib/italic-caret";
-import { Flashcards } from "@/lib/flashcards";
 import { useCardSync } from "@/lib/card-sync";
-import { TableOfContents as TocExtension } from "@tiptap/extension-table-of-contents";
 import {
   TableOfContents,
   createTocStore,
@@ -74,6 +57,11 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
   const editorRef = useRef<Editor | null>(null);
+  // The editor changes a note as it loads, e.g. giving card text ids. That
+  // comes before saving starts, so those changes are kept until it does.
+  const hasLoaded = useRef(false);
+  const isSaving = useRef(false);
+  const loadChanges = useRef<number[][]>([]);
   const hasInsertedInitialContent = useRef(false);
 
   const { isSuccess, data } = useQuery({
@@ -169,6 +157,18 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     },
   });
 
+  // Before the content is applied below, so no change made as it loads is missed.
+  useLayoutEffect(() => {
+    const keep = (update: Uint8Array, origin: unknown) => {
+      if (origin === "tauri-load") hasLoaded.current = true;
+      else if (hasLoaded.current && !isSaving.current) {
+        loadChanges.current.push(Array.from(update));
+      }
+    };
+    yDoc.on("update", keep);
+    return () => yDoc.off("update", keep);
+  }, [yDoc]);
+
   // applying updates; before paint, so a switched-to note never shows empty
   useLayoutEffect(() => {
     if (!data) return;
@@ -189,9 +189,14 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     };
 
     persistenceTarget.current = yDoc;
+    isSaving.current = true;
+    for (const update of loadChanges.current.splice(0)) {
+      saveQueue.enqueue(moduleId, update);
+    }
     yDoc.on("update", handleUpdate);
     return () => {
       persistenceTarget.current = null;
+      isSaving.current = false;
       yDoc.off("update", handleUpdate);
       // Leaving the note: retry any failed saves now rather than after backoff.
       saveQueue.retryNow();
@@ -234,70 +239,13 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     {
       editable: isSuccess,
       shouldRerenderOnTransaction: false,
-      extensions: [
-        StarterKit.configure({
-          undoRedo: false,
-          // Links open in the browser on ⌘-click, through LinkEditor.
-          link: { openOnClick: false },
-        }),
-        LinkEditor,
-        Arrows,
-        MoveLines,
-        ItalicCaret,
-        InlineMath,
-        MathBlock,
-        Flashcards,
-        HeadingHieararchy,
-        SectionFocus,
-        Sections,
-        HeadingFold,
-        SlashCommand.configure({
-          insertImages: (currentEditor, files, position) => {
-            void insertImages(currentEditor, files, position);
-          },
-        }),
-        LatexSuggest,
-        TocExtension.configure({
-          scrollParent: () =>
-            document.querySelector<HTMLElement>(".app-scroll-container") ??
-            window,
-          onUpdate: (content) => tocStore.setState(() => content),
-        }),
-        FindHighlights.configure({
-          searchDebounceMs: 100,
-          injectCSS: false,
-        }),
-        Collaboration.configure({
-          document: yDoc,
-        }),
-        SavedImage.configure({
-          inline: false,
-          allowBase64: false,
-          HTMLAttributes: {
-            class: "note-image",
-          },
-        }),
-        InlineImage.configure({
-          allowBase64: false,
-          HTMLAttributes: {
-            class: "note-image",
-          },
-        }),
-        FileHandler.configure({
-          allowedMimeTypes: IMAGE_TYPES,
-          consumePasteEvent: true,
-          onPaste: (currentEditor, files) => {
-            void insertImages(
-              currentEditor,
-              files,
-              currentEditor.state.selection.anchor,
-            );
-          },
-          onDrop: (currentEditor, files, position) => {
-            void insertImages(currentEditor, files, position);
-          },
-        }),
-      ],
+      extensions: noteExtensions({
+        document: yDoc,
+        insertImages: (currentEditor, files, position) => {
+          void insertImages(currentEditor, files, position);
+        },
+        onTocUpdate: (content) => tocStore.setState(() => content),
+      }),
       editorProps: {
         handleScrollToSelection: (view) => {
           if (!view.state.selection.empty) return false;

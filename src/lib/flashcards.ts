@@ -5,7 +5,10 @@ import type { Node } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, type ClozeId, type Range } from "./cards.ts";
+
+const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -284,8 +287,33 @@ export const Flashcards = Extension.create({
       // Ids appear with the first complete card in a block, and copies made
       // by paste or a split are renumbered. Outside syntax, ids stay, so a
       // card that is retyped or restored by undo keeps its history.
-      new Plugin({
-        key: new PluginKey("flashcardIds"),
+      new Plugin<boolean>({
+        key: flashcardIdsKey,
+        // Whether ids were added while Yjs rendered, which it does not save.
+        state: {
+          init: () => false,
+          apply: (tr, value) => tr.getMeta(flashcardIdsKey) ?? value,
+        },
+        view: (view) => {
+          let scheduled = false;
+          // Any later update makes Yjs save the document, ids included.
+          const writeBack = () => {
+            if (scheduled || !flashcardIdsKey.getState(view.state)) return;
+            scheduled = true;
+            queueMicrotask(() => {
+              scheduled = false;
+              if (view.isDestroyed) return;
+              view.dispatch(
+                view.state.tr
+                  .setMeta(flashcardIdsKey, false)
+                  .setMeta("addToHistory", false),
+              );
+            });
+          };
+          // Yjs may already have rendered while the view was being created.
+          writeBack();
+          return { update: writeBack };
+        },
         appendTransaction(transactions, oldState, state) {
           if (!transactions.some((tr) => tr.docChanged)) return null;
           const ranges = changedRanges(transactions.flatMap((tr) => tr.mapping.maps));
@@ -310,7 +338,11 @@ export const Flashcards = Extension.create({
           }
           for (const { pos, cardId } of plan) tr.setNodeAttribute(pos, "cardId", cardId);
           repairClozeIds(tr, mapping, oldBlocks, ranges);
-          return tr.docChanged ? tr : null;
+          if (!tr.docChanged) return null;
+          if (transactions.some((transaction) => transaction.getMeta(ySyncPluginKey)?.isChangeOrigin)) {
+            tr.setMeta(flashcardIdsKey, true);
+          }
+          return tr;
         },
         props: {
           transformPasted(slice, view) {
