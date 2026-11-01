@@ -1,4 +1,5 @@
 import { openReview } from "@/lib/card-sync";
+import { backfillCards } from "@/lib/card-backfill";
 import { createRootRoute, Outlet, useNavigate, useMatchRoute } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
@@ -45,6 +46,11 @@ const RootLayout = () => {
     return () =>
       window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);
   }, [navigate]);
+
+  // Due counts and review include notes not opened since cards existed.
+  useEffect(() => {
+    void backfillCards();
+  }, []);
 
   const matchRoute = useMatchRoute();
   const reviewing = !!matchRoute({ to: "/review" });
