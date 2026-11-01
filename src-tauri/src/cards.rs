@@ -140,6 +140,17 @@ pub(crate) struct DueCount {
     review: i64,
 }
 
+// When a live card is next due and when it was last reviewed, for the info
+// shown beside it in the note.
+#[derive(Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CardSchedule {
+    id: String,
+    due_at: i64,
+    last_review_at: Option<i64>,
+    state: i64,
+}
+
 fn json_text(value: &serde_json::Value) -> CommandResult<String> {
     serde_json::to_string(value).map_err(db_err)
 }
@@ -310,6 +321,26 @@ fn query_due_counts(conn: &Connection, now: i64) -> CommandResult<Vec<DueCount>>
     rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }
 
+fn query_card_schedules(conn: &Connection, module_id: &str) -> CommandResult<Vec<CardSchedule>> {
+    let mut stmt = conn
+        .prepare(
+            "select id, due_at, last_review_at, state from cards
+             where module_id = ?1 and deleted_at is null order by id",
+        )
+        .map_err(db_err)?;
+    let rows = stmt
+        .query_map([module_id], |row| {
+            Ok(CardSchedule {
+                id: row.get(0)?,
+                due_at: row.get(1)?,
+                last_review_at: row.get(2)?,
+                state: row.get(3)?,
+            })
+        })
+        .map_err(db_err)?;
+    rows.collect::<Result<Vec<_>>>().map_err(db_err)
+}
+
 // Sets a card's scheduling state, only if its repetition count is still
 // `expected_reps`: a stale or repeated write (a double key press, two windows)
 // is rejected rather than applied twice.
@@ -447,6 +478,15 @@ pub(crate) fn due_cards(
 ) -> CommandResult<Vec<Card>> {
     let conn = db.lock()?;
     query_due_cards(&conn, module_id.as_deref(), now)
+}
+
+#[tauri::command(async)]
+pub(crate) fn card_schedules(
+    db: tauri::State<'_, Db>,
+    module_id: String,
+) -> CommandResult<Vec<CardSchedule>> {
+    let conn = db.lock()?;
+    query_card_schedules(&conn, &module_id)
 }
 
 #[tauri::command(async)]
@@ -637,6 +677,13 @@ mod tests {
         assert_eq!(f.due(Some("b"), 20).len(), 1);
         // A graduated card due again counts as review, not new.
         review(&f, "2", 0, 15).unwrap();
+        assert_eq!(
+            query_card_schedules(&f.db.conn.lock().unwrap(), "a").unwrap(),
+            vec![
+                CardSchedule { id: "1".into(), due_at: 10, last_review_at: None, state: 0 },
+                CardSchedule { id: "2".into(), due_at: 15, last_review_at: Some(100), state: 2 },
+            ]
+        );
         assert_eq!(
             query_due_counts(&f.db.conn.lock().unwrap(), 20).unwrap(),
             vec![

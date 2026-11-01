@@ -4,7 +4,8 @@ import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } 
 import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
-import { changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, type ClozeId, type Range } from "./cards.ts";
+import { cardIdsOf, changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, type ClozeId, type Range } from "./cards.ts";
+import { formatInterval } from "./fsrs.ts";
 
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
 
@@ -15,22 +16,105 @@ declare module "@tiptap/core" {
       makeCloze: () => ReturnType;
       // Remove the braces of the cloze holding the selection, keeping its text.
       removeCloze: () => ReturnType;
+      // Show when the note's cards are due and were last reviewed, as of `now`.
+      setCardSchedules: (schedules: CardSchedule[], now: number) => ReturnType;
       // Give these blocks fresh card ids, e.g. when another note owns them.
       renewCardIds: (blockIds: string[]) => ReturnType;
     };
   }
 }
 
-const decorationsKey = new PluginKey<DecorationSet>("flashcardDecorations");
+export type CardSchedule = {
+  id: string;
+  dueAt: number;
+  lastReviewAt: number | null;
+  state: number;
+};
+
+type Schedules = { byId: Map<string, CardSchedule>; now: number };
+
+const decorationsKey = new PluginKey<{ set: DecorationSet; schedules: Schedules }>(
+  "flashcardDecorations",
+);
+
+const INFO_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>';
+
+// The icon beside a card block, with when each of its cards is due and was
+// last reviewed in a popup shown on hover.
+function cardInfo(
+  entries: { answer: string | null; schedule: CardSchedule | undefined }[],
+  due: boolean,
+  now: number,
+) {
+  const info = document.createElement("span");
+  info.className = "card-info";
+  info.contentEditable = "false";
+  if (due) info.dataset.due = "";
+  info.innerHTML = INFO_ICON;
+
+  const popup = document.createElement("span");
+  popup.className = "card-info-popup";
+  popup.setAttribute("role", "tooltip");
+  for (const { answer, schedule } of entries) {
+    const row = document.createElement("span");
+    row.className = "card-info-row";
+    // A block with several clozes names each by its answer.
+    if (entries.length > 1 && answer !== null) {
+      const name = document.createElement("span");
+      name.className = "card-info-answer";
+      name.textContent = answer;
+      row.append(name);
+    }
+    const lines = [
+      !schedule
+        ? "Not saved yet"
+        : schedule.dueAt <= now
+          ? "Due now"
+          : `Due in ${formatInterval(schedule.dueAt - now)}`,
+      ...(schedule
+        ? [schedule.lastReviewAt === null
+            ? "Never reviewed"
+            : `Last reviewed ${formatInterval(now - schedule.lastReviewAt)} ago`]
+        : []),
+    ];
+    for (const line of lines) {
+      const text = document.createElement("span");
+      text.textContent = line;
+      row.append(text);
+    }
+    popup.append(row);
+  }
+  info.append(popup);
+  return info;
+}
 
 // Card syntax stays real, editable text: decorations only restyle it. Until
 // the caret enters its block, a faint `::` reads as an arrow and cloze braces
 // take no room; there both show as typed. The hidden text is underlined, and
 // card blocks get a faint margin marker.
-function blockDecorations(node: Node, pos: number): Decoration[] {
+function blockDecorations(node: Node, pos: number, schedules: Schedules): Decoration[] {
   const syntax = parseBlock(node);
   const start = pos + 1;
   const decorations: Decoration[] = [];
+  const entries = cardIdsOf(node).map(({ id, answer }) => ({
+    answer,
+    schedule: schedules.byId.get(id),
+  }));
+  if (entries.length > 0) {
+    const due = entries.some(({ schedule }) => schedule && schedule.dueAt <= schedules.now);
+    // Redrawn when what it shows changes.
+    const key = JSON.stringify([due, entries.map(({ answer, schedule }) =>
+      [answer, schedule?.dueAt ?? null, schedule?.lastReviewAt ?? null])]);
+    decorations.push(
+      Decoration.widget(start, () => cardInfo(entries, due, schedules.now), {
+        side: -1,
+        ignoreSelection: true,
+        stopEvent: () => true,
+        key: `card-info:${schedules.now}:${key}`,
+      }),
+    );
+  }
   if (syntax.cards.length > 0) {
     decorations.push(
       Decoration.node(pos, pos + node.nodeSize, {
@@ -187,10 +271,11 @@ function repairClozeIds(
   }
 }
 
-function buildDecorations(doc: Node) {
+function buildDecorations(doc: Node, schedules: Schedules) {
   return DecorationSet.create(
     doc,
-    collectBlocks(doc, 0, doc.content.size).flatMap(({ node, pos }) => blockDecorations(node, pos)),
+    collectBlocks(doc, 0, doc.content.size).flatMap(({ node, pos }) =>
+      blockDecorations(node, pos, schedules)),
   );
 }
 
@@ -287,6 +372,16 @@ export const Flashcards = Extension.create({
           }
           return true;
         },
+      setCardSchedules:
+        (schedules, now) =>
+        ({ tr, dispatch }) => {
+          if (dispatch) {
+            const byId = new Map(schedules.map((schedule) => [schedule.id, schedule]));
+            tr.setMeta(decorationsKey, { byId, now } satisfies Schedules);
+            tr.setMeta("addToHistory", false);
+          }
+          return true;
+        },
       renewCardIds:
         (blockIds) =>
         ({ state, tr, dispatch }) => {
@@ -363,10 +458,16 @@ export const Flashcards = Extension.create({
       new Plugin({
         key: decorationsKey,
         state: {
-          init: (_, { doc }) => buildDecorations(doc),
-          apply(tr, set) {
-            if (!tr.docChanged) return set;
-            let next = set.map(tr.mapping, tr.doc);
+          init: (_, { doc }) => {
+            const schedules: Schedules = { byId: new Map(), now: Date.now() };
+            return { set: buildDecorations(doc, schedules), schedules };
+          },
+          apply(tr, value) {
+            const update = tr.getMeta(decorationsKey) as Schedules | undefined;
+            if (update) return { set: buildDecorations(tr.doc, update), schedules: update };
+            if (!tr.docChanged) return value;
+            const { schedules } = value;
+            let next = value.set.map(tr.mapping, tr.doc);
             const seen = new Set<number>();
             for (const { from, to } of changedRanges(tr.mapping.maps)) {
               for (const { node, pos } of collectBlocks(tr.doc, from, to)) {
@@ -376,15 +477,15 @@ export const Flashcards = Extension.create({
                 const stale = next
                   .find(pos, end)
                   .filter((decoration) => decoration.from >= pos && decoration.to <= end);
-                next = next.remove(stale).add(tr.doc, blockDecorations(node, pos));
+                next = next.remove(stale).add(tr.doc, blockDecorations(node, pos, schedules));
               }
             }
-            return next;
+            return { set: next, schedules };
           },
         },
         props: {
           decorations(state) {
-            const set = decorationsKey.getState(state);
+            const set = decorationsKey.getState(state)?.set;
             if (!set) return null;
             const active = activeBlock(state, set);
             return active ? set.add(state.doc, [active]) : set;
