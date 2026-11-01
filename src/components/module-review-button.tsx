@@ -2,17 +2,17 @@ import { Link, useMatchRoute } from "@tanstack/react-router";
 import { Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDueCounts } from "@/lib/card-sync";
+import { CardCounts } from "@/components/card-counts";
 
 // Reviews the open module's cards; shown beside the breadcrumbs.
 export function ModuleReviewButton() {
   const matchRoute = useMatchRoute();
-  const { byModule } = useDueCounts();
+  const { forModule } = useDueCounts();
   // These pages also match the module id pattern.
   const isPage = !!matchRoute({ to: "/settings" }) || !!matchRoute({ to: "/review" });
   const match = matchRoute({ to: "/$moduleId" });
   if (!match || isPage) return null;
 
-  const due = byModule.get(match.moduleId) ?? 0;
   return (
     <Button
       size="xs"
@@ -23,7 +23,7 @@ export function ModuleReviewButton() {
     >
       <Layers />
       Review
-      {due > 0 && <span className="tabular-nums">{due}</span>}
+      <CardCounts counts={forModule(match.moduleId)} />
     </Button>
   );
 }

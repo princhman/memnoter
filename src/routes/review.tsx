@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardFace } from "@/components/card-face";
+import { CardCounts } from "@/components/card-counts";
 import { dueCountsKey, flushCardSyncs } from "@/lib/card-sync";
 import { backfillCards } from "@/lib/card-backfill";
 import {
@@ -50,6 +51,18 @@ function reviewedFields(card: StoredCard) {
     state, scheduleStatus, lastReviewAt, reps, lapses } = card;
   return { dueAt, stability, stabilityFast, difficulty, scheduledDays, learningStep,
     state, scheduleStatus, lastReviewAt, reps, lapses };
+}
+
+// The session's remaining cards, split like the due counts.
+function countByState(queue: StoredCard[]) {
+  const counts = { new: 0, learning: 0, review: 0 };
+  for (const { state } of queue) {
+    // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
+    if (state === 0) counts.new++;
+    else if (state === 2) counts.review++;
+    else counts.learning++;
+  }
+  return counts;
 }
 
 // Fields, such as the command palette's search, keep their own undo.
@@ -302,9 +315,7 @@ function Review() {
     <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col">
       <header className="flex items-center gap-3 text-sm text-muted-foreground">
         {scope && <span className="truncate">{scope}</span>}
-        {queue && remaining > 0 && (
-          <span className="tabular-nums">{remaining} left</span>
-        )}
+        {queue && remaining > 0 && <CardCounts counts={countByState(queue)} />}
       </header>
 
       <div className="flex flex-1 flex-col justify-center gap-8 py-8">
