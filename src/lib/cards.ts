@@ -21,7 +21,10 @@ export type Segment =
   // The answer of a cloze card, highlighted on the back.
   | { type: "cloze"; children: Segment[] }
   // The hidden cloze on the front.
-  | { type: "blank" };
+  | { type: "blank" }
+  // Another cloze of the block, also hidden on the front; review can show it
+  // on its own, for context.
+  | { type: "hidden"; children: Segment[] };
 
 export type CardPayload = Segment[] | OcclusionFace;
 
@@ -226,7 +229,8 @@ function clozeSide(block: Node, syntax: BlockSyntax, targets: number[], reveal: 
     segments.push(...segmentsOf(units.filter((unit) => unit.at >= start && unit.at < open.from)));
     const answer = segmentsOf(units.filter((unit) => unit.at >= inner.from && unit.at < inner.to));
     if (selected.has(index)) segments.push(reveal ? { type: "cloze", children: answer } : { type: "blank" });
-    else segments.push(...answer);
+    else if (reveal) segments.push(...answer);
+    else segments.push({ type: "hidden", children: answer });
     start = close.to;
   });
   segments.push(...segmentsOf(units.filter((unit) => unit.at >= start)));

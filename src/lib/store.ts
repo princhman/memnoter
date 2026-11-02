@@ -20,6 +20,8 @@ type appState = {
   sidebarOpen: boolean;
   // Most recently opened first, for the welcome screen.
   recentModuleIds: string[];
+  // Review shows a card due soon when none is due yet, as Anki does.
+  learnAhead: boolean;
 };
 
 const RECENT_LIMIT = 20;
@@ -32,6 +34,7 @@ const defaultState: appState = {
   viewByModule: {},
   sidebarOpen: true,
   recentModuleIds: [],
+  learnAhead: false,
 };
 
 function loadState(): appState {
@@ -103,4 +106,8 @@ export function forgetModule(moduleId: string) {
 
 export function setSidebarOpen(open: boolean) {
   appStore.setState((state) => ({ ...state, sidebarOpen: open }));
+}
+
+export function setLearnAhead(learnAhead: boolean) {
+  appStore.setState((state) => ({ ...state, learnAhead }));
 }

@@ -405,7 +405,7 @@ test("joining selected clozes hides them together, preserves the first identity,
     assert.deepEqual(joined[0].front, [
       { type: "text", text: "A " }, { type: "blank" },
       { type: "text", text: " with " }, { type: "blank" },
-      { type: "text", text: " and three" },
+      { type: "text", text: " and " }, { type: "hidden", children: [{ type: "text", text: "three" }] },
     ]);
     assert.deepEqual(joined[0].back.filter((part) => part.type === "cloze").map((part) => part.children), [
       [{ type: "text", text: "one" }], [{ type: "text", text: "two" }],

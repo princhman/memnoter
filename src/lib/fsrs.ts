@@ -150,14 +150,22 @@ export function formatInterval(ms: number) {
   return `${round(days / 365)}y`;
 }
 
-// Cards rated again come back in the same session once due. When nothing is
-// due yet, a card due within this window is shown early instead of waiting.
+// With learn ahead on and no card due, a card due within this window is
+// shown instead of waiting for it.
 export const LEARN_AHEAD_MS = 20 * MINUTE;
 
-export function nextInQueue<T extends { dueAt: number }>(queue: readonly T[], now: number) {
+// The most overdue card. Without learn ahead a card is never shown before it
+// is due: one graded Again (1m) waits its minute, counted meanwhile as due
+// later today.
+export function nextInQueue<T extends { dueAt: number }>(
+  queue: readonly T[],
+  now: number,
+  learnAhead = false,
+) {
+  const limit = now + (learnAhead ? LEARN_AHEAD_MS : 0);
   let next: T | undefined;
   for (const card of queue) {
-    if (card.dueAt <= now + LEARN_AHEAD_MS && (!next || card.dueAt < next.dueAt)) next = card;
+    if (card.dueAt <= limit && (!next || card.dueAt < next.dueAt)) next = card;
   }
   return next;
 }
