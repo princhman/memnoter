@@ -15,6 +15,7 @@ import { queryClient } from "@/lib/query-client";
 import { saveQueue } from "@/lib/saves";
 
 const INDEX_DEBOUNCE_MS = 1_000;
+const RETRY_MS = 5_000;
 
 // Each open editor's "index now"; quitting runs them and waits for the writes,
 // since a note indexed by the current extractor is not backfilled on launch.
@@ -23,6 +24,7 @@ const indexing = () => queryClient.isMutating({ mutationKey: ["search-index"] })
 
 export async function flushSearchIndexing(timeoutMs: number) {
   for (const flush of activeFlushes) flush();
+  retryFailedIndexing();
   if (!indexing()) return;
   await new Promise<void>((resolve) => {
     const timer = window.setTimeout(done, timeoutMs);
@@ -37,8 +39,26 @@ export async function flushSearchIndexing(timeoutMs: number) {
   });
 }
 
+// A write that failed keeps its text, to be tried again shortly and when the
+// app quits: the note still carries the current extractor's version, so the
+// next launch would not index it again. Only the latest text for a note is
+// kept, so a retry never replaces newer text.
+const failed = new Map<string, { text: SearchText; backfill: boolean }>();
+const latestWrite = new Map<string, number>();
+let retryTimer: number | undefined;
+
+function retryFailedIndexing() {
+  window.clearTimeout(retryTimer);
+  retryTimer = undefined;
+  for (const [moduleId, { text, backfill }] of failed) void indexNote(moduleId, text, backfill);
+}
+
 async function indexNote(moduleId: string, text: SearchText, backfill = false) {
+  const write = (latestWrite.get(moduleId) ?? 0) + 1;
+  latestWrite.set(moduleId, write);
+  failed.delete(moduleId);
   try {
+    // A restore replaces the database; what it had to index is moot.
     if (saveQueue.isSuspended()) return;
     // Restore drains this mutation before replacing the database.
     await queryClient.getMutationCache().build(queryClient, {
@@ -50,6 +70,9 @@ async function indexNote(moduleId: string, text: SearchText, backfill = false) {
     void queryClient.invalidateQueries({ queryKey: ["search-notes"] });
   } catch (error) {
     console.error("Failed to index note for search:", error);
+    if (latestWrite.get(moduleId) !== write || saveQueue.isSuspended()) return;
+    failed.set(moduleId, { text, backfill });
+    retryTimer ??= window.setTimeout(retryFailedIndexing, RETRY_MS);
   }
 }
 
