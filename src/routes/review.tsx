@@ -113,9 +113,19 @@ function Review() {
   const shownAt = useRef(Date.now());
   const displayedCard = useRef<StoredCard | undefined>(undefined);
   const scopeLoading = useRef(false);
+  // Each scope is its own session. A grade, undo or redo still writing when
+  // the scope changes must not touch the new session's queue or history, and
+  // the new scope loads after it, so its card is read in its new state.
+  const session = useRef(0);
+  const writing = useRef<Promise<unknown>>(Promise.resolve());
+  const track = <T,>(write: Promise<T>) => {
+    writing.current = write.catch(() => {});
+    return write;
+  };
 
   useEffect(() => {
     let cancelled = false;
+    session.current++;
     // Keep the mounted card while changing scope so shared cards do not flash.
     const previousCard = displayedCard.current;
     scopeLoading.current = true;
@@ -124,7 +134,7 @@ function Review() {
     setEarlyUntil(null);
     setUndoSteps([]);
     setRedoSteps([]);
-    Promise.all([
+    writing.current.then(() => Promise.all([
       getScheduler(),
       // Notes never checked for cards are checked first, in the background.
       backfillCards().then(() =>
@@ -136,7 +146,7 @@ function Review() {
           ),
         ]),
       ),
-    ])
+    ]))
       .then(([scheduler, [unindexed, cards]]) => {
         if (cancelled) return;
         const nextCard = nextInQueue(cards, Date.now(), appStore.state.learnAhead);
@@ -197,6 +207,7 @@ function Review() {
     async (rating: Grade) => {
       if (!scheduler || !card || !revealed || pending.current || scopeLoading.current) return;
       pending.current = true;
+      const mine = session.current;
       const reviewTime = Date.now();
       try {
         const result = scheduleReview(
@@ -206,12 +217,13 @@ function Review() {
           reviewTime,
           reviewTime - shownAt.current,
         );
-        await writeCards("review_card", {
+        await track(writeCards("review_card", {
           cardId: card.id,
           expectedReps: card.reps,
           card: result.card,
           log: result.log,
-        });
+        }));
+        if (session.current !== mine) return;
         const queueBefore = queue ?? [];
         const rest = queueBefore.filter((queued) => queued.id !== card.id);
         // A card due again today comes back in this session once due.
@@ -225,13 +237,15 @@ function Review() {
         setRedoSteps([]);
       } catch (error) {
         // Keep the card available to retry after a transient storage failure.
-        setError(String(error));
+        if (session.current === mine) setError(String(error));
       } finally {
         pending.current = false;
-        setRevealed(false);
-        setNow(Date.now());
-        setEarlyUntil(null);
         void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+        if (session.current === mine) {
+          setRevealed(false);
+          setNow(Date.now());
+          setEarlyUntil(null);
+        }
       }
     },
     [scheduler, card, revealed, queue, queryClient],
@@ -243,27 +257,31 @@ function Review() {
     const step = undoSteps[undoSteps.length - 1];
     if (!step || pending.current || scopeLoading.current) return;
     pending.current = true;
+    const mine = session.current;
     try {
-      await writeCards("undo_review", {
+      await track(writeCards("undo_review", {
         cardId: step.before.id,
         expectedReps: step.result.card.reps,
         previous: reviewedFields(step.before),
         previousFsrsModel: step.before.fsrsModel,
         reviewTime: step.result.log.reviewTime,
-      });
+      }));
+      if (session.current !== mine) return;
       setError(null);
       setUndoSteps((steps) => steps.slice(0, -1));
       setRedoSteps((steps) => [...steps, step]);
       setQueue(step.queueBefore);
       setReviewed((count) => count - 1);
     } catch (error) {
-      setError(String(error));
+      if (session.current === mine) setError(String(error));
     } finally {
       pending.current = false;
-      setRevealed(false);
-      setNow(Date.now());
-      setEarlyUntil(null);
       void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+      if (session.current === mine) {
+        setRevealed(false);
+        setNow(Date.now());
+        setEarlyUntil(null);
+      }
     }
   }, [undoSteps, queryClient]);
 
@@ -272,26 +290,30 @@ function Review() {
     const step = redoSteps[redoSteps.length - 1];
     if (!step || pending.current || scopeLoading.current) return;
     pending.current = true;
+    const mine = session.current;
     try {
-      await writeCards("review_card", {
+      await track(writeCards("review_card", {
         cardId: step.before.id,
         expectedReps: step.before.reps,
         card: step.result.card,
         log: step.result.log,
-      });
+      }));
+      if (session.current !== mine) return;
       setError(null);
       setRedoSteps((steps) => steps.slice(0, -1));
       setUndoSteps((steps) => [...steps, step]);
       setQueue(step.queueAfter);
       setReviewed((count) => count + 1);
     } catch (error) {
-      setError(String(error));
+      if (session.current === mine) setError(String(error));
     } finally {
       pending.current = false;
-      setRevealed(false);
-      setNow(Date.now());
-      setEarlyUntil(null);
       void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+      if (session.current === mine) {
+        setRevealed(false);
+        setNow(Date.now());
+        setEarlyUntil(null);
+      }
     }
   }, [redoSteps, queryClient]);
 
