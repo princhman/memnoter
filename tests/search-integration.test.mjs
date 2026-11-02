@@ -13,7 +13,7 @@ register(`data:text/javascript,${encodeURIComponent(`
   }
 `)}`, import.meta.url);
 globalThis.window = { setTimeout, clearTimeout };
-const { indexStoredNote } = await import('../src/lib/search-index.ts');
+const { indexStoredNote, flushSearchIndexing } = await import('../src/lib/search-index.ts');
 const { acknowledgeContent, acknowledgeCompaction } = await import('../src/lib/content.ts');
 const { saveQueue } = await import('../src/lib/saves.ts');
 const { queryClient } = await import('../src/lib/query-client.ts');
@@ -66,6 +66,49 @@ test('stored search indexing reconciles late reads and joins the restore mutatio
     finishIndex?.();
     saveQueue.resume();
     for (const mutation of queryClient.getMutationCache().getAll()) mutation.destroy();
+    queryClient.clear();
+    clearMocks();
+    doc.destroy();
+  }
+});
+
+test('a failed index write is kept and written again, unless newer text replaced it', async () => {
+  const doc = new Y.Doc();
+  const paragraph = new Y.XmlElement('paragraph');
+  const text = new Y.XmlText();
+  text.insert(0, 'Text that failed to index');
+  paragraph.insert(0, [text]);
+  doc.getXmlFragment('default').insert(0, [paragraph]);
+  const content = { state: [], updates: [{ id: 1, bytes: Array.from(Y.encodeStateAsUpdate(doc)) }], files: [] };
+  const writes = [];
+  let failing = true;
+  mockIPC((command, args) => {
+    if (command === 'get_content') return content;
+    writes.push(args);
+    if (failing) throw new Error('database is locked');
+  });
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    await indexStoredNote('retry-note');
+    assert.equal(writes.length, 1);
+    failing = false;
+    // Quitting writes it again.
+    await flushSearchIndexing(1_000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(writes.length, 2);
+    assert.equal(writes[1].body, 'Text that failed to index');
+    await flushSearchIndexing(1_000);
+    assert.equal(writes.length, 2, 'a written note is not retried');
+
+    failing = true;
+    await indexStoredNote('retry-note');
+    failing = false;
+    await indexStoredNote('retry-note');
+    await flushSearchIndexing(1_000);
+    assert.equal(writes.length, 4, 'newer text replaced the failed write');
+  } finally {
+    console.error = errors;
     queryClient.clear();
     clearMocks();
     doc.destroy();
