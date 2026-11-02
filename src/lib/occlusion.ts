@@ -1,13 +1,34 @@
+import type { Box } from "@/lib/box";
 export type Point = { x: number; y: number };
-export type Mask = { id: string } & (
+// `group` joins masks into one card: the id of the mask whose card it is.
+export type Mask = { id: string; group?: string } & (
   | { shape: "rectangle"; x: number; y: number; width: number; height: number }
   | { shape: "ellipse"; cx: number; cy: number; rx: number; ry: number }
   | { shape: "freehand"; points: Point[] }
 );
 export type OcclusionFace = {
   version: 1; fileId: string; imageId: string; targetMaskId: string;
+  // Every mask the card asks; missing in faces stored before joining.
+  targetMaskIds?: string[];
   revealed: boolean; masks: Mask[];
 };
+
+// The masks asked together, one card each: a joined group, or a single mask.
+// The card is the owner's, so its schedule survives joining; an owner that
+// was deleted passes the card to the group's first mask.
+export function maskCards(masks: Mask[]): { owner: Mask; members: Mask[] }[] {
+  const groups = new Map<string, Mask[]>();
+  for (const mask of masks) {
+    const key = typeof mask.group === "string" && mask.group ? mask.group : mask.id;
+    groups.set(key, [...(groups.get(key) ?? []), mask]);
+  }
+  return [...groups].map(([key, members]) => ({ owner: members.find(m => m.id === key) ?? members[0], members }));
+}
+
+// The ids of the masks a face asks.
+export function targetsOf(face: OcclusionFace): string[] {
+  return Array.isArray(face.targetMaskIds) ? face.targetMaskIds : [face.targetMaskId];
+}
 export const clamp = (n: number) => Math.max(0, Math.min(1, n));
 export function normalizedPoint(x: number, y: number, bounds: { left: number; top: number; width: number; height: number }): Point {
   return { x: clamp((x - bounds.left) / bounds.width), y: clamp((y - bounds.top) / bounds.height) };
@@ -19,6 +40,31 @@ export function drawMask(shape: Mask["shape"], points: Point[], id: string): Mas
   if (shape === "freehand") return { id, shape, points: points.map(p => ({ x: clamp(p.x), y: clamp(p.y) })) };
   return shape === "rectangle" ? { id, shape, x, y, width, height } : { id, shape, cx: x + width / 2, cy: y + height / 2, rx: width / 2, ry: height / 2 };
 }
+// The box a mask fills, for moving and resizing it like a crop area.
+export function maskBounds(mask: Mask): Box {
+  if (mask.shape === "rectangle") return { x: mask.x, y: mask.y, width: mask.width, height: mask.height };
+  if (mask.shape === "ellipse") return { x: mask.cx - mask.rx, y: mask.cy - mask.ry, width: 2 * mask.rx, height: 2 * mask.ry };
+  const xs = mask.points.map((p) => p.x), ys = mask.points.map((p) => p.y);
+  const x = Math.min(...xs), y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
+// The mask fitted to a new box; a freehand path is stretched to fill it.
+export function withBounds(mask: Mask, box: Box): Mask {
+  if (mask.shape === "rectangle") return { ...mask, ...box };
+  if (mask.shape === "ellipse") {
+    return { ...mask, cx: box.x + box.width / 2, cy: box.y + box.height / 2, rx: box.width / 2, ry: box.height / 2 };
+  }
+  const from = maskBounds(mask);
+  return {
+    ...mask,
+    points: mask.points.map((p) => ({
+      x: clamp(box.x + ((p.x - from.x) / from.width) * box.width),
+      y: clamp(box.y + ((p.y - from.y) / from.height) * box.height),
+    })),
+  };
+}
+
 export function validMasks(value: unknown): Mask[] {
   if (!Array.isArray(value)) return [];
   const ids = new Set<string>();
@@ -34,5 +80,8 @@ export function validMasks(value: unknown): Mask[] {
   });
 }
 export function renewImageIdentity(attrs: Record<string, unknown>, newId: () => string) {
-  return { ...attrs, imageId: newId(), masks: validMasks(attrs.masks).map(m => ({ ...m, id: newId() })) };
+  const masks = validMasks(attrs.masks);
+  const ids = new Map(masks.map(m => [m.id, newId()]));
+  // Joined masks stay joined under their new ids.
+  return { ...attrs, imageId: newId(), masks: masks.map(m => ({ ...m, id: ids.get(m.id)!, ...(m.group ? { group: ids.get(m.group) ?? ids.get(m.id)! } : {}) })) };
 }

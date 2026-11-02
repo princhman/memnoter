@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
-import { drawMask, normalizedPoint, validMasks, type Mask, type Point } from "@/lib/occlusion";
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { Circle, Combine, MousePointer2, PenLine, Split, Square, Trash2, Undo2 } from "lucide-react";
+import { drawMask, maskBounds, maskCards, normalizedPoint, validMasks, withBounds, type Mask, type Point } from "@/lib/occlusion";
+import { HANDLES, moveBox, resizeBox, type Handle } from "@/lib/box";
 import { Button } from "@/components/ui/button";
+import { MOD_KEY, cn } from "@/lib/utils";
 
 export function MaskShape({ mask, ...props }: { mask: Mask } & Omit<React.SVGProps<SVGElement>, "mask">) {
   if (mask.shape === "rectangle") return <rect x={mask.x} y={mask.y} width={mask.width} height={mask.height} {...props as React.SVGProps<SVGRectElement>} />;
@@ -8,57 +11,242 @@ export function MaskShape({ mask, ...props }: { mask: Mask } & Omit<React.SVGPro
   return <polygon points={mask.points.map(p => `${p.x},${p.y}`).join(" ")} {...props as React.SVGProps<SVGPolygonElement>} />;
 }
 
+type Tool = Mask["shape"] | "select";
+const TOOLS: { tool: Tool; label: string; key: string; Icon: typeof Square }[] = [
+  { tool: "select", label: "Select", key: "V", Icon: MousePointer2 },
+  { tool: "rectangle", label: "Rectangle", key: "R", Icon: Square },
+  { tool: "ellipse", label: "Ellipse", key: "E", Icon: Circle },
+  { tool: "freehand", label: "Freehand", key: "F", Icon: PenLine },
+];
+// Smaller masks are taken for a stray click, not a mask.
+const MIN_SIZE = 0.01;
+// Arrow keys move the selected mask by this, or ten times it with Shift.
+const NUDGE = 0.005;
+
+// A drag on the image: drawing a new mask, or moving or resizing one.
+type Gesture =
+  | { kind: "draw"; pointerId: number; id: string; points: Point[] }
+  | { kind: "edit"; pointerId: number; ids: string[]; start: Point; before: Mask[]; mode: "move" | Handle };
+
 export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src: string; masks: Mask[]; onCancel: () => void; onSave: (masks: Mask[]) => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const frame = useRef<HTMLDivElement>(null);
   const [masks, setMasks] = useState(initial);
   const [history, setHistory] = useState<Mask[][]>([]);
-  const [selected, setSelected] = useState<string>();
-  const [tool, setTool] = useState<Mask["shape"] | "select">("rectangle");
+  // Several masks can be selected, with Shift, to join or move them together.
+  const [selected, setSelected] = useState<string[]>([]);
+  const [tool, setTool] = useState<Tool>("rectangle");
   const [draft, setDraft] = useState<Mask>();
-  const [error, setError] = useState("");
-  const gesture = useRef<{ points: Point[]; id: string } | null>(null);
+  const gesture = useRef<Gesture | null>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
-  const commit = (next: Mask[]) => { setHistory(h => [...h, masks]); setMasks(next); setError(""); };
-  const point = (e: PointerEvent<SVGSVGElement>) => normalizedPoint(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
-  const target = masks.find(m => m.id === selected);
-  return <dialog ref={dialog} className="occlusion-dialog" aria-labelledby="occlusion-title" onCancel={e => { e.preventDefault(); onCancel(); }}>
+
+  // Each change is one undo step; a drag is one change, made when it ends.
+  const commit = (next: Mask[], before = masks) => { setHistory(h => [...h, before]); setMasks(next); };
+  const undo = () => {
+    if (!history.length) return;
+    setMasks(history[history.length - 1]);
+    setHistory(h => h.slice(0, -1));
+  };
+  const remove = () => {
+    if (!selected.length) return;
+    commit(masks.filter(m => !selected.includes(m.id)));
+    setSelected([]);
+  };
+  const point = (e: PointerEvent) => normalizedPoint(e.clientX, e.clientY, frame.current!.getBoundingClientRect());
+  // Resize handles are for a single selected mask.
+  const target = selected.length === 1 ? masks.find(m => m.id === selected[0]) : undefined;
+
+  // Each card's number; joined masks share one. Same order as the cards.
+  const cards = maskCards(masks);
+  const cardNumber = new Map(cards.flatMap(({ members }, i) => members.map(m => [m.id, i + 1] as const)));
+  // The selected masks with the rest of their groups.
+  const selectedGroups = () => {
+    const keys = new Set(cards.filter(({ members }) => members.some(m => selected.includes(m.id))).map(({ owner }) => owner.id));
+    return cards.filter(({ owner }) => keys.has(owner.id));
+  };
+  // The first selected mask's card owns the joined card, so its schedule is kept.
+  const join = () => {
+    const groups = selectedGroups();
+    if (groups.length < 2) return;
+    const owner = cards.find(({ members }) => members.some(m => m.id === selected[0]))!.owner.id;
+    const members = new Set(groups.flatMap(({ members }) => members.map(m => m.id)));
+    commit(masks.map(m => members.has(m.id) ? { ...m, group: owner } : m));
+  };
+  const separate = () => {
+    const members = new Set(selectedGroups().flatMap(({ members }) => members.map(m => m.id)));
+    commit(masks.map(m => {
+      if (!members.has(m.id)) return m;
+      const { group: _, ...rest } = m;
+      return rest as Mask;
+    }));
+  };
+  const canJoin = selectedGroups().length >= 2;
+  const canSeparate = selectedGroups().some(({ members }) => members.length > 1);
+
+  // Dragging a mask moves it, with the rest of the selection, whichever tool
+  // is on; dragging a handle resizes it. Shift-click adds or drops a mask.
+  const beginEdit = (e: PointerEvent<Element>, id: string, mode: "move" | Handle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey && mode === "move") {
+      setSelected(current => current.includes(id) ? current.filter(other => other !== id) : [...current, id]);
+      return;
+    }
+    frame.current!.setPointerCapture(e.pointerId);
+    const ids = mode === "move" && selected.includes(id) ? selected : [id];
+    setSelected(ids);
+    gesture.current = { kind: "edit", pointerId: e.pointerId, ids, start: point(e), before: masks, mode };
+  };
+
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    setSelected([]);
+    if (tool === "select") return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    gesture.current = { kind: "draw", pointerId: e.pointerId, id: crypto.randomUUID(), points: [point(e)] };
+  };
+
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const g = gesture.current;
+    if (!g || g.pointerId !== e.pointerId) return;
+    const p = point(e);
+    if (g.kind === "draw") {
+      g.points = tool === "freehand" ? [...g.points.slice(0, 4094), p] : [g.points[0], p];
+      setDraft(drawMask(tool === "select" ? "rectangle" : tool, g.points, g.id));
+      return;
+    }
+    const mode = g.mode;
+    let dx = p.x - g.start.x, dy = p.y - g.start.y;
+    const moving = g.before.filter(m => g.ids.includes(m.id));
+    if (mode === "move") {
+      // Masks moved together stop together at the image's edge.
+      const boxes = moving.map(maskBounds);
+      dx = Math.max(-Math.min(...boxes.map(b => b.x)), Math.min(1 - Math.max(...boxes.map(b => b.x + b.width)), dx));
+      dy = Math.max(-Math.min(...boxes.map(b => b.y)), Math.min(1 - Math.max(...boxes.map(b => b.y + b.height)), dy));
+    }
+    setMasks(g.before.map(m => {
+      if (!g.ids.includes(m.id)) return m;
+      const box = maskBounds(m);
+      return withBounds(m, mode === "move" ? moveBox(box, dx, dy) : resizeBox(box, mode, dx, dy, MIN_SIZE));
+    }));
+  };
+
+  const onPointerUp = (e: PointerEvent<HTMLDivElement>) => {
+    const g = gesture.current;
+    if (!g || g.pointerId !== e.pointerId) return;
+    gesture.current = null;
+    if (g.kind === "draw") {
+      setDraft(undefined);
+      const shape = tool === "select" ? "rectangle" : tool;
+      const mask = drawMask(shape, shape === "freehand" ? [...g.points, point(e)] : [g.points[0], point(e)], g.id);
+      const { width, height } = maskBounds(mask);
+      if (width >= MIN_SIZE && height >= MIN_SIZE && validMasks([mask]).length) {
+        commit([...masks, mask]);
+        setSelected([mask.id]);
+      }
+      return;
+    }
+    // Only a mask that moved is an undo step; a click just selects it.
+    if (masks.some((m, i) => m !== g.before[i])) commit(masks, g.before);
+  };
+
+  const onPointerCancel = () => {
+    const g = gesture.current;
+    gesture.current = null;
+    setDraft(undefined);
+    if (g?.kind === "edit") setMasks(g.before);
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDialogElement>) => {
+    if ((e.target as HTMLElement).closest("input, textarea")) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (mod || e.altKey) return;
+    const choice = TOOLS.find(t => t.key.toLowerCase() === e.key.toLowerCase());
+    if (choice) { e.preventDefault(); setTool(choice.tool); return; }
+    if ((e.key === "Backspace" || e.key === "Delete") && selected.length) { e.preventDefault(); remove(); return; }
+    const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (arrow && selected.length) {
+      e.preventDefault();
+      const step = e.shiftKey ? NUDGE * 10 : NUDGE;
+      commit(masks.map(m => selected.includes(m.id) ? withBounds(m, moveBox(maskBounds(m), arrow[0] * step, arrow[1] * step)) : m));
+    }
+  };
+
+  const box = target && maskBounds(target);
+  const area = box && { left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%` };
+
+  return <dialog
+    ref={dialog}
+    className="occlusion-dialog"
+    aria-labelledby="occlusion-title"
+    onKeyDown={onKeyDown}
+    // Escape first lets go of the selected mask, then closes.
+    onCancel={e => { e.preventDefault(); if (selected.length) setSelected([]); else onCancel(); }}
+  >
     <h2 id="occlusion-title">Image occlusion</h2>
-    <p>Draw masks, then select one to edit its normalized coordinates. Only the target is hidden during review; other answers stay visible.</p>
-    <div className="flex flex-wrap gap-2 my-3">{(["select", "rectangle", "ellipse", "freehand"] as const).map(t => <Button key={t} variant={tool === t ? "default" : "outline"} aria-pressed={tool === t} onClick={() => setTool(t)}>{t}</Button>)}
-      <Button disabled={!history.length} onClick={() => { setMasks(history[history.length - 1]); setHistory(h => h.slice(0,-1)); }}>Undo</Button>
+    <p>Drag over the parts to hide. Each number is one card: Shift-click masks and join them to ask them together. Drag a mask to move it, or its handles to resize it.</p>
+    <div className="occlusion-toolbar">
+      <div className="flex items-center gap-0.5" role="toolbar" aria-label="Mask tools">
+        {TOOLS.map(({ tool: t, label, key, Icon }) => (
+            <Button key={t} size="icon-sm" variant={tool === t ? "secondary" : "ghost"} aria-label={label} title={`${label} (${key})`} aria-pressed={tool === t} onClick={() => setTool(t)}>
+              <Icon />
+            </Button>
+        ))}
+      </div>
+      <div className="flex items-center gap-0.5">
+        <span className="mr-2 text-xs text-muted-foreground tabular-nums">{cards.length} {cards.length === 1 ? "card" : "cards"}</span>
+          <Button size="sm" variant="ghost" title="Ask the selected masks as one card" disabled={!canJoin} onClick={join}><Combine />Join</Button>
+          <Button size="sm" variant="ghost" title="Make each selected mask its own card" disabled={!canSeparate} onClick={separate}><Split />Separate</Button>
+          <Button size="icon-sm" variant="ghost" aria-label="Undo" title={`Undo (${MOD_KEY}Z)`} disabled={!history.length} onClick={undo}><Undo2 /></Button>
+
+          <Button size="icon-sm" variant="ghost" aria-label="Delete mask" title="Delete mask (⌫)" disabled={!selected.length} onClick={remove}><Trash2 /></Button>
+
+      </div>
     </div>
-    <div className="occlusion-frame">
+    <div
+      ref={frame}
+      className={cn("occlusion-frame", tool !== "select" && "cursor-crosshair")}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+    >
       <img src={src} alt="Image to mask" draggable={false} />
-      <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="Draw occlusion masks" onPointerDown={e => {
-        if (tool === "select") return;
-        e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
-        gesture.current = { points: [point(e)], id: crypto.randomUUID() };
-      }} onPointerMove={e => {
-        const g = gesture.current; if (!g || tool === "select") return;
-        const p = point(e);
-        g.points = tool === "freehand" ? [...g.points.slice(0,4094), p] : [g.points[0], p];
-        setDraft(drawMask(tool, g.points, g.id));
-      }} onPointerUp={e => {
-        const g = gesture.current; if (!g || tool === "select") return;
-        const m = drawMask(tool, [...g.points, point(e)], g.id);
-        if (validMasks([m]).length) { commit([...masks, m]); setSelected(m.id); }
-        gesture.current = null; setDraft(undefined);
-      }} onPointerCancel={() => { gesture.current = null; setDraft(undefined); }}>
-        {[...masks, ...(draft ? [draft] : [])].map((m,i) => <MaskShape key={m.id} mask={m} fill={m.id === selected ? "#e9a23b" : "#557bcd"} fillOpacity={0.65} stroke="white" strokeWidth={0.003} onPointerDown={e => { if (tool === "select") { e.stopPropagation(); setSelected(m.id); } }}><title>Mask {i + 1}</title></MaskShape>)}
+      <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="Occlusion masks">
+        {[...masks, ...(draft ? [draft] : [])].map((m, i) => (
+          <MaskShape
+            key={m.id}
+            mask={m}
+            className={cn("occlusion-mask", selected.includes(m.id) && "is-selected")}
+            vectorEffect="non-scaling-stroke"
+            onPointerDown={e => { if (e.button === 0 && m !== draft) beginEdit(e, m.id, "move"); }}
+          >
+            <title>Mask {i + 1}</title>
+          </MaskShape>
+        ))}
       </svg>
+      {masks.map(m => {
+        const b = maskBounds(m);
+        return <span key={m.id} className={cn("occlusion-number", selected.includes(m.id) && "is-selected")} style={{ left: `${b.x * 100}%`, top: `${b.y * 100}%` }} aria-hidden>{cardNumber.get(m.id)}</span>;
+      })}
+      {area && target && (
+        <div className="occlusion-selection" style={area} onPointerDown={e => { if (e.button === 0) beginEdit(e, target.id, "move"); }}>
+          {HANDLES.map(handle => (
+            <span
+              key={handle}
+              className={`image-crop-handle image-crop-handle-${handle}`}
+              aria-hidden
+              onPointerDown={e => { if (e.button === 0) beginEdit(e, target.id, handle); }}
+            />
+          ))}
+        </div>
+      )}
     </div>
-    <div className="flex flex-wrap gap-2 my-3">{masks.map((m,i) => <Button key={m.id} variant="outline" aria-pressed={selected === m.id} onClick={() => { setSelected(m.id); setTool("select"); }}>Mask {i+1} ({m.shape})</Button>)}</div>
-    <Button onClick={() => { const m = drawMask(tool === "select" ? "rectangle" : tool, tool === "freehand" ? [{x:.25,y:.25},{x:.75,y:.25},{x:.5,y:.75}] : [{x:.25,y:.25},{x:.75,y:.75}], crypto.randomUUID()); commit([...masks,m]); setSelected(m.id); }}>Add centered mask (keyboard)</Button>
-    {target && <fieldset key={`${target.id}-${history.length}`} className="my-3"><legend>Edit selected {target.shape}</legend>
-      {target.shape === "freehand" ? <label>Closed path points (JSON, x/y from 0 to 1)<textarea defaultValue={JSON.stringify(target.points)} onBlur={e => {
-        try { const next = { ...target, points: JSON.parse(e.target.value) }; if (!validMasks([next]).length) throw Error(); commit(masks.map(m => m.id === target.id ? next : m)); } catch { setError("Enter at least three valid points forming a closed area, with coordinates from 0 to 1."); }
-      }} /></label> : Object.entries(target).filter(([k]) => !["id","shape"].includes(k)).map(([key,value]) => <label key={key} className="inline-flex gap-2 mr-3">{key}<input type="number" min="0" max="1" step="0.01" defaultValue={value as number} onBlur={e => {
-        const next = { ...target, [key]: Number(e.target.value) };
-        if (validMasks([next]).length) commit(masks.map(m => m.id === target.id ? next : m)); else setError("The mask must have a positive area and fit inside the image (0–1).");
-      }} /></label>)}
-      <Button variant="destructive" onClick={() => { commit(masks.filter(m => m.id !== selected)); setSelected(undefined); }}>Delete selected mask</Button>
-    </fieldset>}
-    {error && <p role="alert">{error}</p>}
-    <div className="flex justify-end gap-2 mt-4"><Button variant="ghost" onClick={onCancel}>Cancel</Button><Button onClick={() => onSave(masks)}>Save masks</Button></div>
+    <div className="flex justify-end gap-2 mt-4">
+      <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+      <Button onClick={() => onSave(masks)}>Save masks</Button>
+    </div>
   </dialog>;
 }

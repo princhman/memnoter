@@ -1,9 +1,11 @@
 import { imageOperation } from "@/lib/write-lifecycle";
 import { OcclusionEditor } from "@/components/occlusion-editor";
 import { saveQueue } from "@/lib/saves";
-import { validMasks } from "@/lib/occlusion";
+import { maskCards, validMasks } from "@/lib/occlusion";
+import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
+import { HANDLES, moveBox, resizeBox, type Box, type Handle } from "@/lib/box";
 import { createContext, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
-import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
+import { NodeViewWrapper, ReactNodeViewRenderer, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { mergeAttributes, ResizableNodeView } from "@tiptap/core";
 import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { NodeType } from "@tiptap/pm/model";
@@ -30,19 +32,8 @@ export const FilesContext = createContext<FilesContextValue>({
   readImage: async () => { throw new Error("Image storage is unavailable"); },
 });
 
-type Crop = { x: number; y: number; width: number; height: number };
-type CropHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
-const CROP_HANDLES: CropHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+type Crop = Box;
 const MIN_CROP = 0.05;
-
-function resizeCrop(crop: Crop, handle: CropHandle, dx: number, dy: number): Crop {
-  let left = crop.x, top = crop.y, right = crop.x + crop.width, bottom = crop.y + crop.height;
-  if (handle.includes("w")) left = Math.max(0, Math.min(right - MIN_CROP, left + dx));
-  if (handle.includes("e")) right = Math.min(1, Math.max(left + MIN_CROP, right + dx));
-  if (handle.includes("n")) top = Math.max(0, Math.min(bottom - MIN_CROP, top + dy));
-  if (handle.includes("s")) bottom = Math.min(1, Math.max(top + MIN_CROP, bottom + dy));
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
 
 function CropDialog({ image, onCancel, onSave }: {
   image: HTMLImageElement;
@@ -50,12 +41,12 @@ function CropDialog({ image, onCancel, onSave }: {
   onSave: (crop: Crop) => Promise<void>;
 }) {
   const frame = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ pointerId: number; startX: number; startY: number; crop: Crop; mode: "move" | CropHandle } | null>(null);
+  const drag = useRef<{ pointerId: number; startX: number; startY: number; crop: Crop; mode: "move" | Handle } | null>(null);
   const [crop, setCrop] = useState<Crop>({ x: 0, y: 0, width: 1, height: 1 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const beginDrag = (event: ReactPointerEvent<HTMLElement>, mode: "move" | CropHandle) => {
+  const beginDrag = (event: ReactPointerEvent<HTMLElement>, mode: "move" | Handle) => {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -69,9 +60,9 @@ function CropDialog({ image, onCancel, onSave }: {
     const dx = (event.clientX - current.startX) / bounds.width;
     const dy = (event.clientY - current.startY) / bounds.height;
     if (current.mode === "move") {
-      setCrop({ ...current.crop, x: Math.max(0, Math.min(1 - current.crop.width, current.crop.x + dx)), y: Math.max(0, Math.min(1 - current.crop.height, current.crop.y + dy)) });
+      setCrop(moveBox(current.crop, dx, dy));
     } else {
-      setCrop(resizeCrop(current.crop, current.mode, dx, dy));
+      setCrop(resizeBox(current.crop, current.mode, dx, dy, MIN_CROP));
     }
   };
 
@@ -99,7 +90,7 @@ function CropDialog({ image, onCancel, onSave }: {
             <img src={image.src} alt="Crop preview" draggable={false} />
             <div className="image-crop-shade-clip"><div className="image-crop-shade" style={area} /></div>
             <div className="image-crop-selection" style={area} onPointerDown={(event) => beginDrag(event, "move")} onPointerMove={updateDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
-              {CROP_HANDLES.map((handle) => (
+              {HANDLES.map((handle) => (
                 <span key={handle} className={`image-crop-handle image-crop-handle-${handle}`} aria-label={`Resize crop area (${handle})`} onPointerDown={(event) => beginDrag(event, handle)} onPointerMove={updateDrag} onPointerUp={endDrag} onPointerCancel={endDrag} />
               ))}
             </div>
@@ -139,6 +130,30 @@ function SavedImageView(props: NodeViewProps) {
   const [describing, setDescribing] = useState(false);
   const dark = useDarkTheme();
   const adaptive = Boolean(node.attrs.adaptive);
+
+  // The image's cards get the dot text cards have: due state and schedule on
+  // hover, and a way into the mask editor.
+  const schedules = useEditorState({ editor, selector: ({ editor }) => cardSchedulesOf(editor.state) });
+  const infoHost = useRef<HTMLSpanElement>(null);
+  const canEditMasks = editor.isEditable && !!src && !failed && !!node.attrs.fileId;
+  useEffect(() => {
+    const element = infoHost.current;
+    if (!element) return;
+    const { imageId, fileId } = node.attrs;
+    const masks = validMasks(node.attrs.masks);
+    if (isInline || typeof imageId !== "string" || typeof fileId !== "string" || !masks.length || !schedules) {
+      element.replaceChildren();
+      return;
+    }
+    // Numbered as in the mask editor.
+    const entries = maskCards(masks).map(({ owner, members }, index) => ({
+      answer: members.length > 1 ? `Card ${index + 1} (${members.length} masks)` : `Card ${index + 1}`,
+      schedule: schedules.byId.get(`${imageId}:o:${owner.id}`),
+    }));
+    const due = entries.some(({ schedule }) => schedule && schedule.dueAt <= schedules.now);
+    element.replaceChildren(cardInfo(entries, due, schedules.now,
+      canEditMasks ? { label: "Edit masks", run: () => setOcclusionOpen(true) } : null));
+  }, [schedules, node.attrs.imageId, node.attrs.fileId, node.attrs.masks, isInline, canEditMasks]);
 
   useEffect(() => {
     if (!host.current || !src) return;
@@ -368,6 +383,7 @@ function SavedImageView(props: NodeViewProps) {
 
   return (
     <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-align={isInline ? undefined : node.attrs.alignment}>
+      <span ref={infoHost} className="contents" />
       {isInline
         ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" data-drag-handle onClick={selectImage} />
         : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" data-drag-handle onClick={selectImage} />}

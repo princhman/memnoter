@@ -17,3 +17,14 @@ test('review admits only a matching concealed/revealed pair with a valid target'
     assert.equal(validatedOcclusionPair(front, invalid), null);
   }
 });
+
+test('a joined card names every mask it asks, all present and the same on both faces', () => {
+  const masks = [front.masks[0], { id: 'other', shape: 'rectangle', x: .5, y: .5, width: .5, height: .5 }];
+  const joined = { ...front, masks, targetMaskIds: ['mask', 'other'] };
+  assert.ok(validatedOcclusionPair(joined, { ...joined, revealed: true }));
+  for (const invalid of [{ ...joined, targetMaskIds: ['other'] }, { ...joined, targetMaskIds: ['mask', 'absent'] },
+    { ...joined, targetMaskIds: 'mask' }]) {
+    assert.equal(validatedOcclusionPair(invalid, { ...invalid, revealed: true }), null);
+  }
+  assert.equal(validatedOcclusionPair(joined, { ...joined, revealed: true, targetMaskIds: ['mask'] }), null);
+});

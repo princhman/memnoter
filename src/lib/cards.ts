@@ -1,4 +1,4 @@
-import { validMasks, type OcclusionFace } from "./occlusion.ts";
+import { maskCards, validMasks, type OcclusionFace } from "./occlusion.ts";
 import type { Node } from "@tiptap/pm/model";
 import type { StepMap } from "@tiptap/pm/transform";
 
@@ -319,9 +319,9 @@ export function extractCards(doc: Node): ExtractedCard[] {
       if (typeof imageId === "string" && typeof fileId === "string" && !seen.has(imageId)) {
         seen.add(imageId);
         const masks = validMasks(node.attrs.masks);
-        for (const mask of masks) {
-          const front: OcclusionFace = { version: 1, fileId, imageId, targetMaskId: mask.id, revealed: false, masks };
-          cards.push({ id: `${imageId}:o:${mask.id}`, blockId: imageId, kind: "occlusion", front, back: { ...front, revealed: true }, section });
+        for (const { owner, members } of maskCards(masks)) {
+          const front: OcclusionFace = { version: 1, fileId, imageId, targetMaskId: owner.id, targetMaskIds: members.map(m => m.id), revealed: false, masks };
+          cards.push({ id: `${imageId}:o:${owner.id}`, blockId: imageId, kind: "occlusion", front, back: { ...front, revealed: true }, section });
         }
       }
       return false;

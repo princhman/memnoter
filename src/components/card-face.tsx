@@ -3,7 +3,7 @@ import { validatedOcclusionPair } from "@/lib/occlusion-face-validation";
 import { useEffect, useState, type ReactNode } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { MaskShape } from "@/components/occlusion-editor";
-import { validMasks, type OcclusionFace } from "@/lib/occlusion";
+import { targetsOf, validMasks, type OcclusionFace } from "@/lib/occlusion";
 import type { CardKind, Segment, CardPayload } from "@/lib/cards";
 import { cn } from "@/lib/utils";
 
@@ -141,11 +141,35 @@ function OcclusionReview({ face }: { face: OcclusionFace }) {
   }, [face.fileId]);
   if (asset?.fileId !== face.fileId) return <p role="status">Loading image…</p>;
   if (asset.failed || face.version !== 1) return <p role="alert">Image unavailable. Open the source note to check or remove the image.</p>;
-  const target = validMasks(face.masks).find(m => m.id === face.targetMaskId);
-  return <div className="grid gap-3"><p>{face.revealed ? "Answer outlined below" : "Recall the covered area"}</p><div className="occlusion-frame">
-    <img src={asset.src} alt="Occlusion review image" onError={() => setAsset({ fileId: face.fileId, failed: true })} />
-    <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-label={face.revealed ? "Target answer outlined" : "Target answer hidden"}>
-      {target && <MaskShape mask={target} fill={face.revealed ? "none" : "#557bcd"} stroke="#e9a23b" strokeWidth={0.006} />}
+  return <OcclusionImage face={face} src={asset.src!} onError={() => setAsset({ fileId: face.fileId, failed: true })} />;
+}
+
+// The asked masks cover their answer until it is shown, then are outlined.
+// The other masks stay covered too, and a click shows or covers one, for
+// context; once the answer is shown they are all uncovered.
+function OcclusionImage({ face, src, onError }: { face: OcclusionFace; src: string; onError: () => void }) {
+  const [peeked, setPeeked] = useState<Set<string>>(new Set());
+  const targets = new Set(targetsOf(face));
+  const masks = validMasks(face.masks);
+  const toggle = (id: string) => setPeeked(current => {
+    const next = new Set(current);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  });
+  return <div className="occlusion-frame">
+    <img src={src} alt="Occlusion review image" onError={onError} />
+    <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-label={face.revealed ? "Answer outlined" : "Answer hidden"}>
+      {masks.map(mask => targets.has(mask.id)
+        ? <MaskShape key={mask.id} mask={mask} className={face.revealed ? "occlusion-answer" : "occlusion-target"} vectorEffect="non-scaling-stroke" />
+        : !face.revealed && <MaskShape
+            key={mask.id}
+            mask={mask}
+            role="button"
+            aria-label={peeked.has(mask.id) ? "Cover this area" : "Show this area"}
+            className={cn("occlusion-other", peeked.has(mask.id) && "is-peeked")}
+            vectorEffect="non-scaling-stroke"
+            onClick={() => toggle(mask.id)}
+          />)}
     </svg>
-  </div></div>;
+  </div>;
 }

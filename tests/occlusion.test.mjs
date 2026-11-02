@@ -7,7 +7,8 @@ import { prosemirrorToYDoc, yDocToProsemirrorJSON } from "@tiptap/y-tiptap";
 import { Slice, Fragment } from "@tiptap/pm/model";
 import { Flashcards } from "../src/lib/flashcards.ts";
 import { extractCards, blockIdOf } from "../src/lib/cards.ts";
-import { normalizedPoint, drawMask, validMasks } from "../src/lib/occlusion.ts";
+import { normalizedPoint, drawMask, validMasks, maskBounds, withBounds, renewImageIdentity } from "../src/lib/occlusion.ts";
+import { moveBox, resizeBox } from "../src/lib/box.ts";
 
 // Real editor transactions exercise persisted node attributes and identity repair.
 const ImageNode = Node.create({ name: "image", group: "block", atom: true, addAttributes: () => ({ imageId: { default: null }, fileId: { default: null }, masks: { default: [] }, width: { default: null } }) });
@@ -112,4 +113,44 @@ test("copies renew image and mask identities; cross-note conflict repair leaves 
     assert.notEqual(pasted.content.firstChild.attrs.imageId, editor.state.doc.firstChild.attrs.imageId);
     assert.notEqual(pasted.content.firstChild.attrs.masks[0].id, editor.state.doc.firstChild.attrs.masks[0].id);
   } finally { editor.destroy(); }
+});
+
+test("masks move and resize through their box, staying inside the image", () => {
+  const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+  // Moving stops at the image's edge.
+  const moved = withBounds(rectangle, moveBox(maskBounds(rectangle), 0.9, -0.5));
+  assert.deepEqual([moved.x, moved.y, moved.width, moved.height], [0.7, 0, 0.3, 0.4]);
+  // A corner handle drags two edges; the box keeps its minimum size.
+  const resized = withBounds(ellipse, resizeBox(maskBounds(ellipse), "se", 0.1, -1, 0.01));
+  close(resized.cx, 0.55); close(resized.rx, 0.25); close(resized.ry, 0.005); close(resized.cy - resized.ry, 0.2);
+  // A freehand path stretches to fill its new box.
+  const stretched = withBounds(freehand, { x: 0.5, y: 0.5, width: 0.5, height: 0.25 });
+  assert.deepEqual(stretched.points, [{ x: 0.5, y: 0.5 }, { x: 1, y: 0.5 }, { x: 0.75, y: 0.75 }]);
+  assert.equal(validMasks([moved, resized, stretched]).length, 3);
+});
+
+test("joined masks are one card, kept by their owner, and stay joined when copied", () => {
+  const masks = [{ ...rectangle, group: "e" }, ellipse, { ...freehand, group: "e" }, { ...rectangle, id: "solo" }];
+  const editor = editorFor([{ ...image, attrs: { ...image.attrs, masks } }]);
+  try {
+    const cards = extractCards(editor.state.doc);
+    assert.deepEqual(cards.map(c => [c.id, c.front.targetMaskIds]), [
+      ["source:o:e", ["r", "e", "f"]],
+      ["source:o:solo", ["solo"]],
+    ]);
+    assert.equal(cards[0].front.targetMaskId, "e");
+  } finally { editor.destroy(); }
+
+  // Without its owner the group's card passes to its first mask.
+  const orphaned = editorFor([{ ...image, attrs: { ...image.attrs, masks: [masks[0], masks[2]] } }]);
+  try {
+    assert.deepEqual(extractCards(orphaned.state.doc).map(c => c.id), ["source:o:r"]);
+  } finally { orphaned.destroy(); }
+
+  let n = 0;
+  const copy = renewImageIdentity({ masks }, () => `new${++n}`);
+  const byOld = Object.fromEntries(masks.map((m, i) => [m.id, copy.masks[i]]));
+  assert.equal(byOld.r.group, byOld.e.id);
+  assert.equal(byOld.f.group, byOld.e.id);
+  assert.equal(byOld.solo.group, undefined);
 });

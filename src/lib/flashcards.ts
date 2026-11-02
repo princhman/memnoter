@@ -34,18 +34,24 @@ export type CardSchedule = {
   state: number;
 };
 
-type Schedules = { byId: Map<string, CardSchedule>; now: number };
+export type Schedules = { byId: Map<string, CardSchedule>; now: number };
+
+// The schedules the note's card dots show, as of their last fetch.
+export function cardSchedulesOf(state: EditorState): Schedules | undefined {
+  return decorationsKey.getState(state)?.schedules;
+}
 
 const decorationsKey = new PluginKey<{ set: DecorationSet; schedules: Schedules }>(
   "flashcardDecorations",
 );
 
-// A small margin dot with each card's schedule shown on hover.
-function cardInfo(
+// A small margin dot with each card's schedule shown on hover, and an
+// optional action at the foot of its popup.
+export function cardInfo(
   entries: { answer: string | null; schedule: CardSchedule | undefined }[],
   due: boolean,
   now: number,
-  onJoin: (() => void) | null,
+  action: { label: string; run: () => void } | null,
 ) {
   const info = document.createElement("span");
   info.className = "card-info";
@@ -62,8 +68,8 @@ function cardInfo(
 
   const popup = document.createElement("span");
   popup.className = "card-info-popup";
-  popup.setAttribute("role", onJoin ? "dialog" : "tooltip");
-  if (onJoin) popup.setAttribute("aria-label", "Card details");
+  popup.setAttribute("role", action ? "dialog" : "tooltip");
+  if (action) popup.setAttribute("aria-label", "Card details");
   for (const { answer, schedule } of entries) {
     const row = document.createElement("span");
     row.className = "card-info-row";
@@ -93,13 +99,13 @@ function cardInfo(
     }
     popup.append(row);
   }
-  if (onJoin) {
+  if (action) {
     const join = document.createElement("button");
     join.type = "button";
     join.className = "card-info-join";
-    join.textContent = "Join into one card";
+    join.textContent = action.label;
     join.addEventListener("mousedown", (event) => event.preventDefault());
-    join.addEventListener("click", onJoin);
+    join.addEventListener("click", action.run);
     const footer = document.createElement("span");
     footer.className = "card-info-footer";
     footer.append(join);
@@ -127,14 +133,14 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules): Decora
       [answer, schedule?.state ?? null, schedule?.dueAt ?? null, schedule?.lastReviewAt ?? null])]);
     decorations.push(
       Decoration.widget(start, (view, getPos) => cardInfo(entries, due, schedules.now,
-        syntax.clozes.length > 1 && entries.length > 1 ? () => {
+        syntax.clozes.length > 1 && entries.length > 1 ? { label: "Join into one card", run: () => {
           // Resolve the widget's current position: edits above it can move it.
           const position = getPos();
           if (position === undefined) return;
           const $pos = view.state.doc.resolve(position);
           const groups = joinedClozeGroups($pos.parent, 0, $pos.parent.content.size);
           if (groups) view.dispatch(view.state.tr.setNodeAttribute($pos.before(), "clozeGroups", groups));
-        } : null), {
+        } } : null), {
         side: -1,
         ignoreSelection: true,
         stopEvent: () => true,
