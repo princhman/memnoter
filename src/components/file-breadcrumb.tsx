@@ -17,7 +17,7 @@ import { useEditorState } from "@tiptap/react";
 import { getFocusedSectionPath } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { Fragment } from "react";
-import { useIsFullscreen } from "@/hooks/use-fullscreen";
+import { ReviewScopeMenu } from "./review-scope-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,9 +27,11 @@ import {
 } from "./ui/dropdown-menu";
 import { Button } from "./ui/button";
 
+// Clears the window controls and toolbar, whose width the root layout sets.
+const TOOLBAR_OFFSET = "w-[calc(var(--toolbar-width,10.75rem)+0.75rem)]";
+
 export function FileBreadcrumb() {
   const { state } = useSidebar();
-  const isFullScreen = useIsFullscreen();
 
   const {
     isPending,
@@ -41,8 +43,11 @@ export function FileBreadcrumb() {
   });
 
   const matchRoute = useMatchRoute();
+  // These pages also match the module id pattern.
+  const isSettings = !!matchRoute({ to: "/settings" });
+  const isReview = !!matchRoute({ to: "/review" });
   const match = matchRoute({ to: "/$moduleId" });
-  const moduleId = match ? match.moduleId : null;
+  const moduleId = match && !isSettings && !isReview ? match.moduleId : null;
   const moduleName = modules.find((module) => module.id === moduleId)?.name;
   const { activeEditor } = useActiveEditor();
   const editor =
@@ -79,19 +84,28 @@ export function FileBreadcrumb() {
         // sidebar toggles and swaps instantly when crossing the breakpoint.
         className={cn(
           "hidden shrink-0 transition-[width] duration-(--sidebar-motion-duration) ease-(--sidebar-motion-ease) motion-reduce:transition-none md:block",
-          state === "collapsed" ? (isFullScreen ? "w-30" : "w-46") : "w-2",
+          state === "collapsed" ? TOOLBAR_OFFSET : "w-2",
         )}
       />
       {/* Below md the sidebar is a sheet, so always clear the window controls. */}
-      <div
-        className={cn("shrink-0 md:hidden", isFullScreen ? "w-30" : "w-46")}
-      />
+      <div className={cn("shrink-0 md:hidden", TOOLBAR_OFFSET)} />
       <div className="min-w-0">
         <Breadcrumb>
-          <BreadcrumbList>
-            {!moduleId ? (
-              <BreadcrumbItem>
-                <BreadcrumbPage>Home</BreadcrumbPage>
+          <BreadcrumbList className={isReview ? "flex-nowrap" : undefined}>
+            {isReview ? (
+              <>
+                {/* The module under review comes first, as it will for a module's other pages. */}
+                <BreadcrumbItem className="min-w-0">
+                  <ReviewScopeMenu />
+                </BreadcrumbItem>
+                <BreadcrumbSeparator>/</BreadcrumbSeparator>
+                <BreadcrumbItem className="shrink-0">
+                  <BreadcrumbPage>Review</BreadcrumbPage>
+                </BreadcrumbItem>
+              </>
+            ) : !moduleId ? (
+              <BreadcrumbItem className="shrink-0">
+                <BreadcrumbPage>{isSettings ? "Settings" : "Home"}</BreadcrumbPage>
               </BreadcrumbItem>
             ) : (
               <BreadcrumbItem>
@@ -121,9 +135,12 @@ export function FileBreadcrumb() {
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       render={
-                        <Button size="icon-sm" variant="ghost">
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label="Show parent sections"
+                        >
                           <BreadcrumbEllipsis />
-                          <span className="sr-only">Toggle menu</span>
                         </Button>
                       }
                     />
@@ -182,3 +199,4 @@ export function FileBreadcrumb() {
     </>
   );
 }
+

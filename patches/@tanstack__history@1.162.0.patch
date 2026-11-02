@@ -1,0 +1,21 @@
+diff --git a/dist/cjs/index.cjs b/dist/cjs/index.cjs
+index 8f88a73c3a99f58d8bda94d3c82d35a2923fb7d0..b17719a505f25caebf41869470e577df5c4628d8 100644
+--- a/dist/cjs/index.cjs
++++ b/dist/cjs/index.cjs
+@@ -233 +233 @@
+-					win.history.go(1);
++					win.history.go(-delta);
+diff --git a/dist/esm/index.js b/dist/esm/index.js
+index f109cf460a841d00ce7492da6f4aa13de1efbf7e..0582503eb4aa52a0869a9720bea26041cdaf358b 100644
+--- a/dist/esm/index.js
++++ b/dist/esm/index.js
+@@ -232 +232 @@
+-					win.history.go(1);
++					win.history.go(-delta);
+diff --git a/src/index.ts b/src/index.ts
+index 705dbf0111b274d8d3a9a3ed1c96621af4e4d834..4d5fe6260d2a48bcc110b8bf4a2d11b6e8bc2a53 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -441 +441 @@
+-            win.history.go(1)
++            win.history.go(-delta)

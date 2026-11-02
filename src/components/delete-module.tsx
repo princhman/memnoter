@@ -1,8 +1,11 @@
+import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { Module } from "@/lib/types";
+import { dueCountsKey } from "@/lib/card-sync";
 import { forgetModule } from "@/lib/store";
+import { saveQueue } from "@/lib/saves";
 import {
   Dialog,
   DialogClose,
@@ -28,9 +31,12 @@ const DeleteModule = ({
   const queryClient = useQueryClient();
   const router = useRouter();
   const mutation = useMutation({
-    mutationFn: () => invoke("delete_module", { moduleId }),
-    onSuccess: async () => {
+    mutationKey: ["delete-module"],
+    mutationFn: () => exclusiveWrite(async () => {
+      await invoke("delete_module", { moduleId });
+      saveQueue.drop(moduleId);
       forgetModule(moduleId);
+      void queryClient.invalidateQueries({ queryKey: dueCountsKey });
       if (
         router.state.matches.some(
           (match) =>
@@ -45,7 +51,7 @@ const DeleteModule = ({
       queryClient.setQueryData<Module[]>(["modules"], (modules) =>
         modules?.filter((module) => module.id !== moduleId),
       );
-    },
+    }, { excludedMutation: "delete-module" }),
   });
 
   return (

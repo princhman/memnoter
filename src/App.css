@@ -193,6 +193,9 @@ body {
     max-width: calc(760px + 0.8rem);
     margin: 0 auto;
     padding-inline: 0.4rem;
+    /* Lets the last line scroll up to the middle of the window. Clicks here
+       put the caret at the end. */
+    padding-bottom: 50vh;
     color: var(--foreground);
     font-family: "Arrows", var(--font-sans);
     font-size: 1rem;
@@ -250,7 +253,7 @@ body {
     pointer-events: none;
 }
 
-/* Headings — Notion-ish */
+/* Headings, Notion-ish */
 .tiptap h1,
 .tiptap h2,
 .tiptap h3,
@@ -709,10 +712,10 @@ body {
     font-size: 0.85rem;
 }
 
-/* Inline math — styled to match the app's theme tokens (shadcn / Tailwind vars).
+/* Inline math, styled to match the app's theme tokens (shadcn / Tailwind vars).
    Light/dark is handled by the CSS variables, so no media queries are needed. */
 
-/* ---------- Editing state (cursor inside) — looks like inline code ---------- */
+/* ---------- Editing state (cursor inside): looks like inline code ---------- */
 .tiptap .inline-math.is-editing {
     display: inline;
     border-radius: 0.35rem;
@@ -739,12 +742,15 @@ body {
 }
 
 /* ---------- Rendered widget (cursor outside) ---------- */
+/* Inline, not inline-block: a long formula wraps across lines like text, so
+   each line box grows to fit its part instead of the whole block overlapping
+   the line above. */
 .tiptap .inline-math-widget {
-    display: inline-block;
-    vertical-align: baseline;
+    display: inline;
     padding: 0 0.15em;
     border-radius: 0.35rem;
-    margin-block: calc(var(--inline-math-overflow, 0.5em) * -1);
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
     cursor: pointer;
     -webkit-user-select: none;
     user-select: none;
@@ -797,7 +803,7 @@ body {
     padding: 0 0.25em;
 }
 
-/* ---------- Floating live preview (while editing) — popover look ---------- */
+/* ---------- Floating live preview (while editing): popover look ---------- */
 .tiptap .inline-math-preview {
     position: relative;
     display: inline-block;
@@ -1070,12 +1076,309 @@ body {
   pointer-events: none;
 }
 
+/* Amber like other apps' find, which stands out from the indigo selection. */
 .find-highlight {
   position: absolute;
   border-radius: 2px;
-  background-color: color-mix(in oklch, var(--primary) 18%, transparent);
+  background-color: oklch(0.88 0.16 90 / 0.55);
 }
 
 .find-highlight-current {
-  background-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  background-color: oklch(0.8 0.17 65);
 }
+
+.dark .find-highlight {
+  background-color: oklch(0.78 0.15 85 / 0.4);
+}
+
+.dark .find-highlight-current {
+  background-color: oklch(0.72 0.17 60 / 0.75);
+}
+
+/* Flashcards. Card syntax stays real, editable text and is only restyled:
+   no characters are hidden from the caret and nothing changes width when the
+   caret arrives, so text never shifts under it. */
+.tiptap .card-block {
+    position: relative;
+}
+
+/* A faint marker in the right margin; the left one holds fold toggles. */
+.tiptap .card-block::after {
+    content: "";
+    position: absolute;
+    top: 0.55em;
+    right: -0.8rem;
+    width: 0.3rem;
+    height: 0.3rem;
+    border-radius: 9999px;
+    background: var(--primary);
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+/* Card info sits where headings keep their fold toggle. It shows on hover,
+   in the caret's block, and always while one of the block's cards is due. */
+.tiptap .card-info {
+    position: absolute;
+    top: 0;
+    right: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1lh;
+    margin-right: 0.15rem;
+    color: var(--muted-foreground);
+    font-size: 1rem;
+    font-weight: 400;
+    cursor: default;
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+    user-select: none;
+}
+
+/* A heading's fold toggle keeps its place; the info goes before it. */
+.tiptap :is(h1, h2, h3, h4, h5, h6) > .card-info {
+    right: calc(100% + 1.4rem);
+}
+
+.tiptap .card-info::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.tiptap .card-block:hover > .card-info,
+.tiptap .card-block-active > .card-info,
+.tiptap .note-image-block:is(:hover, [data-selected="true"]) .card-info {
+    opacity: 1;
+}
+
+.tiptap .card-info[data-state="new"] {
+    color: var(--color-sky-600);
+}
+
+.tiptap .card-info[data-state="learning"],
+.tiptap .card-info[data-state="relearning"] {
+    color: var(--color-red-600);
+}
+
+.tiptap .card-info[data-state="review"] {
+    color: var(--color-emerald-600);
+}
+
+.dark .tiptap .card-info[data-state="new"] {
+    color: var(--color-sky-400);
+}
+
+.dark .tiptap .card-info:is([data-state="learning"], [data-state="relearning"]) {
+    color: var(--color-red-400);
+}
+
+.dark .tiptap .card-info[data-state="review"] {
+    color: var(--color-emerald-400);
+}
+
+.tiptap .card-info[data-due] {
+    opacity: 1;
+}
+
+/* Full colour only when due; a card waiting its turn keeps a faint dot. */
+.tiptap .card-info:not([data-due])::before {
+    opacity: 0.35;
+}
+
+.tiptap .card-info-popup {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 50;
+    display: none;
+    flex-direction: column;
+    width: 16rem;
+    max-width: calc(100vw - 3rem);
+    padding: 0;
+    border-radius: 0.75rem;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 8px 32px rgb(0 0 0 / 0.2), 0 2px 6px rgb(0 0 0 / 0.08);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 400;
+    font-style: normal;
+    letter-spacing: normal;
+    line-height: 1.5;
+    text-align: left;
+    white-space: normal;
+    pointer-events: auto;
+}
+
+.tiptap .card-info:focus-within {
+    opacity: 1;
+}
+
+.tiptap .card-info:hover .card-info-popup,
+.tiptap .card-info:focus-within .card-info-popup {
+    display: flex;
+}
+
+.tiptap .card-info-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.75rem 0.875rem;
+}
+
+.tiptap .card-info-row + .card-info-row {
+    border-top: 1px solid var(--border);
+}
+
+.tiptap .card-info-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.25rem;
+}
+
+.tiptap .card-info-answer {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8125rem;
+    font-weight: 500;
+}
+
+.tiptap .card-info-state {
+    flex-shrink: 0;
+    padding: 0.0625rem 0.375rem;
+    border-radius: 0.25rem;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    font-size: 0.625rem;
+    font-weight: 500;
+}
+
+.tiptap .card-info-state[data-state="new"] {
+    color: var(--color-sky-600);
+    background: color-mix(in oklch, var(--color-sky-500) 12%, transparent);
+}
+
+.tiptap .card-info-state:is([data-state="learning"], [data-state="relearning"]) {
+    color: var(--color-red-600);
+    background: color-mix(in oklch, var(--color-red-500) 12%, transparent);
+}
+
+.tiptap .card-info-state[data-state="review"] {
+    color: var(--color-emerald-600);
+    background: color-mix(in oklch, var(--color-emerald-500) 12%, transparent);
+}
+
+.dark .tiptap .card-info-state[data-state="new"] { color: var(--color-sky-400); }
+.dark .tiptap .card-info-state:is([data-state="learning"], [data-state="relearning"]) { color: var(--color-red-400); }
+.dark .tiptap .card-info-state[data-state="review"] { color: var(--color-emerald-400); }
+
+.tiptap .card-info-reviewed {
+    color: var(--muted-foreground);
+    font-size: 0.6875rem;
+}
+
+.tiptap .card-info-footer {
+    padding: 0.375rem;
+    border-top: 1px solid var(--border);
+}
+
+.tiptap .card-info-join {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 2rem;
+    padding: 0.375rem 0.5rem;
+    border: 0;
+    border-radius: 0.375rem;
+    background: var(--muted);
+    color: var(--popover-foreground);
+    font: inherit;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    outline: none;
+    transition: background-color 120ms ease;
+}
+
+.tiptap .card-info-join:hover {
+    background: color-mix(in oklch, var(--muted), var(--foreground) 6%);
+}
+
+.tiptap .card-info-join:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+/* `::` reads as a subtle arrow. The characters stay in place, drawn
+   transparent over an arrow image, and show as typed in the caret's block. */
+.tiptap .card-sep {
+    padding-inline: 0.12em;
+    color: transparent;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8h10.5M9.5 4.5 13 8l-3.5 3.5' fill='none' stroke='%23737373' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 1em no-repeat;
+}
+
+.dark .tiptap .card-sep {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8h10.5M9.5 4.5 13 8l-3.5 3.5' fill='none' stroke='%23a1a1a1' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.tiptap .card-block-active .card-sep {
+    color: var(--muted-foreground);
+    background: none;
+    opacity: 0.6;
+}
+
+/* Keep cloze markers hidden in both reading and editing states. */
+.tiptap .cloze-brace {
+    font-size: 0;
+}
+
+.tiptap .cloze-text {
+    border-radius: 2px;
+    background-color: color-mix(in oklch, var(--primary) 10%, transparent);
+    text-decoration-line: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: color-mix(in oklch, var(--primary) 70%, transparent);
+    text-underline-offset: 0.2em;
+}
+
+/* The dark primary is too dim on the dark background. */
+.dark .tiptap .cloze-text {
+    background-color: color-mix(in oklch, var(--chart-1) 14%, transparent);
+    text-decoration-color: var(--chart-1);
+}
+
+.card-face .katex {
+    font-size: 1.1em;
+}
+
+.occlusion-dialog { margin: auto; width: min(960px, 95vw); max-height: 94vh; overflow: auto; padding: 24px; border: none; border-radius: 12px; background: var(--background); color: var(--foreground); box-shadow: 0 12px 40px color-mix(in oklch, black 28%, transparent); }
+.occlusion-dialog::backdrop { background: color-mix(in oklch, black 55%, transparent); }
+.occlusion-dialog h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+.occlusion-dialog > p { margin: 0.35rem 0 0.75rem; color: var(--muted-foreground); font-size: 0.85rem; }
+.occlusion-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.75rem; }
+.occlusion-frame { position: relative; width: fit-content; max-width: 100%; margin: auto; line-height: 0; touch-action: none; user-select: none; }
+.occlusion-frame img { display: block; max-width: 100%; max-height: 60vh; pointer-events: none; }
+.occlusion-frame svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.occlusion-mask { fill: var(--color-sky-500); fill-opacity: 0.6; stroke: white; stroke-width: 1.5px; cursor: move; }
+.occlusion-mask.is-selected { fill: var(--color-amber-500); fill-opacity: 0.7; }
+/* Review: the asked masks in the answer colour, the others plain and
+   clickable; covers are opaque so nothing shows through. */
+.occlusion-target { fill: var(--color-amber-500); stroke: white; stroke-width: 1.5px; }
+.occlusion-answer { fill: none; stroke: var(--color-amber-500); stroke-width: 3px; }
+.occlusion-other { fill: var(--muted); stroke: var(--muted-foreground); stroke-width: 1px; cursor: pointer; }
+.occlusion-other:hover { fill: color-mix(in oklch, var(--muted) 85%, var(--foreground)); }
+.occlusion-other.is-peeked { fill: transparent; stroke-dasharray: 4 3; }
+/* The card a mask belongs to, as a tab in its top-left corner in the mask's
+   colour; joined masks share the number. */
+.occlusion-number { position: absolute; margin: 3px; padding: 0 5px; border-radius: 4px; background: var(--color-sky-600); color: white; font-size: 11px; font-weight: 600; line-height: 16px; pointer-events: none; }
+.occlusion-number.is-selected { background: var(--color-amber-600); }
+/* The selected mask's box, with the crop dialog's handles. */
+.occlusion-selection { position: absolute; cursor: move; outline: 1.5px dashed white; outline-offset: 2px; }

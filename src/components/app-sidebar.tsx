@@ -7,15 +7,18 @@ import {
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuAction,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Module } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
-import { Ellipsis, Pencil, Trash2 } from "lucide-react";
+import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,7 +29,11 @@ import {
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
-import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useEffect, useState } from "react";
+import { useDueCounts } from "@/lib/card-sync";
+import { CardCounts } from "@/components/card-counts";
 
 const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
   const [renameOpen, setRenameOpen] = useState(false);
@@ -82,25 +89,43 @@ const AppSidebar = () => {
     queryFn: async () => await invoke<Module[]>("modules"),
   });
   const matchRoute = useMatchRoute();
+  const { total } = useDueCounts();
+
+  // Narrow windows show the sidebar as a sheet with its own open state.
+  const { toggleSidebar } = useSidebar();
+  useEffect(() => {
+    window.addEventListener(TOGGLE_SIDEBAR_EVENT, toggleSidebar);
+    return () => window.removeEventListener(TOGGLE_SIDEBAR_EVENT, toggleSidebar);
+  }, [toggleSidebar]);
 
   return (
     <Sidebar>
       <SidebarContent className="pt-6">
-        {/*<SidebarHeader>
-        <div className="flex justify-between">
-          <div className="px-2 text-md font-semibold pt-8">Notes</div>
-        </div>
-      </SidebarHeader>
-
         <SidebarGroup>
-          <SidebarMenu>
+          <SidebarMenu className="gap-0.5">
             <SidebarMenuItem>
-              <SidebarMenuButton>
+              <SidebarMenuButton
+                isActive={!!matchRoute({ to: "/" })}
+                render={<Link to="/" />}
+              >
+                <House />
                 <span>Home</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={!!matchRoute({ to: "/review" })}
+                render={<Link to="/review" search={{}} />}
+              >
+                <Layers />
+                <span>Review</span>
+              </SidebarMenuButton>
+              <SidebarMenuBadge>
+                <CardCounts counts={total} />
+              </SidebarMenuBadge>
+            </SidebarMenuItem>
           </SidebarMenu>
-        </SidebarGroup>*/}
+        </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
           <CreateModule />
@@ -141,7 +166,24 @@ const AppSidebar = () => {
       </SidebarContent>
 
       <SidebarFooter>
-        <UpdateStatus />
+        <UpdateStatus>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground aria-[current=page]:text-foreground"
+                  aria-label="Settings"
+                  render={<Link to="/settings" />}
+                />
+              }
+            >
+              <Settings />
+            </TooltipTrigger>
+            <TooltipContent side="top">Settings</TooltipContent>
+          </Tooltip>
+        </UpdateStatus>
       </SidebarFooter>
     </Sidebar>
   );

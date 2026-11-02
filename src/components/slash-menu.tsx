@@ -2,6 +2,7 @@ import {
   forwardRef,
   Fragment,
   useEffect,
+  useId,
   useImperativeHandle,
   useRef,
   useState,
@@ -14,17 +15,41 @@ import Suggestion, {
   type SuggestionProps,
 } from "@tiptap/suggestion";
 import { cn, MOD_KEY } from "@/lib/utils";
+import { useActiveDescendant } from "@/hooks/use-active-descendant";
+
+export type SlashCommandOptions = {
+  // Saves picked images and inserts them at a position, as pasting does.
+  insertImages: (editor: Editor, files: File[], position: number) => void;
+};
 
 type SlashItem = {
   group: string;
   title: string;
   keywords: string[];
   hint: string;
-  run: (editor: Editor, range: Range) => void;
+  run: (editor: Editor, range: Range, options: SlashCommandOptions) => void;
 };
 
 const ALT_KEY = MOD_KEY === "⌘" ? "⌥" : "Alt+";
+const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
 const shortcut = (key: string) => `${MOD_KEY}${ALT_KEY}${key}`;
+const shiftShortcut = (key: string) => `${MOD_KEY}${SHIFT_KEY}${key}`;
+
+export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+function pickImages(onPick: (files: File[]) => void) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = IMAGE_TYPES.join(",");
+  input.multiple = true;
+  input.addEventListener("change", () => {
+    const files = Array.from(input.files ?? []).filter((file) =>
+      IMAGE_TYPES.includes(file.type),
+    );
+    if (files.length) onPick(files);
+  });
+  input.click();
+}
 
 // Listed in display order; a group label shows above its first item.
 const ITEMS: SlashItem[] = [
@@ -60,6 +85,50 @@ const ITEMS: SlashItem[] = [
     }),
   ),
   {
+    group: "Blocks",
+    title: "Bullet list",
+    keywords: ["list", "bullet", "unordered", "ul", "-"],
+    hint: shiftShortcut("8"),
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).toggleBulletList().run(),
+  },
+  {
+    group: "Blocks",
+    title: "Numbered list",
+    keywords: ["list", "numbered", "ordered", "ol", "1."],
+    hint: shiftShortcut("7"),
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).toggleOrderedList().run(),
+  },
+  {
+    group: "Blocks",
+    title: "Code block",
+    keywords: ["code", "pre", "snippet", "```"],
+    hint: shortcut("C"),
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).toggleCodeBlock().run(),
+  },
+  {
+    group: "Blocks",
+    title: "Quote",
+    keywords: ["quote", "blockquote", "citation", ">"],
+    hint: shiftShortcut("B"),
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).toggleBlockquote().run(),
+  },
+  {
+    group: "Blocks",
+    title: "Image",
+    keywords: ["image", "picture", "photo", "upload", "file"],
+    hint: "",
+    run: (editor, range, options) => {
+      editor.chain().focus().deleteRange(range).run();
+      pickImages((files) =>
+        options.insertImages(editor, files, editor.state.selection.from),
+      );
+    },
+  },
+  {
     group: "Math",
     title: "Inline math",
     keywords: ["math", "equation", "latex", "formula", "$"],
@@ -90,12 +159,17 @@ function filterItems(query: string) {
 // Typing  /  in raw text such as formulas or code is literal.
 const RAW_TEXT_NODES = new Set(["codeBlock", "mathBlock", "inlineMath"]);
 
-export const SlashCommand = Extension.create({
+export const SlashCommand = Extension.create<SlashCommandOptions>({
   name: "slash-command",
   // Arrow keys and Enter go to the open menu before other extensions.
   priority: 200,
 
+  addOptions() {
+    return { insertImages: () => {} };
+  },
+
   addProseMirrorPlugins() {
+    const options = this.options;
     return [
       Suggestion<SlashItem, SlashItem>({
         editor: this.editor,
@@ -109,7 +183,7 @@ export const SlashCommand = Extension.create({
           }
           return true;
         },
-        command: ({ editor, range, props }) => props.run(editor, range),
+        command: ({ editor, range, props }) => props.run(editor, range, options),
         render: () => {
           let renderer: ReactRenderer<SlashMenuHandle, SlashMenuProps> | null =
             null;
@@ -146,9 +220,12 @@ type SlashMenuHandle = {
 };
 
 const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
-  ({ items, command }, ref) => {
+  ({ items, command, editor }, ref) => {
     const [selected, setSelected] = useState(0);
     const listRef = useRef<HTMLDivElement>(null);
+    const listboxId = useId();
+    const optionId = (index: number) => `${listboxId}-${index}`;
+    useActiveDescendant(editor, listboxId, items.length ? optionId(selected) : null);
 
     useEffect(() => setSelected(0), [items]);
 
@@ -188,7 +265,9 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
       >
         <div
           ref={listRef}
+          id={listboxId}
           role="listbox"
+          aria-label="Insert"
           // A stable gutter keeps the rows the same width whether or not
           // filtering leaves enough items to scroll.
           className="max-h-72 overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
@@ -196,7 +275,9 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
         {items.map((item, index) => (
           <Fragment key={item.title}>
             {item.group !== items[index - 1]?.group && (
+              // Each option's name says what it is; the label is visual only.
               <div
+                aria-hidden="true"
                 className={cn(
                   "px-2 pb-0.5 text-xs text-muted-foreground",
                   index === 0 ? "pt-1" : "mt-1 border-t pt-1.5",
@@ -208,6 +289,8 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
             <button
               type="button"
               role="option"
+              id={optionId(index)}
+              tabIndex={-1}
               data-index={index}
               aria-selected={index === selected}
               className={cn(
@@ -218,9 +301,11 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
               onClick={() => command(item)}
             >
               <span className="truncate">{item.title}</span>
-              <kbd className="shrink-0 font-sans text-xs text-muted-foreground">
-                {item.hint}
-              </kbd>
+              {item.hint && (
+                <kbd className="shrink-0 font-sans text-xs text-muted-foreground">
+                  {item.hint}
+                </kbd>
+              )}
             </button>
           </Fragment>
         ))}

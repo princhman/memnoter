@@ -18,7 +18,13 @@ type appState = {
   openedModuleId: string | null;
   viewByModule: Record<string, ModuleView>;
   sidebarOpen: boolean;
+  // Most recently opened first, for the welcome screen.
+  recentModuleIds: string[];
+  // Review shows a card due soon when none is due yet, as Anki does.
+  learnAhead: boolean;
 };
+
+const RECENT_LIMIT = 20;
 
 const STORAGE_KEY = "app-state";
 const SAVE_DEBOUNCE_MS = 250;
@@ -27,6 +33,8 @@ const defaultState: appState = {
   openedModuleId: null,
   viewByModule: {},
   sidebarOpen: true,
+  recentModuleIds: [],
+  learnAhead: false,
 };
 
 function loadState(): appState {
@@ -64,7 +72,16 @@ window.addEventListener("beforeunload", saveState);
 
 export function setOpenedModule(moduleId: string | null) {
   if (appStore.state.openedModuleId === moduleId) return;
-  appStore.setState((state) => ({ ...state, openedModuleId: moduleId }));
+  appStore.setState((state) => ({
+    ...state,
+    openedModuleId: moduleId,
+    recentModuleIds: moduleId
+      ? [
+          moduleId,
+          ...state.recentModuleIds.filter((id) => id !== moduleId),
+        ].slice(0, RECENT_LIMIT)
+      : state.recentModuleIds,
+  }));
 }
 
 export function saveModuleView(moduleId: string, view: ModuleView) {
@@ -82,10 +99,15 @@ export function forgetModule(moduleId: string) {
       openedModuleId:
         state.openedModuleId === moduleId ? null : state.openedModuleId,
       viewByModule,
+      recentModuleIds: state.recentModuleIds.filter((id) => id !== moduleId),
     };
   });
 }
 
 export function setSidebarOpen(open: boolean) {
   appStore.setState((state) => ({ ...state, sidebarOpen: open }));
+}
+
+export function setLearnAhead(learnAhead: boolean) {
+  appStore.setState((state) => ({ ...state, learnAhead }));
 }
