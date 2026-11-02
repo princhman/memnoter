@@ -81,12 +81,12 @@ test("each cloze is a card that hides only itself", () => {
   assert.deepEqual(syntax.cards, [
     {
       kind: "cloze",
-      front: [{ type: "blank" }, text(" is the capital of France :: ignored")],
+      front: [{ type: "blank" }, text(" is the capital of "), { type: "hidden", children: [text("France")] }, text(" :: ignored")],
       back: [{ type: "cloze", children: [text("Paris")] }, text(" is the capital of France :: ignored")],
     },
     {
       kind: "cloze",
-      front: [text("Paris is the capital of "), { type: "blank" }, text(" :: ignored")],
+      front: [{ type: "hidden", children: [text("Paris")] }, text(" is the capital of "), { type: "blank" }, text(" :: ignored")],
       back: [text("Paris is the capital of "), { type: "cloze", children: [text("France")] }, text(" :: ignored")],
     },
   ]);

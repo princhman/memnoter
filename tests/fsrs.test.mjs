@@ -3,7 +3,6 @@ import { test } from "node:test";
 import {
   formatInterval,
   getScheduler,
-  LEARN_AHEAD_MS,
   nextInQueue,
   previewDue,
   scheduleReview,
@@ -84,10 +83,10 @@ test("button previews match the review that is then stored", async () => {
   assert.equal(stored.lapses, 1);
 });
 
-test("again brings a card back within the session", async () => {
+test("again brings a card back after a minute", async () => {
   const scheduler = await getScheduler();
   const { card } = scheduleReview(scheduler, storedCard(), 1, now);
-  assert.ok(card.dueAt - now <= LEARN_AHEAD_MS);
+  assert.equal(card.dueAt - now, MINUTE);
 });
 
 test("intervals are labelled like Anki's buttons", () => {
@@ -97,14 +96,19 @@ test("intervals are labelled like Anki's buttons", () => {
   );
 });
 
-test("the queue shows the most overdue card and learns ahead only when idle", () => {
+test("the queue shows the most overdue card, and none before it is due", () => {
   const queue = [
     { id: "later", dueAt: now + 10 * MINUTE },
     { id: "old", dueAt: now - DAY },
     { id: "older", dueAt: now - 2 * DAY },
   ];
   assert.equal(nextInQueue(queue, now).id, "older");
-  assert.equal(nextInQueue(queue.slice(0, 1), now).id, "later");
+  assert.equal(nextInQueue(queue.slice(0, 1), now), undefined);
+  assert.equal(nextInQueue(queue.slice(0, 1), now + 10 * MINUTE).id, "later");
+  // Learn ahead shows a card due within 20 minutes when none is due.
+  assert.equal(nextInQueue(queue.slice(0, 1), now, true).id, "later");
+  assert.equal(nextInQueue(queue, now, true).id, "older");
+  assert.equal(nextInQueue([{ id: "far", dueAt: now + 21 * MINUTE }], now, true), undefined);
   assert.equal(nextInQueue([{ id: "far", dueAt: now + DAY }], now), undefined);
   assert.equal(nextInQueue([], now), undefined);
 });

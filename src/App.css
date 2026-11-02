@@ -1184,6 +1184,11 @@ body {
     opacity: 1;
 }
 
+/* Full colour only when due; a card waiting its turn keeps a faint dot. */
+.tiptap .card-info:not([data-due])::before {
+    opacity: 0.35;
+}
+
 .tiptap .card-info-popup {
     position: absolute;
     top: 100%;

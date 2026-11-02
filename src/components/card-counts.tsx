@@ -8,8 +8,8 @@ const PARTS = [
 ] as const;
 
 // Cards due now as Anki shows them: new, learning and to review, each in its
-// own colour, with zeros faded. Each count carries a faded superscript +n for
-// its cards due later today.
+// own colour, faded when zero. Each count carries a superscript +n, in its
+// colour, for its cards due later today.
 export function CardCounts({ counts, className }: { counts: Counts; className?: string }) {
   const later = (key: (typeof PARTS)[number]["key"]) => counts.laterToday?.[key] ?? 0;
   const label = PARTS.map(({ key, label }) =>
@@ -21,12 +21,10 @@ export function CardCounts({ counts, className }: { counts: Counts; className?: 
         <span
           key={key}
           aria-hidden
-          className={counts[key] > 0 ? className : "text-muted-foreground/50"}
+          className={className}
         >
-          {counts[key]}
-          {later(key) > 0 && (
-            <sup className="ml-px text-[0.65em] text-muted-foreground">+{later(key)}</sup>
-          )}
+          <span className={counts[key] > 0 ? undefined : "opacity-40"}>{counts[key]}</span>
+          {later(key) > 0 && <sup className="ml-px text-[0.65em] opacity-70">+{later(key)}</sup>}
         </span>
       ))}
     </span>

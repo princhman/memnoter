@@ -182,7 +182,7 @@ const none = (): Required<CardCounts> => ({
 });
 
 // The next local midnight.
-function endOfDay(now: number) {
+export function endOfDay(now: number) {
   const end = new Date(now);
   end.setHours(24, 0, 0, 0);
   return end.getTime();

@@ -1,18 +1,19 @@
+import { useSelector } from "@tanstack/react-store";
+import { appStore } from "@/lib/store";
 import { writeCards } from "@/lib/card-writes";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardFace } from "@/components/card-face";
-import { dueCountsKey, flushCardSyncs } from "@/lib/card-sync";
+import { dueCountsKey, endOfDay, flushCardSyncs } from "@/lib/card-sync";
 import { backfillCards } from "@/lib/card-backfill";
 import {
   formatInterval,
   getScheduler,
   GRADES,
-  LEARN_AHEAD_MS,
   nextInQueue,
   previewDue,
   scheduleReview,
@@ -52,14 +53,16 @@ function reviewedFields(card: StoredCard) {
     state, scheduleStatus, lastReviewAt, reps, lapses };
 }
 
-// The session's remaining cards, split like the due counts.
-function countByState(queue: StoredCard[]) {
-  const counts = { new: 0, learning: 0, review: 0 };
-  for (const { state } of queue) {
+// The session's remaining cards, split like the due counts: due now, and
+// due later today.
+function countByState(queue: StoredCard[], now: number) {
+  const counts = { new: 0, learning: 0, review: 0, laterToday: { new: 0, learning: 0, review: 0 } };
+  for (const { state, dueAt } of queue) {
+    const split = dueAt <= now ? counts : counts.laterToday;
     // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
-    if (state === 0) counts.new++;
-    else if (state === 2) counts.review++;
-    else counts.learning++;
+    if (state === 0) split.new++;
+    else if (state === 2) split.review++;
+    else split.learning++;
   }
   return counts;
 }
@@ -118,6 +121,7 @@ function Review() {
     scopeLoading.current = true;
     setError(null);
     setReviewed(0);
+    setEarlyUntil(null);
     setUndoSteps([]);
     setRedoSteps([]);
     Promise.all([
@@ -127,14 +131,15 @@ function Review() {
         Promise.all([
           invoke<{ id: string; name: string }[]>("unindexed_card_modules"),
           flushCardSyncs().then(() =>
-            invoke<StoredCard[]>("due_cards", { moduleId: moduleId ?? null, now: Date.now() }),
+            // Cards due later today join the session, to be shown once due.
+            invoke<StoredCard[]>("due_cards", { moduleId: moduleId ?? null, now: endOfDay(Date.now()) }),
           ),
         ]),
       ),
     ])
       .then(([scheduler, [unindexed, cards]]) => {
         if (cancelled) return;
-        const nextCard = nextInQueue(cards, Date.now());
+        const nextCard = nextInQueue(cards, Date.now(), appStore.state.learnAhead);
         if (nextCard?.id !== previousCard?.id || nextCard?.reps !== previousCard?.reps) {
           setRevealed(false);
           setNow(Date.now());
@@ -150,7 +155,25 @@ function Review() {
     };
   }, [moduleId]);
 
-  const card = queue ? nextInQueue(queue, now) : undefined;
+  const learnAhead = useSelector(appStore, (state) => state.learnAhead);
+  // Set by "Show now": cards due by then may be shown early, until a grade.
+  const [earlyUntil, setEarlyUntil] = useState<number | null>(null);
+  const card = queue
+    ? nextInQueue(queue, now, learnAhead) ?? (earlyUntil === null ? undefined : nextInQueue(queue, earlyUntil))
+    : undefined;
+  // The card due next after now, if the session has one.
+  const nextDueAt = queue?.reduce<number | null>(
+    (soonest, { dueAt }) => (dueAt > now && (soonest === null || dueAt < soonest) ? dueAt : soonest),
+    null,
+  ) ?? null;
+  // Shows that card, and moves it into the due counts, once it is due. While
+  // waiting for it, the countdown on the page also refreshes.
+  useEffect(() => {
+    if (nextDueAt === null) return;
+    const delay = Math.min(nextDueAt - Date.now() + 50, card ? 2 ** 31 - 1 : 30_000);
+    const timeout = window.setTimeout(() => setNow(Date.now()), Math.max(delay, 0));
+    return () => window.clearTimeout(timeout);
+  }, [nextDueAt, now, card]);
   // The module is in the breadcrumb unless every module is under review.
   const source = card ? [...(moduleId ? [] : [card.moduleName || "Untitled module"]), ...card.section] : [];
   displayedCard.current = card;
@@ -191,8 +214,8 @@ function Review() {
         });
         const queueBefore = queue ?? [];
         const rest = queueBefore.filter((queued) => queued.id !== card.id);
-        // Learning steps come back in this session; the rest are done.
-        const queueAfter = result.card.dueAt <= reviewTime + LEARN_AHEAD_MS
+        // A card due again today comes back in this session once due.
+        const queueAfter = result.card.dueAt < endOfDay(reviewTime)
           ? [...rest, { ...card, ...result.card }]
           : rest;
         setError(null);
@@ -207,6 +230,7 @@ function Review() {
         pending.current = false;
         setRevealed(false);
         setNow(Date.now());
+        setEarlyUntil(null);
         void queryClient.invalidateQueries({ queryKey: dueCountsKey });
       }
     },
@@ -238,6 +262,7 @@ function Review() {
       pending.current = false;
       setRevealed(false);
       setNow(Date.now());
+      setEarlyUntil(null);
       void queryClient.invalidateQueries({ queryKey: dueCountsKey });
     }
   }, [undoSteps, queryClient]);
@@ -265,6 +290,7 @@ function Review() {
       pending.current = false;
       setRevealed(false);
       setNow(Date.now());
+      setEarlyUntil(null);
       void queryClient.invalidateQueries({ queryKey: dueCountsKey });
     }
   }, [redoSteps, queryClient]);
@@ -274,7 +300,7 @@ function Review() {
   actions.current = { undo, redo };
   useEffect(() => {
     reviewActionsStore.setState(() => ({
-      counts: queue ? countByState(queue) : null,
+      counts: queue ? countByState(queue, now) : null,
       canUndo: undoSteps.length > 0,
       canRedo: redoSteps.length > 0,
       undo: () => void undo(),
@@ -286,7 +312,7 @@ function Review() {
           }
         : null,
     }));
-  }, [undoSteps.length, redoSteps.length, undo, redo, card, router, queue]);
+  }, [undoSteps.length, redoSteps.length, undo, redo, card, router, queue, now]);
   useEffect(() => () => reviewActionsStore.setState(() => null), []);
 
   // The app menu's Undo and Redo, and ⌘Z and ⌘⇧Z, act on grades here.
@@ -320,7 +346,8 @@ function Review() {
       const onButton = target?.closest("button");
       if ((event.key === " " || event.key === "Enter") && !onButton) {
         event.preventDefault();
-        if (!revealed) reveal();
+        if (!card && nextDueAt !== null) setEarlyUntil(nextDueAt);
+        else if (!revealed) reveal();
         return;
       }
       const grade = GRADES.find(({ key }) => key === event.key);
@@ -331,7 +358,7 @@ function Review() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [reveal, rate, revealed]);
+  }, [reveal, rate, revealed, card, nextDueAt]);
 
 
   return (
@@ -357,7 +384,18 @@ function Review() {
         {queue === null && !error && (
           <p className="text-center text-muted-foreground">Loading cards…</p>
         )}
-        {queue !== null && !card && (
+        {queue !== null && !card && nextDueAt !== null && (
+          <div className="grid justify-items-center gap-3 text-center">
+            <Clock className="size-10 text-muted-foreground" />
+            <h1 className="text-2xl font-semibold">Next card in {formatInterval(nextDueAt - now)}</h1>
+            <p className="text-muted-foreground">It shows here once it is due.</p>
+            <Button variant="secondary" className="mt-2" onClick={() => setEarlyUntil(nextDueAt)}>
+              Show now
+              <kbd className="font-sans text-xs text-muted-foreground">Space</kbd>
+            </Button>
+          </div>
+        )}
+        {queue !== null && !card && nextDueAt === null && (
           <div className="grid justify-items-center gap-3 text-center">
             <CheckCircle2 className="size-10 text-emerald-600 dark:text-emerald-400" />
             <h1 className="text-2xl font-semibold">{unindexed.length ? "No due cards in checked notes" : "All caught up"}</h1>
@@ -375,7 +413,8 @@ function Review() {
               <p className="mb-8 truncate text-xs text-muted-foreground">{source.join(" / ")}</p>
             )}
             <CardFace
-              key={card.id}
+              // A card graded and shown again starts with its clozes hidden.
+              key={`${card.id}:${card.reps}`}
               kind={card.kind}
               front={card.front}
               back={card.back}
