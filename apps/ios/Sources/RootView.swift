@@ -20,6 +20,7 @@ struct RootView: View {
     @State private var image: PhotosPickerItem?
     @State private var find = ""
     @State private var showingFind = false
+    @FocusState private var findFocused: Bool
     @State private var keyboardDocked = false
     @State private var keyboardTop: CGFloat = 0
     @State private var deleting: NoteModule?
@@ -50,6 +51,10 @@ struct RootView: View {
             }
             .listStyle(.sidebar)
             .searchable(text: $search, isPresented: $showSearch, prompt: "Search notes")
+            .background {
+                Button("Search modules") { columnVisibility = .all; showSearch = true }
+                    .keyboardShortcut("k").hidden().accessibilityHidden(true)
+            }
             .task(id: search) {
                 guard let client = store.client else { return }
                 do { let results: [SearchHit] = try await client.call("search_notes", SearchArgs(query: search)); if !Task.isCancelled { hits = results } }
@@ -85,7 +90,7 @@ struct RootView: View {
                             Button("Show whole note") { session.exec("showDocument") }.fixedSize()
                         }.padding(.horizontal).padding(.vertical, 8).background(.bar)
                     }
-                    if showingFind { TextField("Find in note", text: $find).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
+                    if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
                     WebSurface(session: session)
                         .background(Color(uiColor: .systemBackground))
                         .overlay {
@@ -140,12 +145,11 @@ struct RootView: View {
                     }
                     ToolbarItemGroup(placement: .primaryAction) {
                         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }.disabled(busy).accessibilityLabel("Insert photo")
-                        Button { showingFind.toggle() } label: { Image(systemName: "magnifyingglass") }.keyboardShortcut("f")
+                        Button { showingFind = true; findFocused = true } label: { Image(systemName: "magnifyingglass") }.accessibilityLabel("Find in note").keyboardShortcut("f")
                         Button { showOutline = true } label: { Image(systemName: "list.bullet.indent") }
                         Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }.labelStyle(.iconOnly)
                     }
                 }
-                ToolbarItem(placement: .automatic) { Button { showSearch = true } label: { Image(systemName: "doc.text.magnifyingglass") }.keyboardShortcut("k") }
             }
         }
         .task(id: store.client != nil) {
@@ -194,6 +198,7 @@ struct RootView: View {
             }
         }
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
+        .onChange(of: showingFind) { _, shown in findFocused = shown }
         .onChange(of: image) { _, item in
             guard let item, let id = module?.id, let client = store.client else { return }
             busy = true
