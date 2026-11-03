@@ -1,14 +1,16 @@
 import SwiftUI
+import PhotosUI
 
 struct FormatButtonStyle: ButtonStyle {
     var active = false
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 18, weight: .semibold))
             .frame(minWidth: 44, minHeight: 44)
             .foregroundStyle(Color.primary)
             .background(Color(uiColor: .tertiarySystemFill).opacity(active || configuration.isPressed ? 1 : 0), in: RoundedRectangle(cornerRadius: 12))
-            .opacity(configuration.isPressed ? 0.65 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.35)
             .contentShape(Rectangle())
     }
 }
@@ -16,6 +18,8 @@ struct FormatButtonStyle: ButtonStyle {
 struct FormattingBar: View {
     @Bindable var session: WebSession
     let maximumWidth: CGFloat
+    @Binding var image: PhotosPickerItem?
+    let busy: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showStyles = false
     @State private var stylesWidth: CGFloat = 650
@@ -91,20 +95,33 @@ struct FormattingBar: View {
 
     private var expandedButtons: some View {
         HStack(spacing: 2) {
-            paragraph("Title", level: 1)
-            paragraph("Heading", level: 2)
-            paragraph("Subheading", level: 3)
-            paragraph("Body", level: nil)
+            ForEach(1...6, id: \.self) { level in paragraph("H\(level)", level: level) }
+            paragraph("Text", level: nil)
             divider
             formatButton("Strikethrough", "strikethrough", "strike", active: mark("strike"))
             formatButton("Code", "chevron.left.forwardslash.chevron.right", "code", active: mark("code"))
+            divider
+            formatButton("Code block", "curlybraces", "codeBlock", active: session.state.blockType == "codeBlock")
             formatButton("Numbered list", "list.number", "orderedList", active: session.state.orderedList)
             formatButton("Quote", "text.quote", "blockquote", active: session.state.blockquote)
+            divider
+            Button { session.exec("insertSection", ["kind": "sibling"]) } label: { Image(systemName: "text.badge.plus") }
+                .buttonStyle(FormatButtonStyle()).accessibilityLabel("New section")
+            Button { session.exec("insertSection", ["kind": "subsection"]) } label: { Image(systemName: "text.insert") }
+                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Subsection")
+            formatButton("Indent list item", "increase.indent", "indent").disabled(!session.state.canIndent)
+            formatButton("Outdent list item", "decrease.indent", "outdent").disabled(!session.state.canOutdent)
+            formatButton(session.state.folded ? "Unfold current section" : "Fold current section",
+                         session.state.folded ? "chevron.right" : "chevron.down",
+                         session.state.folded ? "unfoldCurrentSection" : "foldCurrentSection", active: session.state.folded)
+                .disabled(!session.state.folded && !session.state.canFold)
+            divider
+            PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
+                .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
             formatButton("Math block", "x.squareroot", "mathBlock", active: session.state.blockType == "mathBlock")
             Button { editingLink.toggle() } label: { Image(systemName: "link") }
                 .buttonStyle(FormatButtonStyle(active: mark("link")))
                 .accessibilityLabel("Edit link").accessibilityAddTraits(mark("link") ? .isSelected : [])
-            formatButton("Make card from selection", "rectangle.stack.badge.plus", "makeCard")
             if editingLink {
                 // Opening URL entry leaves the editor focused. ProseMirror retains
                 // its selection if the user then taps the field inside the capsule.
@@ -123,6 +140,17 @@ struct FormattingBar: View {
                 .accessibilityLabel(link.isEmpty ? "Remove link" : "Apply link")
                 .disabled(!link.isEmpty && URL(string: link)?.scheme == nil)
             }
+            if session.state.inCloze || session.state.canMakeCard || session.state.canJoinClozes {
+                divider
+                if session.state.inCloze {
+                    formatButton("Remove card", "rectangle.stack.badge.minus", "removeCard", active: true)
+                } else if session.state.canMakeCard {
+                    formatButton("Make card from selection", "rectangle.stack.badge.plus", "makeCard")
+                }
+                if session.state.canJoinClozes {
+                    formatButton("Join clozes", "rectangle.stack", "joinClozes")
+                }
+            }
         }
     }
 
@@ -136,7 +164,7 @@ struct FormattingBar: View {
             Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1).padding(.horizontal, 8)
         }
         .buttonStyle(FormatButtonStyle(active: active))
-        .accessibilityLabel(title).accessibilityAddTraits(active ? .isSelected : [])
+        .accessibilityLabel(level.map { "Heading \($0)" } ?? "Text").accessibilityAddTraits(active ? .isSelected : [])
     }
 
     private func formatButton(_ title: String, _ symbol: String, _ command: String, active: Bool = false) -> some View {

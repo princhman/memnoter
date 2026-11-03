@@ -90,7 +90,7 @@ struct RootView: View {
                             GeometryReader { geometry in
                             if keyboardDocked {
                                 let keyboardInset = max(0, geometry.frame(in: .global).maxY - keyboardTop)
-                                FormattingBar(session: session, maximumWidth: max(0, geometry.size.width - 32))
+                                FormattingBar(session: session, maximumWidth: max(0, geometry.size.width - 32), image: $image, busy: busy)
                                     .padding(16)
                                     .padding(.bottom, keyboardInset)
                                     .disabled(!session.state.editable)
