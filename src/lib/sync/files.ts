@@ -18,6 +18,7 @@ const fileDoc = (fileId: string) => `file:${fileId}`;
 
 export type FileSyncOptions = {
   generation: string;
+  signal?: AbortSignal;
   server: string;
   token: string;
   key: CryptoKey;
@@ -25,7 +26,11 @@ export type FileSyncOptions = {
   onUnauthorized: () => void;
 };
 
-export function createFileSync({ generation, server, token, key, onStored, onUnauthorized }: FileSyncOptions) {
+export function createFileSync({ generation, signal, server, token, key, onStored, onUnauthorized }: FileSyncOptions) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
   let running = true;
   let busy = false;
   let drained: Promise<void> = Promise.resolve();
@@ -41,17 +46,20 @@ export function createFileSync({ generation, server, token, key, onStored, onUna
   async function upload(fileId: string) {
     const contents = await invoke<{ bytes: number[] }>("read_file", { moduleId: "", fileId });
     const blob = await encryptBlob(key, fileDoc(fileId), new Uint8Array(contents.bytes));
-    await putObject(server, token, "files", fileId, blob);
+    await putObject(server, token, "files", fileId, blob, controller.signal);
+    if (!running) return;
     await invoke("sync_upload_done", { fileId, generation });
   }
 
   async function download(file: MissingFile) {
-    const blob = await getObject(server, token, "files", file.fileId);
+    const blob = await getObject(server, token, "files", file.fileId, controller.signal);
+    if (!running) return;
     if (!blob) {
       notYet.add(file.fileId);
       return;
     }
     const bytes = await decryptBlob(key, fileDoc(file.fileId), blob);
+    if (!running) return;
     const stored = await invoke<FileType>("sync_store_file", {
       generation,
       fileId: file.fileId,
@@ -69,6 +77,7 @@ export function createFileSync({ generation, server, token, key, onStored, onUna
       try {
         await task();
       } catch (error) {
+        if (!running || controller.signal.aborted) return;
         if (error instanceof SyncApiError && error.status === 401) {
           running = false;
           onUnauthorized();
@@ -90,7 +99,7 @@ export function createFileSync({ generation, server, token, key, onStored, onUna
       if (!running) return;
       await attempt(() => download(file));
     }
-    if (failed || notYet.size > 0) {
+    if (running && (failed || notYet.size > 0)) {
       window.clearTimeout(retryTimer);
       retryTimer = window.setTimeout(() => void run(), RETRY_MS);
     }
@@ -131,6 +140,8 @@ export function createFileSync({ generation, server, token, key, onStored, onUna
     },
     stop() {
       running = false;
+      controller.abort();
+      signal?.removeEventListener("abort", abort);
       window.clearTimeout(kickTimer);
       window.clearTimeout(retryTimer);
       return drained;

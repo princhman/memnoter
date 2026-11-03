@@ -67,3 +67,41 @@ for (const fails of [false, true]) {
     await disableSync();
   });
 }
+
+for (const failure of ['rejected', 'stalled']) {
+  test(`restore restarts and releases serialized actions after a ${failure} drain`, async t => {
+    const events = [];
+    let stopped = false;
+    const account = JSON.stringify({ server: 'https://mock.local', key: [], token: 'token' });
+    globalThis.syncFixture = {
+      call: async command => {
+        if (command === 'sync_status') return { account, generation: 'epoch' };
+        if (command === 'sync_reconcile') return { updates: [], deleted: [] };
+        if (command === 'restore_backup') { events.push('restore'); return; }
+        if (command === 'sync_disable') return;
+        assert.fail(command);
+      },
+      engine: () => ({ start: () => events.push('start'), stop: () => { stopped = true; }, idle: () => failure === 'rejected' ? Promise.reject(Error('drain failed')) : new Promise(() => {}) }),
+      files: () => ({ kick() {}, stop: async () => {} }),
+    };
+    await retrySync();
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const restore = restoreBackup('snapshot');
+    await tick();
+    assert.equal(stopped, true);
+    if (failure === 'stalled') {
+      assert.deepEqual(events, ['start']);
+      t.mock.timers.tick(5000);
+      await tick();
+      // Starting the replacement also passes through stopEngine.
+      t.mock.timers.tick(5000);
+    }
+    await restore;
+    assert.deepEqual(events, ['start', 'restore', 'start']);
+    const disabled = disableSync();
+    await tick();
+    t.mock.timers.tick(5000);
+    await disabled;
+    t.mock.timers.reset();
+  });
+}

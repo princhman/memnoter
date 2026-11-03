@@ -59,6 +59,7 @@ export type ApplyResult = {
   filesChanged: boolean;
 };
 
+let requestController: AbortController | null = null;
 let engine: SyncEngine | null = null;
 let fileSync: FileSync | null = null;
 let activeAccount: SyncAccount | null = null;
@@ -175,11 +176,11 @@ function tauriStore(generation: string): SyncStore {
   };
 }
 
-function blobStore(account: SyncAccount): BlobStore {
+function blobStore(account: SyncAccount, signal: AbortSignal): BlobStore {
   return {
-    put: (id, blob) => putObject(account.server, account.token, "blobs", id, blob),
+    put: (id, blob) => putObject(account.server, account.token, "blobs", id, blob, signal),
     async get(id) {
-      const blob = await getObject(account.server, account.token, "blobs", id);
+      const blob = await getObject(account.server, account.token, "blobs", id, signal);
       if (!blob) throw new Error("A synced change is missing from the server");
       return blob;
     },
@@ -190,7 +191,7 @@ function socketUrl(server: string) {
   return `${server.replace(/\/+$/, "").replace(/^http/, "ws")}/v1/sync`;
 }
 
-function browserSocket(account: SyncAccount, onUnauthorized: () => void) {
+function browserSocket(account: SyncAccount, onUnauthorized: () => void, signal: AbortSignal) {
   return (): SyncSocket => {
     const ws = new WebSocket(socketUrl(account.server), [SYNC_PROTOCOL, `${AUTH_PROTOCOL_PREFIX}${account.token}`]);
     let opened = false;
@@ -217,8 +218,8 @@ function browserSocket(account: SyncAccount, onUnauthorized: () => void) {
     ws.onclose = (event) => {
       socket.onclose?.(event.code, event.reason);
       // A refused handshake looks like any network failure; ask the server.
-      if (!opened) {
-        void isTokenValid(account.server, account.token).then((valid) => {
+      if (!opened && !signal.aborted) {
+        void isTokenValid(account.server, account.token, signal).then((valid) => {
           if (!valid) onUnauthorized();
         });
       }
@@ -244,6 +245,8 @@ async function readAccount(): Promise<SyncAccount | null> {
 async function run(account: SyncAccount) {
   await stopEngine();
   const { generation } = await invoke<SyncStatusResponse>("sync_status");
+  const controller = new AbortController();
+  requestController = controller;
   const key = await importKey(account.key);
   const unauthorized = () => {
     if (engine !== current) return;
@@ -253,8 +256,8 @@ async function run(account: SyncAccount) {
   const current = createSyncEngine({
     store: tauriStore(generation),
     key,
-    connect: browserSocket(account, unauthorized),
-    blobs: blobStore(account),
+    connect: browserSocket(account, unauthorized, controller.signal),
+    blobs: blobStore(account, controller.signal),
     onSignedOut: () => {
       if (engine === current) void signedOut("Signed out because the cloud data was deleted.");
     },
@@ -266,6 +269,7 @@ async function run(account: SyncAccount) {
   engine = current;
   activeAccount = account;
   const files = createFileSync({
+    signal: controller.signal,
     generation,
     server: account.server,
     token: account.token,
@@ -301,21 +305,32 @@ async function run(account: SyncAccount) {
 }
 
 function stopEngine() {
+  requestController?.abort();
+  requestController = null;
   unlisten?.();
   unlisten = null;
-  engine?.stop();
-  draining = Promise.all([draining, engine?.idle(), fileSync?.stop()]);
+  const current = engine;
+  const files = fileSync;
+  // Capture synchronous shutdown failures too, and still stop both workers.
+  const workers = [draining, Promise.resolve().then(() => { current?.stop(); return current?.idle(); }),
+    Promise.resolve().then(() => files?.stop())];
   engine = null;
   fileSync = null;
   setSyncedFileHandler(null);
   activeAccount = null;
   for (const timer of reindexTimers.values()) window.clearTimeout(timer);
   reindexTimers.clear();
-  draining = draining.then(async () => {
-    // Completions may have scheduled indexing while the workers drained.
-    for (const timer of reindexTimers.values()) window.clearTimeout(timer);
-    reindexTimers.clear();
-    await Promise.allSettled([...reindexing]);
+  // Database generation checks reject any late completion after this bound.
+  // Never retain a rejected/unbounded drain as the next transition's barrier.
+  draining = new Promise<void>((resolve) => {
+    let ended = false;
+    const timer = setTimeout(() => { ended = true; resolve(); }, 5_000);
+    void Promise.allSettled(workers).then(async () => {
+      if (ended) return;
+      for (const timer of reindexTimers.values()) window.clearTimeout(timer);
+      reindexTimers.clear();
+      await Promise.allSettled([...reindexing]);
+    }).finally(() => { ended = true; clearTimeout(timer); resolve(); });
   });
   return draining;
 }
@@ -377,7 +392,7 @@ export function deleteCloudData() {
   return serially(async () => {
     const account = activeAccount;
     if (!account) throw new Error("Sync is off");
-    await wipeCloudData(account.server, account.token);
+    await wipeCloudData(account.server, account.token, requestController?.signal);
     await signedOut(null);
   });
 }
@@ -390,8 +405,8 @@ export function retrySync() {
 // exclusiveWrite suspends saves, then drain already-started work before swapping.
 export function restoreBackup(id: string) {
   return serially(async () => {
-    await stopEngine();
     try {
+      await stopEngine();
       await exclusiveWrite(async () => {
         await invoke("restore_backup", { id });
         saveQueue.clear();
