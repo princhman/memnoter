@@ -23,32 +23,16 @@ struct FormattingBar: View {
     let maximumWidth: CGFloat
     @Binding var image: PhotosPickerItem?
     let busy: Bool
-    @State private var contentWidth: CGFloat = 0
-    @State private var scrollOffset: CGFloat = 0
     @State private var editingLink = false
     @State private var link = ""
 
     private var rowWidth: CGFloat { max(36, maximumWidth - 8) }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            buttons
-                .fixedSize(horizontal: true, vertical: false)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("formattingRow")) } action: { frame in
-                    contentWidth = frame.width
-                    scrollOffset = max(0, -frame.minX)
-                }
+        TouchScrollingRow {
+            buttons.fixedSize(horizontal: true, vertical: false)
         }
-        .coordinateSpace(name: "formattingRow")
-        .scrollIndicators(.visible)
         .frame(width: rowWidth, height: 44)
-        .mask {
-            HStack(spacing: 0) {
-                LinearGradient(colors: [scrollOffset > 1 ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing).frame(width: 14)
-                Rectangle()
-                LinearGradient(colors: [.black, scrollOffset + rowWidth < contentWidth - 1 ? .clear : .black], startPoint: .leading, endPoint: .trailing).frame(width: 14)
-            }
-        }
         .padding(.horizontal, 4)
         .background {
             Capsule().fill(.regularMaterial).frame(height: 38)
@@ -152,5 +136,55 @@ struct FormattingBar: View {
         Button { session.exec(command) } label: { Image(systemName: symbol) }
             .buttonStyle(FormatButtonStyle(active: active))
             .accessibilityLabel(title).accessibilityAddTraits(active ? .isSelected : [])
+    }
+}
+
+// A UIKit pan recognizer owns the whole row, including drags that begin on
+// hosted buttons. Cancel their press once a pan wins, without delaying taps.
+private final class FormattingScrollView: UIScrollView {
+    override func touchesShouldCancel(in view: UIView) -> Bool { true }
+}
+
+private struct TouchScrollingRow<Content: View>: UIViewControllerRepresentable {
+    let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    func makeUIViewController(context: Context) -> RowController<Content> {
+        RowController(content: content)
+    }
+    func updateUIViewController(_ controller: RowController<Content>, context: Context) {
+        controller.host.rootView = content
+        controller.host.view.invalidateIntrinsicContentSize()
+    }
+}
+
+private final class RowController<Content: View>: UIViewController {
+    let host: UIHostingController<Content>
+    init(content: Content) {
+        host = UIHostingController(rootView: content)
+        super.init(nibName: nil, bundle: nil)
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+    override func loadView() {
+        let scroll = FormattingScrollView()
+        scroll.delaysContentTouches = false
+        scroll.canCancelContentTouches = true
+        scroll.showsVerticalScrollIndicator = false
+        scroll.alwaysBounceHorizontal = true
+        scroll.isDirectionalLockEnabled = true
+        view = scroll
+        addChild(host)
+        host.sizingOptions = .intrinsicContentSize
+        host.view.backgroundColor = .clear
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            host.view.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
+        ])
+        host.didMove(toParent: self)
     }
 }
