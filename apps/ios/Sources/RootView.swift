@@ -75,6 +75,7 @@ struct RootView: View {
                     }
                     if showingFind { TextField("Find in note", text: $find).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
                     WebSurface(session: session)
+                        .background(Color(uiColor: .systemBackground))
                     ScrollView(.horizontal, showsIndicators: false) {
                       HStack {
                         ForEach([("bold", "B"), ("italic", "I"), ("underline", "U"), ("heading", "H1"), ("bulletList", "List"), ("makeCard", "Card")], id: \.0) { command, title in

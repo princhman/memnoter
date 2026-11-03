@@ -28,3 +28,8 @@ body {
 .tiptap {
   font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
+
+/* Let the native system background show through the entire writing surface. */
+html, body, #root, .app-scroll-container, .tiptap-shell, .tiptap {
+  background: transparent;
+}

@@ -71,6 +71,11 @@ struct EditorState: Decodable {
         config.setURLSchemeHandler(ResourceHandler(root: directory, images: true), forURLScheme: "memnoter-file")
         config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: "memnoter-app")
         web = WKWebView(frame: .zero, configuration: config)
+        // Clear before loading so even the initial page paint uses the native surface.
+        web.isOpaque = false
+        web.backgroundColor = .clear
+        web.scrollView.backgroundColor = .clear
+        web.underPageBackgroundColor = .clear
         web.uiDelegate = self
         web.navigationDelegate = self
         web.isInspectable = true
