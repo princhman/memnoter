@@ -1382,3 +1382,6 @@ body {
 .occlusion-number.is-selected { background: var(--color-amber-600); }
 /* The selected mask's box, with the crop dialog's handles. */
 .occlusion-selection { position: absolute; cursor: move; outline: 1.5px dashed white; outline-offset: 2px; }
+
+/* Literal tabs remain note text through Yjs persistence. */
+.tiptap { tab-size: 4; }
