@@ -6,11 +6,14 @@ struct FormatButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 18, weight: .semibold))
-            .frame(minWidth: 44, minHeight: 44)
+            .font(.system(size: 16, weight: .semibold))
+            .frame(minWidth: 30, minHeight: 30)
             .foregroundStyle(Color.primary)
-            .background(Color(uiColor: .tertiarySystemFill).opacity(active || configuration.isPressed ? 1 : 0), in: RoundedRectangle(cornerRadius: 12))
+            .background(Color(uiColor: .tertiarySystemFill).opacity(active || configuration.isPressed ? 1 : 0), in: RoundedRectangle(cornerRadius: 8))
             .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.35)
+            // Expand the hit target without enlarging the visible 30pt control.
+            .padding(.horizontal, 3)
+            .padding(.vertical, 7)
             .contentShape(Rectangle())
     }
 }
@@ -25,7 +28,7 @@ struct FormattingBar: View {
     @State private var editingLink = false
     @State private var link = ""
 
-    private var rowWidth: CGFloat { max(44, maximumWidth - 12) }
+    private var rowWidth: CGFloat { max(36, maximumWidth - 8) }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
@@ -38,7 +41,7 @@ struct FormattingBar: View {
         }
         .coordinateSpace(name: "formattingRow")
         .scrollIndicators(.visible)
-        .frame(width: rowWidth, height: 50)
+        .frame(width: rowWidth, height: 44)
         .mask {
             HStack(spacing: 0) {
                 LinearGradient(colors: [scrollOffset > 1 ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing).frame(width: 14)
@@ -46,18 +49,21 @@ struct FormattingBar: View {
                 LinearGradient(colors: [.black, scrollOffset + rowWidth < contentWidth - 1 ? .clear : .black], startPoint: .leading, endPoint: .trailing).frame(width: 14)
             }
         }
-        .padding(6)
-        .background(.regularMaterial, in: Capsule())
+        .padding(.horizontal, 4)
+        .background {
+            Capsule().fill(.regularMaterial).frame(height: 38)
+                .allowsHitTesting(false)
+        }
         // The decorative shape covers the scroll viewport. It must not become
         // the hit-test target ahead of the row's pan recognizer and buttons.
-        .overlay { Capsule().strokeBorder(.primary.opacity(0.08)).allowsHitTesting(false) }
-        .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+        .overlay { Capsule().strokeBorder(.primary.opacity(0.08)).frame(height: 38).allowsHitTesting(false) }
+        .shadow(color: .black.opacity(0.10), radius: 5, y: 2)
         .accessibilityElement(children: .contain)
     }
 
     private var buttons: some View {
-        HStack(spacing: 2) {
-            // Keep frequent actions within the first 230pt, even in a narrow window.
+        HStack(spacing: 0) {
+            // Keep frequent actions within the first 180pt, even in a narrow window.
             formatButton("Bold", "bold", "bold", active: mark("bold"))
             formatButton("Italic", "italic", "italic", active: mark("italic"))
             formatButton("Underline", "underline", "underline", active: mark("underline"))
@@ -130,13 +136,13 @@ struct FormattingBar: View {
         }
     }
 
-    private var divider: some View { Divider().frame(height: 24).padding(.horizontal, 4) }
+    private var divider: some View { Divider().frame(height: 16).padding(.horizontal, 3) }
     private func mark(_ name: String) -> Bool { session.state.marks.contains(name) }
 
     private func paragraph(_ title: String, level: Int?) -> some View {
         let active = level == nil ? session.state.blockType == "paragraph" : session.state.headingLevel == level
         return Button { session.exec(level == nil ? "paragraph" : "heading", level.map { ["level": $0] } ?? [:]) } label: {
-            Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1).padding(.horizontal, 8)
+            Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1).padding(.horizontal, 4)
         }
         .buttonStyle(FormatButtonStyle(active: active))
         .accessibilityLabel(level.map { "Heading \($0)" } ?? "Text").accessibilityAddTraits(active ? .isSelected : [])

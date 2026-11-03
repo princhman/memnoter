@@ -111,6 +111,9 @@ Codable JSON because their schema varies by card kind.
 The editor's trailing material capsule uses keyboard frame notifications for both animated placement and visibility, including the hardware shortcut bar, and hides for an
 undocked/floating keyboard. All formatting tools stay in one horizontally scrolling
 row with a stable available-width capsule, edge fades and a native scroll indicator.
+The material capsule is 38pt tall; 30pt visible buttons use transparent padding
+for 44pt vertical touch targets. Decorative capsule layers ignore hit testing so
+horizontal pans and taps reach the scroll row rather than its border overlay.
 Bold, italic, underline, bullets and inline math lead so frequent actions remain
 visible in narrow windows; styles and the remaining grouped tools follow. Tapping
 formatting actions preserves the editor selection and first responder.
