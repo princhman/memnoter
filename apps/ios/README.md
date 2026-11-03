@@ -202,3 +202,23 @@ remains unconfirmed. Screenshots: build/screenshots/80-before.png,
 runner watchdog; its prescribed coordinate retry also failed while draining.
 Full module-switch/relaunch view restoration remains unverified on simulator.
 The Device panel was closed without simulator shutdown.
+
+
+Input-assistant follow-up (95): the host clears leading/trailing
+`inputAssistantItem` button groups on the web view and its content responder
+before loading, after navigation, and on keyboard show/frame changes. This uses
+public UIKit APIs only. Paste, Copy and Cut now live after the first formatting
+group and use WebKit's native editing actions; undo/redo remain in navigation.
+Keyboard placement still follows the reported destination frame, with a bottom
+anchor when a hardware keyboard's empty assistant frame falls below the window.
+Predictive text, autocorrect and spellcheck are unchanged. If predictions retain
+a system row, offer an explicit editor autocorrect/spellcheck setting rather than
+silently disabling them.
+
+Both simulator and signed physical-device builds passed. Runtime verification
+is pending: agent-device returned DEVICE_IN_USE twice for the dedicated iPad Air
+(including its wait retry). Its other session was left untouched; simulator
+installation, screenshots, Paste interaction and the existing XCUITest were not
+run to avoid interrupting it. Still check predictions on/off, software/hardware
+keyboards, Copy/Cut/Paste with rich content, and keyboard-edge alignment. No
+`95-…` screenshots were produced in this session.

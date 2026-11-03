@@ -251,12 +251,17 @@ struct RootView: View {
         case 3: .linear(duration: duration)
         default: .timingCurve(0.42, 0, 0.58, 1, duration: duration)
         }
+        if !hiding { session?.hideEditorInputAssistant() }
         // One destination frame drives visibility and placement, including the
         // hardware shortcut strip. Floating keyboards do not obscure the bottom.
         withAnimation(animation) {
-            keyboardDocked = !hiding && localFrame.minY < window.bounds.maxY
+            let docked = localFrame.minY < window.bounds.maxY
                 && localFrame.maxY >= window.bounds.maxY && localFrame.width >= window.bounds.width * 0.9
-            keyboardTop = hiding ? window.bounds.maxY : localFrame.minY
+            // Without the hardware assistant, its frame can be below the window.
+            // Keep our row at the bottom while the editor is first responder.
+            let hardware = localFrame.minY >= window.bounds.maxY && session?.editorFirstResponder != nil
+            keyboardDocked = !hiding && (docked || hardware)
+            keyboardTop = hiding ? window.bounds.maxY : min(localFrame.minY, window.bounds.maxY)
         }
     }
     func newModule() {

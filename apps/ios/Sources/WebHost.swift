@@ -92,12 +92,50 @@ struct EditorState: Decodable {
         web.backgroundColor = .clear
         web.scrollView.backgroundColor = .clear
         web.underPageBackgroundColor = .clear
+        hideEditorInputAssistant()
+        for name in [UIResponder.keyboardWillShowNotification, UIResponder.keyboardWillChangeFrameNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChange), name: name, object: nil)
+        }
         web.uiDelegate = self
         web.navigationDelegate = self
         #if DEBUG
         web.isInspectable = true
         #endif
         web.load(URLRequest(url: URL(string: "memnoter-app://localhost/\(entry)")!))
+    }
+    // WKWebView delegates text input to a content subview. Use only public
+    // UIView / UIResponder APIs, without private selectors or runtime changes.
+    private var editorInputViews: [UIView] {
+        func descendants(_ view: UIView) -> [UIView] {
+            [view] + view.subviews.flatMap { descendants($0) }
+        }
+        return descendants(web.scrollView).filter {
+            $0.isFirstResponder || String(describing: type(of: $0)).hasPrefix("WKContent")
+        }
+    }
+    var editorFirstResponder: UIView? { editorInputViews.first { $0.isFirstResponder } }
+
+    func hideEditorInputAssistant() {
+        for view in [web!] + editorInputViews {
+            let item = view.inputAssistantItem
+            let changed = !item.leadingBarButtonGroups.isEmpty || !item.trailingBarButtonGroups.isEmpty
+            item.leadingBarButtonGroups = []
+            item.trailingBarButtonGroups = []
+            if changed && view.isFirstResponder { view.reloadInputViews() }
+        }
+    }
+    @objc private func keyboardWillChange() { hideEditorInputAssistant() }
+
+    // Keep WebKit's native rich clipboard and paste permission handling.
+    func clipboard(_ action: Selector) {
+        guard let responder = editorFirstResponder,
+              responder.canPerformAction(action, withSender: nil) else { return }
+        switch action {
+        case #selector(UIResponderStandardEditActions.copy(_:)): responder.copy(nil)
+        case #selector(UIResponderStandardEditActions.cut(_:)): responder.cut(nil)
+        case #selector(UIResponderStandardEditActions.paste(_:)): responder.paste(nil)
+        default: break
+        }
     }
     func run(_ script: String, _ arguments: [String: Any] = [:]) async throws -> Any? {
         try await web.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .page)
@@ -135,6 +173,9 @@ struct EditorState: Decodable {
             state = EditorState(); headings = []
         }
         try await serialized("await window.memnoterEditor.open(id)", ["id": id])
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        hideEditorInputAssistant()
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         generation = UUID(); ready = false
@@ -204,7 +245,7 @@ struct EditorState: Decodable {
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) { self.error = String(describing: error) }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { error = "The editor process stopped. Reopen the app to recover saved notes." }
-    func dispose() { generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
+    func dispose() { NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
 }
 struct WebSurface: UIViewRepresentable {
     let session: WebSession

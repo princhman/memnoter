@@ -54,6 +54,13 @@ struct FormattingBar: View {
             formatButton("Bullet list", "list.bullet", "bulletList", active: session.state.bulletList)
             formatButton("Inline math", "function", "inlineMath", active: session.state.blockType == "inlineMath")
             divider
+            Button { session.clipboard(#selector(UIResponderStandardEditActions.paste(_:))) } label: { Image(systemName: "doc.on.clipboard") }
+                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Paste")
+            Button { session.clipboard(#selector(UIResponderStandardEditActions.copy(_:))) } label: { Image(systemName: "doc.on.doc") }
+                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Copy")
+            Button { session.clipboard(#selector(UIResponderStandardEditActions.cut(_:))) } label: { Image(systemName: "scissors") }
+                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Cut")
+            divider
             ForEach(1...6, id: \.self) { level in paragraph("H\(level)", level: level) }
             paragraph("Text", level: nil)
             divider
