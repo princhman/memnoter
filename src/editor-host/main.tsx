@@ -6,9 +6,7 @@ import { queryClient } from "@/lib/query-client";
 import "../App.css";
 import "katex/dist/katex.min.css";
 import "./host.css";
-import { fitToVisibleViewport } from "@/lib/platform";
 
-fitToVisibleViewport();
 const theme = window.matchMedia("(prefers-color-scheme: dark)");
 const applyTheme = () => {
   document.documentElement.classList.toggle("dark", theme.matches);

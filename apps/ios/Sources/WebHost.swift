@@ -64,6 +64,17 @@ struct EditorState: Decodable {
 }
 @MainActor @Observable final class WebSession: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
     var web: WKWebView!
+    var bottomInset: CGFloat = 0 {
+        didSet { if ready { reportBottomInset() } }
+    }
+    private func reportBottomInset() {
+        Task {
+            do {
+                _ = try await run("window.memnoterEditor.setBottomInset(inset * window.innerHeight / height)",
+                                  ["inset": bottomInset, "height": max(1, web.bounds.height)])
+            } catch { self.error = String(describing: error) }
+        }
+    }
     var ready = false
     var headings: [Heading] = []
     var state = EditorState()
@@ -212,7 +223,7 @@ struct EditorState: Decodable {
                    let json = String(data: data, encoding: .utf8) {
                     UserDefaults.standard.set(json, forKey: "editorViewState")
                 }
-            case "ready": ready = true; onReady?()
+            case "ready": ready = true; reportBottomInset(); onReady?()
             case "outline":
                 guard payload["moduleId"] as? String == moduleId else { return }
                 if let data = try? JSONSerialization.data(withJSONObject: payload["headings"] ?? []) { headings = (try? JSONDecoder().decode([Heading].self, from: data)) ?? [] }

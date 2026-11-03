@@ -270,3 +270,16 @@ native destination are stored separately by the SwiftUI host.
 Section IDs in native state and outline are opaque. Empty headings skipped by
 the shared TOC use a `native-section:<position>` fallback, refreshed on every
 transaction. Pass the latest ID to `focusSection`; do not persist these IDs.
+
+## Keyboard overlap
+
+Native calls `window.memnoterEditor.setBottomInset(px)` with the bottom overlap
+of the docked keyboard and floating formatting bar (44pt row plus 16pt gap),
+converted from web-view points to CSS pixels. Send zero on keyboard dismissal;
+floating keyboards have no bottom overlap. This API works before a note opens
+and retains the inset across note switches. Resend after geometry/frame changes
+and `ready`. The host deliberately does not use `fitToVisibleViewport`: its full
+viewport and native overlap are the single source of keyboard geometry.
+The scroll container adds bottom padding and scroll padding for this overlap
+plus 24px of caret margin. Caret reveal uses the selection head, scrolls only
+when outside that visible area, and respects Reduce Motion.
