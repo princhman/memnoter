@@ -6,11 +6,11 @@ import { suppressesTextInput } from "../lib/editor-input.ts";
 export function revealCaret(view: EditorView) {
   if (view.isDestroyed || suppressesTextInput(view.state.selection)) return;
   const container = view.dom.closest<HTMLElement>(".app-scroll-container");
-  if (!container) return;
+  if (!container || anchors.has(container)) return;
   const inset = Number(container.dataset.bottomInset ?? 0);
   const caret = view.coordsAtPos(view.state.selection.head);
-  const top = container.getBoundingClientRect().top + container.clientTop;
-  const bottom = top + container.clientHeight - inset - 24;
+  const top = visibleTop(container);
+  const bottom = container.getBoundingClientRect().top + container.clientTop + container.clientHeight - inset - 24;
   const delta = caret.bottom > bottom ? caret.bottom - bottom : caret.top < top ? caret.top - top : 0;
   if (Math.abs(delta) < 1) return;
   container.dispatchEvent(new Event("memnoter:reveal"));
@@ -18,15 +18,60 @@ export function revealCaret(view: EditorView) {
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
 }
 
-export function sectionToTop(editor: Editor, pos: number) {
+// One owner for section navigation, delayed layout and native inset changes.
+// Retain the anchor until reader input; a late image load has no fixed deadline.
+const anchors = new WeakMap<HTMLElement, { apply(): void; stop(): void }>();
+const inputEvents = ["wheel", "touchstart", "pointerdown", "keydown"];
+
+function visibleTop(container: HTMLElement) {
+  return container.getBoundingClientRect().top + container.clientTop + Number(container.dataset.topInset ?? 0);
+}
+
+export function refreshSectionAnchor(container: HTMLElement) {
+  const anchor = anchors.get(container);
+  anchor?.apply();
+  return !!anchor;
+}
+
+export function sectionToTop(editor: Editor, pos: number, offset = 0) {
   if (typeof window === "undefined") return;
   const heading = editor.view.nodeDOM(pos);
   const container = editor.view.dom.closest<HTMLElement>(".app-scroll-container");
   if (!(heading instanceof HTMLElement) || !container) return;
+  anchors.get(container)?.stop();
   container.dispatchEvent(new Event("memnoter:reveal"));
-  container.scrollTop += heading.getBoundingClientRect().top - container.getBoundingClientRect().top - container.clientTop;
+  let frame = 0;
+  const apply = () => {
+    if (editor.isDestroyed || !heading.isConnected) { stop(); return; }
+    const delta = heading.getBoundingClientRect().top - visibleTop(container) - offset;
+    const target = Math.max(0, container.scrollTop + delta);
+    // Supply enough trailing room before clamping, even for a short last section.
+    const extra = Number(container.dataset.anchorSpace ?? 0);
+    const space = Math.max(0, Math.ceil(target - (container.scrollHeight - extra - container.clientHeight)));
+    container.dataset.anchorSpace = String(space);
+    container.style.setProperty("--anchor-space", `${space}px`);
+    container.scrollTo({ top: Math.min(target, Math.max(0, container.scrollHeight - container.clientHeight)), behavior: "instant" });
+  };
+  const observer = new ResizeObserver(() => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(apply);
+  });
+  const stop = () => {
+    observer.disconnect();
+    cancelAnimationFrame(frame);
+    inputEvents.forEach(event => container.removeEventListener(event, stop, true));
+    anchors.delete(container);
+  };
+  anchors.set(container, { apply, stop });
+  inputEvents.forEach(event => container.addEventListener(event, stop, { capture: true, passive: true }));
+  observer.observe(editor.view.dom);
+  observer.observe(container);
+  apply();
+  frame = requestAnimationFrame(() => { apply(); frame = requestAnimationFrame(apply); });
 }
 
-export function scheduleCaret(editor: Editor) {
-  if (typeof window !== "undefined") requestAnimationFrame(() => revealCaret(editor.view));
+export function sectionOffset(editor: Editor, pos: number) {
+  const heading = editor.view.nodeDOM(pos);
+  const container = editor.view.dom.closest<HTMLElement>(".app-scroll-container");
+  return heading instanceof HTMLElement && container ? heading.getBoundingClientRect().top - visibleTop(container) : 0;
 }

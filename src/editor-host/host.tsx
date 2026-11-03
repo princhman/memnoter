@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { sectionFocusKey } from "@/lib/section-focus";
-import { revealCaret, sectionToTop } from "./scroll";
+import { refreshSectionAnchor, revealCaret, sectionToTop } from "./scroll";
 import Tiptap from "@/components/Tiptap";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
@@ -14,6 +14,7 @@ declare global {
   interface Window {
     memnoterEditor: {
       setBottomInset(px: number): void;
+      setTopInset(px: number): void;
       open(moduleId: string): Promise<void>;
       flush(): Promise<void>;
       exec(command: string, args?: Record<string, unknown>): boolean;
@@ -44,6 +45,14 @@ export function Host() {
     };
     let queue = Promise.resolve();
     window.memnoterEditor = {
+      setTopInset(px) {
+        if (!Number.isFinite(px) || px < 0) throw new Error("Invalid top inset");
+        const element = container.current;
+        if (!element) return;
+        element.dataset.topInset = String(px);
+        element.style.setProperty("--top-inset", `${px}px`);
+        refreshSectionAnchor(element);
+      },
       setBottomInset(px) {
         if (!Number.isFinite(px) || px < 0) throw new Error("Invalid bottom inset");
         const element = container.current;
@@ -51,7 +60,7 @@ export function Host() {
         element.dataset.bottomInset = String(px);
         element.style.setProperty("--bottom-inset", `${px}px`);
         const editor = active.current?.editor;
-        if (editor && !editor.isDestroyed) requestAnimationFrame(() => revealCaret(editor.view));
+        if (!refreshSectionAnchor(element) && editor && !editor.isDestroyed) requestAnimationFrame(() => revealCaret(editor.view));
       },
       open(id) {
         const operation = queue.then(async () => {

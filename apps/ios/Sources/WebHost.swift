@@ -62,16 +62,28 @@ struct EditorState: Decodable {
     var bulletList = false; var orderedList = false; var blockquote = false
     var marks: [String] = []; var canUndo = false; var canRedo = false; var editable = false
 }
+// Report navigation/safe-area occlusion after UIKit has laid out the web view.
+@MainActor final class EditorWebView: WKWebView {
+    var viewportChanged: (() -> Void)?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        viewportChanged?()
+    }
+}
 @MainActor @Observable final class WebSession: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
     var web: WKWebView!
     var bottomInset: CGFloat = 0 {
         didSet { if ready { reportBottomInset() } }
     }
+    private var reportedViewport: [CGFloat] = []
     private func reportBottomInset() {
+        let viewport = [bottomInset, web.safeAreaInsets.top, web.bounds.height]
+        guard viewport != reportedViewport else { return }
+        reportedViewport = viewport
         Task {
             do {
-                _ = try await run("window.memnoterEditor?.setBottomInset(inset * window.innerHeight / height)",
-                                  ["inset": bottomInset, "height": max(1, web.bounds.height)])
+                _ = try await run("window.memnoterEditor?.setTopInset(top * window.innerHeight / height); window.memnoterEditor?.setBottomInset(inset * window.innerHeight / height)",
+                                  ["inset": bottomInset, "top": web.safeAreaInsets.top, "height": max(1, web.bounds.height)])
             } catch { self.error = String(describing: error) }
         }
     }
@@ -98,7 +110,13 @@ struct EditorState: Decodable {
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.setURLSchemeHandler(ResourceHandler(root: directory, images: true), forURLScheme: "memnoter-file")
         config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: "memnoter-app")
-        web = WKWebView(frame: .zero, configuration: config)
+        let editorWeb = EditorWebView(frame: .zero, configuration: config)
+        web = editorWeb
+        web.scrollView.contentInsetAdjustmentBehavior = .never
+        editorWeb.viewportChanged = { [weak self] in
+            guard let self, self.ready else { return }
+            self.reportBottomInset()
+        }
         // Clear before loading so even the initial page paint uses the native surface.
         web.isOpaque = false
         web.backgroundColor = .clear
@@ -190,7 +208,7 @@ struct EditorState: Decodable {
         hideEditorInputAssistant()
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        generation = UUID(); ready = false
+        generation = UUID(); ready = false; reportedViewport = []
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }

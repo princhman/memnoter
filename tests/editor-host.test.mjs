@@ -198,6 +198,56 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     });
     await restored.close();
     await page.bringToFront();
+    const exec = (command, args) => page.evaluate(([command, args]) => window.memnoterEditor.exec(command, args), [command, args]);
+    // A short final section still needs to reach the visible top. Keep its
+    // screen position through delayed image/math reflow, with and without
+    // native keyboard occlusion. Exercise the public WK protocol and layout.
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await page.evaluate(() => window.memnoterEditor.open('scroll-regression'));
+    await page.locator('.tiptap').click();
+    await page.keyboard.insertText(('Content above the last section. '.repeat(15) + '\n').repeat(30));
+    await exec('mathBlock');
+    await page.keyboard.type('x^2 + y^2');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await exec('insertImage', { fileId: 'keyboard-regression' });
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await exec('heading', { level: 1 });
+    await page.keyboard.type('Final section');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Short final body');
+    const finalId = await page.evaluate(() => window.messages.filter(m => m.event === 'outline').at(-1).payload.headings.find(h => h.text === 'Final section').id);
+    const headingTop = () => page.locator('.tiptap h1').filter({ hasText: 'Final section' }).evaluate(node => node.getBoundingClientRect().top);
+    for (const keyboard of [0, 300]) {
+      await page.evaluate(keyboard => {
+        window.memnoterEditor.setTopInset(88);
+        window.memnoterEditor.setBottomInset(keyboard);
+      }, keyboard);
+      await exec('focusSection', { id: finalId });
+      await page.waitForFunction(() => {
+        const heading = document.querySelector('.section-focus-start').getBoundingClientRect();
+        return heading.top >= 88 && heading.top <= 92 && heading.bottom < 1180 - 300;
+      });
+      const before = await headingTop();
+      await exec('showDocument');
+      // Fonts and image decoding can finish several frames after unhide.
+      // Alter actual NodeView geometry at that boundary rather than mocking
+      // the scroll implementation or inventing an editor-only test API.
+      await page.evaluate(async () => {
+        window.memnoterEditor.setBottomInset(Number(document.querySelector('.app-scroll-container').dataset.bottomInset));
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const image = document.querySelector('.note-image-host');
+        const math = document.querySelector('.math-block');
+        if (!image || !math) throw Error('Missing reflow fixtures');
+        image.style.height = `${image.getBoundingClientRect().height + 240}px`;
+        math.style.paddingBottom = `${parseFloat(getComputedStyle(math).paddingBottom) + 120}px`;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      });
+      assert.ok(Math.abs(await headingTop() - before) <= 4, `Unfocus moved final heading with keyboard inset ${keyboard}`);
+    }
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.evaluate(() => { window.memnoterEditor.setTopInset(0); window.memnoterEditor.setBottomInset(0); });
     const result = await page.evaluate(async () => {
       await window.memnoterEditor.open('two');
       return {
@@ -211,7 +261,6 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal(result.calls.some(command => command.startsWith('plugin:') || command === 'set_editor_history'), false);
     assert.equal(result.unknown, false);
     // Exercise the public WK bridge against the real shared schema/commands.
-    const exec = (command, args) => page.evaluate(([command, args]) => window.memnoterEditor.exec(command, args), [command, args]);
     const state = () => page.evaluate(() => window.messages.filter(m => m.event === 'state').at(-1).payload);
     await page.evaluate(() => window.memnoterEditor.focus());
     for (let level = 1; level <= 6; level++) {
