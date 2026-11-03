@@ -295,3 +295,6 @@ pub struct FileType {
     pub path: String,
     pub file_type: String,
 }
+
+pub mod files;
+pub use files::*;
