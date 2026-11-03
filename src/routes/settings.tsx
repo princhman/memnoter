@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import AboutSection from "@/components/settings/about-section";
 import BackupsSection from "@/components/settings/backups-section";
 import ReviewSection from "@/components/settings/review-section";
 
@@ -12,6 +13,7 @@ function Settings() {
       <h1 className="text-xl font-semibold">Settings</h1>
       <ReviewSection />
       <BackupsSection />
+      <AboutSection />
     </div>
   );
 }
