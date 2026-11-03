@@ -87,8 +87,18 @@ pub(crate) fn copy_dir(from: &Path, to: &Path) -> CommandResult<()> {
 // Stored file paths are absolute, so point them at the new files dir and fold
 // the WAL into main.db so the moved database is self-contained.
 pub(crate) fn rewrite_file_paths(db_path: &Path, files_dir: &Path) -> CommandResult<()> {
-    let mut conn = Connection::open(db_path).map_err(db_err)?;
-    let tx = conn.transaction().map_err(db_err)?;
+    let conn = Connection::open(db_path).map_err(db_err)?;
+    rebase_file_paths(&conn, files_dir)?;
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(db_err)?;
+    conn.close().map_err(|(_, error)| db_err(error))
+}
+
+// Derive receipts from current storage and validated ids on every open. This
+// also refreshes paths returned by get_content to desktop image renderers.
+// Idempotent: unchanged receipts do not cause writes, and old backups work too.
+fn rebase_file_paths(conn: &Connection, files_dir: &Path) -> CommandResult<()> {
+    let tx = conn.unchecked_transaction().map_err(db_err)?;
     let ids = tx
         .prepare("select id from files")
         .map_err(db_err)?
@@ -97,20 +107,23 @@ pub(crate) fn rewrite_file_paths(db_path: &Path, files_dir: &Path) -> CommandRes
         .collect::<Result<Vec<_>>>()
         .map_err(db_err)?;
     for id in ids {
+        // Never let database-controlled identifiers escape managed storage.
+        // Leave corrupt rows untouched so read/delete guards still reject them.
+        if Uuid::parse_str(&id).is_err() {
+            continue;
+        }
         let path = files_dir.join(&id);
         let path_str = path
             .to_str()
             .ok_or_else(|| "File path is not valid UTF-8".to_string())?;
         tx.execute(
-            "update files set path = ?1 where id = ?2",
+            "update files set path = ?1 where id = ?2 and path <> ?1",
             params![path_str, id],
         )
         .map_err(db_err)?;
     }
     tx.commit().map_err(db_err)?;
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-        .map_err(db_err)?;
-    conn.close().map_err(|(_, error)| db_err(error))
+    Ok(())
 }
 
 // AUTOINCREMENT preserves the high-water mark even after compaction empties
@@ -192,6 +205,8 @@ pub(crate) fn open_db(app_dir: &Path) -> CommandResult<Db> {
     crate::sync::migrate(&conn)?;
 
     migrate_update_ids(&conn)?;
+
+    rebase_file_paths(&conn, &files_path)?;
 
     Ok(Db {
         conn: Mutex::new(conn),

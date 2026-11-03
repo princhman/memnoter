@@ -809,3 +809,69 @@ fn legacy_data_is_copied_with_rewritten_paths_and_left_intact() {
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[test]
+fn images_survive_moving_the_data_directory() {
+    let dir = std::env::temp_dir().join(format!("notes-move-{}", Uuid::new_v4()));
+    let moved = dir.with_extension("moved");
+    let db = open_db(&dir).unwrap();
+    let module = create_module(&db, "Images".into()).unwrap();
+    let image = save_file(
+        &dir,
+        &db,
+        module.clone(),
+        b"image bytes".to_vec(),
+        "image/png".into(),
+    )
+    .unwrap();
+    drop(db);
+    std::fs::rename(&dir, &moved).unwrap();
+    // Reopen twice to exercise idempotence as well as old absolute receipts.
+    drop(open_db(&moved).unwrap());
+    let db = open_db(&moved).unwrap();
+    let contents =
+        serde_json::to_value(read_file(&moved, &db, module.clone(), image.id.clone()).unwrap())
+            .unwrap();
+    assert_eq!(
+        contents["bytes"],
+        serde_json::json!(b"image bytes".to_vec())
+    );
+    assert_eq!(
+        resolve_card_image(&moved, &db, image.id.clone()).unwrap(),
+        moved.join("files").join(&image.id).to_str().unwrap()
+    );
+    let content = serde_json::to_value(get_content(&db, module.clone()).unwrap()).unwrap();
+    assert_eq!(
+        content["files"][0]["path"],
+        moved.join("files").join(&image.id).to_str().unwrap()
+    );
+    delete_module(&moved, &db, module).unwrap();
+    assert!(!moved.join("files").join(image.id).exists());
+    drop(db);
+    std::fs::remove_dir_all(moved).unwrap();
+}
+
+#[test]
+fn image_path_traversal_cannot_escape_managed_storage() {
+    let f = Fixture::new();
+    let outside = f.dir.join("outside");
+    std::fs::write(&outside, b"private").unwrap();
+    for id in ["../outside", "/tmp/outside"] {
+        f.db.lock()
+            .unwrap()
+            .execute(
+                "insert into files values (?1, 'note', ?2, 'image/png')",
+                params![id, outside.to_str().unwrap()],
+            )
+            .unwrap();
+        drop(open_db(&f.dir).unwrap());
+        assert!(read_file(&f.dir, &f.db, "note".into(), id.into()).is_err());
+        assert!(resolve_card_image(&f.dir, &f.db, id.into()).is_err());
+        assert!(delete_module(&f.dir, &f.db, "note".into()).is_err());
+        f.db.lock()
+            .unwrap()
+            .execute("delete from files where id=?1", [id])
+            .unwrap();
+    }
+    assert_eq!(std::fs::read(outside).unwrap(), b"private");
+}
