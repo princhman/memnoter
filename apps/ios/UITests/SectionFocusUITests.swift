@@ -61,7 +61,15 @@ final class SectionFocusUITests: XCTestCase {
         XCTAssertFalse(clear.exists, "Focus must not leak into the other module")
         if app.buttons["Show Sidebar"].waitForExistence(timeout: 2) { app.buttons["Show Sidebar"].tap() }
         let module = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", name)).firstMatch
+        // Retained simulators accumulate modules between runs. SwiftUI lazily
+        // exposes sidebar rows, so scroll to this run's module before tapping.
+        let sidebar = app.collectionViews.firstMatch
+        for _ in 0..<30 {
+            if module.exists && module.isHittable { break }
+            sidebar.swipeUp()
+        }
         XCTAssertTrue(module.waitForExistence(timeout: 5))
+        XCTAssertTrue(module.isHittable)
         module.tap()
         XCTAssertTrue(clear.waitForExistence(timeout: 10))
         XCTAssertTrue(chip.label.contains("Child section"))
