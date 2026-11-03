@@ -113,6 +113,14 @@ struct RootView: View {
             .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if let session, let module, !session.state.focusedSectionPath.isEmpty {
+                    ToolbarItem(placement: .principal) {
+                        SectionBreadcrumb(module: module.name, path: session.state.focusedSectionPath) { id in
+                            if let id { session.exec("focusSection", ["id": id]) }
+                            else { session.exec("showDocument") }
+                        }
+                    }
+                }
                 if columnVisibility == .detailOnly {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
