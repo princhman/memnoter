@@ -12,7 +12,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
   try {
     await server.listen();
     browser = await webkit.launch();
-    const context = await browser.newContext();
+    const context = await browser.newContext({ reducedMotion: "reduce" });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -84,6 +84,26 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.keyboard.type('Child body');
     await page.keyboard.press('Enter');
     await page.keyboard.insertText('Tail '.repeat(2000));
+    await page.keyboard.press('ArrowLeft');
+    // Real WebKit layout: the last caret must clear native occlusion, and an
+    // already visible caret must not move the reader on subsequent typing.
+    await page.evaluate(() => {
+      document.querySelector('.app-scroll-container').scrollTop = 0;
+      window.memnoterEditor.setBottomInset(300);
+    });
+    await page.waitForFunction(() => {
+      const range = window.getSelection().getRangeAt(0).cloneRange();
+      range.collapse(false);
+      const caret = range.getBoundingClientRect();
+      const container = document.querySelector('.app-scroll-container');
+      return caret.height > 0 && container.scrollTop > 0 && caret.bottom <= container.getBoundingClientRect().bottom - 324 + 1 && caret.top >= 0;
+    });
+    const visibleScroll = await page.locator('.app-scroll-container').evaluate(node => node.scrollTop);
+    assert.ok(visibleScroll > 0);
+    await page.keyboard.type('x');
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.ok(Math.abs(await page.locator('.app-scroll-container').evaluate(node => node.scrollTop) - visibleScroll) < 1);
+    await page.evaluate(() => window.memnoterEditor.setBottomInset(0));
     const focus = await page.evaluate(() => {
       const outline = window.messages.filter(m => m.event === 'outline').at(-1).payload.headings;
       const first = outline.find(h => h.text === 'First');
@@ -98,6 +118,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       window.memnoterEditor.exec('showDocument');
       return { firstVisible, visible, caret: state.headingId, id: child.id, path: state.focusedSectionPath,
         cleared: window.messages.filter(m => m.event === 'state').at(-1).payload.focusedSectionId,
+        top: before - document.querySelector('.app-scroll-container').getBoundingClientRect().top,
         delta: heading.getBoundingClientRect().top - before };
     });
     assert.deepEqual(focus.firstVisible, ['First', 'First body']);
@@ -132,7 +153,8 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       const before = window.messages.filter(m => m.event === 'state').length;
       const result = window.memnoterEditor.exec('focusCurrentSection');
       const states = window.messages.filter(m => m.event === 'state');
-      return { result, emitted: states.length > before, state: states.at(-1).payload };
+      return { result, emitted: states.length > before, state: states.at(-1).payload,
+        top: document.querySelector('.section-focus-start').getBoundingClientRect().top - document.querySelector('.app-scroll-container').getBoundingClientRect().top };
     });
     assert.equal(currentFocus.result, true);
     assert.equal(currentFocus.emitted, true);
@@ -237,6 +259,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal(await page.getByPlaceholder('Describe the image').evaluate(node => node === document.activeElement), true);
     assert.equal(await page.getByPlaceholder('Describe the image').getAttribute('inputmode'), null);
     await page.locator('.tiptap h2').filter({ hasText: 'Sibling section' }).click();
+    await page.waitForFunction(() => document.querySelector('.tiptap').getAttribute('inputmode') === null);
     assert.equal(await page.locator('.tiptap').getAttribute('inputmode'), null);
     assert.equal((await state()).suppressKeyboard, false);
     assert.deepEqual(errors, []);

@@ -1,3 +1,4 @@
+import { revealCaret } from "@/editor-host/scroll";
 import { headingNumberingKey } from "@/lib/heading-numbering";
 import type { Module } from "@/lib/types";
 import { imageFilesOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
@@ -245,6 +246,7 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
       }),
       editorProps: {
         handleScrollToSelection: (view) => {
+          if (hostOnly) { revealCaret(view); return true; }
           if (!view.state.selection.empty) return false;
           const container = view.dom.closest<HTMLElement>(".app-scroll-container");
           if (!container) return false;

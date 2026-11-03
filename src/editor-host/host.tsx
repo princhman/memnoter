@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { revealCaret } from "./scroll";
 import Tiptap from "@/components/Tiptap";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
@@ -11,6 +12,7 @@ import { editorOutline, editorState, execEditor } from "./commands";
 declare global {
   interface Window {
     memnoterEditor: {
+      setBottomInset(px: number): void;
       open(moduleId: string): Promise<void>;
       flush(): Promise<void>;
       exec(command: string, args?: Record<string, unknown>): boolean;
@@ -24,6 +26,7 @@ export function Host() {
   const [moduleId, setModuleId] = useState<string | null>(null);
   const { activeEditor } = useActiveEditor();
   const active = useRef(activeEditor);
+  const container = useRef<HTMLElement>(null);
   const opening = useRef<{ moduleId: string; resolve(): void; reject(error: Error): void } | null>(null);
   useLayoutEffect(() => { active.current = activeEditor; }, [activeEditor]);
 
@@ -40,6 +43,15 @@ export function Host() {
     };
     let queue = Promise.resolve();
     window.memnoterEditor = {
+      setBottomInset(px) {
+        if (!Number.isFinite(px) || px < 0) throw new Error("Invalid bottom inset");
+        const element = container.current;
+        if (!element) return;
+        element.dataset.bottomInset = String(px);
+        element.style.setProperty("--bottom-inset", `${px}px`);
+        const editor = active.current?.editor;
+        if (editor && !editor.isDestroyed) requestAnimationFrame(() => revealCaret(editor.view));
+      },
       open(id) {
         const operation = queue.then(async () => {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
@@ -111,9 +123,25 @@ export function Host() {
       opening.current.resolve();
       opening.current = null;
     }
+    let frame = 0;
+    const reveal = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => revealCaret(editor.view));
+    };
     editor.on("transaction", publish);
-    return () => { editor.off("transaction", publish); };
+    editor.on("selectionUpdate", reveal);
+    editor.on("update", reveal);
+    editor.on("focus", reveal);
+    window.addEventListener("resize", reveal);
+    return () => {
+      cancelAnimationFrame(frame);
+      editor.off("transaction", publish);
+      editor.off("selectionUpdate", reveal);
+      editor.off("update", reveal);
+      editor.off("focus", reveal);
+      window.removeEventListener("resize", reveal);
+    };
   }, [activeEditor]);
 
-  return <main className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} hostOnly />}</main>;
+  return <main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} hostOnly />}</main>;
 }
