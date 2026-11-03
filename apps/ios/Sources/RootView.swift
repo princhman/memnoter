@@ -5,6 +5,7 @@ struct RootView: View {
     @Bindable var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var session: WebSession?
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var selected: String? = "home"
     @State private var reviewModule: String?
     @State private var search = ""
@@ -22,7 +23,7 @@ struct RootView: View {
     @State private var deleting: NoteModule?
     var module: NoteModule? { store.modules.first { $0.id == selected } }
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: Binding(get: { selected }, set: { if let destination = $0 { if destination == "review" { reviewModule = nil }; navigate(destination) } })) {
                 NavigationLink(value: "home") { Label("Home", systemImage: "house") }
                 NavigationLink(value: "review") {
@@ -53,8 +54,15 @@ struct RootView: View {
                 catch { store.error = String(describing: error) }
             }
             .navigationTitle("Memnoter")
+            .toolbar(removing: .sidebarToggle)
             .toolbar {
-                ToolbarItem(placement: .primaryAction) { Button(action: newModule) { Image(systemName: "plus") }.keyboardShortcut("n") }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button(action: newModule) { Image(systemName: "plus") }.keyboardShortcut("n")
+                    Button {
+                        withAnimation { columnVisibility = .detailOnly }
+                    } label: { Image(systemName: "sidebar.left") }
+                    .accessibilityLabel("Hide Sidebar")
+                }
                 ToolbarItem(placement: .bottomBar) { Button { showSettings = true } label: { Label("Settings", systemImage: "gear") }.disabled(busy) }
             }
             .disabled(busy)
@@ -103,6 +111,12 @@ struct RootView: View {
             .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if columnVisibility == .detailOnly {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
+                            .accessibilityLabel("Show Sidebar")
+                    }
+                }
                 if let session, module != nil {
                     ToolbarItemGroup(placement: .primaryAction) {
                         Button { session.exec("undo") } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
