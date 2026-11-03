@@ -72,13 +72,15 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       const heading = document.querySelector(`[data-toc-id="${child.id}"]`);
       const before = heading.getBoundingClientRect().top;
       window.memnoterEditor.exec('showDocument');
-      return { firstVisible, visible, caret: state.headingId, id: child.id,
+      return { firstVisible, visible, caret: state.headingId, id: child.id, path: state.focusedSectionPath,
         cleared: window.messages.filter(m => m.event === 'state').at(-1).payload.focusedSectionId,
         delta: heading.getBoundingClientRect().top - before };
     });
     assert.deepEqual(focus.firstVisible, ['First', 'First body']);
     assert.deepEqual(focus.visible, ['Child', 'Child body']);
     assert.equal(focus.caret, focus.id);
+    assert.deepEqual(focus.path.map(c => [c.title, c.level]), [["Second", 1], ["Child", 2]]);
+    assert.equal(focus.path.at(-1).id, focus.id);
     assert.equal(focus.cleared, null);
     assert.ok(Math.abs(focus.delta) < 1);
     const result = await page.evaluate(async () => {

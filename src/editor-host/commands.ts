@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/core";
-import { sectionFocusKey } from "../lib/section-focus.ts";
+import { getFocusedSectionPath, sectionFocusKey } from "../lib/section-focus.ts";
 import { headingFoldKey } from "../lib/heading-fold.ts";
 
 export function editorOutline(editor: Editor) {
@@ -20,6 +20,10 @@ export function editorState(editor: Editor) {
   const focusedHeading = focusedPos == null ? null : editor.state.doc.nodeAt(focusedPos);
   const caretHeading = editor.state.selection.$from.parent;
   return {
+    focusedSectionPath: getFocusedSectionPath(editor).map(crumb => ({
+      id: editor.state.doc.nodeAt(crumb.pos)?.attrs["data-toc-id"],
+      level: crumb.level, title: crumb.title,
+    })),
     focusedSectionId: focusedHeading?.attrs["data-toc-id"] ?? null,
     headingId: caretHeading.type.name === "heading" ? caretHeading.attrs["data-toc-id"] ?? null : null,
     marks, blockType: editor.state.selection.$from.parent.type.name,
