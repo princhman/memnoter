@@ -63,7 +63,10 @@ struct RootView: View {
                     } label: { Image(systemName: "sidebar.left") }
                     .accessibilityLabel("Hide Sidebar")
                 }
-                ToolbarItem(placement: .bottomBar) { Button { showSettings = true } label: { Label("Settings", systemImage: "gear") }.disabled(busy) }
+                ToolbarItemGroup(placement: .bottomBar) {
+                    Spacer()
+                    Button { showSettings = true } label: { Label("Settings", systemImage: "gear") }.disabled(busy)
+                }
             }
             .disabled(busy)
         } detail: {
