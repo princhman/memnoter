@@ -115,21 +115,6 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
 // then), after edits settle, and when the note closes.
 export function useCardSync(editor: Editor | null, moduleId: string, ready: boolean) {
   const queryClient = useQueryClient();
-  // Keep the editor alive until copied ids have been repaired and resynced.
-  useBlocker({
-    disabled: !editor || !ready,
-    enableBeforeUnload: false,
-    shouldBlockFn: async () => {
-      try {
-        await flushCardSyncs();
-        return false;
-      } catch {
-        window.alert("Could not save flashcards. Please try leaving the note again.");
-        return true;
-      }
-    },
-  });
-
   // Before loading starts, so a background check never races this editor.
   useLayoutEffect(() => {
     openModules.set(moduleId, (openModules.get(moduleId) ?? 0) + 1);
@@ -224,4 +209,24 @@ export function useDueCounts() {
     total,
     forModule: (moduleId: string) => byModule.get(moduleId) ?? none(),
   };
+}
+
+// Desktop navigation waits for card ID repair before unmounting the editor.
+export function CardNavigationGuard({ editor, ready }: { editor: Editor | null; ready: boolean }) {
+  // Keep the editor alive until copied ids have been repaired and resynced.
+  useBlocker({
+    disabled: !editor || !ready,
+    enableBeforeUnload: false,
+    shouldBlockFn: async () => {
+      try {
+        await flushCardSyncs();
+        return false;
+      } catch {
+        window.alert("Could not save flashcards. Please try leaving the note again.");
+        return true;
+      }
+    },
+  });
+
+  return null;
 }

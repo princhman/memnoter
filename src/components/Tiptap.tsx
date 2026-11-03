@@ -28,7 +28,7 @@ import {
   type FileType,
   type GetContentResponse,
 } from "@/lib/content";
-import { useCardSchedules, useCardSync } from "@/lib/card-sync";
+import { CardNavigationGuard, useCardSchedules, useCardSync } from "@/lib/card-sync";
 import { useCardReveal } from "@/lib/card-reveal";
 import {
   TableOfContents,
@@ -40,9 +40,10 @@ const COMPACTION_IDLE_MS = 3_000;
 
 type TipTapProps = {
   moduleId: string;
+  hostOnly?: boolean;
 };
 
-const Tiptap = ({ moduleId }: TipTapProps) => {
+const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
   const { data: modules } = useQuery({ queryKey: ["modules"], queryFn: () => invoke<Module[]>("modules") });
   const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
   const yDoc = useMemo(() => new Y.Doc(), [moduleId]);
@@ -454,12 +455,15 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   return (
     <FilesContext.Provider value={filesContext}>
+      {!hostOnly && <CardNavigationGuard editor={editor} ready={isSuccess} />}
+      {hostOnly ? <EditorContent editor={editor} /> : <>
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
       <LinkMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} numbered={numbered} />
+      </>}
     </FilesContext.Provider>
   );
 };

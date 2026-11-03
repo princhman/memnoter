@@ -16,6 +16,11 @@ export default defineConfig(async () => ({
     react(),
     tailwindcss(),
   ],
+  build: {
+    rollupOptions: {
+      input: { main: new URL("./index.html", import.meta.url).pathname, editor: new URL("./editor.html", import.meta.url).pathname },
+    },
+  },
   resolve: {
     alias: {
       "@": new URL("./src", import.meta.url).pathname,
