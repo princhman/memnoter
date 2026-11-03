@@ -1,3 +1,4 @@
+import { IconTooltip } from "@/components/icon-tooltip";
 import { headingNumbers } from "@/lib/heading-numbering";
 import {
   useEffect,
@@ -223,8 +224,8 @@ export function TableOfContents({
 
       <div className="toc-rail">
         {items.map((item, index) => (
+          <IconTooltip key={item.id} label={numberAt(item.pos) + item.textContent} side="left">
           <button
-            key={item.id}
             type="button"
             className="toc-dash"
             aria-label={numberAt(item.pos) + item.textContent}
@@ -257,6 +258,7 @@ export function TableOfContents({
               }}
             />
           </button>
+          </IconTooltip>
         ))}
       </div>
     </nav>

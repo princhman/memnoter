@@ -1,16 +1,22 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { webkit } from "playwright";
 test("module actions open from right-click and keyboard, reuse dialogs and review the selected module", async () => {
-  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
+  const cacheDir = await mkdtemp(join(fileURLToPath(new URL("../node_modules/", import.meta.url)), ".memnoter-vite-"));
+  const server = await createServer({ cacheDir, root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
     await server.listen(); browser = await webkit.launch();
     const page = await browser.newPage();
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/modules.html`);
     const row = page.getByRole("link", { name: "Algebra", exact: true });
+    await page.getByRole("button", { name: "Actions for Algebra" }).hover();
+    await page.getByRole("button", { name: "Actions for Algebra" }).focus();
+    await page.getByRole("tooltip").filter({ hasText: "Shift+F10" }).waitFor();
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
     await page.getByRole("dialog", { name: "Rename module" }).waitFor();
@@ -26,5 +32,13 @@ test("module actions open from right-click and keyboard, reuse dialogs and revie
     await page.getByRole("menuitem", { name: "Disable chapter numbering" }).waitFor();
     await page.getByRole("menuitem", { name: "Review", exact: true }).click();
     await page.waitForURL("**/review?module=algebra");
-  } finally { await browser?.close(); await server.close(); }
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/tooltips.html`);
+    await page.getByRole("button", { name: "Rectangle", exact: true }).hover();
+    const tooltip = page.getByRole("tooltip", { name: "Rectangle R", exact: true });
+    await tooltip.waitFor();
+    assert.match(await tooltip.textContent(), /Rectangle.*R/s);
+    assert.equal(await tooltip.evaluate(element => !!element.closest("dialog")), true);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+  } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
 });

@@ -3,7 +3,7 @@ import { useSelector } from "@tanstack/react-store";
 import { getVersion } from "@tauri-apps/api/app";
 import { AlertCircle, Check, Download, Loader2, RefreshCw, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { IconTooltip } from "@/components/icon-tooltip";
 import { checkForUpdates, restartToUpdate, updateStore } from "@/lib/updater";
 import type { ReactNode } from "react";
 
@@ -58,28 +58,19 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
       </span>
       <div className="flex items-center">
         {children}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
+        <IconTooltip label={label} side="top"><Button
                 variant="ghost"
                 size="icon-sm"
                 className="relative text-muted-foreground"
                 aria-label={label}
                 aria-disabled={!onClick}
                 onClick={onClick}
-              />
-            }
-          >
+              >
             {icon}
             {status.state === "ready" && (
               <span className="absolute top-1 right-1 size-1.5 rounded-full bg-sidebar-primary" />
             )}
-          </TooltipTrigger>
-          <TooltipContent side="top" align="end">
-            {label}
-          </TooltipContent>
-        </Tooltip>
+          </Button></IconTooltip>
       </div>
     </div>
   );

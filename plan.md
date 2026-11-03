@@ -33,8 +33,11 @@
   actions, with keyboard access and the same delete confirmation.
   Added right-click/Shift+F10 access, module review and numbering actions.
   WebKit covers menu entry points and dialogs; 132 tests, lint and build pass.
-- [ ] Audit button tooltips. The shared IconTooltip component and image toolbar
+- [x] Audit button tooltips. The shared IconTooltip component and image toolbar
   tooltips exist; check remaining icon-only actions and expose their shortcuts.
+  Shared icon tooltips now cover toolbars, module actions, outline, breadcrumb
+  overflow, dialog closes and mask tools, including shortcuts and native-dialog
+  portals. Escape still closes dialogs; 132 tests, lint and build pass.
 
 - [ ] Expand and normalise the window drag area across the full top bar, including
   sidebar and inset backgrounds. Preserve interactive controls, double-click

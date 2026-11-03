@@ -15,7 +15,7 @@ import {
   Underline,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { IconTooltip } from "@/components/icon-tooltip";
 import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
 import { cn, MOD_KEY } from "@/lib/utils";
 
@@ -189,10 +189,8 @@ function MarkButton({
   children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
+    <IconTooltip label={label} hint={hint}>
+<Button
             size="icon-sm"
             variant="ghost"
             aria-label={label}
@@ -202,17 +200,9 @@ function MarkButton({
               pressed && "bg-primary/15 text-primary hover:bg-primary/20",
             )}
             onClick={onToggle}
-          />
-        }
-      >
-        {children}
-      </TooltipTrigger>
-      <TooltipContent>
-        <span className="grid gap-0.5">
-          <strong className="font-medium">{label}</strong>
-          <span className="text-muted-foreground">{hint}</span>
-        </span>
-      </TooltipContent>
-    </Tooltip>
+          >
+{children}
+</Button>
+</IconTooltip>
   );
 }
