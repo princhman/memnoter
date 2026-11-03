@@ -74,7 +74,8 @@ const RootLayout = () => {
         <SidebarProvider
           open={sidebarOpen}
           onOpenChange={setSidebarOpen}
-          className="h-dvh overflow-hidden overscroll-none"
+          // Fills the body, which keeps clear of the iPad's status bar.
+          className="relative h-full min-h-0 overflow-hidden overscroll-none"
           style={
             toolbarWidth === null
               ? undefined
