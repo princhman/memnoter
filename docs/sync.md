@@ -113,3 +113,10 @@ free of egress fees.
   in, rather than rolling every device back.
 - Chapter numbering (on `feat/editor-improvements`) needs a
   "<id>.numbering" vault field once both branches are merged.
+
+## Licensing
+
+The app and shared sync client code in `src/lib/sync/` are MIT. The server in
+`sync-server/` is AGPL-3.0-only: self-hosting is free, and anyone who runs a
+modified copy as a network service must publish their changes. See
+`sync-server/LICENSE`.
