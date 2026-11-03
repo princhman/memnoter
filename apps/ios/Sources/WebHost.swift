@@ -175,6 +175,9 @@ struct EditorState: Decodable {
                 guard payload["moduleId"] as? String == moduleId else { return }
                 if let data = try? JSONSerialization.data(withJSONObject: payload["headings"] ?? []) { headings = (try? JSONDecoder().decode([Heading].self, from: data)) ?? [] }
             case "state":
+                #if DEBUG
+                print("[editor state] \(payload)")
+                #endif
                 guard payload["moduleId"] as? String == moduleId else { return }
                 if let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(EditorState.self, from: data) { state = decoded }
             case "error": error = payload["message"] as? String
