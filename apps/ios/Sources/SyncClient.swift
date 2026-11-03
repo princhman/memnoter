@@ -92,11 +92,14 @@ struct SyncKeychain {
     func start() async {
         do {
             account = try keychain.load()
-            if account != nil {
+            if let account {
+                let state = try await command("sync_status") as? [String: Any] ?? [:]
+                if let old = state["account"] as? String, old != account.userId { _ = try await command("sync_disable") }
+                _ = try await command("sync_enable", ["account": account.userId])
                 let result = try await command("sync_reconcile")
                 try await deliver(result)
                 resume()
-            }
+            } else { _ = try await command("sync_disable") }
         } catch { self.error = error.localizedDescription }
     }
     func signIn(server: String, email: String, code: String) async throws -> (String, String, Bool) {
@@ -110,13 +113,13 @@ struct SyncKeychain {
         if info == nil {
             var salt = [UInt8](repeating: 0, count: 16)
             guard SecRandomCopyBytes(kSecRandomDefault, salt.count, &salt) == errSecSuccess else { throw SyncFailure(message: "Could not generate encryption salt") }
-            let key = await Task.detached { syncDeriveKey(passphrase: passphrase, salt: salt) }.value
-            let check = try syncCrypt(key: key, doc: "key-check", bytes: Array("memnoter-key-check".utf8), decrypt: false)
+            let key = await Task.detached { nativeDeriveKey(passphrase: passphrase, salt: salt) }.value
+            let check = try nativeCrypt(key: key, doc: "key-check", bytes: Array("memnoter-key-check".utf8), decrypt: false)
             info = try await api(server, "/v1/key", token: token, method: "PUT", body: ["salt": Data(salt).base64EncodedString(), "check": Data(check).base64EncodedString()])["key"] as? [String: String]
         }
         guard let info, let salt = Data(base64Encoded: info["salt"] ?? ""), let check = Data(base64Encoded: info["check"] ?? "") else { throw SyncFailure(message: "Invalid encryption parameters") }
-        let key = await Task.detached { syncDeriveKey(passphrase: passphrase, salt: Array(salt)) }.value
-        guard (try? syncCrypt(key: key, doc: "key-check", bytes: Array(check), decrypt: true)) == Array("memnoter-key-check".utf8) else { throw SyncFailure(message: "That passphrase doesn't match the one set for this account.") }
+        let key = await Task.detached { nativeDeriveKey(passphrase: passphrase, salt: Array(salt)) }.value
+        guard (try? nativeCrypt(key: key, doc: "key-check", bytes: Array(check), decrypt: true)) == Array("memnoter-key-check".utf8) else { throw SyncFailure(message: "That passphrase doesn't match the one set for this account.") }
         stop()
         // Switching accounts must reset the old cursor/outbox before seeding.
         if let old = try keychain.load(), old.userId != user || old.server != server { _ = try await command("sync_disable") }
@@ -218,7 +221,7 @@ struct SyncKeychain {
                     guard let doc = entry["doc"] as? String, let encoded = entry["data"] as? String, var blob = Data(base64Encoded: encoded) else { throw SyncFailure(message: "Invalid sync entry") }
                     if blob.count == 33 && blob.first == 2 { blob = try await object("blobs", String(decoding: blob.dropFirst(), as: UTF8.self)) }
                     let bytes: [UInt8]
-                    do { bytes = try syncCrypt(key: account.key, doc: doc, bytes: Array(blob), decrypt: true) }
+                    do { bytes = try nativeCrypt(key: account.key, doc: doc, bytes: Array(blob), decrypt: true) }
                     catch { fatal = true; throw SyncFailure(message: "Synced data could not be decrypted. Check your sync passphrase.") }
                     entries.append(["seq": entry["seq"] ?? 0, "doc": doc, "bytes": bytes])
                 }
@@ -238,7 +241,7 @@ struct SyncKeychain {
                     let state = try await command("sync_status") as? [String: Any] ?? [:]
                     if let cursor = state["cursor"] as? Int, cursor >= upTo {
                         if let bytes = try await command("sync_snapshot", ["doc": doc]) as? [UInt8] {
-                            let data = try await storable(Data(syncCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)))
+                            let data = try await storable(Data(nativeCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)))
                             try await send(["t": "compact", "doc": doc, "upTo": cursor, "data": data.base64EncodedString()])
                         } else { try await send(["t": "drop", "doc": doc]) }
                     }
@@ -275,7 +278,7 @@ struct SyncKeychain {
         for row in rows {
             guard let doc = row["doc"] as? String, let bytes = row["bytes"] as? [UInt8] else { continue }
             if dropped.contains(doc) { entries.append(["doc": doc, "drop": true]); continue }
-            let blob = try await storable(Data(syncCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)))
+            let blob = try await storable(Data(nativeCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)))
             entries.append(["doc": doc, "data": blob.base64EncodedString()])
         }
         guard owner == generation, ready else { return }
@@ -290,14 +293,14 @@ struct SyncKeychain {
             guard owner == generation else { return }
             let file = try await command("read_file", ["moduleId": "", "fileId": id]) as? [String: Any] ?? [:]
             guard let bytes = file["bytes"] as? [UInt8] else { continue }
-            _ = try await object("files", id, put: Data(syncCrypt(key: account.key, doc: "file:" + id, bytes: bytes, decrypt: false)))
+            _ = try await object("files", id, put: Data(nativeCrypt(key: account.key, doc: "file:" + id, bytes: bytes, decrypt: false)))
             guard owner == generation else { return }
             _ = try await command("sync_upload_done", ["fileId": id])
         }
         for file in try await command("sync_missing_files") as? [[String: String]] ?? [] {
             guard owner == generation, let id = file["fileId"], let module = file["moduleId"] else { return }
             let blob = try await object("files", id)
-            let bytes = try syncCrypt(key: account.key, doc: "file:" + id, bytes: Array(blob), decrypt: true)
+            let bytes = try nativeCrypt(key: account.key, doc: "file:" + id, bytes: Array(blob), decrypt: true)
             guard owner == generation else { return }
             let stored = try await command("sync_store_file", ["fileId": id, "moduleId": module, "fileType": file["fileType"] ?? "", "bytes": bytes])
             let json = String(decoding: try JSONSerialization.data(withJSONObject: stored), as: UTF8.self)
@@ -307,3 +310,10 @@ struct SyncKeychain {
 }
 
 extension Notification.Name { static let syncDidApply = Notification.Name("memnoter.syncDidApply") }
+
+private func nativeDeriveKey(passphrase: String, salt: [UInt8]) -> [UInt8] {
+    Array(syncDeriveKey(passphrase: passphrase, salt: Data(salt)))
+}
+private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Bool) throws -> [UInt8] {
+    Array(try syncCrypt(key: Data(key), doc: doc, bytes: Data(bytes), decrypt: decrypt))
+}

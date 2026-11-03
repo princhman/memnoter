@@ -9,6 +9,7 @@ import SwiftUI
 
 @MainActor @Observable final class AppStore {
     var client: CoreClient?
+    var sync: SyncClient?
     var modules: [NoteModule] = []
     var counts: [DueCount] = []
     private var recentModuleIds = UserDefaults.standard.stringArray(forKey: "recentModuleIds") ?? []
@@ -26,7 +27,14 @@ import SwiftUI
     var directory = URL.applicationSupportDirectory.appendingPathComponent("Memnoter", isDirectory: true)
     func start() async {
         guard client == nil else { return }
-        do { client = try await CoreClient.open(directory); await refresh(); try await client?.dailyBackup() }
+        do { client = try await CoreClient.open(directory); await refresh()
+            if let client {
+                let sync = SyncClient(core: client)
+                self.sync = sync
+                sync.onRemote = { [weak self] _ in await self?.refresh() }
+                await sync.start()
+            }
+            try await client?.dailyBackup() }
         catch { self.error = error.localizedDescription }
     }
     func refresh() async {

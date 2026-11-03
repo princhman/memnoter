@@ -1,3 +1,5 @@
+import { onRemote, onFileStored, type ApplyResult } from "@/lib/sync/manager";
+import type { FileType } from "@/lib/content";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { sectionFocusKey } from "@/lib/section-focus";
 import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop } from "./scroll";
@@ -13,6 +15,8 @@ import { editorOutline, editorState, execEditor } from "./commands";
 declare global {
   interface Window {
     memnoterEditor: {
+      applyRemote(result: ApplyResult): void;
+      fileStored(moduleId: string, file: FileType): void;
       setBottomInset(px: number): void;
       setTopInset(px: number): void;
       open(moduleId: string): Promise<void>;
@@ -46,6 +50,8 @@ export function Host() {
     };
     let queue = Promise.resolve();
     window.memnoterEditor = {
+      applyRemote: onRemote,
+      fileStored: onFileStored,
       setTopInset(px) {
         traceScroll("topInset", { px });
         if (!Number.isFinite(px) || px < 0) throw new Error("Invalid top inset");

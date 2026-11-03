@@ -5,6 +5,7 @@ struct RootView: View {
     @Bindable var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var session: WebSession?
+    @State private var backgroundWork: Task<Void, Never>?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @AppStorage("selectedDestination") private var savedDestination = "home"
     private var selected: String? {
@@ -160,12 +161,25 @@ struct RootView: View {
                 }
             }
         }
-        .task(id: store.client != nil) {
+        .task(id: store.sync != nil) {
             if let client = store.client, session == nil {
                 await store.refresh()
                 columnVisibility = sidebarVisible ? .all : .detailOnly
                 let restored = WebSession(client: client, directory: store.directory)
                 session = restored
+                store.sync?.onRemote = { json in
+                    if let session, session.ready {
+                        _ = try await session.run("window.memnoterEditor.applyRemote(JSON.parse(json))", ["json": json])
+                    }
+                    await store.refresh()
+                    if let selected, selected != "home", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
+                }
+                store.sync?.onFile = { module, json in
+                    if let session, session.ready {
+                        _ = try await session.run("window.memnoterEditor.fileStored(module, JSON.parse(json))", ["module": module, "json": json])
+                    }
+                    await store.refresh()
+                }
                 restored.onReady = { [weak restored] in
                     guard let restored, let selected, store.modules.contains(where: { $0.id == selected }) else { return }
                     Task { do { try await restored.open(selected) } catch { store.error = String(describing: error) } }
@@ -195,7 +209,7 @@ struct RootView: View {
                 } }
             }
         }
-        .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(client: client, beforeRestore: { try await session?.flush() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory); selected = "home"; await store.refresh() }) } }
+        .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory); selected = "home"; await store.refresh(); store.sync?.resume() }) } }
         .sheet(isPresented: $showOutline) {
             NavigationStack {
                 List(session?.headings ?? []) { heading in
@@ -237,11 +251,26 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { updateKeyboard($0) }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { updateKeyboard($0) }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { updateKeyboard($0, hiding: true) }
+        .onReceive(NotificationCenter.default.publisher(for: .coreDidWrite)) { _ in store.sync?.nudge() }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
-                let task = UIApplication.shared.beginBackgroundTask(withName: "Save note")
-                Task { defer { UIApplication.shared.endBackgroundTask(task) }; do { try await session?.flush() } catch { store.error = String(describing: error) } }
-            } else { Task { await store.refresh() } }
+                backgroundWork?.cancel()
+                let task = UIApplication.shared.beginBackgroundTask(withName: "Save note") {
+                    Task { @MainActor in backgroundWork?.cancel(); store.sync?.pause() }
+                }
+                backgroundWork = Task {
+                    defer {
+                        if scenePhase != .active { store.sync?.pause() }
+                        UIApplication.shared.endBackgroundTask(task)
+                    }
+                    do {
+                        try await session?.flush()
+                        store.sync?.nudge()
+                        try await Task.sleep(for: .seconds(3))
+                    } catch is CancellationError { }
+                    catch { store.error = String(describing: error) }
+                }
+            } else { backgroundWork?.cancel(); store.sync?.resume(); Task { await store.refresh() } }
         }
     }
     private func updateKeyboard(_ notification: Notification, hiding: Bool = false) {

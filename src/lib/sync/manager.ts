@@ -50,7 +50,7 @@ export const syncStatusStore = createStore<SyncUiStatus>({
 });
 
 type SyncStatusResponse = { account: string | null; cursor: number; pending: number };
-type ApplyResult = {
+export type ApplyResult = {
   updates: { moduleId: string; update: ContentUpdate }[];
   modulesChanged: boolean;
   deleted: string[];
@@ -97,7 +97,7 @@ function scheduleReindex(moduleId: string) {
   );
 }
 
-function onRemote(result: ApplyResult) {
+export function onRemote(result: ApplyResult) {
   for (const { moduleId, update } of result.updates) {
     // The same path as a local save: an open editor applies the update from
     // the cache, and compaction then includes it.
@@ -124,7 +124,7 @@ function onRemote(result: ApplyResult) {
   if (result.filesChanged) fileSync?.kick();
 }
 
-function onFileStored(moduleId: string, file: FileType) {
+export function onFileStored(moduleId: string, file: FileType) {
   queryClient.setQueryData<GetContentResponse>(
     ["content", moduleId],
     (content) => content && !content.files.some((known) => known.id === file.id)
