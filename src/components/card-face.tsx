@@ -6,6 +6,8 @@ import { MaskShape } from "@/components/occlusion-editor";
 import { targetsOf, validMasks, type OcclusionFace } from "@/lib/occlusion";
 import type { CardKind, Segment, CardPayload } from "@/lib/cards";
 import { cn } from "@/lib/utils";
+import { useSelector } from "@tanstack/react-store";
+import { requestSyncedFile, syncedFilesStore } from "@/lib/sync/file-requests";
 
 const MARK_TAGS: Record<string, keyof HTMLElementTagNameMap> = {
   bold: "strong",
@@ -132,13 +134,19 @@ export function CardFace({
 
 function OcclusionReview({ face }: { face: OcclusionFace }) {
   const [asset, setAsset] = useState<{ fileId: string; src?: string; failed?: boolean }>();
+  // An image from another device may still be downloading; look again when one arrives.
+  const syncedFiles = useSelector(syncedFilesStore, (state) => state.version);
   useEffect(() => {
     let active = true;
     void invoke<string>("resolve_card_image", { fileId: face.fileId }).then(path => {
       if (active) setAsset({ fileId: face.fileId, src: convertFileSrc(path) });
-    }).catch(() => { if (active) setAsset({ fileId: face.fileId, failed: true }); });
+    }).catch(() => {
+      if (!active) return;
+      setAsset({ fileId: face.fileId, failed: true });
+      requestSyncedFile(face.fileId);
+    });
     return () => { active = false; };
-  }, [face.fileId]);
+  }, [face.fileId, syncedFiles]);
   if (asset?.fileId !== face.fileId) return <p role="status">Loading image…</p>;
   if (asset.failed || face.version !== 1) return <p role="alert">Image unavailable. Open the source note to check or remove the image.</p>;
   return <OcclusionImage face={face} src={asset.src!} onError={() => setAsset({ fileId: face.fileId, failed: true })} />;

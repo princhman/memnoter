@@ -64,6 +64,11 @@ async function indexStoredCards(moduleId: string) {
   }
 }
 
+// Synced changes to a closed note can add or remove its cards.
+export function reindexStoredCards(moduleId: string) {
+  return indexStoredCards(moduleId);
+}
+
 let backfill: Promise<void> | undefined;
 
 // Checks every note never checked for cards, one at a time, once per app

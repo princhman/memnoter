@@ -38,3 +38,5 @@ plan.md
 /apps/ios/build-sidebar/
 
 /apps/ios/build-polish/
+# Throwaway data for scripts/sync-dev.sh
+.sync-dev/

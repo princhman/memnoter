@@ -22,6 +22,10 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
     page.on("pageerror", console.error);
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/selection.html`);
     await page.waitForFunction(() => window.editor);
+    // Playwright's default caret hiding mutates contenteditable styles. That
+    // makes ProseMirror rebuild math views during the capture itself. Hide
+    // the caret with a stylesheet and leave the editor DOM alone in captures.
+    await page.addStyleTag({ content: ".tiptap, .tiptap * { caret-color: transparent !important; }" });
     await page.evaluate(() => document.fonts.ready);
     for (const dark of [false, true]) {
       await page.evaluate(dark => {
@@ -34,11 +38,16 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         editor.commands.focus("start");
       }, dark);
       await page.waitForFunction(() => [...document.images].every(img => img.complete));
-      await page.waitForTimeout(1700);
+      // Math mounts lazily and can request fonts after the editor's initial
+      // font load. Compare settled rendering rather than an arbitrary delay.
+      await page.waitForFunction(() =>
+        document.querySelectorAll(".inline-math-widget .katex, .math-block-widget .katex").length === 2 &&
+        !document.querySelector("[data-render-pending]"));
+      await page.evaluate(() => document.fonts.ready);
       const prefix = `${artifacts}/${dark ? "dark" : "light"}`;
       // Baseline captures also let pixel assertions compare with the real
       // background of code, math and chips rather than guessing theme RGB.
-      const baseline = await page.screenshot({ path: `${prefix}-baseline.png` });
+      const baseline = await page.screenshot({ caret: "initial", animations: "disabled", path: `${prefix}-baseline.png` });
       const widths = await page.evaluate(() => [...editor.view.dom.querySelectorAll("p,h2")].map(el => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().width; }));
       for (const action of ["select-all", "drag", "shift-click", "shift-down", "mid-line"]) {
         await page.evaluate(() => editor.commands.focus("start"));
@@ -62,8 +71,8 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         });
         await page.waitForTimeout(80);
         assert.equal(await page.evaluate(() => editor.state.selection.empty), false, action);
-        await page.screenshot({ path: `${prefix}-${action}.png` });
-        const png = await page.screenshot({ style: '[aria-label="Text formatting"], [aria-label="Text formatting"] * { visibility: hidden !important; }' });
+        await page.screenshot({ caret: "initial", animations: "disabled", path: `${prefix}-${action}.png` });
+        const png = await page.screenshot({ caret: "initial", animations: "disabled", style: '[aria-label="Text formatting"], [aria-label="Text formatting"] * { visibility: hidden !important; }' });
         const evidence = await page.evaluate(async ({ before, after }) => {
           const decode = async base64 => { const img = new Image(); img.src = `data:image/png;base64,${base64}`; await img.decode(); const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0); return ctx.getImageData(0, 0, c.width, c.height); };
           const a = await decode(before), b = await decode(after);
@@ -183,7 +192,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         return { highlighted: !!dom.closest(".text-range-selected"), unchanged: before === JSON.stringify(editor.getJSON()) };
       }, type);
       assert.deepEqual(result, { highlighted: true, unchanged: true });
-      await page.screenshot({ path: `${artifacts}/dark-${type}-source.png`, style: '[aria-label="Text formatting"], [aria-label="Text formatting"] * { visibility: hidden !important; }' });
+      await page.screenshot({ caret: "initial", animations: "disabled", path: `${artifacts}/dark-${type}-source.png`, style: '[aria-label="Text formatting"], [aria-label="Text formatting"] * { visibility: hidden !important; }' });
     }
     await page.evaluate(() => {
       editor.commands.setContent("<p>AV office affinity tail</p>");
@@ -195,8 +204,12 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
     });
     assert.ok(Math.abs(shaping.selected - shaping.plain) < .1, JSON.stringify(shaping));
     await page.waitForTimeout(600); // Separate typing from setContent in Yjs undo.
+    await page.evaluate(() => editor.view.focus());
+    await page.waitForFunction(() => editor.view.hasFocus());
     await page.keyboard.press("Shift+ArrowRight");
-    assert.equal(await page.evaluate(() => editor.state.selection.to - editor.state.selection.from), 1);
+    // WebKit delivers native selectionchange after the keyboard event. Wait
+    // for ProseMirror to observe it before checking the composition lifecycle.
+    await page.waitForFunction(() => editor.state.selection.from === 2 && editor.state.selection.to === 3);
     await page.evaluate(() => editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
     assert.equal(await page.locator(".text-range-selected").count(), 0, "no decoration DOM changes during composition");
     await page.evaluate(() => editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
