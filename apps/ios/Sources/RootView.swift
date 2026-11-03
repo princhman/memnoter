@@ -209,7 +209,7 @@ struct RootView: View {
                 } }
             }
         }
-        .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory); selected = "home"; await store.refresh(); store.sync?.resume() }) } }
+        .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
         .sheet(isPresented: $showOutline) {
             NavigationStack {
                 List(session?.headings ?? []) { heading in

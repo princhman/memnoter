@@ -677,7 +677,7 @@ fn delete_modules(
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncStatus {
-    account: Option<String>,
+    pub(crate) account: Option<String>,
     cursor: i64,
     pending: i64,
 }
@@ -716,7 +716,7 @@ pub struct ApplyResult {
     files_changed: bool,
 }
 
-fn status(conn: &Connection) -> CommandResult<SyncStatus> {
+pub(crate) fn status(conn: &Connection) -> CommandResult<SyncStatus> {
     Ok(SyncStatus {
         account: get_value(conn, "account")?,
         cursor: cursor(conn)?,
@@ -733,6 +733,41 @@ fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
     if !was_enabled {
         set_value(&tx, "cursor", 0)?;
         seed(&tx)?;
+    }
+    tx.commit().map_err(db_err)
+}
+
+/// A snapshot owns notes, but must not change the device's signed-in account.
+/// Desktop stores account JSON; iOS stores the Keychain user ID.
+pub(crate) fn reconcile_restored_account(
+    conn: &mut Connection,
+    current: Option<&str>,
+) -> CommandResult<()> {
+    let restored = get_value::<String>(conn, "account")?;
+    let same = match (restored.as_deref(), current) {
+        (Some(a), Some(b)) if a == b => true,
+        (Some(a), Some(b)) => {
+            let identity = |raw: &str| {
+                let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+                Some((
+                    value.get("server")?.as_str()?.to_owned(),
+                    value.get("userId")?.as_str()?.to_owned(),
+                ))
+            };
+            identity(a).is_some() && identity(a) == identity(b)
+        }
+        _ => false,
+    };
+    let tx = conn.transaction().map_err(db_err)?;
+    if !same {
+        disable(&tx)?;
+    }
+    if let Some(account) = current {
+        set_value(&tx, "account", account)?;
+        if !same {
+            set_value(&tx, "cursor", 0)?;
+            seed(&tx)?;
+        }
     }
     tx.commit().map_err(db_err)
 }

@@ -213,7 +213,7 @@ fn maintenance(result: CommandResult<()>) {
     }
 }
 
-fn stage_restore(source: &Path, app_dir: &Path) -> CommandResult<PathBuf> {
+fn stage_restore(source: &Path, app_dir: &Path, account: Option<&str>) -> CommandResult<PathBuf> {
     let staging = app_dir.join(RESTORE_STAGING);
     remove_if_exists(&staging)?;
     std::fs::create_dir_all(&staging).map_err(db_err)?;
@@ -229,6 +229,10 @@ fn stage_restore(source: &Path, app_dir: &Path) -> CommandResult<PathBuf> {
     }
     // Stored image paths are absolute; point them at this data dir.
     rewrite_file_paths(&db_path, &app_dir.join("files"))?;
+    // Reconcile before the swap so failure leaves the live database untouched.
+    let staged = open_db(&staging)?;
+    let mut conn = staged.lock()?;
+    super::sync::reconcile_restored_account(&mut conn, account)?;
     Ok(staging)
 }
 
@@ -257,7 +261,8 @@ pub fn restore(
     }
     // Keep the current data restorable in case this restore was a mistake.
     create(conn, app_dir, now)?;
-    let staging = match stage_restore(&source, app_dir) {
+    let account = super::sync::status(conn)?.account;
+    let staging = match stage_restore(&source, app_dir, account.as_deref()) {
         Ok(staging) => staging,
         Err(error) => {
             let _ = remove_if_exists(&app_dir.join(RESTORE_STAGING));
@@ -608,6 +613,106 @@ mod tests {
         assert_eq!(owner, "copy");
         delete_module_data(&mut conn, &dir.0.join("files"), "copy").unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn restore_keeps_device_account_and_reconciles_snapshot_sync_state() {
+        // Include renewed desktop credentials: identity, not token, owns the cursor.
+        let desktop_old = r#"{"server":"https://sync","userId":"a","token":"old"}"#;
+        let desktop_new = r#"{"server":"https://sync","userId":"a","token":"new"}"#;
+        for (restored, current, keep) in [
+            (Some("a"), Some("a"), true),
+            (None, Some("a"), false),
+            (Some("b"), Some("a"), false),
+            (Some("b"), None, false),
+            (Some(desktop_old), Some(desktop_new), true),
+            (
+                Some(desktop_old),
+                Some(r#"{"server":"https://other","userId":"a"}"#),
+                false,
+            ),
+        ] {
+            let dir = TempDir::new();
+            let mut conn = open_db(&dir.0).unwrap().conn.into_inner().unwrap();
+            conn.execute("insert into modules (id,name) values ('note','Note')", [])
+                .unwrap();
+            let image = Uuid::new_v4().to_string();
+            let path = dir.0.join("files").join(&image);
+            std::fs::write(&path, b"pixels").unwrap();
+            conn.execute(
+                "insert into files values (?1,'note',?2,'image/png')",
+                params![image, path.to_str().unwrap()],
+            )
+            .unwrap();
+            if let Some(account) = restored {
+                conn.execute("insert into sync_state values ('account',?1)", [account])
+                    .unwrap();
+                conn.execute("insert into sync_state values ('cursor',42)", [])
+                    .unwrap();
+                conn.execute(
+                    "insert into sync_outbox (doc,bytes) values ('old-account',X'01')",
+                    [],
+                )
+                .unwrap();
+                conn.execute(
+                    "insert into sync_docs (doc,state) values ('old-account',X'0000')",
+                    [],
+                )
+                .unwrap();
+            }
+            let backup = create(&conn, &dir.0, at(0)).unwrap();
+            conn.execute_batch(
+                "delete from sync_state; delete from sync_outbox; delete from sync_docs;",
+            )
+            .unwrap();
+            if let Some(account) = current {
+                conn.execute("insert into sync_state values ('account',?1)", [account])
+                    .unwrap();
+            }
+            restore(&mut conn, &dir.0, &backup.id, at(1)).unwrap();
+            let status = serde_json::to_value(super::super::sync::status(&conn).unwrap()).unwrap();
+            assert_eq!(status["account"], serde_json::json!(current));
+            assert_eq!(status["cursor"], if keep { 42 } else { 0 });
+            let docs: Vec<String> = conn
+                .prepare("select doc from sync_outbox")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            if keep {
+                assert_eq!(docs, ["old-account"]);
+            } else if current.is_some() {
+                assert_eq!(docs, ["vault"]);
+            } else {
+                assert!(docs.is_empty());
+            }
+            let stale: i64 = conn
+                .query_row(
+                    "select count(*) from sync_docs where doc='old-account'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(stale, i64::from(keep));
+            let uploads: Vec<String> = conn
+                .prepare("select file_id from sync_file_uploads")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            if current.is_some() && !keep {
+                assert_eq!(uploads, [image]);
+            } else {
+                assert!(uploads.is_empty());
+            }
+
+            assert_eq!(
+                super::super::sync::record_update(&conn, "note", &[0, 0]).unwrap(),
+                current.is_some()
+            );
+        }
     }
 
     #[test]
