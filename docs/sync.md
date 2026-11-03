@@ -79,6 +79,17 @@ are never touched. In development the sign-in code is shown on screen.
 
 ## Deploying
 
+Production runs at `https://sync.memnoter.com` (a custom domain on the
+`memnoter.com` zone; workers.dev is off), which release builds use by default.
+Sign-in codes come from `sync@memnoter.com`; Email Sending is enabled for the
+zone with its SPF, DKIM and DMARC records. To deploy a change:
+
+```sh
+cd sync-server && npx wrangler deploy
+```
+
+First-time setup, already done for memnoter.com:
+
 ```sh
 cd sync-server
 npx wrangler r2 bucket create memnoter-sync
@@ -87,7 +98,7 @@ npx wrangler secret put AUTH_SECRET               # long random string
 npx wrangler deploy
 ```
 
-Then build the app with `VITE_SYNC_SERVER=https://<worker url>`.
+`VITE_SYNC_SERVER` overrides the server the app uses.
 
 R2 adds $0.015 / GB-month of storage and $4.50 / M uploads; downloads are
 free of egress fees.

@@ -15,7 +15,7 @@ export type SyncAccount = {
 type KeyInfo = { salt: string; check: string };
 
 export const DEFAULT_SYNC_SERVER: string =
-  import.meta.env.VITE_SYNC_SERVER ?? (import.meta.env.DEV ? "http://localhost:8787" : "https://sync.memnoter.app");
+  import.meta.env.VITE_SYNC_SERVER ?? (import.meta.env.DEV ? "http://localhost:8787" : "https://sync.memnoter.com");
 
 export class SyncApiError extends Error {
   constructor(message: string, readonly status: number) {

@@ -4,6 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "observability": { "enabled": true },
+  // Served only at sync.memnoter.com; the workers.dev URL is off.
+  "routes": [{ "pattern": "sync.memnoter.com", "custom_domain": true }],
+  "workers_dev": false,
   "durable_objects": {
     "bindings": [
       { "name": "VAULT", "class_name": "Vault" },
@@ -15,11 +18,10 @@
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "memnoter-sync" }],
   // Sign-in requests per IP address.
   "ratelimits": [{ "name": "AUTH_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } }],
-  // The from address's domain must be onboarded first:
-  // `npx wrangler email sending enable <domain>`.
+  // memnoter.com is onboarded for Email Sending (SPF, DKIM, DMARC in DNS).
   "send_email": [{ "name": "EMAIL" }],
   "vars": {
-    "EMAIL_FROM": "sync@memnoter.app"
+    "EMAIL_FROM": "sync@memnoter.com"
   }
   // AUTH_SECRET is a secret: `npx wrangler secret put AUTH_SECRET`.
   // For local development put AUTH_SECRET and DEV_RETURN_CODE=1 in .dev.vars.
