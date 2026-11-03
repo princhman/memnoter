@@ -25,12 +25,18 @@
   whether it is optional before implementing.
   Added an off-by-default SQLite module setting and shared display-only heading/
   outline numbers. 130 frontend tests, 40 Rust tests, lint and build pass.
-- [ ] Move images within a note. Verify drag handles for block and inline images,
+- [x] Move images within a note. Verify drag handles for block and inline images,
   drop placement, preservation of captions and masks, and undo/redo.
+  Added visible handles, isolated Yjs move history and repaired invalid restored
+  node selections. WebKit covers both layouts; 131 tests, lint and build pass.
 - [ ] Context actions on module rows: rename, review and delete using the existing
   actions, with keyboard access and the same delete confirmation.
 - [ ] Audit button tooltips. The shared IconTooltip component and image toolbar
   tooltips exist; check remaining icon-only actions and expose their shortcuts.
+
+- [ ] Expand and normalise the window drag area across the full top bar, including
+  sidebar and inset backgrounds. Preserve interactive controls, double-click
+  maximise, full-screen and collapsed-sidebar behavior without overlay strips.
 
 ## Larger features
 

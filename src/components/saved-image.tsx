@@ -1,3 +1,4 @@
+import { IconTooltip } from "@/components/icon-tooltip";
 import { imageOperation } from "@/lib/write-lifecycle";
 import { OcclusionEditor } from "@/components/occlusion-editor";
 import { saveQueue } from "@/lib/saves";
@@ -12,7 +13,7 @@ import type { NodeType } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import Image from "@tiptap/extension-image";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, GripVertical, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -394,6 +395,9 @@ function SavedImageView(props: NodeViewProps) {
 
   return (
     <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-align={isInline ? undefined : node.attrs.alignment}>
+      {editor.isEditable && <IconTooltip label="Move image" hint="Drag to another position in this note">
+        <span role="img" aria-label="Move image" className="note-image-drag" data-drag-handle draggable><GripVertical className="size-4" /></span>
+      </IconTooltip>}
       <span ref={infoHost} className="contents" />
       {isInline
         ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" data-drag-handle onClick={selectImage} onDoubleClick={() => { if (src && !failed) setPreviewOpen(true); }} />

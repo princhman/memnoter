@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
+import { ImageMoveHistory } from "@/lib/image-move-history";
 import StarterKit from "@tiptap/starter-kit";
 import type * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -47,6 +48,7 @@ export function noteExtensions({
       link: { openOnClick: false },
     }),
     TabSpacing,
+    ImageMoveHistory,
     LinkEditor,
     Arrows,
     MoveLines,
