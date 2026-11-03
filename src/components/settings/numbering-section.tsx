@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "@/lib/backend";
 import { Switch } from "@/components/ui/switch";
 import type { Module } from "@/lib/types";
 

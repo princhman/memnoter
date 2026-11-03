@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
+import { isTauri } from "@/lib/backend";
 import { getVersion } from "@tauri-apps/api/app";
 
 export default function AboutSection() {
   const { data: version } = useQuery({
     queryKey: ["app-version"],
     queryFn: getVersion,
+    enabled: isTauri(),
     staleTime: Infinity,
   });
   return (
