@@ -48,11 +48,22 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: Memnoter
+  MemnoterUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Memnoter
+    dependencies:
+      - target: Memnoter
 schemes:
   Memnoter:
     build:
       targets:
         Memnoter: all
         MemnoterTests: [test]
+        MemnoterUITests: [test]
     test:
-      targets: [MemnoterTests]
+      targets: [MemnoterTests, MemnoterUITests]
