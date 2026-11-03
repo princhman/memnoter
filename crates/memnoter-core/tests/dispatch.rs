@@ -34,12 +34,13 @@ fn dispatch_and_desktop_register_the_same_data_commands() {
         .split("tauri::generate_handler![")
         .nth(1)
         .unwrap()
-        .split(']')
-        .skip(1)
+        .split("])")
+        .next()
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim().starts_with("#["))
         .collect::<Vec<_>>()
-        .join("]");
-    // Skip the conditional attribute on the macOS-only menu entry.
-    let handler = handler.split("])").next().unwrap();
+        .join("\n");
     let registered: BTreeSet<_> = handler
         .split(',')
         .map(str::trim)

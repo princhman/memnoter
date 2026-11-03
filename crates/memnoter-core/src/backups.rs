@@ -305,15 +305,15 @@ pub fn list_backups(data_dir: &Path) -> CommandResult<Vec<Backup>> {
 pub fn backup_now(data_dir: &Path, db: &Db) -> CommandResult<Backup> {
     let dir = data_dir;
     let conn = db.lock()?;
-    let backup = create(&conn, &dir, Utc::now())?;
-    maintenance(prune(&dir, KEEP_BACKUPS));
+    let backup = create(&conn, dir, Utc::now())?;
+    maintenance(prune(dir, KEEP_BACKUPS));
     Ok(backup)
 }
 
 pub fn restore_backup(data_dir: &Path, db: &Db, id: String) -> CommandResult<()> {
     let dir = data_dir;
     let mut conn = db.lock()?;
-    let result = restore(&mut conn, &dir, &id, Utc::now());
+    let result = restore(&mut conn, dir, &id, Utc::now());
     if result
         .as_ref()
         .is_err_and(|error| error.starts_with("Database unavailable."))
@@ -322,6 +322,20 @@ pub fn restore_backup(data_dir: &Path, db: &Db, id: String) -> CommandResult<()>
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
     result
+}
+
+/// Run the launch-time daily backup check off the caller's thread.
+/// As on desktop, this checks once; the 24-hour interval is persisted in snapshots.
+pub fn spawn_daily_backup(core: std::sync::Arc<crate::Core>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let result = core
+            .db
+            .lock()
+            .and_then(|conn| backup_if_due(&conn, core.data_dir(), Utc::now()));
+        if let Err(error) = result {
+            eprintln!("Daily backup failed: {error}");
+        }
+    })
 }
 
 #[cfg(test)]
@@ -627,18 +641,4 @@ mod tests {
         assert!(!old.exists());
         assert!(!dir.0.join(RESTORE_STAGING).exists());
     }
-}
-
-/// Run the launch-time daily backup check off the caller's thread.
-/// As on desktop, this checks once; the 24-hour interval is persisted in snapshots.
-pub fn spawn_daily_backup(core: std::sync::Arc<crate::Core>) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let result = core
-            .db
-            .lock()
-            .and_then(|conn| backup_if_due(&conn, core.data_dir(), Utc::now()));
-        if let Err(error) = result {
-            eprintln!("Daily backup failed: {error}");
-        }
-    })
 }
