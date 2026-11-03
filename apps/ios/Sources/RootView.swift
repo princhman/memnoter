@@ -120,7 +120,7 @@ struct RootView: View {
                         Button { session.exec("undo") } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
                         Button { session.exec("redo") } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
                     }
-                    if session.state.focusedSectionId != nil || session.state.headingId != nil {
+                    if session.state.focusedSectionId != nil || session.state.focusableSection != nil {
                         if #available(iOS 26.0, *) {
                             ToolbarSpacer(.fixed, placement: .topBarLeading)
                         }

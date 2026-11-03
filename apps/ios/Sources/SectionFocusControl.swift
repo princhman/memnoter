@@ -41,8 +41,8 @@ struct SectionFocusControl: View {
                     .accessibilityLabel("Show whole note")
                     .help("Show whole note")
                 }
-            } else if let id = session.state.headingId {
-                Button { session.exec("focusSection", ["id": id]) } label: {
+            } else if session.state.focusableSection != nil {
+                Button { session.exec("focusCurrentSection") } label: {
                     if compact {
                         Image(systemName: "scope").frame(width: 44, height: 44)
                     } else {

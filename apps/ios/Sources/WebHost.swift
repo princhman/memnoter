@@ -49,7 +49,9 @@ import ImageIO
 }
 struct Heading: Decodable, Identifiable { let id: String; let level: Int; let text: String; let folded: Bool }
 struct SectionCrumb: Decodable, Identifiable { let id: String; let level: Int; let title: String }
+struct FocusableSection: Decodable { let pos: Int; let id: String?; let title: String; let level: Int }
 struct EditorState: Decodable {
+    var focusableSection: FocusableSection?
     var focusedSectionPath: [SectionCrumb] = []
     var focusedSectionId: String?; var headingId: String?
     var blockType = "paragraph"; var headingLevel: Int?

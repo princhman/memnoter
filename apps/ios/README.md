@@ -112,7 +112,8 @@ The editor's trailing material capsule uses keyboard frame notifications for bot
 undocked/floating keyboard. Its nonmodal Aa popover preserves the editor
 selection and first responder while applying styles, marks, lists and math.
 Link URL entry temporarily takes text focus and returns it to the editor on
-Apply. Photos insertion and undo/redo live in navigation; saving/failure status
+Apply. Section focus is available from body text inside the innermost containing
+section and retains the caret when entered. Photos insertion and undo/redo live in navigation; saving/failure status
 appears there only while needed. It is not a custom UIKit inputAccessoryView. Chapter numbering reloads editor providers after
 flushing to invalidate cached preferences. Search covers core-indexed notes;
 older notes need opening to refresh their index. Home mirrors the desktop welcome screen, with up to five recent modules and
