@@ -88,8 +88,8 @@ struct RootView: View {
                     if showingFind { TextField("Find in note", text: $find).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
                     WebSurface(session: session)
                         .background(Color(uiColor: .systemBackground))
-                    if keyboardDocked {
-                    ScrollView(.horizontal, showsIndicators: false) {
+                        .overlay(alignment: .bottomTrailing) {
+                            if keyboardDocked {
                       HStack {
                         ForEach([("bold", "B"), ("italic", "I"), ("underline", "U"), ("heading", "H1"), ("bulletList", "List"), ("makeCard", "Card")], id: \.0) { command, title in
                             Button(title) { session.exec(command, command == "heading" ? ["level": 1] : [:]) }
@@ -103,12 +103,17 @@ struct RootView: View {
                             Button { session.exec("focusSection", ["id": headingId]) } label: { Image(systemName: "scope") }
                                 .accessibilityLabel("Focus on section")
                         }
-                        Spacer()
                         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }.disabled(busy)
-                        Text(session.saveStatus).font(.caption).foregroundStyle(.secondary)
                       }.padding(10)
-                    }.background(.bar).disabled(!session.state.editable)
-                    }
+
+                                .background(.regularMaterial, in: Capsule())
+                                .overlay { Capsule().strokeBorder(.primary.opacity(0.08)) }
+                                .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+                                .padding(16)
+                                .disabled(!session.state.editable)
+                            }
+                        }
+
                 } else {
                     HomeView(modules: store.modules, recentModules: store.recentModules, newModule: newModule, openModule: navigate)
                         .disabled(busy)
@@ -127,6 +132,12 @@ struct RootView: View {
                     ToolbarItemGroup(placement: .topBarLeading) {
                         Button { session.exec("undo") } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
                         Button { session.exec("redo") } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if !session.saveStatus.isEmpty {
+                            Label(session.saveStatus, systemImage: session.saveStatus == "Save failed" ? "exclamationmark.icloud" : "icloud.and.arrow.up")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     ToolbarItemGroup(placement: .primaryAction) {
                         Button { showingFind.toggle() } label: { Image(systemName: "magnifyingglass") }.keyboardShortcut("f")

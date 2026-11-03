@@ -134,7 +134,7 @@ struct EditorState: Decodable {
             case "state":
                 if let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(EditorState.self, from: data) { state = decoded }
             case "error": error = payload["message"] as? String
-            case "saveStatus": saveStatus = payload["failing"] as? Bool == true ? "Save failed" : (payload["pending"] as? Int ?? 0) > 0 ? "Saving…" : "Saved"
+            case "saveStatus": saveStatus = payload["failing"] as? Bool == true ? "Save failed" : (payload["pending"] as? Int ?? 0) > 0 ? "Saving…" : ""
             default: break
             }
         }
