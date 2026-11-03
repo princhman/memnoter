@@ -63,6 +63,7 @@ struct EditorState: Decodable {
     var saveStatus = ""
     var onReady: (() -> Void)?
     let client: CoreClient
+    private var moduleId: String?
     private var generation = UUID()
     private var barrier: Task<Void, Error>?
     init(client: CoreClient, directory: URL, entry: String = "editor.html") {
@@ -80,14 +81,29 @@ struct EditorState: Decodable {
         web.underPageBackgroundColor = .clear
         web.uiDelegate = self
         web.navigationDelegate = self
+        #if DEBUG
         web.isInspectable = true
+        #endif
         web.load(URLRequest(url: URL(string: "memnoter-app://localhost/\(entry)")!))
     }
     func run(_ script: String, _ arguments: [String: Any] = [:]) async throws -> Any? {
         try await web.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .page)
     }
     func exec(_ command: String, _ args: [String: Any] = [:]) {
-        Task { do { _ = try await run("return window.memnoterEditor.exec(command, args)", ["command": command, "args": args]) } catch { self.error = String(describing: error) } }
+        let target = moduleId
+        Task {
+            guard target == moduleId else { return }
+            do {
+                #if DEBUG
+                print("[editor exec] \(command) \(args)")
+                #endif
+                let reply = try await run("return window.memnoterEditor.exec(command, args)", ["command": command, "args": args])
+                #if DEBUG
+                print("[editor reply] \(command): \(String(describing: reply))")
+                #endif
+                if reply as? Bool == false { self.error = "Editor could not perform \(command)." }
+            } catch { self.error = String(describing: error) }
+        }
     }
     private func serialized(_ script: String, _ arguments: [String: Any] = [:]) async throws {
         let previous = barrier
@@ -100,7 +116,13 @@ struct EditorState: Decodable {
         try await next.value
     }
     func flush() async throws { guard ready else { return }; try await serialized("await window.memnoterEditor.flush()") }
-    func open(_ id: String) async throws { try await serialized("await window.memnoterEditor.open(id)", ["id": id]) }
+    func open(_ id: String) async throws {
+        if moduleId != id {
+            moduleId = id
+            state = EditorState(); headings = []
+        }
+        try await serialized("await window.memnoterEditor.open(id)", ["id": id])
+    }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         generation = UUID(); ready = false
     }
@@ -132,8 +154,10 @@ struct EditorState: Decodable {
             switch event {
             case "ready": ready = true; onReady?()
             case "outline":
+                guard payload["moduleId"] as? String == moduleId else { return }
                 if let data = try? JSONSerialization.data(withJSONObject: payload["headings"] ?? []) { headings = (try? JSONDecoder().decode([Heading].self, from: data)) ?? [] }
             case "state":
+                guard payload["moduleId"] as? String == moduleId else { return }
                 if let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(EditorState.self, from: data) { state = decoded }
             case "error": error = payload["message"] as? String
             case "saveStatus": saveStatus = payload["failing"] as? Bool == true ? "Save failed" : (payload["pending"] as? Int ?? 0) > 0 ? "Saving…" : ""
