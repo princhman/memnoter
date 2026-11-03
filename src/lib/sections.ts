@@ -1,7 +1,7 @@
 import { Extension } from "@tiptap/core";
 import type { EditorState } from "@tiptap/pm/state";
 import { TextSelection } from "@tiptap/pm/state";
-import { getSectionRange, sectionFocusKey } from "./section-focus";
+import { getSectionRange, sectionFocusKey } from "./section-focus.ts";
 
 export type SectionKind = "sibling" | "subsection";
 
@@ -19,7 +19,7 @@ const MAX_LEVEL = 6;
 
 // The nearest heading at or before the top-level block holding the cursor,
 // and where its section ends.
-function currentSection(state: EditorState) {
+export function currentSection(state: EditorState) {
   const { $from } = state.selection;
   const blockPos = $from.depth > 0 ? $from.before(1) : $from.pos;
   let heading: { pos: number; level: number } | null = null;

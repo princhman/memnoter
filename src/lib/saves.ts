@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "./backend.ts";
 import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
 import { queryClient } from "@/lib/query-client";

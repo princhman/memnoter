@@ -1,7 +1,7 @@
 import katex from "katex";
 import { validatedOcclusionPair } from "@/lib/occlusion-face-validation";
 import { useEffect, useState, type ReactNode } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { call as invoke, fileUrl as convertFileSrc } from "../lib/backend.ts";
 import { MaskShape } from "@/components/occlusion-editor";
 import { targetsOf, validMasks, type OcclusionFace } from "@/lib/occlusion";
 import type { CardKind, Segment, CardPayload } from "@/lib/cards";

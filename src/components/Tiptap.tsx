@@ -1,13 +1,15 @@
+import { traceScroll } from "@/editor-host/scroll";
 import { headingNumberingKey } from "@/lib/heading-numbering";
 import type { Module } from "@/lib/types";
 import { imageFilesOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
 // src/Tiptap.tsx
+import { suppressesTextInput } from "@/lib/editor-input";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import { redo as yRedo, undo as yUndo, ySyncPluginKey } from "@tiptap/y-tiptap";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { listen } from "../lib/backend.ts";
+import { call as invoke } from "../lib/backend.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { applyPendingSaves, saveQueue } from "@/lib/saves";
 import { setNativeEditorHistory } from "@/lib/native-history";
@@ -28,7 +30,7 @@ import {
   type FileType,
   type GetContentResponse,
 } from "@/lib/content";
-import { useCardSchedules, useCardSync } from "@/lib/card-sync";
+import { CardNavigationGuard, useCardSchedules, useCardSync } from "@/lib/card-sync";
 import { useCardReveal } from "@/lib/card-reveal";
 import {
   TableOfContents,
@@ -40,9 +42,10 @@ const COMPACTION_IDLE_MS = 3_000;
 
 type TipTapProps = {
   moduleId: string;
+  hostOnly?: boolean;
 };
 
-const Tiptap = ({ moduleId }: TipTapProps) => {
+const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
   const { data: modules } = useQuery({ queryKey: ["modules"], queryFn: () => invoke<Module[]>("modules") });
   const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
   const yDoc = useMemo(() => new Y.Doc(), [moduleId]);
@@ -243,6 +246,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       }),
       editorProps: {
         handleScrollToSelection: (view) => {
+          if (hostOnly) { traceScroll("prosemirror.scrollIntoView.suppressed"); return true; }
           if (!view.state.selection.empty) return false;
           const container = view.dom.closest<HTMLElement>(".app-scroll-container");
           if (!container) return false;
@@ -260,12 +264,18 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
             caret.right <= left + container.clientWidth
           );
         },
-        attributes: {
+        // Apply before NodeView focus calls; only text carets request a keyboard.
+        attributes: ({ selection }) => ({
+          ...(hostOnly ? {
+            "data-native-editor": "true",
+            ...(suppressesTextInput(selection)
+              ? { inputmode: "none" } : {}),
+          } : {}),
           class: "tiptap",
           autocapitalize: "off",
           // macOS WebKit also applies capitalisation through text correction.
           autocorrect: "off",
-        },
+        }),
       },
       // ai-suggested change to prevent double enter lag
       onTransaction: ({ editor, transaction }) => {
@@ -456,12 +466,15 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
 
   return (
     <FilesContext.Provider value={filesContext}>
+      {!hostOnly && <CardNavigationGuard editor={editor} ready={isSuccess} />}
+      {hostOnly ? <EditorContent editor={editor} /> : <>
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
       <LinkMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} numbered={numbered} />
+      </>}
     </FilesContext.Provider>
   );
 };

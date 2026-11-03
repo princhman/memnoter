@@ -12,7 +12,7 @@ import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/stat
 import type { NodeType } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import Image from "@tiptap/extension-image";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { call as invoke, fileUrl as convertFileSrc } from "../lib/backend.ts";
 import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -318,7 +318,7 @@ function SavedImageView(props: NodeViewProps) {
     const position = latest.current.getPos();
     if (position !== undefined && position >= 0 && position < editor.state.doc.content.size) {
       editor.commands.setNodeSelection(position);
-      editor.view.focus();
+      if (!editor.view.dom.hasAttribute("data-native-editor")) editor.view.focus();
     }
   };
   // Pressing and dragging the image moves it; a press without moving is a click.
@@ -326,6 +326,9 @@ function SavedImageView(props: NodeViewProps) {
     if (!editor.isEditable || event.button !== 0 || (event.target as Element).closest("[data-resize-handle]")) return;
     // No text selection or native image drag while the pointer moves.
     event.preventDefault();
+    // Select before tracking a touch drag so the native host suppresses its
+    // keyboard even when the preceding selection was a text caret.
+    if (editor.view.dom.hasAttribute("data-native-editor")) selectImage();
     cancelMove.current?.();
     cancelMove.current = startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent);
   };

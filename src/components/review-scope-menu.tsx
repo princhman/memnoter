@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "../lib/backend.ts";
 import { ChevronDown } from "lucide-react";
 import { openReview } from "@/lib/card-sync";
 import { Module } from "@/lib/types";

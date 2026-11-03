@@ -11,7 +11,7 @@ import {
 import { cn } from "cn";
 import { useSidebar } from "./ui/sidebar";
 import { useQuery } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "../lib/backend.ts";
 import { Module } from "@/lib/types";
 import { useMatchRoute } from "@tanstack/react-router";
 import { useEditorState } from "@tiptap/react";

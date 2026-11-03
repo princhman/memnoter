@@ -2,7 +2,7 @@ import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "../../lib/backend.ts";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

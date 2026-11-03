@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "./backend.ts";
 import * as Y from "yjs";
 import { applySavedContent, reconcileContent, type GetContentResponse } from "@/lib/content";
 import {

@@ -2,8 +2,8 @@
 // commands in src-tauri/src/sync.rs and folds remote changes into the caches
 // the editor reads, exactly like a local save would.
 
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call as invoke } from "@/lib/backend";
+import { listen } from "@/lib/backend";
 import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
 import { acknowledgeContent, type ContentUpdate, type FileType, type GetContentResponse } from "@/lib/content";

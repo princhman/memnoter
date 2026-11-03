@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "./backend.ts";
+import { call as invoke } from "./backend.ts";
 
 let nativeHistoryUpdates = Promise.resolve();
 
@@ -6,6 +7,7 @@ let nativeHistoryUpdates = Promise.resolve();
 // `menu` events instead of the webview's native text undo. Calls are applied
 // in order, so a delayed one never overrides a newer one.
 export function setNativeEditorHistory(editorFocused: boolean) {
+  if (!isTauri()) return;
   nativeHistoryUpdates = nativeHistoryUpdates
     .then(() => invoke<void>("set_editor_history", { editorFocused }))
     .catch((error) => {

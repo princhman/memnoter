@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "../lib/backend.ts";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { NEW_MODULE_EVENT } from "@/lib/app-events";
@@ -92,7 +92,7 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
             render={
               <SidebarGroupAction
                 aria-label="New module"
-                className="invisible group-hover:visible"
+                className="invisible group-hover:visible pointer-coarse:visible"
               />
             }
           >

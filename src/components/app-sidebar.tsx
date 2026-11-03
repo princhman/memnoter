@@ -18,7 +18,7 @@ import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Module } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "../lib/backend.ts";
 import CreateModule from "./create-module";
 import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {

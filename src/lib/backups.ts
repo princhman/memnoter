@@ -1,6 +1,6 @@
 import { flushCardSyncs } from "@/lib/card-sync";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "./backend.ts";
 import { flushSaves, saveQueue } from "@/lib/saves";
 
 export type Backup = { id: string; created_at: number };

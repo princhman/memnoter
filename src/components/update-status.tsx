@@ -1,8 +1,10 @@
+import { isTauri } from "@/lib/backend";
 import { useSelector } from "@tanstack/react-store";
 import { AlertCircle, Check, Download, Loader2, RefreshCw, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { checkForUpdates, restartToUpdate, updateStore } from "@/lib/updater";
+import { IS_IOS } from "@/lib/platform";
 import type { ReactNode } from "react";
 
 // `children` sit beside the update button, e.g. the Settings button.
@@ -48,7 +50,8 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
     <div className="flex items-center justify-end gap-2">
       <div className="flex items-center">
         {children}
-        <IconTooltip label={label} side="top"><Button
+        {/* The App Store updates iOS apps. */}
+        {isTauri() && !IS_IOS && <IconTooltip label={label} side="top"><Button
                 variant="ghost"
                 size="icon-sm"
                 className="relative text-muted-foreground"
@@ -60,7 +63,7 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
             {status.state === "ready" && (
               <span className="absolute top-1 right-1 size-1.5 rounded-full bg-sidebar-primary" />
             )}
-          </Button></IconTooltip>
+          </Button></IconTooltip>}
       </div>
     </div>
   );

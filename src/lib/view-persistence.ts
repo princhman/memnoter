@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect } from "react";
+import { isNativeHost } from "./backend";
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import { sectionFocusKey } from "./section-focus";
 import { getFoldedIds } from "./heading-fold";
 import {
   appStore,
+  clearModuleView,
   saveModuleView,
+  saveState,
   setOpenedModule,
   type ModuleView,
 } from "./store";
@@ -16,7 +19,7 @@ const SCROLL_CONTAINER = ".app-scroll-container";
 const ANCHOR_HOLD_MS = 3_000;
 const SAVE_DELAY_MS = 150;
 
-const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"];
+const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown", "memnoter:reveal"];
 
 type ScrollAnchor = NonNullable<ModuleView["scrollAnchor"]>;
 
@@ -90,6 +93,7 @@ function restoreScroll(
   editor: Editor,
   container: HTMLElement,
   view: ModuleView,
+  onFailure: () => void,
 ) {
   const apply = () => {
     const element = view.scrollAnchor && anchorElement(editor, view.scrollAnchor);
@@ -105,7 +109,15 @@ function restoreScroll(
   };
 
   // Resize callbacks run before paint, so each correction is never seen.
-  const resizeObserver = new ResizeObserver(apply);
+  const resizeObserver = new ResizeObserver(() => {
+    try { apply(); }
+    catch (error) {
+      stop();
+      console.warn("Ignoring saved scroll anchor:", error);
+      onFailure();
+    }
+  });
+  let holdTimeout: number | undefined;
 
   const stop = () => {
     if (stopActiveRestore === stop) stopActiveRestore = undefined;
@@ -118,9 +130,14 @@ function restoreScroll(
 
   stopActiveRestore?.();
   stopActiveRestore = stop;
-  apply();
-  resizeObserver.observe(editor.view.dom);
-  const holdTimeout = window.setTimeout(stop, ANCHOR_HOLD_MS);
+  try {
+    apply();
+    resizeObserver.observe(editor.view.dom);
+  } catch (error) {
+    stop();
+    throw error;
+  }
+  holdTimeout = window.setTimeout(stop, ANCHOR_HOLD_MS);
   for (const event of USER_SCROLL_EVENTS) {
     container.addEventListener(event, stop, { passive: true });
   }
@@ -129,6 +146,14 @@ function restoreScroll(
 }
 
 // Stops holding each restored editor's scroll position.
+const activeSaves = new Map<Editor, () => void>();
+
+// Native calls this before switching notes or suspending JavaScript.
+export function flushPersistedViews() {
+  for (const save of activeSaves.values()) save();
+  saveState();
+}
+
 const restoredViews = new WeakMap<Editor, (() => void) | undefined>();
 
 // Puts back the module's saved scroll position, cursor and focused and folded
@@ -143,21 +168,44 @@ export function restoreView(editor: Editor, moduleId: string) {
   const saved = appStore.state.viewByModule[moduleId];
   let stopRestoring: (() => void) | undefined;
 
-  if (saved) {
-    if (saved.focusedSection != null) {
-      editor.commands.showSection(saved.focusedSection);
-    }
-    restoreSelection(editor, saved);
-    if (saved.foldedSections?.length) {
-      // Views saved before folds were keyed by heading id hold positions.
-      editor.commands.setFolds(
-        saved.foldedSections.filter((id) => typeof id === "string"),
-      );
-    }
-    editor.commands.focus(undefined, { scrollIntoView: false });
-    stopRestoring = restoreScroll(editor, container, saved);
-  } else {
+  const discard = () => {
+    stopRestoring?.();
+    clearModuleView(moduleId);
+    editor.commands.showDocument();
+    editor.commands.setFolds([]);
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atStart(editor.state.doc)).setMeta("addToHistory", false));
     container.scrollTop = 0;
+  };
+
+  try {
+    if (saved) {
+      const { doc } = editor.state;
+      const position = (value: number) => Number.isInteger(value) && value >= 0 && value <= doc.content.size;
+      const headingIds = new Set<string>();
+      doc.forEach(node => {
+        if (node.type.name === "heading") headingIds.add(node.attrs["data-toc-id"]);
+      });
+      if (!position(saved.anchor) || !position(saved.head) ||
+          !Number.isFinite(saved.scrollTop) || saved.scrollTop < 0 ||
+          (saved.scrollAnchor && (!position(saved.scrollAnchor.pos) || !Number.isFinite(saved.scrollAnchor.offset))) ||
+          (saved.focusedSection != null && (!position(saved.focusedSection) || doc.nodeAt(saved.focusedSection)?.type.name !== "heading")) ||
+          (saved.foldedSections != null && (!Array.isArray(saved.foldedSections) || saved.foldedSections.some(id => !headingIds.has(id))))) {
+        discard();
+      } else {
+        if (saved.focusedSection != null) editor.commands.showSection(saved.focusedSection);
+        restoreSelection(editor, saved);
+        editor.commands.setFolds(saved.foldedSections ?? []);
+        // A restored caret must not summon the keyboard on launch. Tapping the
+        // editor is the user's decision to begin editing.
+        if (!isNativeHost()) editor.commands.focus(undefined, { scrollIntoView: false });
+        stopRestoring = restoreScroll(editor, container, saved, discard);
+      }
+    } else {
+      container.scrollTop = 0;
+    }
+  } catch (error) {
+    console.warn("Ignoring saved editor view:", error);
+    discard();
   }
   restoredViews.set(editor, stopRestoring);
 }
@@ -201,6 +249,12 @@ export function usePersistedView(
       });
     };
 
+    const saveNow = () => {
+      window.clearTimeout(saveTimeout);
+      save();
+    };
+    activeSaves.set(editor, saveNow);
+
     const scheduleSave = () => {
       if (saveTimeout === undefined) {
         saveTimeout = window.setTimeout(save, SAVE_DELAY_MS);
@@ -211,6 +265,7 @@ export function usePersistedView(
     container.addEventListener("scroll", scheduleSave, { passive: true });
 
     return () => {
+      activeSaves.delete(editor);
       restoredViews.get(editor)?.();
       // A rerun of this effect for the same editor restores again.
       restoredViews.delete(editor);

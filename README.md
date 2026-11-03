@@ -144,3 +144,7 @@ The Memnoter app, including the shared sync client and protocol in
 The server in [`sync-server/`](sync-server/) is licensed separately under
 [GNU AGPL-3.0](sync-server/LICENSE). Self-hosting is free; anyone running a
 modified copy as a service must publish their changes.
+
+## Native iPad app and shared core
+
+See [apps/ios/README.md](apps/ios/README.md) for the native SwiftUI iPad app and build instructions, and [crates/memnoter-core/README.md](crates/memnoter-core/README.md) for the shared Rust core and dispatch API.

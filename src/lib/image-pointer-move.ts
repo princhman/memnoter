@@ -110,7 +110,7 @@ export function startImagePointerMove(view: EditorView, getPos: () => number | u
     stopCapturing(view);
     view.dispatch(tr);
     stopCapturing(view);
-    view.focus();
+    if (!view.dom.hasAttribute("data-native-editor")) view.focus();
   };
   const up = () => finish(true);
   const cancel = () => finish(false);

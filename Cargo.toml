@@ -1,0 +1,3 @@
+[workspace]
+members = ["src-tauri", "crates/memnoter-core", "crates/memnoter-ffi"]
+resolver = "2"
