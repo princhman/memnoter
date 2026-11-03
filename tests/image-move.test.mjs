@@ -1,3 +1,5 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -5,7 +7,8 @@ import { createServer } from "vite";
 import { webkit } from "playwright";
 
 test("internal block and inline image drops retain assets, descriptions and masks with one-step undo/redo", async () => {
-  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
+  const cacheDir = await mkdtemp(join(fileURLToPath(new URL("../node_modules/", import.meta.url)), ".memnoter-vite-"));
+  const server = await createServer({ cacheDir, root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
     await server.listen();
@@ -44,5 +47,5 @@ test("internal block and inline image drops retain assets, descriptions and mask
       assert.deepEqual(images(result.after), images(result.before));
       assert.ok(result.after.content.findIndex(node => images(node).length) > 0, JSON.stringify(result.after));
     }
-  } finally { await browser?.close(); await server.close(); }
+  } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
 });

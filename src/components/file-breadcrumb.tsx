@@ -1,3 +1,4 @@
+import { IconTooltip } from "@/components/icon-tooltip";
 import {
   Breadcrumb,
   BreadcrumbEllipsis,
@@ -133,6 +134,7 @@ export function FileBreadcrumb() {
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
                   <DropdownMenu>
+                    <IconTooltip label="Show parent sections">
                     <DropdownMenuTrigger
                       render={
                         <Button
@@ -144,6 +146,7 @@ export function FileBreadcrumb() {
                         </Button>
                       }
                     />
+                    </IconTooltip>
                     <DropdownMenuContent align="start">
                       <DropdownMenuGroup>
                         {sectionPath

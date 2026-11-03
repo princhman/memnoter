@@ -17,7 +17,6 @@ import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, G
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { FileType } from "@/lib/content";
 import { adaptedUrl, cachedAdaptedUrl, scheduleTrim } from "@/lib/image-adapt";
 import { useDarkTheme } from "@/hooks/use-dark-theme";
@@ -625,14 +624,11 @@ function ToolbarButton({ label, hint, pressed, disabled, onClick, children }: {
   children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<Button size="icon-sm" variant="ghost" aria-label={label} aria-pressed={pressed} disabled={disabled} onClick={onClick} />}>
-        {children}
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {hint ? <span className="grid gap-0.5"><strong className="font-medium">{label}</strong><span className="text-muted-foreground">{hint}</span></span> : label}
-      </TooltipContent>
-    </Tooltip>
+    <IconTooltip label={label} hint={hint}>
+<Button size="icon-sm" variant="ghost" aria-label={label} aria-pressed={pressed} disabled={disabled} onClick={onClick} >
+{children}
+</Button>
+</IconTooltip>
   );
 }
 

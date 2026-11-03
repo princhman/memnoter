@@ -1,3 +1,4 @@
+import { MOD_KEY } from "@/lib/utils";
 import { openReview } from "@/lib/card-sync";
 import {
   Sidebar,
@@ -31,7 +32,7 @@ import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { IconTooltip } from "@/components/icon-tooltip";
 import { useEffect, useState, useRef, type ReactNode } from "react";
 import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
@@ -60,6 +61,7 @@ const ModuleMenu = ({ name, moduleId, numbered, children }: { name: string; modu
     >
       {children}
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <IconTooltip label={`Actions for ${name}`} hint="Shift+F10" side="right">
         <DropdownMenuTrigger
           render={
             <SidebarMenuAction ref={trigger} showOnHover aria-label={`Actions for ${name}`} />
@@ -67,6 +69,7 @@ const ModuleMenu = ({ name, moduleId, numbered, children }: { name: string; modu
         >
           <Ellipsis />
         </DropdownMenuTrigger>
+        </IconTooltip>
 
         <DropdownMenuContent>
           <DropdownMenuGroup>
@@ -191,22 +194,9 @@ const AppSidebar = () => {
 
       <SidebarFooter>
         <UpdateStatus>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-muted-foreground aria-[current=page]:text-foreground"
-                  aria-label="Settings"
-                  render={<Link to="/settings" />}
-                />
-              }
-            >
-              <Settings />
-            </TooltipTrigger>
-            <TooltipContent side="top">Settings</TooltipContent>
-          </Tooltip>
+          <IconTooltip label="Settings" hint={`${MOD_KEY},`} side="top">
+            <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
+          </IconTooltip>
         </UpdateStatus>
       </SidebarFooter>
     </Sidebar>
