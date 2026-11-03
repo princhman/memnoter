@@ -20,8 +20,22 @@ final class CoreClientTests: XCTestCase {
     }
 }
 
+/// Probe the platform directly so only missing simulator entitlements skip.
+private func requireKeychainAccess() throws {
+    let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "memnoter.tests.probe.\(UUID().uuidString)",
+        kSecAttrAccount as String: "probe", kSecValueData as String: Data([1])]
+    let status = SecItemAdd(query as CFDictionary, nil)
+    defer { SecItemDelete(query as CFDictionary) }
+    if status == errSecMissingEntitlement {
+        throw XCTSkip("Keychain unavailable: errSecMissingEntitlement (-34018). Run simulator tests with signing enabled or on a signed device for real Keychain coverage.")
+    }
+    XCTAssertEqual(status, errSecSuccess, "Unexpected Keychain probe failure")
+}
+
 final class SyncStorageTests: XCTestCase {
     func testKeychainSurvivesNewStoreAndDeletesOnlyItsAccount() throws {
+        try requireKeychainAccess()
         let store = SyncKeychain(service: "memnoter.tests.\(UUID().uuidString)")
         defer { try? store.delete() }
         XCTAssertNil(try store.load())
@@ -78,6 +92,7 @@ final class NativeSyncEndToEndTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         do { _ = try await session.data(from: URL(string: "http://localhost:8787")!) }
         catch { throw XCTSkip("Start the local sync Worker on port 8787 for native E2E") }
+        try requireKeychainAccess()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let a = try await CoreClient.open(root.appendingPathComponent("a"))
