@@ -113,7 +113,13 @@ safe area. It provides common marks, headings, lists, math, card creation and
 Photos insertion. It is not a custom UIKit inputAccessoryView. Native link
 editing is not exposed yet. Chapter numbering reloads editor providers after
 flushing to invalidate cached preferences. Search covers core-indexed notes;
-older notes need opening to refresh their index. Home is a welcome screen.
+older notes need opening to refresh their index. Home mirrors the desktop welcome screen, with up to five recent modules and
+muted iPad keyboard shortcuts. Recently opened modules are remembered locally.
+
+The asset catalog uses `brand/icon-purple-1024.png` for the opaque iOS icon
+and `brand/icon-purple-256.png` for the welcome mark. Dark artwork composites
+`brand/icon-reversed-transparent.png` over system dark gray; the tinted icon
+is a grayscale version of that artwork. iPadOS supplies the icon corner mask.
 
 ## Verification in this implementation session
 
@@ -128,3 +134,13 @@ supported wait retry. That session was not reused or closed. No screenshots
 were captured, and note entry/relaunch persistence, Photos insertion, outline
 interaction, review interaction and restore UI remain unverified. The iPad was
 already booted and was left running.
+
+
+Home/icon follow-up: XcodeGen and simulator/device builds passed. Both builds
+were installed, including the physical iPad `00008101-0013399E0CD8001E`.
+The retained simulator showed the app full screen; New module opened its dialog
+and a Recent row opened its note. Screenshots are in `build/screenshots/`:
+`08-home-light.png`, `08-home-dark.png`, and `09-home-screen-icon.png`.
+The device tool reported successful portrait rotation but the simulator stayed
+in landscape, so portrait layout still needs a manual check. The Device panel
+was closed without shutting down the retained simulator.

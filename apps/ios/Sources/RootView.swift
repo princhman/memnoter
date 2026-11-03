@@ -54,7 +54,7 @@ struct RootView: View {
             }
             .navigationTitle("Memnoter")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) { Button { rename = nil; name = ""; editingName = true } label: { Image(systemName: "plus") }.keyboardShortcut("n") }
+                ToolbarItem(placement: .primaryAction) { Button(action: newModule) { Image(systemName: "plus") }.keyboardShortcut("n") }
                 ToolbarItem(placement: .bottomBar) { Button { showSettings = true } label: { Label("Settings", systemImage: "gear") }.disabled(busy) }
             }
             .disabled(busy)
@@ -95,7 +95,8 @@ struct RootView: View {
                       }.padding(10)
                     }.background(.bar).disabled(!session.state.editable)
                 } else {
-                    ContentUnavailableView("Your knowledge, connected", systemImage: "note.text", description: Text("Create a module to start writing. Use Q :: A to make a flashcard."))
+                    HomeView(modules: store.modules, recentModules: store.recentModules, newModule: newModule, openModule: navigate)
+                        .disabled(busy)
                 }
             }
             .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
@@ -180,6 +181,11 @@ struct RootView: View {
             } else { Task { await store.refresh() } }
         }
     }
+    func newModule() {
+        rename = nil
+        name = ""
+        editingName = true
+    }
     func focusSection(_ heading: Heading) {
         session?.exec("focusSection", ["id": heading.id])
         showOutline = false
@@ -219,6 +225,9 @@ struct RootView: View {
                 if store.modules.contains(where: { $0.id == destination }), let session {
                     if session.ready { try await session.open(destination) }
                     else { session.onReady = { Task { do { try await session.open(destination) } catch { store.error = String(describing: error) } } } }
+                }
+                if store.modules.contains(where: { $0.id == destination }) {
+                    store.recordOpenedModule(destination)
                 }
                 selected = destination
                 await store.refresh()

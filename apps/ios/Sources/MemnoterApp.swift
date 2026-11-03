@@ -11,6 +11,17 @@ import SwiftUI
     var client: CoreClient?
     var modules: [NoteModule] = []
     var counts: [DueCount] = []
+    private var recentModuleIds = UserDefaults.standard.stringArray(forKey: "recentModuleIds") ?? []
+    var recentModules: [NoteModule] {
+        let byId = Dictionary(uniqueKeysWithValues: modules.map { ($0.id, $0) })
+        let recent = recentModuleIds.compactMap { byId[$0] }
+        let remaining = modules.filter { !recentModuleIds.contains($0.id) }
+        return Array((recent + remaining).prefix(5))
+    }
+    func recordOpenedModule(_ id: String) {
+        recentModuleIds = [id] + recentModuleIds.filter { $0 != id }.prefix(4)
+        UserDefaults.standard.set(recentModuleIds, forKey: "recentModuleIds")
+    }
     var error: String?
     var directory = URL.applicationSupportDirectory.appendingPathComponent("Memnoter", isDirectory: true)
     func start() async {
