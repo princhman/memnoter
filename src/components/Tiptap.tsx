@@ -2,7 +2,7 @@ import { headingNumberingKey } from "@/lib/heading-numbering";
 import type { Module } from "@/lib/types";
 import { imageFilesOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
 // src/Tiptap.tsx
-import { NodeSelection } from "@tiptap/pm/state";
+import { suppressesTextInput } from "@/lib/editor-input";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
@@ -266,7 +266,7 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
         attributes: ({ selection }) => ({
           ...(hostOnly ? {
             "data-native-editor": "true",
-            ...(selection instanceof NodeSelection && selection.node.isAtom && !selection.node.isText
+            ...(suppressesTextInput(selection)
               ? { inputmode: "none" } : {}),
           } : {}),
           class: "tiptap",

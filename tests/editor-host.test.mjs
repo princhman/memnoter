@@ -231,12 +231,14 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal(await exec('insertImage', { fileId: 'keyboard-regression' }), true);
     await page.locator('.note-image-host').dispatchEvent('click');
     assert.equal(await page.locator('.tiptap').getAttribute('inputmode'), 'none');
+    assert.equal((await state()).suppressKeyboard, true);
     await page.getByRole('button', { name: 'Alt text and title', exact: true }).click();
     await page.getByPlaceholder('Describe the image').click();
     assert.equal(await page.getByPlaceholder('Describe the image').evaluate(node => node === document.activeElement), true);
     assert.equal(await page.getByPlaceholder('Describe the image').getAttribute('inputmode'), null);
     await page.locator('.tiptap h2').filter({ hasText: 'Sibling section' }).click();
     assert.equal(await page.locator('.tiptap').getAttribute('inputmode'), null);
+    assert.equal((await state()).suppressKeyboard, false);
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true });

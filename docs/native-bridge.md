@@ -13,7 +13,9 @@ In the native editor, atom-node selections (including images) set
 `inputmode="none"` on the ProseMirror contenteditable. Text selections remove
 it; real inputs in image controls keep their own keyboard behavior. Image
 pointer presses select before tracking the move, and native image selection
-and drop do not explicitly focus the editor. Desktop focus behavior is retained.
+and drop do not explicitly focus the editor. The `state.suppressKeyboard` flag
+also hides the native formatting bar, including its hardware-keyboard fallback.
+Desktop focus behavior is retained.
 Math source remains text-editable and uses the ordinary text keyboard.
 
 ## Host setup and transport
@@ -155,7 +157,7 @@ Handle only `kind: "event"` as events; command replies are separate callbacks.
 | Event | Payload |
 | --- | --- |
 | `ready` | `{"protocolVersion":1}` |
-| `state` | `{moduleId, marks: string[], blockType: string, headingLevel: number|null, headingId: string|null, focusableSection: {pos: number, id: string|null, title: string, level: number}|null, focusedSectionId: string|null, focusedSectionPath: {id: string, level: number, title: string}[], bulletList: boolean, orderedList: boolean, blockquote: boolean, canIndent: boolean, canOutdent: boolean, canMakeCard: boolean, inCloze: boolean, canJoinClozes: boolean, folded: boolean, canFold: boolean, canUndo: boolean, canRedo: boolean, hasSelection: boolean, editable: boolean}` |
+| `state` | `{moduleId, marks: string[], blockType: string, headingLevel: number|null, headingId: string|null, focusableSection: {pos: number, id: string|null, title: string, level: number}|null, focusedSectionId: string|null, focusedSectionPath: {id: string, level: number, title: string}[], bulletList: boolean, orderedList: boolean, blockquote: boolean, canIndent: boolean, canOutdent: boolean, canMakeCard: boolean, inCloze: boolean, canJoinClozes: boolean, folded: boolean, canFold: boolean, canUndo: boolean, canRedo: boolean, hasSelection: boolean, editable: boolean, suppressKeyboard: boolean}` |
 | `outline` | `{moduleId, headings: [{id: string, level: number, text: string, pos: number, folded: boolean}]}` |
 | `saveStatus` | `{pending: number, failing: boolean, lastError: string|null, imageErrors: string[]}` |
 | `error` | `{moduleId: string|null, message: string}` |

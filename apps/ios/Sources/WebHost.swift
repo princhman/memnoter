@@ -51,6 +51,7 @@ struct Heading: Decodable, Identifiable { let id: String; let level: Int; let te
 struct SectionCrumb: Decodable, Identifiable { let id: String; let level: Int; let title: String }
 struct FocusableSection: Decodable { let pos: Int; let id: String?; let title: String; let level: Int }
 struct EditorState: Decodable {
+    var suppressKeyboard: Bool?
     var focusableSection: FocusableSection?
     var focusedSectionPath: [SectionCrumb] = []
     var focusedSectionId: String?; var headingId: String?

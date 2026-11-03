@@ -93,7 +93,7 @@ struct RootView: View {
                         .background(Color(uiColor: .systemBackground))
                         .overlay {
                             GeometryReader { geometry in
-                            if keyboardDocked {
+                            if keyboardDocked && session.state.suppressKeyboard != true {
                                 let keyboardInset = max(0, geometry.frame(in: .global).maxY - keyboardTop)
                                 FormattingBar(session: session, maximumWidth: max(0, geometry.size.width - 32), image: $image, busy: busy)
                                     .padding(16)

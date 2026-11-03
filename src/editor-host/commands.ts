@@ -1,3 +1,4 @@
+import { suppressesTextInput } from "../lib/editor-input.ts";
 import type { Editor } from "@tiptap/core";
 import { getFocusedSectionPath, sectionFocusKey } from "../lib/section-focus.ts";
 import { currentSection } from "../lib/sections.ts";
@@ -53,6 +54,7 @@ export function editorState(editor: Editor) {
     canFold: editor.can().foldCurrentSection(),
     canUndo: editor.can().undo(), canRedo: editor.can().redo(),
     hasSelection: !editor.state.selection.empty, editable: editor.isEditable,
+    suppressKeyboard: suppressesTextInput(editor.state.selection),
   };
 }
 
