@@ -298,3 +298,6 @@ pub struct FileType {
 
 pub mod files;
 pub use files::*;
+
+pub mod search;
+pub use search::*;
