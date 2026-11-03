@@ -1,3 +1,4 @@
+import { Host } from "./host";
 import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
@@ -7,6 +8,6 @@ import "katex/dist/katex.min.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
-    <ActiveEditorProvider><main className="app-scroll-container h-full overflow-y-auto p-4" /></ActiveEditorProvider>
+    <ActiveEditorProvider><Host /></ActiveEditorProvider>
   </QueryClientProvider>,
 );
