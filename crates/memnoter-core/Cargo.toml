@@ -12,3 +12,7 @@ rusqlite = { version = "0.40.1", features = ["bundled"] }
 chrono = "0.4.45"
 uuid = { version = "1.23.4", features = ["v4"] }
 yrs = "0.24"
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+unicode-normalization = "0.1"

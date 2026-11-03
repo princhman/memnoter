@@ -33,16 +33,20 @@ pub(crate) fn due_counts(
 }
 #[tauri::command(async)]
 pub(crate) fn review_card(
+    app: tauri::AppHandle,
     core: tauri::State<'_, std::sync::Arc<Core>>,
     card_id: String,
     expected_reps: i64,
     card: ReviewedCard,
     log: ReviewLog,
 ) -> CommandResult<()> {
-    memnoter_core::cards::review_card(&core.db, card_id, expected_reps, card, log)
+    memnoter_core::cards::review_card(&core.db, card_id, expected_reps, card, log)?;
+    let _ = app.emit("sync-outbox", ());
+    Ok(())
 }
 #[tauri::command(async)]
 pub(crate) fn undo_review(
+    app: tauri::AppHandle,
     core: tauri::State<'_, std::sync::Arc<Core>>,
     card_id: String,
     expected_reps: i64,
@@ -57,7 +61,9 @@ pub(crate) fn undo_review(
         previous,
         previous_fsrs_model,
         review_time,
-    )
+    )?;
+    let _ = app.emit("sync-outbox", ());
+    Ok(())
 }
 #[tauri::command(async)]
 pub(crate) fn unindexed_card_modules(

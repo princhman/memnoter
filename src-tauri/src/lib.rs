@@ -5,6 +5,7 @@ mod backups;
 mod cards;
 #[cfg(target_os = "macos")]
 mod menu;
+mod sync;
 #[derive(Default)]
 struct ExitGate(AtomicBool);
 #[tauri::command]
@@ -31,10 +32,13 @@ fn set_module_numbering(
 }
 #[tauri::command]
 fn create_module(
+    app: tauri::AppHandle,
     core: tauri::State<'_, std::sync::Arc<Core>>,
     name: String,
 ) -> CommandResult<String> {
-    memnoter_core::create_module(&core.db, name)
+    let result = memnoter_core::create_module(&core.db, name)?;
+    let _ = app.emit("sync-outbox", ());
+    Ok(result)
 }
 #[tauri::command]
 fn modules(core: tauri::State<'_, std::sync::Arc<Core>>) -> CommandResult<Vec<Module>> {
@@ -42,18 +46,24 @@ fn modules(core: tauri::State<'_, std::sync::Arc<Core>>) -> CommandResult<Vec<Mo
 }
 #[tauri::command]
 fn rename_module(
+    app: tauri::AppHandle,
     core: tauri::State<'_, std::sync::Arc<Core>>,
     module_id: String,
     name: String,
 ) -> CommandResult<()> {
-    memnoter_core::rename_module(&core.db, module_id, name)
+    memnoter_core::rename_module(&core.db, module_id, name)?;
+    let _ = app.emit("sync-outbox", ());
+    Ok(())
 }
 #[tauri::command(async)]
 fn delete_module(
+    app: tauri::AppHandle,
     core: tauri::State<'_, std::sync::Arc<Core>>,
     module_id: String,
 ) -> CommandResult<()> {
-    memnoter_core::delete_module(core.data_dir(), &core.db, module_id)
+    memnoter_core::delete_module(core.data_dir(), &core.db, module_id)?;
+    let _ = app.emit("sync-outbox", ());
+    Ok(())
 }
 #[tauri::command(async)]
 fn get_content(
@@ -64,11 +74,14 @@ fn get_content(
 }
 #[tauri::command(async)]
 fn add_update(
+    app: tauri::AppHandle,
     core: tauri::State<'_, std::sync::Arc<Core>>,
     module_id: String,
     bytes: Vec<u8>,
 ) -> CommandResult<ContentUpdate> {
-    memnoter_core::add_update(&core.db, module_id, bytes)
+    let result = memnoter_core::add_update(&core.db, module_id, bytes)?;
+    let _ = app.emit("sync-outbox", ());
+    Ok(result)
 }
 #[tauri::command(async)]
 fn save_compaction(
@@ -81,12 +94,15 @@ fn save_compaction(
 }
 #[tauri::command(async)]
 fn save_file(
+    app: tauri::AppHandle,
     core: tauri::State<'_, std::sync::Arc<Core>>,
     module_id: String,
     bytes: Vec<u8>,
     mime_type: String,
 ) -> CommandResult<FileType> {
-    memnoter_core::save_file(core.data_dir(), &core.db, module_id, bytes, mime_type)
+    let result = memnoter_core::save_file(core.data_dir(), &core.db, module_id, bytes, mime_type)?;
+    let _ = app.emit("sync-outbox", ());
+    Ok(result)
 }
 #[tauri::command(async)]
 fn read_file(
@@ -163,8 +179,23 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let core = std::sync::Arc::new(
-                Core::open(app.path().app_data_dir()?).expect("Failed to init db."),
+                Core::open({
+                    #[cfg(debug_assertions)]
+                    if let Some(dir) = std::env::var_os("MEMNOTER_DATA_DIR") {
+                        std::path::PathBuf::from(dir)
+                    } else {
+                        app.path().app_data_dir()?
+                    }
+                    #[cfg(not(debug_assertions))]
+                    app.path().app_data_dir()?
+                })
+                .expect("Failed to init db."),
             );
+            #[cfg(debug_assertions)]
+            if std::env::var_os("MEMNOTER_DATA_DIR").is_some() {
+                app.asset_protocol_scope()
+                    .allow_directory(core.data_dir().join("files"), true)?;
+            }
             app.manage(core.clone());
             app.manage(ExitGate::default());
             memnoter_core::backups::spawn_daily_backup(core);
@@ -199,7 +230,20 @@ pub fn run() {
             search_notes,
             backups::list_backups,
             backups::backup_now,
-            backups::restore_backup
+            backups::restore_backup,
+            sync::sync_status,
+            sync::sync_enable,
+            sync::sync_disable,
+            sync::sync_outbox,
+            sync::sync_ack,
+            sync::sync_set_cursor,
+            sync::sync_apply,
+            sync::sync_snapshot,
+            sync::sync_missing_files,
+            sync::sync_pending_uploads,
+            sync::sync_upload_done,
+            sync::sync_store_file,
+            sync::sync_reconcile
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

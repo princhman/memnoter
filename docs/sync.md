@@ -141,3 +141,30 @@ The app and shared sync client code in `src/lib/sync/` are MIT. The server in
 `sync-server/` is AGPL-3.0-only: self-hosting is free, and anyone who runs a
 modified copy as a network service must publish their changes. See
 `sync-server/LICENSE`.
+
+## Shared core and native iPad
+
+The portable local half lives in `crates/memnoter-core/src/sync.rs`:
+SQLite migrations, transactional outbox hooks, vault/review Yjs documents,
+remote update application, snapshots, and managed image storage/deletion.
+All thirteen sync commands are available through `dispatch` with the same names
+and camelCase argument JSON as desktop. Opening any core database applies the
+idempotent migrations, including upgrading existing desktop review logs.
+
+`sync::crypto` provides native PBKDF2-SHA256 (NFKC passphrases), random salts,
+AES-256-GCM blobs with document-id authentication, and key checks compatible
+with the browser wire format. Native callers encode salts, keys and key checks
+as base64 at the network boundary. The existing WebCrypto implementation stays
+in the shared frontend for the browser sync engine; it has no Tauri dependency.
+
+`src-tauri/src/sync.rs` only adapts commands and emits desktop outbox wakeups.
+The TypeScript engine owns account HTTP requests, WebSockets, retries and
+WebCrypto, and accesses commands/events through `src/lib/backend.ts`.
+The debug-only desktop data-directory override also scopes images and backups
+to that directory, as required by `scripts/sync-dev.sh`.
+
+The native iPad UI still needs sync account/settings UI, network-engine lifecycle
+and foreground/background reconnect handling, secure credential/key storage,
+outbox wakeups after native writes, and applying remote changes to its native
+view state. It can use the existing dispatch bridge or wrap the portable Rust
+sync/crypto APIs in typed UniFFI methods. No Tauri runtime is required by core.

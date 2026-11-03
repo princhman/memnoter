@@ -33,11 +33,19 @@ pub fn save_file(
     std::fs::write(&path, &bytes).map_err(db_err)?;
 
     // ai-suggested error handling - cleanup if failed
-    if let Err(error) = conn.execute(
-        "insert into files (id, module_id, path, file_type)
-         values (?1, ?2, ?3, ?4)",
-        params![id, module_id, path_str, mime_type],
-    ) {
+    // The file row and its upload record commit together.
+    let inserted = (|| -> CommandResult<()> {
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        tx.execute(
+            "insert into files (id, module_id, path, file_type)
+             values (?1, ?2, ?3, ?4)",
+            params![id, module_id, path_str, mime_type],
+        )
+        .map_err(db_err)?;
+        sync::record_file(&tx, &id, &module_id, &mime_type)?;
+        tx.commit().map_err(db_err)
+    })();
+    if let Err(error) = inserted {
         if let Err(cleanup_error) = std::fs::remove_file(&path) {
             return Err(format!(
                 "Database insert failed: {error}. \
@@ -47,6 +55,7 @@ pub fn save_file(
 
         return Err(db_err(error));
     }
+    drop(conn);
 
     Ok(FileType {
         id,

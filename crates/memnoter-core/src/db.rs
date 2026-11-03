@@ -189,6 +189,7 @@ pub(crate) fn open_db(app_dir: &Path) -> CommandResult<Db> {
     migrate_flashcards(&conn)?;
     asset_refs::migrate(&conn)?;
     migrate_search(&conn)?;
+    crate::sync::migrate(&conn)?;
 
     migrate_update_ids(&conn)?;
 

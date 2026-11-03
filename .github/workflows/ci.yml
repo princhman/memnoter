@@ -28,7 +28,7 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ". -> target"
 
       - run: pnpm install --frozen-lockfile
 
@@ -41,12 +41,10 @@ jobs:
       - run: pnpm test
 
       - name: cargo test
-        working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace
 
       - name: cargo clippy
-        working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   sync-server:
     runs-on: ubuntu-latest

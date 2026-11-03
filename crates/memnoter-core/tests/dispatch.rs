@@ -129,3 +129,58 @@ fn frontend_payloads_keep_camel_case_bytes_null_and_storage_errors() {
     assert_eq!(f.call("delete_module", json!({"moduleId":id})), Value::Null);
     assert_eq!(f.call("modules", json!({})), json!([]));
 }
+
+#[test]
+fn sync_dispatch_upgrades_existing_database_and_applies_to_fresh_device() {
+    let a = Fixture::new();
+    let id = a.call("create_module", json!({"name":"Before sync"}));
+    // Model an existing desktop schema before the sync migration.
+    a.core
+        .db
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "drop table sync_outbox; drop table sync_state; drop table sync_docs;
+         drop table sync_file_uploads; drop index review_log_sync_id;
+         alter table review_log drop column sync_id;",
+        )
+        .unwrap();
+    let upgraded = Core::open(&a.dir).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&dispatch(&upgraded, "sync_status", "{}").unwrap()).unwrap(),
+        json!({"account":null,"cursor":0,"pending":0})
+    );
+    a.call("sync_enable", json!({"account":"account-json"}));
+    a.call("rename_module", json!({"moduleId":id,"name":"After sync"}));
+    a.call("add_update", json!({"moduleId":id,"bytes":[0,0]}));
+    let entries = a.call("sync_outbox", json!({"limitBytes":1000000}));
+    let entries: Vec<_> = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(seq, entry)| json!({"seq":seq+1,"doc":entry["doc"],"bytes":entry["bytes"]}))
+        .collect();
+    let b = Fixture::new();
+    b.call("sync_enable", json!({"account":"account-json"}));
+    b.call(
+        "sync_apply",
+        json!({"entries":entries,"cursor":entries.len()}),
+    );
+    assert_eq!(b.call("modules", json!({}))[0]["name"], "After sync");
+    assert_eq!(
+        b.call("get_content", json!({"moduleId":id}))["updates"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["bytes"],
+        json!([0, 0])
+    );
+    // Reopening an already-upgraded DB is idempotent and keeps sync state.
+    let reopened = Core::open(&b.dir).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&dispatch(&reopened, "sync_status", "{}").unwrap()).unwrap()
+            ["cursor"],
+        entries.len()
+    );
+}

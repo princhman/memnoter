@@ -1,5 +1,6 @@
 //! The same command payloads used by Tauri invoke, without a Tauri runtime.
 use crate::cards::*;
+use crate::sync::RemoteEntry;
 use crate::*;
 
 // Derive the accepted command inventory and dispatcher from the same entries.
@@ -49,4 +50,18 @@ commands! { core;
     list_backups() => crate::backups::list_backups(core.data_dir());
     backup_now() => crate::backups::backup_now(core.data_dir(), &core.db);
     restore_backup(id: String) => crate::backups::restore_backup(core.data_dir(), &core.db, id);
+
+    sync_status() => crate::sync::sync_status(&core.db);
+    sync_enable(account: String) => crate::sync::sync_enable(&core.db, account);
+    sync_disable() => crate::sync::sync_disable(&core.db);
+    sync_outbox(limit_bytes: i64) => crate::sync::sync_outbox(&core.db, limit_bytes);
+    sync_ack(max_id: i64) => crate::sync::sync_ack(&core.db, max_id);
+    sync_set_cursor(cursor: i64) => crate::sync::sync_set_cursor(&core.db, cursor);
+    sync_apply(entries: Vec<RemoteEntry>, cursor: i64) => crate::sync::sync_apply(core.data_dir(), &core.db, entries, cursor);
+    sync_snapshot(doc: String) => crate::sync::sync_snapshot(&core.db, doc);
+    sync_missing_files() => crate::sync::sync_missing_files(&core.db);
+    sync_pending_uploads() => crate::sync::sync_pending_uploads(&core.db);
+    sync_upload_done(file_id: String) => crate::sync::sync_upload_done(&core.db, file_id);
+    sync_store_file(file_id: String, module_id: String, file_type: String, bytes: Vec<u8>) => crate::sync::sync_store_file(core.data_dir(), &core.db, file_id, module_id, file_type, bytes);
+    sync_reconcile() => crate::sync::sync_reconcile(core.data_dir(), &core.db);
 }

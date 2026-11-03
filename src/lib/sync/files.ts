@@ -3,7 +3,7 @@
 // Uploads come from `sync_file_uploads`; downloads are the images other
 // devices announced in the vault that this one lacks.
 
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "@/lib/backend";
 import type { FileType } from "@/lib/content";
 import { getObject, putObject, SyncApiError } from "./account";
 import { decryptBlob, encryptBlob } from "./crypto";

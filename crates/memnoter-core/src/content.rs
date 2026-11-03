@@ -11,7 +11,8 @@ pub fn set_module_numbering(db: &Db, module_id: String, enabled: bool) -> Comman
 }
 
 pub fn create_module(db: &Db, name: String) -> CommandResult<String> {
-    let conn = db.lock()?;
+    let mut conn = db.lock()?;
+    let conn = conn.transaction().map_err(db_err)?;
     let id = Uuid::new_v4().to_string();
 
     conn.execute(
@@ -35,6 +36,8 @@ pub fn create_module(db: &Db, name: String) -> CommandResult<String> {
     )
     .map_err(db_err)?;
 
+    sync::record_module(&conn, &id, sync::VaultChange::Name(&name))?;
+    conn.commit().map_err(db_err)?;
     Ok(id)
 }
 
@@ -57,7 +60,8 @@ pub fn modules(db: &Db) -> CommandResult<Vec<Module>> {
 }
 
 pub fn rename_module(db: &Db, module_id: String, name: String) -> CommandResult<()> {
-    let conn = db.lock()?;
+    let mut conn = db.lock()?;
+    let conn = conn.transaction().map_err(db_err)?;
 
     conn.execute(
         "update modules set name = ?2 where id = ?1",
@@ -71,6 +75,8 @@ pub fn rename_module(db: &Db, module_id: String, name: String) -> CommandResult<
     )
     .map_err(db_err)?;
 
+    sync::record_module(&conn, &module_id, sync::VaultChange::Name(&name))?;
+    conn.commit().map_err(db_err)?;
     Ok(())
 }
 
@@ -101,6 +107,9 @@ pub fn delete_module_data(
         [module_id],
     )
     .map_err(db_err)?;
+    // Other devices learn the new owner, or a new device would look for the
+    // image under the deleted note and never download it.
+    sync::publish_file_owners(&tx)?;
     let files = {
         let mut stmt = tx
             .prepare("select id, path from files where module_id = ?1")
@@ -140,7 +149,11 @@ pub fn delete_module_data(
 pub fn delete_module(data_dir: &Path, db: &Db, module_id: String) -> CommandResult<()> {
     let files_dir = data_dir.join("files");
     let mut conn = db.lock()?;
-    delete_module_data(&mut conn, &files_dir, &module_id)
+    // Recorded first: if deleting fails halfway, reconciling finishes it.
+    sync::record_module(&conn, &module_id, sync::VaultChange::Deleted)?;
+    delete_module_data(&mut conn, &files_dir, &module_id)?;
+    drop(conn);
+    Ok(())
 }
 
 pub fn get_content(db: &Db, module_id: String) -> CommandResult<GetContentResponse> {
@@ -196,18 +209,21 @@ pub fn read_content(conn: &Connection, module_id: &str) -> CommandResult<GetCont
 }
 
 pub fn add_update(db: &Db, module_id: String, bytes: Vec<u8>) -> CommandResult<ContentUpdate> {
-    let conn = db.lock()?;
+    let mut conn = db.lock()?;
+    // The outbox row commits with the update, so no saved edit goes unsynced.
+    let tx = conn.transaction().map_err(db_err)?;
 
-    conn.execute(
+    tx.execute(
         "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
         params![module_id, bytes, Utc::now().timestamp_millis()],
     )
     .map_err(db_err)?;
+    let id = tx.last_insert_rowid();
+    sync::record_update(&tx, &module_id, &bytes)?;
+    tx.commit().map_err(db_err)?;
+    drop(conn);
 
-    Ok(ContentUpdate {
-        id: conn.last_insert_rowid(),
-        bytes,
-    })
+    Ok(ContentUpdate { id, bytes })
 }
 
 pub fn save_compaction(
