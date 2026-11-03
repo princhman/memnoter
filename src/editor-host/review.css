@@ -1,0 +1,6 @@
+.review-scroll-container {
+  height: 100%;
+  overflow-y: auto;
+  /* SwiftUI lays rating controls below the web surface. */
+  padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
+}
