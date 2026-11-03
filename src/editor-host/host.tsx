@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { sectionFocusKey } from "@/lib/section-focus";
-import { observeScroll, traceScroll, refreshSectionAnchor, revealCaret, sectionToTop } from "./scroll";
+import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop } from "./scroll";
 import Tiptap from "@/components/Tiptap";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
@@ -50,20 +50,19 @@ export function Host() {
         traceScroll("topInset", { px });
         if (!Number.isFinite(px) || px < 0) throw new Error("Invalid top inset");
         const element = container.current;
-        if (!element) return;
+        if (!element || element.dataset.topInset === String(px)) return;
         element.dataset.topInset = String(px);
         element.style.setProperty("--top-inset", `${px}px`);
-        refreshSectionAnchor(element);
       },
       setBottomInset(px) {
         traceScroll("bottomInset", { px });
         if (!Number.isFinite(px) || px < 0) throw new Error("Invalid bottom inset");
         const element = container.current;
-        if (!element) return;
+        if (!element || element.dataset.bottomInset === String(px)) return;
         element.dataset.bottomInset = String(px);
         element.style.setProperty("--bottom-inset", `${px}px`);
         const editor = active.current?.editor;
-        if (!refreshSectionAnchor(element) && editor && !editor.isDestroyed) requestAnimationFrame(() => revealCaret(editor.view));
+        if (!hasSectionAnchor(element) && editor && !editor.isDestroyed) requestAnimationFrame(() => { if (!editor.isDestroyed) revealCaret(editor.view, "inset"); });
       },
       open(id) {
         const operation = queue.then(async () => {
@@ -135,7 +134,6 @@ export function Host() {
     const focused = sectionFocusKey.getState(editor.state);
     if (focused != null) {
       sectionToTop(editor, focused);
-      requestAnimationFrame(() => revealCaret(editor.view));
     }
     if (opening.current?.moduleId === id) {
       opening.current.resolve();
@@ -144,20 +142,18 @@ export function Host() {
     let frame = 0;
     const reveal = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => revealCaret(editor.view));
+      frame = requestAnimationFrame(() => { if (!editor.isDestroyed) revealCaret(editor.view); });
     };
     editor.on("transaction", publish);
     editor.on("selectionUpdate", reveal);
     editor.on("update", reveal);
     editor.on("focus", reveal);
-    window.addEventListener("resize", reveal);
     return () => {
       cancelAnimationFrame(frame);
       editor.off("transaction", publish);
       editor.off("selectionUpdate", reveal);
       editor.off("update", reveal);
       editor.off("focus", reveal);
-      window.removeEventListener("resize", reveal);
     };
   }, [activeEditor]);
 

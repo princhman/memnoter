@@ -1,3 +1,7 @@
+import type { Editor } from "@tiptap/core";
+import type { EditorView } from "@tiptap/pm/view";
+import { suppressesTextInput } from "../lib/editor-input.ts";
+
 // Enabled by the native Debug host (or the WebKit regression harness).
 export function traceScroll(reason: string, details: Record<string, unknown> = {}) {
   if (!(window as Window & { __memnoterScrollDebug?: boolean }).__memnoterScrollDebug) return;
@@ -13,13 +17,9 @@ export function observeScroll(container: HTMLElement) {
   return () => { container.removeEventListener("scroll", log); document.removeEventListener("scroll", log, true); };
 }
 
-import type { Editor } from "@tiptap/core";
-import type { EditorView } from "@tiptap/pm/view";
-import { suppressesTextInput } from "../lib/editor-input.ts";
-
 // Native owns viewport occlusion. Never subtract visualViewport here as well.
-export function revealCaret(view: EditorView) {
-  if (view.isDestroyed || suppressesTextInput(view.state.selection)) return;
+export function revealCaret(view: EditorView, reason = "selection") {
+  if (view.isDestroyed || !view.hasFocus() || suppressesTextInput(view.state.selection)) return;
   const container = view.dom.closest<HTMLElement>(".app-scroll-container");
   if (!container || anchors.has(container)) return;
   const inset = Number(container.dataset.bottomInset ?? 0);
@@ -29,24 +29,22 @@ export function revealCaret(view: EditorView) {
   const delta = caret.bottom > bottom ? caret.bottom - bottom : caret.top < top ? caret.top - top : 0;
   if (Math.abs(delta) < 1) return;
   container.dispatchEvent(new Event("memnoter:reveal"));
-  traceScroll("caret", { from: container.scrollTop, delta });
+  traceScroll("caret", { trigger: reason, from: container.scrollTop, delta });
   container.scrollTo({ top: container.scrollTop + delta,
-    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+    behavior: "instant" });
 }
 
 // One owner for section navigation, delayed layout and native inset changes.
-// Retain the anchor until reader input; a late image load has no fixed deadline.
+// Settle a navigation for at most 300ms; reader input always takes priority.
 const anchors = new WeakMap<HTMLElement, { apply(): void; stop(): void }>();
-const inputEvents = ["wheel", "touchstart", "pointerdown", "keydown"];
+const inputEvents = ["wheel", "touchstart", "pointerdown", "keydown", "beforeinput"];
 
 function visibleTop(container: HTMLElement) {
   return container.getBoundingClientRect().top + container.clientTop + Number(container.dataset.topInset ?? 0);
 }
 
-export function refreshSectionAnchor(container: HTMLElement) {
-  const anchor = anchors.get(container);
-  anchor?.apply();
-  return !!anchor;
+export function hasSectionAnchor(container: HTMLElement) {
+  return anchors.has(container);
 }
 
 export function sectionToTop(editor: Editor, pos: number, offset = 0) {
@@ -57,6 +55,7 @@ export function sectionToTop(editor: Editor, pos: number, offset = 0) {
   anchors.get(container)?.stop();
   container.dispatchEvent(new Event("memnoter:reveal"));
   let frame = 0;
+  let deadline = 0;
   const apply = () => {
     if (editor.isDestroyed || !heading.isConnected) { stop(); return; }
     const delta = heading.getBoundingClientRect().top - visibleTop(container) - offset;
@@ -76,10 +75,12 @@ export function sectionToTop(editor: Editor, pos: number, offset = 0) {
   const stop = () => {
     observer.disconnect();
     cancelAnimationFrame(frame);
+    window.clearTimeout(deadline);
     inputEvents.forEach(event => container.removeEventListener(event, stop, true));
     anchors.delete(container);
   };
   anchors.set(container, { apply, stop });
+  deadline = window.setTimeout(() => { apply(); stop(); }, 300);
   inputEvents.forEach(event => container.addEventListener(event, stop, { capture: true, passive: true }));
   observer.observe(editor.view.dom);
   observer.observe(container);
