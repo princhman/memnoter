@@ -28,7 +28,7 @@ struct FormattingBar: View {
     private var rowWidth: CGFloat { max(44, maximumWidth - 12) }
 
     var body: some View {
-        ScrollView(.horizontal) {
+        ScrollView(.horizontal, showsIndicators: true) {
             buttons
                 .fixedSize(horizontal: true, vertical: false)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("formattingRow")) } action: { frame in
@@ -48,7 +48,9 @@ struct FormattingBar: View {
         }
         .padding(6)
         .background(.regularMaterial, in: Capsule())
-        .overlay { Capsule().strokeBorder(.primary.opacity(0.08)) }
+        // The decorative shape covers the scroll viewport. It must not become
+        // the hit-test target ahead of the row's pan recognizer and buttons.
+        .overlay { Capsule().strokeBorder(.primary.opacity(0.08)).allowsHitTesting(false) }
         .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
         .accessibilityElement(children: .contain)
     }
