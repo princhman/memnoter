@@ -129,10 +129,23 @@ body,
 
 body {
     margin: 0;
+    /* iPad: keep clear of the status bar and home indicator, and don't let a
+       double tap zoom the page. */
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
 }
 
 .app-scroll-container {
     scrollbar-gutter: stable;
+}
+
+/* The sidebar is fixed to the window, so it skips the body's safe-area padding. */
+[data-slot="sidebar-container"] {
+    top: env(safe-area-inset-top);
+    bottom: env(safe-area-inset-bottom);
+    height: auto;
 }
 
 @layer base {
@@ -467,6 +480,19 @@ body {
     transform: rotate(-90deg);
 }
 
+/* Touch has no hover: keep the toggle faintly visible, and give a finger a
+   bigger target than the chevron. */
+@media (pointer: coarse) {
+    .heading-fold-toggle {
+        opacity: 0.45;
+    }
+    .heading-fold-toggle::after {
+        content: "";
+        position: absolute;
+        inset: -0.5rem -0.35rem;
+    }
+}
+
 /* Saved images use Tiptap's resize handles and persist their node attributes. */
 .note-image-block {
     position: relative;
@@ -525,6 +551,14 @@ body {
 .note-image-block[data-selected="true"] [data-resize-handle],
 .note-image-host [data-resize-state="true"] [data-resize-handle] {
     opacity: 1;
+}
+/* A finger needs more than the drawn 12px square. */
+@media (pointer: coarse) {
+    .note-image-host [data-resize-handle]::after {
+        content: "";
+        position: absolute;
+        inset: -12px;
+    }
 }
 .note-image-host [data-resize-handle="top-left"],
 .note-image-host [data-resize-handle="bottom-right"] {
@@ -965,6 +999,14 @@ body {
     background: var(--chart-1);
 }
 
+/* Taller dashes for a finger; tapping one opens its outline. */
+@media (pointer: coarse) {
+    .toc-dash {
+        height: 14px;
+        padding-left: 1rem;
+    }
+}
+
 .toc-dash[data-active="true"] > span,
 .toc-dash[data-active="true"]::before {
     background: var(--chart-3);
@@ -1219,6 +1261,14 @@ body {
     opacity: 1;
 }
 
+@media (pointer: coarse) {
+    .tiptap .card-info::after {
+        content: "";
+        position: absolute;
+        inset: -0.4rem;
+    }
+}
+
 .tiptap .card-info:hover .card-info-popup,
 .tiptap .card-info:focus-within .card-info-popup {
     display: flex;
@@ -1391,3 +1441,15 @@ body {
   color: var(--muted-foreground);
   pointer-events: none;
 }
+
+.note-image-drag {
+  position: absolute;
+  left: -1.25rem;
+  top: 0;
+  cursor: grab;
+  opacity: 0;
+  color: var(--muted-foreground);
+}
+.note-image-block:hover > .note-image-drag,
+.note-image-block[data-selected="true"] > .note-image-drag { opacity: 1; }
+.note-image-drag:active { cursor: grabbing; }
