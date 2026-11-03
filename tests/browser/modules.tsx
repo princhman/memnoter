@@ -1,0 +1,22 @@
+import { createRoot } from "react-dom/client";
+import { mockIPC } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
+import AppSidebar from "@/components/app-sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import "@/App.css";
+let modules = [{ id: "algebra", name: "Algebra", heading_numbering: false }];
+const calls: unknown[] = [];
+Object.assign(window, { calls });
+mockIPC((command, args) => {
+  calls.push({ command, args });
+  if (command === "modules") return modules;
+  if (command === "due_counts") return [];
+  if (command === "set_module_numbering") modules = modules.map(module => ({ ...module, heading_numbering: args.enabled as boolean }));
+  if (command === "plugin:app|version") return "test";
+});
+const rootRoute = createRootRoute({ component: () => <SidebarProvider><AppSidebar /></SidebarProvider> });
+const routeTree = rootRoute.addChildren(["/", "/$moduleId", "/review", "/settings"].map(path => createRoute({ getParentRoute: () => rootRoute, path, component: () => null })));
+const router = createRouter({ routeTree });
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RouterProvider router={router} /></TooltipProvider></QueryClientProvider>);

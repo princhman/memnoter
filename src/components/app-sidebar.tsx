@@ -1,3 +1,4 @@
+import { openReview } from "@/lib/card-sync";
 import {
   Sidebar,
   SidebarContent,
@@ -15,7 +16,7 @@ import {
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Module } from "@/lib/types";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
-import { Link, useMatchRoute } from "@tanstack/react-router";
+import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
 import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
@@ -31,11 +32,15 @@ import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, type ReactNode } from "react";
 import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
 
-const ModuleMenu = ({ name, moduleId, numbered }: { name: string; moduleId: string; numbered: boolean }) => {
+const ModuleMenu = ({ name, moduleId, numbered, children }: { name: string; moduleId: string; numbered: boolean; children: ReactNode }) => {
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const showMenu = () => { trigger.current?.focus(); setMenuOpen(true); };
   const client = useQueryClient();
   const numbering = useMutation({
     mutationFn: (enabled: boolean) => invoke("set_module_numbering", { moduleId, enabled }),
@@ -45,11 +50,19 @@ const ModuleMenu = ({ name, moduleId, numbered }: { name: string; moduleId: stri
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   return (
-    <>
-      <DropdownMenu>
+    <SidebarMenuItem
+      onContextMenu={event => { event.preventDefault(); showMenu(); }}
+      onKeyDown={event => {
+        if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+          event.preventDefault(); showMenu();
+        }
+      }}
+    >
+      {children}
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger
           render={
-            <SidebarMenuAction showOnHover aria-label={`Actions for ${name}`} />
+            <SidebarMenuAction ref={trigger} showOnHover aria-label={`Actions for ${name}`} />
           }
         >
           <Ellipsis />
@@ -57,6 +70,9 @@ const ModuleMenu = ({ name, moduleId, numbered }: { name: string; moduleId: stri
 
         <DropdownMenuContent>
           <DropdownMenuGroup>
+            <DropdownMenuItem onClick={() => void openReview(() => navigate({ to: "/review", search: { module: moduleId } }))}>
+              <Layers className="size-3" />Review
+            </DropdownMenuItem>
             <DropdownMenuItem disabled={numbering.isPending} onClick={() => numbering.mutate(!numbered)}>
               {numbered ? "Disable" : "Enable"} chapter numbering
             </DropdownMenuItem>
@@ -88,7 +104,7 @@ const ModuleMenu = ({ name, moduleId, numbered }: { name: string; moduleId: stri
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
       />
-    </>
+    </SidebarMenuItem>
   );
 };
 
@@ -152,7 +168,7 @@ const AppSidebar = () => {
                     fuzzy: true,
                   });
                   return (
-                    <SidebarMenuItem key={module.id}>
+                    <ModuleMenu key={module.id} moduleId={module.id} name={module.name} numbered={module.heading_numbering}>
                       <SidebarMenuButton
                         isActive={isActive}
                         render={
@@ -164,8 +180,7 @@ const AppSidebar = () => {
                       >
                         <span>{module.name}</span>
                       </SidebarMenuButton>
-                      <ModuleMenu moduleId={module.id} name={module.name} numbered={module.heading_numbering} />
-                    </SidebarMenuItem>
+                    </ModuleMenu>
                   );
                 })}
               </SidebarMenu>
