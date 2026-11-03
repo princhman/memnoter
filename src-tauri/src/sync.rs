@@ -1072,7 +1072,7 @@ mod tests {
     #[test]
     fn records_nothing_while_off() {
         let (_dir, conn) = db();
-        conn.execute_batch("insert into modules values ('m', 'M'); insert into contents values ('m', X'');")
+        conn.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');")
             .unwrap();
         assert!(!record_update(&conn, "m", &[1]).unwrap());
         assert!(!record_module(&conn, "m", VaultChange::Name("N")).unwrap());
@@ -1083,7 +1083,7 @@ mod tests {
     fn enabling_seeds_vault_then_content() {
         let (_dir, mut conn) = db();
         let update = text_update("hello");
-        conn.execute("insert into modules values ('m', 'Maths')", []).unwrap();
+        conn.execute("insert into modules (id, name) values ('m', 'Maths')", []).unwrap();
         conn.execute("insert into contents values ('m', X'')", []).unwrap();
         conn.execute(
             "insert into contents_updates (module_id, bytes, created_at) values ('m', ?1, 0)",
@@ -1149,7 +1149,7 @@ mod tests {
     #[test]
     fn remote_rename_and_delete() {
         let (_dir, mut conn) = db();
-        conn.execute_batch("insert into modules values ('m', 'Old'); insert into contents values ('m', X'');")
+        conn.execute_batch("insert into modules (id, name) values ('m', 'Old'); insert into contents values ('m', X'');")
             .unwrap();
         enable(&mut conn, "{}").unwrap();
         let rename = vault_update_after(&conn, &[("m.name", "New".into())]);
@@ -1191,7 +1191,7 @@ mod tests {
     fn snapshot_merges_state_and_updates() {
         let (_dir, conn) = db();
         let first = text_update("a");
-        conn.execute("insert into modules values ('m', 'M')", []).unwrap();
+        conn.execute("insert into modules (id, name) values ('m', 'M')", []).unwrap();
         conn.execute("insert into contents values ('m', ?1)", [&first]).unwrap();
         // A second, independent insert from another client.
         let second = text_update("b");
@@ -1266,7 +1266,7 @@ mod tests {
     fn reviews_and_undo_reach_the_other_device() {
         let (_a_dir, mut a) = db();
         let (_b_dir, mut b) = db();
-        a.execute_batch("insert into modules values ('m', 'M'); insert into contents values ('m', X'');")
+        a.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');")
             .unwrap();
         add_card(&a, "m", "card");
         // Reviewed before sync was on: seeding uploads the history.
@@ -1305,7 +1305,7 @@ mod tests {
         let (_a_dir, mut a) = db();
         let (b_dir, mut b) = db();
         let file = uuid::Uuid::new_v4().to_string();
-        a.execute_batch("insert into modules values ('m', 'M'); insert into contents values ('m', X'');")
+        a.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');")
             .unwrap();
         a.execute("insert into files values (?1, 'm', '/x', 'image/png')", [&file]).unwrap();
         enable(&mut a, "{}").unwrap();
@@ -1335,7 +1335,7 @@ mod tests {
         let (_b_dir, mut b) = db();
         let file = uuid::Uuid::new_v4().to_string();
         a.execute_batch(
-            "insert into modules values ('owner', 'Owner'), ('other', 'Other');
+            "insert into modules (id, name) values ('owner', 'Owner'), ('other', 'Other');
              insert into contents values ('owner', X''), ('other', X'');",
         )
         .unwrap();
@@ -1362,7 +1362,7 @@ mod tests {
     #[test]
     fn deleting_a_module_drops_its_documents() {
         let (_dir, mut conn) = db();
-        conn.execute_batch("insert into modules values ('m', 'M'); insert into contents values ('m', X'');")
+        conn.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');")
             .unwrap();
         enable(&mut conn, "{}").unwrap();
         conn.execute("delete from sync_outbox", []).unwrap();
