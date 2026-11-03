@@ -1,5 +1,6 @@
 import SwiftUI
 struct SettingsView: View {
+    let sync: SyncClient?
     let client: CoreClient
     let beforeRestore: () async throws -> Void
     let restored: () async -> Void
@@ -11,6 +12,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                if let sync { SyncSettingsView(sync: sync) }
                 Section { Button("Back up now") { run { let _: Backup = try await client.call("backup_now", Empty()); try await load() } } }
                 Section("Backups") {
                     ForEach(backups) { backup in
@@ -20,11 +22,13 @@ struct SettingsView: View {
                     }
                 }
                 if let error { Text(error).foregroundStyle(.red) }
-            }.disabled(busy).navigationTitle("Backups")
+            }.disabled(busy).navigationTitle("Settings")
                 .toolbar { Button("Done") { dismiss() }.disabled(busy) }
                 .task { run { try await load() } }
                 .confirmationDialog("Replace current notes with this backup?", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) {
                     Button("Restore backup", role: .destructive) { if let selected { run {
+                        sync?.pause()
+                        defer { sync?.resume() }
                         try await beforeRestore()
                         try await client.write("restore_backup", BackupArgs(id: selected.id))
                         await restored(); dismiss()

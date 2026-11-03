@@ -40,6 +40,9 @@ struct ReviewView: View {
                 if cards.isEmpty && !busy { await load() }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { _ in
+            Task { if !busy { last = nil; await load() } }
+        }
         .onDisappear { session?.dispose() }
     }
     func load() async {

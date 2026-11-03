@@ -83,6 +83,27 @@ pub fn migrate(conn: &Connection) -> CommandResult<()> {
     .map_err(db_err)
 }
 
+pub const STALE_GENERATION: &str = "SYNC_STALE_GENERATION";
+
+fn generation(conn: &Connection) -> CommandResult<String> {
+    if let Some(value) = get_value(conn, "generation")? {
+        return Ok(value);
+    }
+    rotate_generation(conn)?;
+    get_value(conn, "generation")?.ok_or_else(|| "Missing sync generation".into())
+}
+
+fn rotate_generation(conn: &Connection) -> CommandResult<()> {
+    set_value(conn, "generation", uuid::Uuid::new_v4().to_string())
+}
+
+fn check_generation(conn: &Connection, expected: &str) -> CommandResult<()> {
+    if generation(conn)? != expected {
+        return Err(STALE_GENERATION.into());
+    }
+    Ok(())
+}
+
 fn push_outbox(conn: &Connection, doc: &str, bytes: &[u8]) -> CommandResult<()> {
     conn.execute(
         "insert into sync_outbox (doc, bytes) values (?1, ?2)",
@@ -677,7 +698,8 @@ fn delete_modules(
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncStatus {
-    account: Option<String>,
+    generation: String,
+    pub(crate) account: Option<String>,
     cursor: i64,
     pending: i64,
 }
@@ -716,8 +738,9 @@ pub struct ApplyResult {
     files_changed: bool,
 }
 
-fn status(conn: &Connection) -> CommandResult<SyncStatus> {
+pub(crate) fn status(conn: &Connection) -> CommandResult<SyncStatus> {
     Ok(SyncStatus {
+        generation: generation(conn)?,
         account: get_value(conn, "account")?,
         cursor: cursor(conn)?,
         pending: conn
@@ -730,6 +753,7 @@ fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     let was_enabled = is_enabled(&tx)?;
     set_value(&tx, "account", account)?;
+    rotate_generation(&tx)?;
     if !was_enabled {
         set_value(&tx, "cursor", 0)?;
         seed(&tx)?;
@@ -737,11 +761,48 @@ fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
     tx.commit().map_err(db_err)
 }
 
+/// A snapshot owns notes, but must not change the device's signed-in account.
+/// Desktop stores account JSON; iOS stores the Keychain user ID.
+pub(crate) fn reconcile_restored_account(
+    conn: &mut Connection,
+    current: Option<&str>,
+) -> CommandResult<()> {
+    let restored = get_value::<String>(conn, "account")?;
+    let same = match (restored.as_deref(), current) {
+        (Some(a), Some(b)) if a == b => true,
+        (Some(a), Some(b)) => {
+            let identity = |raw: &str| {
+                let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+                Some((
+                    value.get("server")?.as_str()?.to_owned(),
+                    value.get("userId")?.as_str()?.to_owned(),
+                ))
+            };
+            identity(a).is_some() && identity(a) == identity(b)
+        }
+        _ => false,
+    };
+    let tx = conn.transaction().map_err(db_err)?;
+    if !same {
+        disable(&tx)?;
+    }
+    if let Some(account) = current {
+        set_value(&tx, "account", account)?;
+        if !same {
+            set_value(&tx, "cursor", 0)?;
+            seed(&tx)?;
+        }
+    }
+    rotate_generation(&tx)?;
+    tx.commit().map_err(db_err)
+}
+
 fn disable(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(
         "delete from sync_outbox; delete from sync_state; delete from sync_docs; delete from sync_file_uploads;",
     )
-    .map_err(db_err)
+    .map_err(db_err)?;
+    rotate_generation(conn)
 }
 
 fn outbox(conn: &Connection, limit_bytes: i64) -> CommandResult<Vec<OutboxEntry>> {
@@ -1029,19 +1090,27 @@ pub fn sync_disable(db: &Db) -> CommandResult<()> {
     disable(&*db.lock()?)
 }
 
-pub fn sync_outbox(db: &Db, limit_bytes: i64) -> CommandResult<Vec<OutboxEntry>> {
-    outbox(&*db.lock()?, limit_bytes)
+pub fn sync_outbox(
+    db: &Db,
+    limit_bytes: i64,
+    generation: String,
+) -> CommandResult<Vec<OutboxEntry>> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    outbox(&conn, limit_bytes)
 }
 
-pub fn sync_ack(db: &Db, max_id: i64) -> CommandResult<()> {
-    db.lock()?
-        .execute("delete from sync_outbox where id <= ?1", [max_id])
+pub fn sync_ack(db: &Db, max_id: i64, generation: String) -> CommandResult<()> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    conn.execute("delete from sync_outbox where id <= ?1", [max_id])
         .map(|_| ())
         .map_err(db_err)
 }
 
-pub fn sync_set_cursor(db: &Db, cursor: i64) -> CommandResult<()> {
+pub fn sync_set_cursor(db: &Db, cursor: i64, generation: String) -> CommandResult<()> {
     let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
     if !is_enabled(&conn)? {
         return Ok(());
     }
@@ -1054,36 +1123,41 @@ pub fn sync_apply(
     db: &Db,
     entries: Vec<RemoteEntry>,
     cursor: i64,
+    generation: String,
 ) -> CommandResult<ApplyResult> {
-    let result = apply_remote(
-        &mut *db.lock()?,
-        Some(&data_dir.join("files")),
-        entries,
-        cursor,
-    )?;
+    let mut conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    let result = apply_remote(&mut conn, Some(&data_dir.join("files")), entries, cursor)?;
     Ok(result)
 }
 
-pub fn sync_snapshot(db: &Db, doc: String) -> CommandResult<Option<Vec<u8>>> {
-    snapshot(&*db.lock()?, &doc)
+pub fn sync_snapshot(db: &Db, doc: String, generation: String) -> CommandResult<Option<Vec<u8>>> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    snapshot(&conn, &doc)
 }
 
-pub fn sync_missing_files(db: &Db) -> CommandResult<Vec<MissingFile>> {
-    missing_files(&*db.lock()?)
+pub fn sync_missing_files(db: &Db, generation: String) -> CommandResult<Vec<MissingFile>> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    missing_files(&conn)
 }
 
-pub fn sync_pending_uploads(db: &Db) -> CommandResult<Vec<String>> {
-    pending_uploads(&*db.lock()?)
+pub fn sync_pending_uploads(db: &Db, generation: String) -> CommandResult<Vec<String>> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    pending_uploads(&conn)
 }
 
-pub fn sync_upload_done(db: &Db, file_id: String) -> CommandResult<()> {
-    db.lock()?
-        .execute(
-            "delete from sync_file_uploads where file_id = ?1",
-            [file_id],
-        )
-        .map(|_| ())
-        .map_err(db_err)
+pub fn sync_upload_done(db: &Db, file_id: String, generation: String) -> CommandResult<()> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    conn.execute(
+        "delete from sync_file_uploads where file_id = ?1",
+        [file_id],
+    )
+    .map(|_| ())
+    .map_err(db_err)
 }
 
 pub fn sync_store_file(
@@ -1093,15 +1167,19 @@ pub fn sync_store_file(
     module_id: String,
     file_type: String,
     bytes: Vec<u8>,
+    generation: String,
 ) -> CommandResult<crate::FileType> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
     let dir = data_dir.join("files");
-    store_file(&*db.lock()?, &dir, &file_id, &module_id, &file_type, &bytes)
+    store_file(&conn, &dir, &file_id, &module_id, &file_type, &bytes)
 }
 
 // Finishes deletions the vault asked for, e.g. after a crash between storing
 // the vault and removing the module's files.
-pub fn sync_reconcile(data_dir: &Path, db: &Db) -> CommandResult<ApplyResult> {
+pub fn sync_reconcile(data_dir: &Path, db: &Db, generation: String) -> CommandResult<ApplyResult> {
     let mut conn = db.lock()?;
+    check_generation(&conn, &generation)?;
     if !is_enabled(&conn)? {
         return Ok(ApplyResult::default());
     }

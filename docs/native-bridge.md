@@ -283,3 +283,15 @@ viewport and native overlap are the single source of keyboard geometry.
 The scroll container adds bottom padding and scroll padding for this overlap
 plus 24px of caret margin. Caret reveal uses the selection head, scrolls only
 when outside that visible area, and respects Reduce Motion.
+
+## Native cloud sync delivery
+
+`window.memnoterEditor.applyRemote(result)` accepts the decoded `sync_apply`
+(or `sync_reconcile`) result. It uses the desktop `onRemote` receipt/cache path:
+`acknowledgeContent` retains the update for compaction and the content query
+feeds it into the existing Yjs document. It does not reopen or replace the
+editor, so unpersisted local Yjs updates and relative selection survive.
+Native awaits delivery and refreshes modules/counts; deleted open modules
+navigate home. Review screens reload their due cards on `syncDidApply`.
+`fileStored(moduleId, file)` accepts the decoded `sync_store_file` receipt and
+updates the image cache through the desktop path.

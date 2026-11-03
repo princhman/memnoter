@@ -78,6 +78,37 @@ creation, camelCase mutations, snake_case responses, binary upload, reopen and
 errors. Rust tests cover the exported FFI persistence/error boundary. Run tests
 only while the shared simulator is idle.
 
+### Keychain and native Worker fixture
+
+Unsigned simulator builds (`CODE_SIGNING_ALLOWED=NO`) may lack Keychain
+entitlements. The storage test and native E2E fixture probe SecItemAdd and skip
+with an explicit message only for errSecMissingEntitlement (-34018); other
+Keychain errors still fail. The storage test performs real save/update/reload,
+accessibility and deletion checks whenever the probe succeeds. For real Keychain
+coverage, run the same test command with simulator signing enabled (omit
+`CODE_SIGNING_ALLOWED=NO`; Xcode uses local ad-hoc simulator signing), or run
+on a physical iPad with a configured development team.
+
+The native two-database E2E test needs a local Worker on port 8787 with development
+sign-in codes enabled. Start only the Worker (no desktop apps required):
+
+```sh
+cd sync-server
+pnpm install --frozen-lockfile
+# In .dev.vars, set AUTH_SECRET to a local random value and DEV_RETURN_CODE=1.
+# Never commit .dev.vars or use production credentials.
+pnpm dev -- --port 8787
+```
+
+Leave it running, then run the Xcode test command above with signing enabled.
+The simulator reaches the Mac Worker at `http://localhost:8787`. The fixture
+creates a unique throwaway email and two temporary databases, signs in, checks
+concurrent Yjs merge and sign-out retention, and removes its local data and
+Keychain entries. It skips if the Worker is unreachable or Keychain entitlements
+are missing; a reachable but misconfigured Worker fails the test. Worker data
+persists in Wrangler's local state; use a throwaway local state directory if
+needed. `scripts/sync-dev.sh` also starts this Worker, plus two desktop clients.
+
 Manual acceptance: create a module; type headings and Q :: A cards; switch away
 and relaunch; verify text; insert a Photos image; use outline scroll/fold;
 review globally and per module with Space, 1–4 and undo; search; create and

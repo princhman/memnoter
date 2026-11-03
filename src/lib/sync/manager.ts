@@ -10,6 +10,7 @@ import { acknowledgeContent, type ContentUpdate, type FileType, type GetContentR
 import { dueCountsKey, isModuleOpen } from "@/lib/card-sync";
 import { reindexStoredCards } from "@/lib/card-backfill";
 import { queryClient } from "@/lib/query-client";
+import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { saveQueue } from "@/lib/saves";
 import { indexStoredNote } from "@/lib/search-index";
 import { forgetModule } from "@/lib/store";
@@ -49,8 +50,8 @@ export const syncStatusStore = createStore<SyncUiStatus>({
   lastSyncedAt: null,
 });
 
-type SyncStatusResponse = { account: string | null; cursor: number; pending: number };
-type ApplyResult = {
+type SyncStatusResponse = { generation: string; account: string | null; cursor: number; pending: number };
+export type ApplyResult = {
   updates: { moduleId: string; update: ContentUpdate }[];
   modulesChanged: boolean;
   deleted: string[];
@@ -58,6 +59,7 @@ type ApplyResult = {
   filesChanged: boolean;
 };
 
+let requestController: AbortController | null = null;
 let engine: SyncEngine | null = null;
 let fileSync: FileSync | null = null;
 let activeAccount: SyncAccount | null = null;
@@ -65,6 +67,7 @@ let unlisten: (() => void) | null = null;
 // Starting and stopping run one at a time, so two engines never overlap.
 let transitions: Promise<unknown> = Promise.resolve();
 let started: Promise<void> | null = null;
+let draining: Promise<unknown> = Promise.resolve();
 
 function serially<T>(task: () => Promise<T>): Promise<T> {
   const next = transitions.then(task, task);
@@ -78,26 +81,31 @@ function writesAllowed() {
 }
 
 const reindexTimers = new Map<string, number>();
+const reindexing = new Set<Promise<void>>();
 function scheduleReindex(moduleId: string) {
   window.clearTimeout(reindexTimers.get(moduleId));
   reindexTimers.set(
     moduleId,
-    window.setTimeout(async () => {
-      reindexTimers.delete(moduleId);
-      // An open note indexes itself as the editor shows the change.
-      if (isModuleOpen(moduleId)) return;
-      try {
-        await indexStoredNote(moduleId);
-        await reindexStoredCards(moduleId);
-        void queryClient.invalidateQueries({ queryKey: dueCountsKey });
-      } catch (error) {
-        console.error(`Failed to index synced note ${moduleId}:`, error);
-      }
+    window.setTimeout(() => {
+      const task = (async () => {
+        reindexTimers.delete(moduleId);
+        // An open note indexes itself as the editor shows the change.
+        if (isModuleOpen(moduleId)) return;
+        try {
+          await indexStoredNote(moduleId);
+          await reindexStoredCards(moduleId);
+          void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+        } catch (error) {
+          console.error(`Failed to index synced note ${moduleId}:`, error);
+        }
+      })();
+      reindexing.add(task);
+      void task.finally(() => reindexing.delete(task));
     }, REINDEX_DELAY_MS),
   );
 }
 
-function onRemote(result: ApplyResult) {
+export function onRemote(result: ApplyResult) {
   for (const { moduleId, update } of result.updates) {
     // The same path as a local save: an open editor applies the update from
     // the cache, and compaction then includes it.
@@ -124,7 +132,7 @@ function onRemote(result: ApplyResult) {
   if (result.filesChanged) fileSync?.kick();
 }
 
-function onFileStored(moduleId: string, file: FileType) {
+export function onFileStored(moduleId: string, file: FileType) {
   queryClient.setQueryData<GetContentResponse>(
     ["content", moduleId],
     (content) => content && !content.files.some((known) => known.id === file.id)
@@ -138,39 +146,41 @@ function onFileStored(moduleId: string, file: FileType) {
 
 
 
-const tauriStore: SyncStore = {
-  async cursor() {
-    return (await invoke<SyncStatusResponse>("sync_status")).cursor;
-  },
-  async outbox(limitBytes) {
-    const entries = await invoke<{ id: number; doc: string; bytes: number[] }[]>("sync_outbox", { limitBytes });
-    return entries.map((entry) => ({ ...entry, bytes: new Uint8Array(entry.bytes) }));
-  },
-  async ackOutbox(maxId) {
-    await invoke("sync_ack", { maxId });
-  },
-  async applyRemote(entries, cursor) {
-    writesAllowed();
-    const result = await invoke<ApplyResult>("sync_apply", {
-      entries: entries.map((entry) => ({ seq: entry.seq, doc: entry.doc, bytes: Array.from(entry.bytes) })),
-      cursor,
-    });
-    onRemote(result);
-  },
-  async setCursor(cursor) {
-    await invoke("sync_set_cursor", { cursor });
-  },
-  async snapshot(doc) {
-    const state = await invoke<number[] | null>("sync_snapshot", { doc });
-    return state ? new Uint8Array(state) : null;
-  },
-};
-
-function blobStore(account: SyncAccount): BlobStore {
+function tauriStore(generation: string): SyncStore {
   return {
-    put: (id, blob) => putObject(account.server, account.token, "blobs", id, blob),
+    async cursor() {
+      return (await invoke<SyncStatusResponse>("sync_status")).cursor;
+    },
+    async outbox(limitBytes) {
+      const entries = await invoke<{ id: number; doc: string; bytes: number[] }[]>("sync_outbox", { limitBytes, generation });
+      return entries.map((entry) => ({ ...entry, bytes: new Uint8Array(entry.bytes) }));
+    },
+    async ackOutbox(maxId) {
+      await invoke("sync_ack", { maxId, generation });
+    },
+    async applyRemote(entries, cursor) {
+      writesAllowed();
+      const result = await invoke<ApplyResult>("sync_apply", {
+        entries: entries.map((entry) => ({ seq: entry.seq, doc: entry.doc, bytes: Array.from(entry.bytes) })),
+        cursor, generation,
+      });
+      onRemote(result);
+    },
+    async setCursor(cursor) {
+      await invoke("sync_set_cursor", { cursor, generation });
+    },
+    async snapshot(doc) {
+      const state = await invoke<number[] | null>("sync_snapshot", { doc, generation });
+      return state ? new Uint8Array(state) : null;
+    },
+  };
+}
+
+function blobStore(account: SyncAccount, signal: AbortSignal): BlobStore {
+  return {
+    put: (id, blob) => putObject(account.server, account.token, "blobs", id, blob, signal),
     async get(id) {
-      const blob = await getObject(account.server, account.token, "blobs", id);
+      const blob = await getObject(account.server, account.token, "blobs", id, signal);
       if (!blob) throw new Error("A synced change is missing from the server");
       return blob;
     },
@@ -181,7 +191,7 @@ function socketUrl(server: string) {
   return `${server.replace(/\/+$/, "").replace(/^http/, "ws")}/v1/sync`;
 }
 
-function browserSocket(account: SyncAccount, onUnauthorized: () => void) {
+function browserSocket(account: SyncAccount, onUnauthorized: () => void, signal: AbortSignal) {
   return (): SyncSocket => {
     const ws = new WebSocket(socketUrl(account.server), [SYNC_PROTOCOL, `${AUTH_PROTOCOL_PREFIX}${account.token}`]);
     let opened = false;
@@ -208,8 +218,8 @@ function browserSocket(account: SyncAccount, onUnauthorized: () => void) {
     ws.onclose = (event) => {
       socket.onclose?.(event.code, event.reason);
       // A refused handshake looks like any network failure; ask the server.
-      if (!opened) {
-        void isTokenValid(account.server, account.token).then((valid) => {
+      if (!opened && !signal.aborted) {
+        void isTokenValid(account.server, account.token, signal).then((valid) => {
           if (!valid) onUnauthorized();
         });
       }
@@ -233,7 +243,10 @@ async function readAccount(): Promise<SyncAccount | null> {
 }
 
 async function run(account: SyncAccount) {
-  stopEngine();
+  await stopEngine();
+  const { generation } = await invoke<SyncStatusResponse>("sync_status");
+  const controller = new AbortController();
+  requestController = controller;
   const key = await importKey(account.key);
   const unauthorized = () => {
     if (engine !== current) return;
@@ -241,10 +254,10 @@ async function run(account: SyncAccount) {
     syncStatusStore.setState((state) => ({ ...state, state: "error", error: "Sign in again to keep syncing." }));
   };
   const current = createSyncEngine({
-    store: tauriStore,
+    store: tauriStore(generation),
     key,
-    connect: browserSocket(account, unauthorized),
-    blobs: blobStore(account),
+    connect: browserSocket(account, unauthorized, controller.signal),
+    blobs: blobStore(account, controller.signal),
     onSignedOut: () => {
       if (engine === current) void signedOut("Signed out because the cloud data was deleted.");
     },
@@ -256,6 +269,8 @@ async function run(account: SyncAccount) {
   engine = current;
   activeAccount = account;
   const files = createFileSync({
+    signal: controller.signal,
+    generation,
     server: account.server,
     token: account.token,
     key,
@@ -267,7 +282,7 @@ async function run(account: SyncAccount) {
   syncStatusStore.setState((state) => ({ ...state, account: publicAccount(account), loaded: true }));
 
   // Finish deletions interrupted by a crash before applying anything new.
-  onRemote(await invoke<ApplyResult>("sync_reconcile"));
+  onRemote(await invoke<ApplyResult>("sync_reconcile", { generation }));
 
   const stopOutbox = await listen("sync-outbox", () => {
     current.nudge();
@@ -290,19 +305,39 @@ async function run(account: SyncAccount) {
 }
 
 function stopEngine() {
+  requestController?.abort();
+  requestController = null;
   unlisten?.();
   unlisten = null;
-  engine?.stop();
+  const current = engine;
+  const files = fileSync;
+  // Capture synchronous shutdown failures too, and still stop both workers.
+  const workers = [draining, Promise.resolve().then(() => { current?.stop(); return current?.idle(); }),
+    Promise.resolve().then(() => files?.stop())];
   engine = null;
-  fileSync?.stop();
   fileSync = null;
   setSyncedFileHandler(null);
   activeAccount = null;
+  for (const timer of reindexTimers.values()) window.clearTimeout(timer);
+  reindexTimers.clear();
+  // Database generation checks reject any late completion after this bound.
+  // Never retain a rejected/unbounded drain as the next transition's barrier.
+  draining = new Promise<void>((resolve) => {
+    let ended = false;
+    const timer = setTimeout(() => { ended = true; resolve(); }, 5_000);
+    void Promise.allSettled(workers).then(async () => {
+      if (ended) return;
+      for (const timer of reindexTimers.values()) window.clearTimeout(timer);
+      reindexTimers.clear();
+      await Promise.allSettled([...reindexing]);
+    }).finally(() => { ended = true; clearTimeout(timer); resolve(); });
+  });
+  return draining;
 }
 
 // This device stops syncing and forgets its sync state; its notes stay.
 async function signedOut(message: string | null) {
-  stopEngine();
+  await stopEngine();
   await invoke("sync_disable");
   syncStatusStore.setState(() => ({
     account: null,
@@ -357,11 +392,27 @@ export function deleteCloudData() {
   return serially(async () => {
     const account = activeAccount;
     if (!account) throw new Error("Sync is off");
-    await wipeCloudData(account.server, account.token);
+    await wipeCloudData(account.server, account.token, requestController?.signal);
     await signedOut(null);
   });
 }
 
 export function retrySync() {
   return serially(loadAndRun);
+}
+
+// Serialize the entire restore with account transitions. Stop producers before
+// exclusiveWrite suspends saves, then drain already-started work before swapping.
+export function restoreBackup(id: string) {
+  return serially(async () => {
+    try {
+      await stopEngine();
+      await exclusiveWrite(async () => {
+        await invoke("restore_backup", { id });
+        saveQueue.clear();
+      }, { excludedMutation: "restore-backup", retain: true });
+    } finally {
+      await loadAndRun();
+    }
+  });
 }

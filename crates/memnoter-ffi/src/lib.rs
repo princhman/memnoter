@@ -32,9 +32,29 @@ impl MemnoterCore {
     }
 }
 
+// Native transport uses the same audited wire crypto as desktop WebCrypto.
+#[uniffi::export]
+pub fn sync_derive_key(passphrase: String, salt: Vec<u8>) -> Vec<u8> {
+    memnoter_core::sync::crypto::derive_key(&passphrase, &salt).to_vec()
+}
+#[uniffi::export]
+pub fn sync_crypt(key: Vec<u8>, doc: String, bytes: Vec<u8>, decrypt: bool) -> Result<Vec<u8>, MemnoterError> {
+    let key: [u8; 32] = key.try_into().map_err(|_| MemnoterError::Storage { message: "Expected a 256-bit key".into() })?;
+    if decrypt { memnoter_core::sync::crypto::decrypt_blob(&key, &doc, &bytes) }
+    else { memnoter_core::sync::crypto::encrypt_blob(&key, &doc, &bytes) }.map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_crypto_rejects_bad_keys_and_wrong_documents() {
+        assert!(sync_crypt(vec![0; 31], "note".into(), vec![], false).is_err());
+        let key = vec![7; 32];
+        let blob = sync_crypt(key.clone(), "note".into(), b"native".to_vec(), false).unwrap();
+        assert_eq!(sync_crypt(key.clone(), "note".into(), blob.clone(), true).unwrap(), b"native");
+        assert!(sync_crypt(key, "other".into(), blob, true).is_err());
+    }
     #[test]
     fn ffi_round_trip_and_errors_survive_reopen() {
         let dir = tempfile::tempdir().unwrap();

@@ -28,7 +28,11 @@ actor CoreClient {
         try await Task.detached { try CoreClient(dataDirectory: directory) }.value
     }
     func raw(_ command: String, json: String = "{}") throws -> String {
-        try core.dispatch(command: command, argsJson: json)
+        let result = try core.dispatch(command: command, argsJson: json)
+        if !command.hasPrefix("sync_") && ["add_update", "create_module", "rename_module", "delete_module", "set_module_numbering", "save_file", "review_card", "undo_review"].contains(command) {
+            Task { @MainActor in NotificationCenter.default.post(name: .coreDidWrite, object: nil) }
+        }
+        return result
     }
     func call<A: Encodable & Sendable, R: Decodable & Sendable>(_ command: String, _ args: A, as: R.Type = R.self) throws -> R {
         let json = String(decoding: try JSONEncoder().encode(args), as: UTF8.self)
@@ -119,3 +123,5 @@ struct ReviewResult: Codable, Sendable { let card: ReviewedCard; let log: Review
 struct DueArgs: Encodable, Sendable { let moduleId: String?; let now: Int64 }
 struct ReviewArgs: Encodable, Sendable { let cardId: String; let expectedReps: Int; let card: ReviewedCard; let log: ReviewLog }
 struct UndoArgs: Encodable, Sendable { let cardId: String; let expectedReps: Int; let previous: ReviewedCard; let previousFsrsModel: String?; let reviewTime: Int64 }
+
+extension Notification.Name { static let coreDidWrite = Notification.Name("memnoter.coreDidWrite") }

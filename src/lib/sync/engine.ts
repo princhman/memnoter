@@ -185,6 +185,7 @@ export function createSyncEngine({
   function enqueue(task: () => Promise<void>) {
     const owner = generation;
     chain = chain.then(() => (owner === generation ? task() : undefined)).catch((error) => {
+      if (!running) return;
       console.error("Sync failed:", error);
       // Whatever is still queued from this connection must not run.
       generation += 1;

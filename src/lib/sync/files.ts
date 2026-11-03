@@ -17,6 +17,8 @@ const KICK_DELAY_MS = 1_000;
 const fileDoc = (fileId: string) => `file:${fileId}`;
 
 export type FileSyncOptions = {
+  generation: string;
+  signal?: AbortSignal;
   server: string;
   token: string;
   key: CryptoKey;
@@ -24,9 +26,15 @@ export type FileSyncOptions = {
   onUnauthorized: () => void;
 };
 
-export function createFileSync({ server, token, key, onStored, onUnauthorized }: FileSyncOptions) {
+export function createFileSync({ generation, signal, server, token, key, onStored, onUnauthorized }: FileSyncOptions) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
   let running = true;
   let busy = false;
+  let drained: Promise<void> = Promise.resolve();
+  let finish: (() => void) | undefined;
   let again = false;
   let kickTimer: number | undefined;
   let retryTimer: number | undefined;
@@ -38,18 +46,22 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
   async function upload(fileId: string) {
     const contents = await invoke<{ bytes: number[] }>("read_file", { moduleId: "", fileId });
     const blob = await encryptBlob(key, fileDoc(fileId), new Uint8Array(contents.bytes));
-    await putObject(server, token, "files", fileId, blob);
-    await invoke("sync_upload_done", { fileId });
+    await putObject(server, token, "files", fileId, blob, controller.signal);
+    if (!running) return;
+    await invoke("sync_upload_done", { fileId, generation });
   }
 
   async function download(file: MissingFile) {
-    const blob = await getObject(server, token, "files", file.fileId);
+    const blob = await getObject(server, token, "files", file.fileId, controller.signal);
+    if (!running) return;
     if (!blob) {
       notYet.add(file.fileId);
       return;
     }
     const bytes = await decryptBlob(key, fileDoc(file.fileId), blob);
+    if (!running) return;
     const stored = await invoke<FileType>("sync_store_file", {
+      generation,
       fileId: file.fileId,
       moduleId: file.moduleId,
       fileType: file.fileType,
@@ -65,6 +77,7 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
       try {
         await task();
       } catch (error) {
+        if (!running || controller.signal.aborted) return;
         if (error instanceof SyncApiError && error.status === 401) {
           running = false;
           onUnauthorized();
@@ -75,18 +88,18 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
       }
     };
 
-    for (const fileId of await invoke<string[]>("sync_pending_uploads")) {
+    for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
       if (!running) return;
       await attempt(() => upload(fileId));
     }
     notYet.clear();
-    const missing = await invoke<MissingFile[]>("sync_missing_files");
+    const missing = await invoke<MissingFile[]>("sync_missing_files", { generation });
     missing.sort((a, b) => Number(wanted.has(b.fileId)) - Number(wanted.has(a.fileId)));
     for (const file of missing) {
       if (!running) return;
       await attempt(() => download(file));
     }
-    if (failed || notYet.size > 0) {
+    if (running && (failed || notYet.size > 0)) {
       window.clearTimeout(retryTimer);
       retryTimer = window.setTimeout(() => void run(), RETRY_MS);
     }
@@ -99,6 +112,7 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
       return;
     }
     busy = true;
+    drained = new Promise<void>((resolve) => { finish = resolve; });
     try {
       do {
         again = false;
@@ -108,6 +122,7 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
       console.error("Image sync failed:", error);
     } finally {
       busy = false;
+      finish?.();
     }
   }
 
@@ -125,8 +140,11 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
     },
     stop() {
       running = false;
+      controller.abort();
+      signal?.removeEventListener("abort", abort);
       window.clearTimeout(kickTimer);
       window.clearTimeout(retryTimer);
+      return drained;
     },
   };
 }
