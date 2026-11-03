@@ -83,5 +83,20 @@ test("dragging block and inline images moves them with assets, descriptions and 
         assert.equal(await page.evaluate(() => getComputedStyle(editor.view.dom).caretColor), "rgba(0, 0, 0, 0)");
       }
     }
+    // Destroying the editor mid-drag must not leave the marker or listeners.
+    await page.evaluate(({ src }) => editor.commands.setContent({ type: "doc", content: [
+      { type: "image", attrs: { src, width: 200, height: 100 } }, { type: "paragraph", content: [{ type: "text", text: "Below" }] },
+    ] }), { src });
+    const img = page.locator(".note-image-host img").first();
+    await page.waitForFunction(() => document.querySelector(".note-image-host img")?.naturalWidth > 0);
+    assert.equal(await img.evaluate(el => getComputedStyle(el.closest(".note-image-host")).touchAction), "none", "touch drags move the image instead of scrolling");
+    const box = await img.boundingBox();
+    await page.mouse.move(box.x + 20, box.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y + 160, { steps: 5 });
+    assert.equal(await page.locator(".note-image-drop-indicator").count(), 1, "drag in progress");
+    await page.evaluate(() => editor.destroy());
+    await page.waitForFunction(() => !document.querySelector(".note-image-drop-indicator") && !document.documentElement.classList.contains("is-moving-image"));
+    await page.mouse.up();
   } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
 });

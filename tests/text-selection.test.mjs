@@ -221,5 +221,17 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
     console.log("3000-block selection", JSON.stringify(performance));
     assert.equal(performance.spans, 3000);
     assert.ok(performance.elapsed < 2000, `select-all stays responsive: ${performance.elapsed}ms`);
+    // High contrast: the drawn selection must use system colours, since
+    // forced colours would otherwise recolour it to the canvas and hide it.
+    await page.emulateMedia({ forcedColors: "active" }).catch(() => {});
+    const forced = await page.evaluate(() => matchMedia("(forced-colors: active)").matches);
+    const rules = await page.evaluate(() => [...document.styleSheets].flatMap(sheet => [...sheet.cssRules])
+      .filter(rule => rule.conditionText?.includes("forced-colors")).map(rule => rule.cssText).join("\n"));
+    assert.match(rules, /text-range-selected[^}]*background:\s*highlight[^}]*color:\s*highlighttext/is);
+    if (forced) {
+      await page.evaluate(() => { editor.commands.setTextSelection({ from: 1, to: 6 }); });
+      const background = await page.evaluate(() => getComputedStyle(document.querySelector(".text-range-selected")).backgroundColor);
+      assert.notEqual(background, "rgba(0, 0, 0, 0)", "selection stays visible in forced colours");
+    }
   } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
 });

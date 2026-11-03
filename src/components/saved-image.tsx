@@ -130,7 +130,12 @@ function SavedImageView(props: NodeViewProps) {
     host.current?.closest<HTMLElement>(".note-image-block")?.parentElement?.clientWidth ?? 0;
   const image = useRef<HTMLImageElement | null>(null);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // Ends an image drag still in progress if this view goes away (editor destroyed).
+  const cancelMove = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; cancelMove.current?.(); };
+  }, []);
   const latest = useRef(props);
   latest.current = props;
   const [failed, setFailed] = useState(false);
@@ -317,7 +322,8 @@ function SavedImageView(props: NodeViewProps) {
     if (!editor.isEditable || event.button !== 0 || (event.target as Element).closest("[data-resize-handle]")) return;
     // No text selection or native image drag while the pointer moves.
     event.preventDefault();
-    startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent);
+    cancelMove.current?.();
+    cancelMove.current = startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent);
   };
 
   const layout: ImageLayout = isInline ? "inline" : node.attrs.wrap ? "wrap" : "break";

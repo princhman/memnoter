@@ -428,9 +428,24 @@ body {
     background: color-mix(in oklch, var(--primary) 80%, transparent);
 }
 
+/* High-contrast modes recolour backgrounds to the canvas, which would hide the
+   drawn selection. Use the system selection colours there instead. */
+@media (forced-colors: active) {
+    .tiptap .text-range-selected {
+        forced-color-adjust: none;
+        background: Highlight;
+        color: HighlightText;
+    }
+}
+
 .tiptap .ProseMirror-selectednode:has(.note-image-block),
 .tiptap .note-image-block.ProseMirror-selectednode {
     outline: none;
+}
+
+/* A finger dragging an image must move it, not pan the page and cancel the move. */
+.note-image-host {
+    touch-action: none;
 }
 
 .note-image-block[data-range-selected] .note-image {

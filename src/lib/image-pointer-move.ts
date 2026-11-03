@@ -64,11 +64,13 @@ function stopCapturing(view: EditorView) {
 }
 
 // Begins tracking a press on an image. Below the threshold it stays a click.
-export function startImagePointerMove(view: EditorView, getPos: () => number | undefined, down: PointerEvent) {
+// Returns a function that cancels the move (for example when the editor is
+// destroyed mid-drag), removing the marker and every window listener.
+export function startImagePointerMove(view: EditorView, getPos: () => number | undefined, down: PointerEvent): () => void {
   const from = getPos();
-  if (from === undefined) return;
+  if (from === undefined) return () => {};
   const node = view.state.doc.nodeAt(from);
-  if (!node) return;
+  if (!node) return () => {};
   const element = view.nodeDOM(from) as HTMLElement | null;
   let moving = false;
   let insert: number | null = null;
@@ -122,4 +124,5 @@ export function startImagePointerMove(view: EditorView, getPos: () => number | u
   window.addEventListener("pointerup", up);
   window.addEventListener("pointercancel", cancel);
   window.addEventListener("keydown", escape, true);
+  return cancel;
 }
