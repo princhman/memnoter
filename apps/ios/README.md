@@ -108,7 +108,7 @@ requires older/imported notes to be opened once for card indexing. It does not
 port desktop learn-ahead/preferences or card backfill. Review face segments are
 Codable JSON because their schema varies by card kind.
 
-The editor's trailing material capsule follows the keyboard through SwiftUI's keyboard safe area, including the hardware shortcut bar, and hides for an
+The editor's trailing material capsule uses keyboard frame notifications for both animated placement and visibility, including the hardware shortcut bar, and hides for an
 undocked/floating keyboard. Its nonmodal Aa popover preserves the editor
 selection and first responder while applying styles, marks, lists and math.
 Link URL entry temporarily takes text focus and returns it to the editor on
@@ -156,3 +156,20 @@ Body/Italic actions updated live states without losing editor focus, and typing
 continued at the retained caret with italic applied. Floating keyboards are
 excluded by the docked-frame check; floating keyboard interaction and link URL
 entry were not manually exercised. Simulator restored to light and left running.
+
+Format-panel visibility follow-up: simulator and signed device builds passed;
+installed and launched on physical iPad `00008101-0013399E0CD8001E`.
+Screenshots `16-before-keyboard.png`, `17-after-keyboard.png`,
+`18-panel-landscape-dark.png`, `19-focused-h2.png`, `20-focused-h3.png`,
+`21-panel-light.png`, `22-shortcut-strip.png`, and `23-keyboard-hidden.png` are in
+`build/screenshots/`. Verified H2 focus through the panel and H3 focus through
+the bar, plus Show whole note. The bar stays available with the minimized
+hardware-style shortcut strip, and Hide keyboard removes it with the strip.
+The panel scrolls within a height capped at
+350pt and the available editor height minus keyboard overlap and 100pt for
+the bar, gap and margins. On an 820pt landscape iPad Air this leaves roughly
+200pt with the docked keyboard shown in the supplied screenshot; content stays
+below navigation and scrolls internally. Smaller-device sizing was checked
+from this geometry, not on a separate simulator. Neutral states checked in
+light and dark. Restored light mode and closed the Device panel without
+shutdown. No web bridge changes were needed.

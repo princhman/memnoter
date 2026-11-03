@@ -61,6 +61,14 @@ struct FormatPanel: View {
                 Text("Leave empty to remove the link.").font(.caption).foregroundStyle(.secondary)
             }
             Divider()
+            if let id = session.state.headingId {
+                Button {
+                    session.exec("focusSection", ["id": id])
+                    close()
+                } label: {
+                    Label("Focus on this section", systemImage: "arrow.up.left.and.arrow.down.right")
+                }.font(.subheadline).foregroundStyle(.primary).buttonStyle(.plain).frame(minHeight: 44)
+            }
             Button { session.exec("makeCard") } label: { Label("Make card from selection", systemImage: "rectangle.stack.badge.plus") }
                 .font(.subheadline).foregroundStyle(.primary).buttonStyle(.plain).frame(minHeight: 44)
         }
