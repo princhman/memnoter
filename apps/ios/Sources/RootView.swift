@@ -166,8 +166,8 @@ struct RootView: View {
                 columnVisibility = sidebarVisible ? .all : .detailOnly
                 let restored = WebSession(client: client, directory: store.directory)
                 session = restored
-                restored.onReady = {
-                    guard let selected, store.modules.contains(where: { $0.id == selected }) else { return }
+                restored.onReady = { [weak restored] in
+                    guard let restored, let selected, store.modules.contains(where: { $0.id == selected }) else { return }
                     Task { do { try await restored.open(selected) } catch { store.error = String(describing: error) } }
                 }
             }
@@ -294,7 +294,9 @@ struct RootView: View {
                         let replacement = WebSession(client: client, directory: store.directory)
                         session = replacement
                         if let selected, store.modules.contains(where: { $0.id == selected }) {
-                            replacement.onReady = { Task { do { try await replacement.open(selected) } catch { store.error = String(describing: error) } } }
+                            replacement.onReady = { [weak replacement] in
+                                guard let replacement else { return }
+                                Task { do { try await replacement.open(selected) } catch { store.error = String(describing: error) } } }
                         }
                     }
                 }
@@ -312,7 +314,9 @@ struct RootView: View {
                 try await session?.flush()
                 if store.modules.contains(where: { $0.id == destination }), let session {
                     if session.ready { try await session.open(destination) }
-                    else { session.onReady = { Task { do { try await session.open(destination) } catch { store.error = String(describing: error) } } } }
+                    else { session.onReady = { [weak session] in
+                        guard let session else { return }
+                        Task { do { try await session.open(destination) } catch { store.error = String(describing: error) } } } }
                 }
                 if store.modules.contains(where: { $0.id == destination }) {
                     store.recordOpenedModule(destination)

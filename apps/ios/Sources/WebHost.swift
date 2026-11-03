@@ -272,7 +272,12 @@ struct EditorState: Decodable {
                    let json = String(data: data, encoding: .utf8) {
                     UserDefaults.standard.set(json, forKey: "editorViewState")
                 }
-            case "ready": ready = true; reportBottomInset(); onReady?()
+            case "ready":
+                ready = true
+                reportBottomInset()
+                let callback = onReady
+                onReady = nil
+                callback?()
             case "outline":
                 guard payload["moduleId"] as? String == moduleId else { return }
                 if let data = try? JSONSerialization.data(withJSONObject: payload["headings"] ?? []) { headings = (try? JSONDecoder().decode([Heading].self, from: data)) ?? [] }
@@ -306,7 +311,7 @@ struct EditorState: Decodable {
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) { self.error = String(describing: error) }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { error = "The editor process stopped. Reopen the app to recover saved notes." }
-    func dispose() { insetReport?.cancel(); NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
+    func dispose() { onReady = nil; insetReport?.cancel(); insetReport = nil; NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
 }
 struct WebSurface: UIViewRepresentable {
     let session: WebSession
