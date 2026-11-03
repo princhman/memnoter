@@ -204,8 +204,12 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
     });
     assert.ok(Math.abs(shaping.selected - shaping.plain) < .1, JSON.stringify(shaping));
     await page.waitForTimeout(600); // Separate typing from setContent in Yjs undo.
+    await page.evaluate(() => editor.view.focus());
+    await page.waitForFunction(() => editor.view.hasFocus());
     await page.keyboard.press("Shift+ArrowRight");
-    assert.equal(await page.evaluate(() => editor.state.selection.to - editor.state.selection.from), 1);
+    // WebKit delivers native selectionchange after the keyboard event. Wait
+    // for ProseMirror to observe it before checking the composition lifecycle.
+    await page.waitForFunction(() => editor.state.selection.from === 2 && editor.state.selection.to === 3);
     await page.evaluate(() => editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
     assert.equal(await page.locator(".text-range-selected").count(), 0, "no decoration DOM changes during composition");
     await page.evaluate(() => editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
