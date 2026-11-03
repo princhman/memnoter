@@ -106,6 +106,38 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal(focus.path.at(-1).id, focus.id);
     assert.equal(focus.cleared, null);
     assert.ok(Math.abs(focus.delta) < 1);
+    // Empty headings have no TOC ID. They still belong in the native focus
+    // path, whose IDs must decode as strings and be usable by focusSection.
+    await page.locator('.tiptap h1').filter({ hasText: 'Second' }).evaluate(node => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      range.collapse(false);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      node.closest('.tiptap').focus();
+    });
+    await page.keyboard.press('Enter');
+    await page.evaluate(() => window.memnoterEditor.exec('heading', { level: 1 }));
+    const emptyAncestor = await page.evaluate(() => {
+      const headings = window.messages.filter(m => m.event === 'outline').at(-1).payload.headings;
+      const child = headings.find(h => h.text === 'Child');
+      window.memnoterEditor.exec('focusSection', { id: child.id });
+      return window.messages.filter(m => m.event === 'state').at(-1).payload;
+    });
+    assert.ok(emptyAncestor.focusedSectionPath.every(c => typeof c.id === 'string'));
+    await page.locator('.tiptap p').filter({ hasText: 'Child body' }).click();
+    const currentFocus = await page.evaluate(() => {
+      window.memnoterEditor.exec('showDocument');
+      const before = window.messages.filter(m => m.event === 'state').length;
+      const result = window.memnoterEditor.exec('focusCurrentSection');
+      const states = window.messages.filter(m => m.event === 'state');
+      return { result, emitted: states.length > before, state: states.at(-1).payload };
+    });
+    assert.equal(currentFocus.result, true);
+    assert.equal(currentFocus.emitted, true);
+    assert.equal(currentFocus.state.focusedSectionId, emptyAncestor.focusedSectionId);
+    assert.equal(currentFocus.state.focusedSectionPath.at(-1).title, 'Child');
+    assert.ok(currentFocus.state.focusedSectionPath.every(c => typeof c.id === 'string'));
     // Flush immediately after a selection change: the view debounce must not
     // lose the caret when native suspends JS or switches notes.
     const persisted = await page.evaluate(async () => {

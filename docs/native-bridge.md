@@ -257,3 +257,7 @@ foldedSections. Positions and folds have the same semantics as desktop.
 view changes synchronously before its async write barrier. Native must retain
 the event handler until that barrier completes. Sidebar visibility and selected
 native destination are stored separately by the SwiftUI host.
+
+Section IDs in native state and outline are opaque. Empty headings skipped by
+the shared TOC use a `native-section:<position>` fallback, refreshed on every
+transaction. Pass the latest ID to `focusSection`; do not persist these IDs.

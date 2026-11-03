@@ -178,8 +178,20 @@ struct EditorState: Decodable {
                 #if DEBUG
                 print("[editor state] \(payload)")
                 #endif
-                guard payload["moduleId"] as? String == moduleId else { return }
-                if let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(EditorState.self, from: data) { state = decoded }
+                guard payload["moduleId"] as? String == moduleId else {
+                    #if DEBUG
+                    print("[editor state ignored] expected module \(String(describing: moduleId))")
+                    #endif
+                    return
+                }
+                do {
+                    let data = try JSONSerialization.data(withJSONObject: payload)
+                    state = try JSONDecoder().decode(EditorState.self, from: data)
+                } catch {
+                    #if DEBUG
+                    print("[editor state decode failed] \(error)")
+                    #endif
+                }
             case "error": error = payload["message"] as? String
             case "saveStatus": saveStatus = payload["failing"] as? Bool == true ? "Save failed" : (payload["pending"] as? Int ?? 0) > 0 ? "Saving…" : ""
             default: break

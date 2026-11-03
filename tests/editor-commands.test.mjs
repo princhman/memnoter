@@ -79,6 +79,12 @@ test('native focus follows the innermost section through body text and section b
       assert.deepEqual(section && [section.title, section.level], expected, text);
       assert.equal(execEditor(editor, 'focusCurrentSection'), expected !== null);
       assert.equal(sectionFocusKey.getState(editor.state), section?.pos ?? null);
+      const focused = editorState(editor);
+      assert.equal(focused.focusedSectionId, section?.id ?? null);
+      if (expected) {
+        assert.equal(typeof focused.focusedSectionId, 'string');
+        assert.ok(focused.focusedSectionPath.every(crumb => typeof crumb.id === 'string'));
+      }
       assert.equal(editor.state.selection.from, selection, 'focusing from body retains the caret');
       editor.commands.showDocument();
     }
