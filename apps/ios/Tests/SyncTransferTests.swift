@@ -53,6 +53,27 @@ final class SyncTransferTests: XCTestCase {
 }
 
 final class SyncFileTransferTests: XCTestCase {
+    @MainActor func testFileCompletionKeepsGenerationCapturedBeforeNetworkWait() async throws {
+        let account = SyncAccount(server: "https://mock.local", email: "a@example.com", userId: "a", token: "token", key: Array(repeating: 17, count: 32))
+        var epoch = "before-restore"
+        var completionEpoch: String?
+        let files = SyncFileTransfers(command: { name, args in
+            switch name {
+            case "sync_status": return ["generation": epoch]
+            case "sync_pending_uploads": return ["image"]
+            case "sync_missing_files": return [[String: String]]()
+            case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]
+            case "sync_upload_done": completionEpoch = args["generation"] as? String; return NSNull()
+            default: XCTFail("Unexpected command: \(name)"); return NSNull()
+            }
+        }, object: { _, _, _ in
+            epoch = "after-restore"
+            return Data()
+        }, isCurrent: { _ in true }, onFile: { _, _ in }, onError: { XCTFail("Unexpected error: \($0)") })
+        try await files.run(account: account, owner: UUID())
+        XCTAssertEqual(completionEpoch, "before-restore", "Core must see the original generation and reject a stale completion")
+    }
+
     @MainActor func testRemovedImagesLoseBackoffBeforeTheyBecomePendingAgain() async throws {
         let account = SyncAccount(server: "https://mock.local", email: "a@example.com", userId: "a", token: "token", key: Array(repeating: 17, count: 32))
         let ids = (0..<100).map { "image-\($0)" }
@@ -60,6 +81,7 @@ final class SyncFileTransferTests: XCTestCase {
         var attempts = 0
         let files = SyncFileTransfers(command: { name, _ in
             switch name {
+            case "sync_status": return ["generation": "test-epoch"]
             case "sync_pending_uploads": return pending
             case "sync_missing_files": return pending.map { ["fileId": $0, "moduleId": "note"] }
             case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]

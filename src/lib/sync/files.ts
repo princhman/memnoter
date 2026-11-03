@@ -17,6 +17,7 @@ const KICK_DELAY_MS = 1_000;
 const fileDoc = (fileId: string) => `file:${fileId}`;
 
 export type FileSyncOptions = {
+  generation: string;
   server: string;
   token: string;
   key: CryptoKey;
@@ -24,7 +25,7 @@ export type FileSyncOptions = {
   onUnauthorized: () => void;
 };
 
-export function createFileSync({ server, token, key, onStored, onUnauthorized }: FileSyncOptions) {
+export function createFileSync({ generation, server, token, key, onStored, onUnauthorized }: FileSyncOptions) {
   let running = true;
   let busy = false;
   let again = false;
@@ -39,7 +40,7 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
     const contents = await invoke<{ bytes: number[] }>("read_file", { moduleId: "", fileId });
     const blob = await encryptBlob(key, fileDoc(fileId), new Uint8Array(contents.bytes));
     await putObject(server, token, "files", fileId, blob);
-    await invoke("sync_upload_done", { fileId });
+    await invoke("sync_upload_done", { fileId, generation });
   }
 
   async function download(file: MissingFile) {
@@ -50,6 +51,7 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
     }
     const bytes = await decryptBlob(key, fileDoc(file.fileId), blob);
     const stored = await invoke<FileType>("sync_store_file", {
+      generation,
       fileId: file.fileId,
       moduleId: file.moduleId,
       fileType: file.fileType,
@@ -75,12 +77,12 @@ export function createFileSync({ server, token, key, onStored, onUnauthorized }:
       }
     };
 
-    for (const fileId of await invoke<string[]>("sync_pending_uploads")) {
+    for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
       if (!running) return;
       await attempt(() => upload(fileId));
     }
     notYet.clear();
-    const missing = await invoke<MissingFile[]>("sync_missing_files");
+    const missing = await invoke<MissingFile[]>("sync_missing_files", { generation });
     missing.sort((a, b) => Number(wanted.has(b.fileId)) - Number(wanted.has(a.fileId)));
     for (const file of missing) {
       if (!running) return;

@@ -195,3 +195,18 @@ throwaway `AUTH_SECRET` in its `.dev.vars` before `xcodebuild test`
 Worker is reachable. It uses unique disposable accounts and data directories,
 and verifies concurrent independent Yjs edits against a Node-generated merged
 snapshot, plus outbox drain and note retention after sign-out.
+
+### Local database generation
+
+`sync_status` includes a persistent UUID `generation`. Each sign-in (`sync_enable`),
+account reset (`sync_disable`), and restored database rotates it, even when the
+backup belongs to the same account. A snapshot's generation is never reused.
+Clients capture this value when starting a connection/transfer pass and include
+it in every local background command: `sync_outbox`, `sync_ack`, `sync_set_cursor`,
+`sync_apply`, `sync_snapshot`, `sync_missing_files`, `sync_pending_uploads`,
+`sync_upload_done`, `sync_store_file`, and `sync_reconcile`.
+The core compares it while holding the database lock, before any side effect.
+A mismatch returns the distinct, non-fatal `SYNC_STALE_GENERATION` error and leaves
+data unchanged. Clients may discard this obsolete work and reconnect with fresh
+state. This is a local IPC contract only; WebSocket and HTTP server protocols
+are unchanged.

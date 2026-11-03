@@ -148,12 +148,15 @@ fn sync_dispatch_upgrades_existing_database_and_applies_to_fresh_device() {
     let upgraded = Core::open(&a.dir).unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(&dispatch(&upgraded, "sync_status", "{}").unwrap()).unwrap(),
-        json!({"account":null,"cursor":0,"pending":0})
+        json!({"account":null,"cursor":0,"pending":0,"generation":a.call("sync_status", json!({}))["generation"]})
     );
     a.call("sync_enable", json!({"account":"account-json"}));
     a.call("rename_module", json!({"moduleId":id,"name":"After sync"}));
     a.call("add_update", json!({"moduleId":id,"bytes":[0,0]}));
-    let entries = a.call("sync_outbox", json!({"limitBytes":1000000}));
+    let entries = a.call(
+        "sync_outbox",
+        json!({"limitBytes":1000000,"generation":a.call("sync_status", json!({}))["generation"]}),
+    );
     let entries: Vec<_> = entries
         .as_array()
         .unwrap()
@@ -165,7 +168,7 @@ fn sync_dispatch_upgrades_existing_database_and_applies_to_fresh_device() {
     b.call("sync_enable", json!({"account":"account-json"}));
     b.call(
         "sync_apply",
-        json!({"entries":entries,"cursor":entries.len()}),
+        json!({"entries":entries,"cursor":entries.len(),"generation":b.call("sync_status", json!({}))["generation"]}),
     );
     assert_eq!(b.call("modules", json!({}))[0]["name"], "After sync");
     assert_eq!(
@@ -183,4 +186,54 @@ fn sync_dispatch_upgrades_existing_database_and_applies_to_fresh_device() {
             ["cursor"],
         entries.len()
     );
+}
+
+#[test]
+fn restore_rejects_old_ack_and_cursor_without_losing_seeded_uploads() {
+    let f = Fixture::new();
+    f.call("create_module", json!({"name":"Restored note"}));
+    let backup = f.call("backup_now", json!({})); // sync-off snapshot
+    f.call("sync_enable", json!({"account":"account"}));
+    let old = f.call("sync_status", json!({}))["generation"].clone();
+    f.call("restore_backup", json!({"id":backup["id"]}));
+    let before = f.call("sync_status", json!({}));
+    assert_ne!(before["generation"], old);
+    assert_eq!(before["cursor"], 0);
+    assert_eq!(before["pending"], 1);
+    for (command, args) in [
+        ("sync_ack", json!({"maxId":11,"generation":old})),
+        ("sync_set_cursor", json!({"cursor":100,"generation":old})),
+        (
+            "sync_apply",
+            json!({"entries":[],"cursor":100,"generation":old}),
+        ),
+        (
+            "sync_upload_done",
+            json!({"fileId":"image","generation":old}),
+        ),
+        (
+            "sync_store_file",
+            json!({"fileId":"invalid","moduleId":"note","fileType":"png","bytes":[1],"generation":old}),
+        ),
+        ("sync_reconcile", json!({"generation":old})),
+    ] {
+        assert_eq!(
+            dispatch(&f.core, command, &args.to_string()),
+            Err("SYNC_STALE_GENERATION".into())
+        );
+    }
+    assert_eq!(f.call("sync_status", json!({})), before);
+    let current = before["generation"].clone();
+    f.call(
+        "sync_set_cursor",
+        json!({"cursor":100,"generation":current}),
+    );
+    f.call("sync_ack", json!({"maxId":11,"generation":current}));
+    assert_eq!(f.call("sync_status", json!({}))["pending"], 0);
+    assert_eq!(f.call("sync_status", json!({}))["cursor"], 100);
+    f.call("sync_enable", json!({"account":"account"}));
+    assert_ne!(f.call("sync_status", json!({}))["generation"], current);
+    let signed_in = f.call("sync_status", json!({}))["generation"].clone();
+    f.call("sync_disable", json!({}));
+    assert_ne!(f.call("sync_status", json!({}))["generation"], signed_in);
 }

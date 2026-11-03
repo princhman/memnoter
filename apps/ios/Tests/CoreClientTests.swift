@@ -124,8 +124,10 @@ final class NativeSyncEndToEndTests: XCTestCase {
         _ = try await sb.command("add_update", ["moduleId": module, "bytes": ub])
         sa.resume(); sb.resume()
         try await eventually {
-            let xa = try await sa.command("sync_snapshot", ["doc": module]) as? [UInt8]
-            let xb = try await sb.command("sync_snapshot", ["doc": module]) as? [UInt8]
+            let ga = try await sa.command("sync_status") as? [String: Any] ?? [:]
+            let gb = try await sb.command("sync_status") as? [String: Any] ?? [:]
+            let xa = try await sa.command("sync_snapshot", ["doc": module, "generation": ga["generation"] ?? ""]) as? [UInt8]
+            let xb = try await sb.command("sync_snapshot", ["doc": module, "generation": gb["generation"] ?? ""]) as? [UInt8]
             let expected: [UInt8] = [2,1,2,0,4,1,4,116,101,120,116,4,98,101,116,97,1,1,0,4,1,4,116,101,120,116,5,97,108,112,104,97,0]
             return xa == expected && xb == expected && sa.pending == 0 && sb.pending == 0
         }

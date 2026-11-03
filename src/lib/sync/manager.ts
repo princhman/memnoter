@@ -49,7 +49,7 @@ export const syncStatusStore = createStore<SyncUiStatus>({
   lastSyncedAt: null,
 });
 
-type SyncStatusResponse = { account: string | null; cursor: number; pending: number };
+type SyncStatusResponse = { generation: string; account: string | null; cursor: number; pending: number };
 export type ApplyResult = {
   updates: { moduleId: string; update: ContentUpdate }[];
   modulesChanged: boolean;
@@ -138,33 +138,35 @@ export function onFileStored(moduleId: string, file: FileType) {
 
 
 
-const tauriStore: SyncStore = {
-  async cursor() {
-    return (await invoke<SyncStatusResponse>("sync_status")).cursor;
-  },
-  async outbox(limitBytes) {
-    const entries = await invoke<{ id: number; doc: string; bytes: number[] }[]>("sync_outbox", { limitBytes });
-    return entries.map((entry) => ({ ...entry, bytes: new Uint8Array(entry.bytes) }));
-  },
-  async ackOutbox(maxId) {
-    await invoke("sync_ack", { maxId });
-  },
-  async applyRemote(entries, cursor) {
-    writesAllowed();
-    const result = await invoke<ApplyResult>("sync_apply", {
-      entries: entries.map((entry) => ({ seq: entry.seq, doc: entry.doc, bytes: Array.from(entry.bytes) })),
-      cursor,
-    });
-    onRemote(result);
-  },
-  async setCursor(cursor) {
-    await invoke("sync_set_cursor", { cursor });
-  },
-  async snapshot(doc) {
-    const state = await invoke<number[] | null>("sync_snapshot", { doc });
-    return state ? new Uint8Array(state) : null;
-  },
-};
+function tauriStore(generation: string): SyncStore {
+  return {
+    async cursor() {
+      return (await invoke<SyncStatusResponse>("sync_status")).cursor;
+    },
+    async outbox(limitBytes) {
+      const entries = await invoke<{ id: number; doc: string; bytes: number[] }[]>("sync_outbox", { limitBytes, generation });
+      return entries.map((entry) => ({ ...entry, bytes: new Uint8Array(entry.bytes) }));
+    },
+    async ackOutbox(maxId) {
+      await invoke("sync_ack", { maxId, generation });
+    },
+    async applyRemote(entries, cursor) {
+      writesAllowed();
+      const result = await invoke<ApplyResult>("sync_apply", {
+        entries: entries.map((entry) => ({ seq: entry.seq, doc: entry.doc, bytes: Array.from(entry.bytes) })),
+        cursor, generation,
+      });
+      onRemote(result);
+    },
+    async setCursor(cursor) {
+      await invoke("sync_set_cursor", { cursor, generation });
+    },
+    async snapshot(doc) {
+      const state = await invoke<number[] | null>("sync_snapshot", { doc, generation });
+      return state ? new Uint8Array(state) : null;
+    },
+  };
+}
 
 function blobStore(account: SyncAccount): BlobStore {
   return {
@@ -234,6 +236,7 @@ async function readAccount(): Promise<SyncAccount | null> {
 
 async function run(account: SyncAccount) {
   stopEngine();
+  const { generation } = await invoke<SyncStatusResponse>("sync_status");
   const key = await importKey(account.key);
   const unauthorized = () => {
     if (engine !== current) return;
@@ -241,7 +244,7 @@ async function run(account: SyncAccount) {
     syncStatusStore.setState((state) => ({ ...state, state: "error", error: "Sign in again to keep syncing." }));
   };
   const current = createSyncEngine({
-    store: tauriStore,
+    store: tauriStore(generation),
     key,
     connect: browserSocket(account, unauthorized),
     blobs: blobStore(account),
@@ -256,6 +259,7 @@ async function run(account: SyncAccount) {
   engine = current;
   activeAccount = account;
   const files = createFileSync({
+    generation,
     server: account.server,
     token: account.token,
     key,
@@ -267,7 +271,7 @@ async function run(account: SyncAccount) {
   syncStatusStore.setState((state) => ({ ...state, account: publicAccount(account), loaded: true }));
 
   // Finish deletions interrupted by a crash before applying anything new.
-  onRemote(await invoke<ApplyResult>("sync_reconcile"));
+  onRemote(await invoke<ApplyResult>("sync_reconcile", { generation }));
 
   const stopOutbox = await listen("sync-outbox", () => {
     current.nudge();
