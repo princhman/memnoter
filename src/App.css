@@ -244,6 +244,10 @@ body {
     animation: italic-caret-blink 1.06s step-end infinite;
 }
 
+.italic-caret.is-upright::after {
+    transform: none;
+}
+
 @keyframes italic-caret-blink {
     50% {
         opacity: 0;
@@ -405,9 +409,33 @@ body {
     text-underline-offset: 0.18em;
 }
 
-/* Selection */
-.tiptap ::selection {
+/* WebKit paints native selected newlines across entire blocks. All editor
+   content, including noneditable widgets and replaced images, uses our boxes. */
+.tiptap::selection,
+.tiptap *::selection {
+    background: transparent;
+    color: inherit;
+}
+
+/* Keep shaping stable when a selection endpoint introduces an inline span.
+   WebKit cannot kern or form ligatures across DOM element boundaries. */
+.tiptap {
+    font-kerning: none;
+    font-variant-ligatures: none;
+}
+
+.tiptap .text-range-selected {
     background: color-mix(in oklch, var(--primary) 80%, transparent);
+}
+
+.tiptap .ProseMirror-selectednode:has(.note-image-block),
+.tiptap .note-image-block.ProseMirror-selectednode {
+    outline: none;
+}
+
+.note-image-block[data-range-selected] .note-image {
+    outline: 2px solid color-mix(in srgb, var(--primary) 35%, transparent);
+    outline-offset: 1px;
 }
 
 /* Empty editor feel */
@@ -911,7 +939,7 @@ body {
     text-align: center;
 }
 
-.tiptap .math-block.ProseMirror-selectednode .math-block-widget {
+.tiptap .math-block:is(.ProseMirror-selectednode, .is-range-selected) .math-block-widget .katex-base {
     background: color-mix(in srgb, var(--primary) 25%, transparent);
 }
 
@@ -1442,14 +1470,19 @@ body {
   pointer-events: none;
 }
 
-.note-image-drag {
-  position: absolute;
-  left: -1.25rem;
-  top: 0;
-  cursor: grab;
-  opacity: 0;
-  color: var(--muted-foreground);
+/* Moving an image: press on it and drag (see image-pointer-move.ts). */
+[data-moving] { opacity: 0.4; }
+.is-moving-image, .is-moving-image * { cursor: grabbing !important; user-select: none; }
+.note-image-drop-indicator {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  border-radius: 1px;
+  background: var(--primary);
 }
-.note-image-block:hover > .note-image-drag,
-.note-image-block[data-selected="true"] > .note-image-drag { opacity: 1; }
-.note-image-drag:active { cursor: grabbing; }
+
+/* Preserve selection feedback over syntax backgrounds without replacing their
+   arrow image or cloze underline. */
+.tiptap .text-range-selected:is(.card-sep, .cloze-text) {
+    background-color: color-mix(in oklch, var(--primary) 80%, transparent);
+}
