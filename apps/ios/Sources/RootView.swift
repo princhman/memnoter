@@ -64,9 +64,19 @@ struct RootView: View {
                     ReviewView(client: client, directory: store.directory, moduleId: reviewModule)
                         .id(reviewModule ?? "all")
                 } else if module != nil, let session {
+                    if session.state.focusedSectionId != nil {
+                        HStack {
+                            Label(session.headings.first { $0.id == session.state.focusedSectionId }?.text ?? "Focused section", systemImage: "scope")
+                                .font(.subheadline).lineLimit(1)
+                            Spacer(minLength: 8)
+                            Button("Show whole note") { session.exec("showDocument") }
+                                .fixedSize()
+                        }.padding(.horizontal).padding(.vertical, 8).background(.bar)
+                    }
                     if showingFind { TextField("Find in note", text: $find).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
                     WebSurface(session: session)
-                    HStack {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                      HStack {
                         ForEach([("bold", "B"), ("italic", "I"), ("underline", "U"), ("heading", "H1"), ("bulletList", "List"), ("makeCard", "Card")], id: \.0) { command, title in
                             Button(title) { session.exec(command, command == "heading" ? ["level": 1] : [:]) }
                                 .tint(session.state.marks.contains(command) ? .accentColor : .secondary)
@@ -75,10 +85,15 @@ struct RootView: View {
                             ForEach(1...3, id: \.self) { level in Button("Heading \(level)") { session.exec("heading", ["level": level]) } }
                             ForEach(["paragraph", "orderedList", "blockquote", "code", "strike", "inlineMath", "mathBlock"], id: \.self) { command in Button(command) { session.exec(command) } }
                         } label: { Image(systemName: "textformat") }.accessibilityLabel("More formatting")
+                        if let headingId = session.state.headingId {
+                            Button { session.exec("focusSection", ["id": headingId]) } label: { Image(systemName: "scope") }
+                                .accessibilityLabel("Focus on section")
+                        }
                         Spacer()
                         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }.disabled(busy)
                         Text(session.saveStatus).font(.caption).foregroundStyle(.secondary)
-                    }.padding(10).background(.bar).disabled(!session.state.editable)
+                      }.padding(10)
+                    }.background(.bar).disabled(!session.state.editable)
                 } else {
                     ContentUnavailableView("Your knowledge, connected", systemImage: "note.text", description: Text("Create a module to start writing. Use Q :: A to make a flashcard."))
                 }
@@ -92,7 +107,7 @@ struct RootView: View {
                         Button { session.exec("redo") } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
                         Button { showingFind.toggle() } label: { Image(systemName: "magnifyingglass") }.keyboardShortcut("f")
                         Button { showOutline = true } label: { Image(systemName: "list.bullet.indent") }
-                        Button("Review") { reviewModule = selected; navigate("review") }
+                        Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }.labelStyle(.iconOnly)
                     }
                 }
                 ToolbarItem(placement: .automatic) { Button { showSearch = true } label: { Image(systemName: "doc.text.magnifyingglass") }.keyboardShortcut("k") }
@@ -131,8 +146,15 @@ struct RootView: View {
                     HStack {
                         Button(heading.text) { session?.exec("scrollToHeading", ["id": heading.id]); showOutline = false }.padding(.leading, CGFloat(heading.level - 1) * 16)
                         Spacer()
+                        if session?.state.focusedSectionId == heading.id {
+                            Image(systemName: "scope").foregroundStyle(.tint).accessibilityLabel("Focused section")
+                        }
+                        Button { focusSection(heading) } label: { Image(systemName: "viewfinder") }
+                            .accessibilityLabel("Focus on section: \(heading.text)")
                         Button { session?.exec(heading.folded ? "unfold" : "fold", ["id": heading.id]) } label: { Image(systemName: heading.folded ? "chevron.right" : "chevron.down") }
                     }
+                    .buttonStyle(.borderless)
+                    .contextMenu { Button("Focus on section", systemImage: "scope") { focusSection(heading) } }
                 }.navigationTitle("Outline").toolbar { Button("Done") { showOutline = false } }
             }
         }
@@ -157,6 +179,10 @@ struct RootView: View {
                 Task { defer { UIApplication.shared.endBackgroundTask(task) }; do { try await session?.flush() } catch { store.error = String(describing: error) } }
             } else { Task { await store.refresh() } }
         }
+    }
+    func focusSection(_ heading: Heading) {
+        session?.exec("focusSection", ["id": heading.id])
+        showOutline = false
     }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {
         Button("Rename") { rename = module; name = module.name; editingName = true }

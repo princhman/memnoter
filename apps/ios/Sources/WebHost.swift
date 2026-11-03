@@ -49,6 +49,7 @@ import ImageIO
 }
 struct Heading: Decodable, Identifiable { let id: String; let level: Int; let text: String; let folded: Bool }
 struct EditorState: Decodable {
+    var focusedSectionId: String?; var headingId: String?
     var marks: [String] = []; var canUndo = false; var canRedo = false; var editable = false
 }
 @MainActor @Observable final class WebSession: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
