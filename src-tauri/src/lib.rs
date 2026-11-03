@@ -941,7 +941,16 @@ pub fn run() {
             let db = init_db(app).expect("Failed to init db.");
             app.manage(db);
             app.manage(ExitGate::default());
-            backups::spawn_daily_backup(app.handle());
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+                    let db = app_handle.state::<Db>();
+                    let conn = db.lock()?;
+                    memnoter_core::backups::backup_if_due(&conn, &dir, Utc::now())
+                })();
+                if let Err(error) = result { eprintln!("Daily backup failed: {error}"); }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
