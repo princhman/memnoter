@@ -2,6 +2,7 @@ import { headingNumberingKey } from "@/lib/heading-numbering";
 import type { Module } from "@/lib/types";
 import { imageFilesOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
 // src/Tiptap.tsx
+import { NodeSelection } from "@tiptap/pm/state";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Y from "yjs";
@@ -261,12 +262,18 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
             caret.right <= left + container.clientWidth
           );
         },
-        attributes: {
+        // Apply before NodeView focus calls; only text carets request a keyboard.
+        attributes: ({ selection }) => ({
+          ...(hostOnly ? {
+            "data-native-editor": "true",
+            ...(selection instanceof NodeSelection && selection.node.isAtom && !selection.node.isText
+              ? { inputmode: "none" } : {}),
+          } : {}),
           class: "tiptap",
           autocapitalize: "off",
           // macOS WebKit also applies capitalisation through text correction.
           autocorrect: "off",
-        },
+        }),
       },
       // ai-suggested change to prevent double enter lag
       onTransaction: ({ editor, transaction }) => {

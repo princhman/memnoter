@@ -9,6 +9,13 @@ without the desktop router, sidebar, toolbar or TOC rail. Image editing and
 occlusion controls, slash suggestions, math editing and card rendering remain
 inside the shared editor. Native owns navigation and formatting controls.
 
+In the native editor, atom-node selections (including images) set
+`inputmode="none"` on the ProseMirror contenteditable. Text selections remove
+it; real inputs in image controls keep their own keyboard behavior. Image
+pointer presses select before tracking the move, and native image selection
+and drop do not explicitly focus the editor. Desktop focus behavior is retained.
+Math source remains text-editable and uses the ordinary text keyboard.
+
 ## Host setup and transport
 
 Before loading the page, register a `WKScriptMessageHandler` named `memnoter`

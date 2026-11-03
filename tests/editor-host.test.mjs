@@ -27,6 +27,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
         else if (command === 'get_content') result = { state: [], updates: [], files: [] };
         else if (command === 'add_update') result = { id: window.messages.length, bytes: args.bytes };
         else if (['sync_cards', 'card_schedules'].includes(command)) result = [];
+        else if (command === 'resolve_card_image') result = 'files/keyboard-regression';
         else if (command === 'index_note') result = null;
         else throw Error(`Unexpected command: ${command}`);
         queueMicrotask(() => window.__memnoterBridge.resolve(id, result));
@@ -224,6 +225,18 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.keyboard.type('Sibling section');
     assert.equal((await state()).headingLevel, 2);
     assert.equal(await page.locator('.tiptap').evaluate(node => node === document.activeElement), true);
+    // Image selection is an editing action, but must not request text input.
+    // Use the public host command and NodeView click, then return to a caret.
+    await exec('showDocument');
+    assert.equal(await exec('insertImage', { fileId: 'keyboard-regression' }), true);
+    await page.locator('.note-image-host').dispatchEvent('click');
+    assert.equal(await page.locator('.tiptap').getAttribute('inputmode'), 'none');
+    await page.getByRole('button', { name: 'Alt text and title', exact: true }).click();
+    await page.getByPlaceholder('Describe the image').click();
+    assert.equal(await page.getByPlaceholder('Describe the image').evaluate(node => node === document.activeElement), true);
+    assert.equal(await page.getByPlaceholder('Describe the image').getAttribute('inputmode'), null);
+    await page.locator('.tiptap h2').filter({ hasText: 'Sibling section' }).click();
+    assert.equal(await page.locator('.tiptap').getAttribute('inputmode'), null);
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true });

@@ -314,7 +314,7 @@ function SavedImageView(props: NodeViewProps) {
     const position = latest.current.getPos();
     if (position !== undefined && position >= 0 && position < editor.state.doc.content.size) {
       editor.commands.setNodeSelection(position);
-      editor.view.focus();
+      if (!editor.view.dom.hasAttribute("data-native-editor")) editor.view.focus();
     }
   };
   // Pressing and dragging the image moves it; a press without moving is a click.
@@ -322,6 +322,9 @@ function SavedImageView(props: NodeViewProps) {
     if (!editor.isEditable || event.button !== 0 || (event.target as Element).closest("[data-resize-handle]")) return;
     // No text selection or native image drag while the pointer moves.
     event.preventDefault();
+    // Select before tracking a touch drag so the native host suppresses its
+    // keyboard even when the preceding selection was a text caret.
+    if (editor.view.dom.hasAttribute("data-native-editor")) selectImage();
     cancelMove.current?.();
     cancelMove.current = startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent);
   };
