@@ -1,5 +1,4 @@
-import { revealCaret, sectionToTop } from "./scroll";
-import { stopScrollRestore } from "../lib/view-persistence";
+import { scheduleCaret, sectionToTop } from "./scroll.ts";
 import { suppressesTextInput } from "../lib/editor-input.ts";
 import type { Editor } from "@tiptap/core";
 import { getFocusedSectionPath, sectionFocusKey } from "../lib/section-focus.ts";
@@ -102,7 +101,7 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
       if (!heading) return false;
       const result = commands.showSection(heading.pos);
       sectionToTop(editor, heading.pos);
-      requestAnimationFrame(() => revealCaret(editor.view));
+      scheduleCaret(editor);
       return result;
     }
     case "showDocument": {
@@ -111,10 +110,10 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
       const heading = dom instanceof HTMLElement ? dom : null;
       const container = heading?.closest<HTMLElement>(".app-scroll-container");
       const before = heading?.getBoundingClientRect().top ?? 0;
-      stopScrollRestore();
+      container?.dispatchEvent(new Event("memnoter:reveal"));
       const result = commands.showDocument();
       if (heading && container) container.scrollTop += heading.getBoundingClientRect().top - before;
-      requestAnimationFrame(() => revealCaret(editor.view));
+      scheduleCaret(editor);
       return result;
     }
     case "insertImage":
@@ -131,14 +130,14 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
         // Move the caret with focus so WebKit never tries to reveal hidden text.
         const result = editor.chain().setTextSelection(heading.pos + 1).showSection(heading.pos).run();
         sectionToTop(editor, heading.pos);
-        requestAnimationFrame(() => revealCaret(editor.view));
+        scheduleCaret(editor);
         return result;
       }
       if (command === "scrollToHeading") {
         commands.showDocument();
         commands.setTextSelection(heading.pos + 1);
         sectionToTop(editor, heading.pos);
-        requestAnimationFrame(() => revealCaret(editor.view));
+        scheduleCaret(editor);
         return true;
       }
       return heading.folded === (command === "fold") || commands.toggleFold(heading.pos);

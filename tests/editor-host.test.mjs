@@ -172,6 +172,32 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     });
     assert.ok(persisted?.viewByModule.one.focusedSection > 0);
     assert.ok(persisted.viewByModule.one.anchor > 0);
+    // Native restores focus from preferences before opening content. Old saved
+    // scroll offsets must not defeat heading alignment or the caret reveal.
+    const updates = await page.evaluate(() => window.messages.filter(m => m.kind === 'call' && m.command === 'add_update' && m.args.moduleId === 'one').map((m, i) => ({ id: i + 1, bytes: m.args.bytes })));
+    const restored = await context.newPage();
+    await restored.addInitScript(({ persisted, updates }) => {
+      window.__memnoterViewState = persisted;
+      persisted.viewByModule.one.scrollTop = 500;
+      delete persisted.viewByModule.one.scrollAnchor;
+      const original = window.webkit.messageHandlers.memnoter.postMessage;
+      window.webkit.messageHandlers.memnoter.postMessage = message => {
+        if (message.kind === 'call' && message.command === 'get_content') {
+          window.messages.push(message);
+          queueMicrotask(() => window.__memnoterBridge.resolve(message.id, { state: [], updates, files: [] }));
+        } else original(message);
+      };
+    }, { persisted, updates });
+    await restored.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+    await restored.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+    await restored.evaluate(() => window.memnoterEditor.open('one'));
+    await restored.waitForFunction(() => {
+      const heading = document.querySelector('.section-focus-start');
+      const container = document.querySelector('.app-scroll-container');
+      return heading && Math.abs(heading.getBoundingClientRect().top - container.getBoundingClientRect().top) < 1;
+    });
+    await restored.close();
+    await page.bringToFront();
     const result = await page.evaluate(async () => {
       await window.memnoterEditor.open('two');
       return {
@@ -222,6 +248,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.keyboard.press('Enter');
     await page.keyboard.type('Answer');
     for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowLeft');
+    await page.waitForFunction(() => window.messages.filter(m => m.event === 'state').at(-1).payload.canMakeCard);
     assert.equal((await state()).canMakeCard, true);
     assert.equal(await exec('makeCard'), true);
     assert.equal((await state()).inCloze, true);

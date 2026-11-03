@@ -70,7 +70,7 @@ struct EditorState: Decodable {
     private func reportBottomInset() {
         Task {
             do {
-                _ = try await run("window.memnoterEditor.setBottomInset(inset * window.innerHeight / height)",
+                _ = try await run("window.memnoterEditor?.setBottomInset(inset * window.innerHeight / height)",
                                   ["inset": bottomInset, "height": max(1, web.bounds.height)])
             } catch { self.error = String(describing: error) }
         }

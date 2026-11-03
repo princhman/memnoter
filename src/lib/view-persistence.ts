@@ -19,7 +19,7 @@ const SCROLL_CONTAINER = ".app-scroll-container";
 const ANCHOR_HOLD_MS = 3_000;
 const SAVE_DELAY_MS = 150;
 
-const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"];
+const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown", "memnoter:reveal"];
 
 type ScrollAnchor = NonNullable<ModuleView["scrollAnchor"]>;
 
