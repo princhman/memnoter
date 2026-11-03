@@ -114,6 +114,13 @@ struct RootView: View {
             .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(module?.name ?? (selected == "review" ? "Review" : "Home"))
+                        .lineLimit(1).truncationMode(.tail)
+                        .accessibilityIdentifier("module.title")
+                }
+            }
+            .toolbar {
                 if columnVisibility == .detailOnly {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
@@ -133,17 +140,17 @@ struct RootView: View {
                             SectionFocusControl(session: session, moduleName: module?.name ?? "", compact: detailWidth < 600)
                         }
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        if !session.saveStatus.isEmpty {
-                            Label(session.saveStatus, systemImage: session.saveStatus == "Save failed" ? "exclamationmark.icloud" : "icloud.and.arrow.up")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }.disabled(busy).accessibilityLabel("Insert photo")
-                        Button { showingFind = true; findFocused = true } label: { Image(systemName: "magnifyingglass") }.accessibilityLabel("Find in note").keyboardShortcut("f")
-                        Button { showOutline = true } label: { Image(systemName: "list.bullet.indent") }
-                        Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }.labelStyle(.iconOnly)
+
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu {
+                            PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
+                            Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }.keyboardShortcut("f")
+                            Button { showOutline = true } label: { Label("Outline", systemImage: "list.bullet.indent") }
+                            Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }
+                            if !session.saveStatus.isEmpty { Text(session.saveStatus) }
+                        } label: { Image(systemName: "ellipsis") }
+                        .accessibilityLabel("Note actions")
+                        .accessibilityValue(session.saveStatus)
                     }
                 }
             }
