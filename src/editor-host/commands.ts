@@ -1,3 +1,5 @@
+import { revealCaret, sectionToTop } from "./scroll";
+import { stopScrollRestore } from "../lib/view-persistence";
 import { suppressesTextInput } from "../lib/editor-input.ts";
 import type { Editor } from "@tiptap/core";
 import { getFocusedSectionPath, sectionFocusKey } from "../lib/section-focus.ts";
@@ -97,7 +99,11 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "unfoldCurrentSection": return commands.unfoldCurrentSection();
     case "focusCurrentSection": {
       const { heading } = currentSection(editor.state);
-      return heading !== null && commands.showSection(heading.pos);
+      if (!heading) return false;
+      const result = commands.showSection(heading.pos);
+      sectionToTop(editor, heading.pos);
+      requestAnimationFrame(() => revealCaret(editor.view));
+      return result;
     }
     case "showDocument": {
       const pos = sectionFocusKey.getState(editor.state);
@@ -105,8 +111,10 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
       const heading = dom instanceof HTMLElement ? dom : null;
       const container = heading?.closest<HTMLElement>(".app-scroll-container");
       const before = heading?.getBoundingClientRect().top ?? 0;
+      stopScrollRestore();
       const result = commands.showDocument();
       if (heading && container) container.scrollTop += heading.getBoundingClientRect().top - before;
+      requestAnimationFrame(() => revealCaret(editor.view));
       return result;
     }
     case "insertImage":
@@ -122,15 +130,15 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
         // Outline/breadcrumb actions can target a section outside the selection.
         // Move the caret with focus so WebKit never tries to reveal hidden text.
         const result = editor.chain().setTextSelection(heading.pos + 1).showSection(heading.pos).run();
-        const dom = editor.view.nodeDOM(heading.pos);
-        if (dom instanceof HTMLElement) dom.scrollIntoView({ block: "start" });
+        sectionToTop(editor, heading.pos);
+        requestAnimationFrame(() => revealCaret(editor.view));
         return result;
       }
       if (command === "scrollToHeading") {
         commands.showDocument();
         commands.setTextSelection(heading.pos + 1);
-        const dom = editor.view.nodeDOM(heading.pos);
-        if (dom instanceof HTMLElement) dom.scrollIntoView({ block: "start" });
+        sectionToTop(editor, heading.pos);
+        requestAnimationFrame(() => revealCaret(editor.view));
         return true;
       }
       return heading.folded === (command === "fold") || commands.toggleFold(heading.pos);

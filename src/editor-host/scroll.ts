@@ -1,3 +1,4 @@
+import type { Editor } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { suppressesTextInput } from "../lib/editor-input";
 import { stopScrollRestore } from "../lib/view-persistence";
@@ -16,4 +17,12 @@ export function revealCaret(view: EditorView) {
   stopScrollRestore();
   container.scrollTo({ top: container.scrollTop + delta,
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+}
+
+export function sectionToTop(editor: Editor, pos: number) {
+  const heading = editor.view.nodeDOM(pos);
+  const container = editor.view.dom.closest<HTMLElement>(".app-scroll-container");
+  if (!(heading instanceof HTMLElement) || !container) return;
+  stopScrollRestore();
+  container.scrollTop += heading.getBoundingClientRect().top - container.getBoundingClientRect().top - container.clientTop;
 }

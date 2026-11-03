@@ -39,3 +39,6 @@ html, body, #root, .app-scroll-container, .tiptap-shell, .tiptap {
 .tiptap.ProseMirror {
   padding-bottom: 0;
 }
+.tiptap.section-focused {
+  min-height: 100vh;
+}

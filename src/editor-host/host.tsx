@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { revealCaret } from "./scroll";
+import { sectionFocusKey } from "@/lib/section-focus";
+import { revealCaret, sectionToTop } from "./scroll";
 import Tiptap from "@/components/Tiptap";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
@@ -119,6 +120,11 @@ export function Host() {
       }
     };
     publish();
+    const focused = sectionFocusKey.getState(editor.state);
+    if (focused != null) {
+      sectionToTop(editor, focused);
+      requestAnimationFrame(() => revealCaret(editor.view));
+    }
     if (opening.current?.moduleId === id) {
       opening.current.resolve();
       opening.current = null;

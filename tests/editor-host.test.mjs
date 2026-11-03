@@ -127,6 +127,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.deepEqual(focus.path.map(c => [c.title, c.level]), [["Second", 1], ["Child", 2]]);
     assert.equal(focus.path.at(-1).id, focus.id);
     assert.equal(focus.cleared, null);
+    assert.ok(Math.abs(focus.top) < 1, `Focused heading top: ${focus.top}`);
     assert.ok(Math.abs(focus.delta) < 1);
     // Empty headings have no TOC ID. They still belong in the native focus
     // path, whose IDs must decode as strings and be usable by focusSection.
@@ -156,6 +157,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       return { result, emitted: states.length > before, state: states.at(-1).payload,
         top: document.querySelector('.section-focus-start').getBoundingClientRect().top - document.querySelector('.app-scroll-container').getBoundingClientRect().top };
     });
+    assert.ok(Math.abs(currentFocus.top) < 1, `Current section top: ${currentFocus.top}`);
     assert.equal(currentFocus.result, true);
     assert.equal(currentFocus.emitted, true);
     assert.equal(currentFocus.state.focusedSectionId, emptyAncestor.focusedSectionId);
