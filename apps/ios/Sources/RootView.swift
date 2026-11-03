@@ -90,10 +90,7 @@ struct RootView: View {
                             GeometryReader { geometry in
                             if keyboardDocked {
                                 let keyboardInset = max(0, geometry.frame(in: .global).maxY - keyboardTop)
-                                FormattingBar(session: session, panelHeight: max(0, geometry.size.height - keyboardInset - 100), panelWidth: min(352, max(0, geometry.size.width - 32)))
-                                    .background(.regularMaterial, in: Capsule())
-                                    .overlay { Capsule().strokeBorder(.primary.opacity(0.08)) }
-                                    .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+                                FormattingBar(session: session, maximumWidth: max(0, geometry.size.width - 32))
                                     .padding(16)
                                     .padding(.bottom, keyboardInset)
                                     .disabled(!session.state.editable)
