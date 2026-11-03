@@ -5,8 +5,16 @@ on:
     tags:
       - "v*"
 
+  workflow_dispatch:
+    inputs:
+      testflight_only:
+        description: Upload to TestFlight without rebuilding desktop (select a v* tag)
+        type: boolean
+        default: false
+
 jobs:
   build:
+    if: ${{ !inputs.testflight_only }}
     permissions:
       contents: write
     strategy:
@@ -69,3 +77,129 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  ios-testflight:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    # Serialize uploads so minute-based build numbers increase, including reruns.
+    concurrency:
+      group: ios-testflight
+      cancel-in-progress: false
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate credentials and release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY_P8_BASE64; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing required GitHub Actions secret: $name"
+              exit 1
+            fi
+          done
+          if [[ "$RELEASE_REF_TYPE" != tag || ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Select a version tag (for example v0.1.2), not a branch."
+            exit 1
+          fi
+          version="${RELEASE_TAG#v}"
+          package_version=$(node -p "require('./package.json').version")
+          if [[ "$version" != "$package_version" ]]; then
+            echo "::error::Tag version $version does not match package.json ($package_version)."
+            exit 1
+          fi
+          build_number=$(date -u +%Y%m%d%H%M)
+          if [[ "$build_number" -le 202611031741 ]]; then
+            echo "::error::Build number must exceed the last local upload (202611031741). Check the runner clock."
+            exit 1
+          fi
+          echo "MARKETING_VERSION=$version" >> "$GITHUB_ENV"
+          echo "CURRENT_PROJECT_VERSION=$build_number" >> "$GITHUB_ENV"
+
+      # Swift 6 and iOS 17 deployment support; don't depend on runner defaults.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # build-ios-core.sh builds both slices of the XCFramework.
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: swatinem/rust-cache@v2
+      - run: brew install xcodegen
+      - run: pnpm install --frozen-lockfile
+      - run: ./scripts/build-ios-core.sh
+      - run: ./scripts/build-ios-web.sh
+      - run: xcodegen generate
+        working-directory: apps/ios
+
+      - name: Prepare App Store Connect API key
+        run: |
+          umask 077
+          printf '%s' "$ASC_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          if [[ ! -s "$RUNNER_TEMP/AuthKey.p8" ]]; then
+            echo "::error::ASC_API_KEY_P8_BASE64 decoded to an empty file."
+            exit 1
+          fi
+
+      - name: Archive iPad app
+        run: |
+          xcodebuild archive \
+            -project apps/ios/Memnoter.xcodeproj \
+            -scheme Memnoter -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Memnoter.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM=BVQCX5TLX3 CODE_SIGN_STYLE=Automatic \
+            MARKETING_VERSION="$MARKETING_VERSION" \
+            CURRENT_PROJECT_VERSION="$CURRENT_PROJECT_VERSION"
+
+      - name: Upload archive dSYMs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-dSYMs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/Memnoter.xcarchive/dSYMs
+          if-no-files-found: warn
+
+      - name: Export and upload to TestFlight
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>BVQCX5TLX3</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Memnoter.xcarchive" \
+            -exportPath "$RUNNER_TEMP/Memnoter-export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Delete App Store Connect API key
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
