@@ -1,9 +1,11 @@
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  useEffect,
   useRef,
   useState,
 } from "react";
+import { isCoarsePointer } from "@/lib/platform";
 import { HeadingAction, type HeadingActionPosition } from "./heading-action";
 import type { Editor } from "@tiptap/core";
 import { sectionFocusKey } from "@/lib/section-focus";
@@ -19,8 +21,49 @@ export const HeadingActionOverlay = ({
 }) => {
   const shellRef = useRef<HTMLElement>(null);
   const hoveredHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  // A mouse or trackpad is over the shell, so hover decides the heading.
+  const mouseInsideRef = useRef(false);
   const [headingActionPosition, setHeadingActionPosition] =
     useState<HeadingActionPosition | null>(null);
+
+  // A finger can't hover, so on touch screens the action follows the heading
+  // that holds the caret: tap a heading to get its button.
+  useEffect(() => {
+    if (!editor || !isCoarsePointer()) return;
+    const follow = () => {
+      if (!mouseInsideRef.current) showCaretHeading();
+    };
+    follow();
+    editor.on("transaction", follow);
+    return () => {
+      editor.off("transaction", follow);
+    };
+  }, [editor]);
+
+  function getCaretHeading(): HTMLHeadingElement | null {
+    if (!editor || editor.isDestroyed) return null;
+    const { $from } = editor.state.selection;
+    for (let depth = $from.depth; depth > 0; depth -= 1) {
+      if ($from.node(depth).type.name !== "heading") continue;
+      let dom: Node | null = null;
+      try {
+        dom = editor.view.nodeDOM($from.before(depth));
+      } catch {
+        // The view isn't mounted yet.
+      }
+      return dom instanceof HTMLElement
+        ? dom.closest<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6")
+        : null;
+    }
+    return null;
+  }
+
+  function showCaretHeading() {
+    const heading = getCaretHeading();
+    hoveredHeadingRef.current = heading;
+    if (heading) positionHeadingAction(heading);
+    else setHeadingActionPosition(null);
+  }
 
   function getHoveredHeadingPosition(): number | null {
     const heading = hoveredHeadingRef.current;
@@ -54,6 +97,8 @@ export const HeadingActionOverlay = ({
   }
 
   function handlePointerOver(event: ReactPointerEvent<HTMLElement>) {
+    if (event.pointerType === "touch") return;
+    mouseInsideRef.current = true;
     const target = event.target;
 
     if (!(target instanceof Element)) return;
@@ -74,22 +119,31 @@ export const HeadingActionOverlay = ({
     positionHeadingAction(heading);
   }
 
-  function positionHeadingAction(heading: HTMLElement) {
+  // `refresh` re-renders even when the button stays put, e.g. to swap its icon.
+  function positionHeadingAction(heading: HTMLElement, refresh = false) {
     const shell = shellRef.current;
     if (!shell) return;
 
     const shellRect = shell.getBoundingClientRect();
     const headingRect = heading.getBoundingClientRect();
-    setHeadingActionPosition({
-      left: headingRect.right - shellRect.left - HEADING_ACTION_SIZE,
-      top:
-        headingRect.top -
-        shellRect.top +
-        (headingRect.height - HEADING_ACTION_SIZE) / 2,
-    });
+    const left = headingRect.right - shellRect.left - HEADING_ACTION_SIZE;
+    const top =
+      headingRect.top - shellRect.top + (headingRect.height - HEADING_ACTION_SIZE) / 2;
+    // Touch screens reposition on every transaction; skip renders that move nothing.
+    setHeadingActionPosition((current) =>
+      !refresh && current?.left === left && current.top === top
+        ? current
+        : { left, top },
+    );
   }
 
-  function handlePointerLeave() {
+  function handlePointerLeave(event: ReactPointerEvent<HTMLElement>) {
+    if (event.pointerType === "touch") return;
+    mouseInsideRef.current = false;
+    if (isCoarsePointer()) {
+      showCaretHeading();
+      return;
+    }
     hoveredHeadingRef.current = null;
     setHeadingActionPosition(null);
   }
@@ -113,7 +167,7 @@ export const HeadingActionOverlay = ({
       heading.scrollIntoView({ block: "start" });
     }
     // The heading moved inside the shell, so move the button with it.
-    positionHeadingAction(heading);
+    positionHeadingAction(heading, true);
   }
 
   function isCurrentlyInFocus(): boolean {

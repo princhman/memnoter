@@ -92,7 +92,7 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
             render={
               <SidebarGroupAction
                 aria-label="New module"
-                className="invisible group-hover:visible"
+                className="invisible group-hover:visible pointer-coarse:visible"
               />
             }
           >
