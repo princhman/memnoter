@@ -27,7 +27,7 @@ const NUDGE = 0.005;
 // A drag on the image: drawing a new mask, or moving or resizing one.
 type Gesture =
   | { kind: "draw"; pointerId: number; id: string; points: Point[] }
-  | { kind: "edit"; pointerId: number; ids: string[]; start: Point; before: Mask[]; mode: "move" | Handle };
+  | { kind: "edit"; pointerId: number; ids: string[]; start: Point; before: Mask[]; mode: "move" | Handle; toggle?: { id: string; selection: string[] } };
 
 export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src: string; masks: Mask[]; onCancel: () => void; onSave: (masks: Mask[]) => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -96,7 +96,9 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
     frame.current!.setPointerCapture(e.pointerId);
     const ids = mode === "move" && selected.includes(id) ? selected : [id];
     setSelected(ids);
-    gesture.current = { kind: "edit", pointerId: e.pointerId, ids, start: point(e), before: masks, mode };
+    // Without Shift on a touch screen, a tap with the Select tool adds or drops the mask.
+    const toggle = mode === "move" && tool === "select" && e.pointerType !== "mouse" ? { id, selection: selected } : undefined;
+    gesture.current = { kind: "edit", pointerId: e.pointerId, ids, start: point(e), before: masks, mode, toggle };
   };
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
@@ -150,6 +152,10 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
     }
     // Only a mask that moved is an undo step; a click just selects it.
     if (masks.some((m, i) => m !== g.before[i])) commit(masks, g.before);
+    else if (g.toggle) {
+      const { id, selection } = g.toggle;
+      setSelected(selection.includes(id) ? selection.filter(other => other !== id) : [...selection, id]);
+    }
   };
 
   const onPointerCancel = () => {
@@ -187,7 +193,7 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
     onCancel={e => { e.preventDefault(); if (selected.length) setSelected([]); else onCancel(); }}
   >
     <h2 id="occlusion-title">Image occlusion</h2>
-    <p>Drag over the parts to hide. Each number is one card: Shift-click masks and join them to ask them together. Drag a mask to move it, or its handles to resize it.</p>
+    <p>Drag over the parts to hide. Each number is one card: Shift-click masks (or tap them with the Select tool) and join them to ask them together. Drag a mask to move it, or its handles to resize it.</p>
     <div className="occlusion-toolbar">
       <div className="flex items-center gap-0.5" role="toolbar" aria-label="Mask tools">
         {TOOLS.map(({ tool: t, label, key, Icon }) => (
