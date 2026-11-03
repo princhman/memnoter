@@ -30,6 +30,12 @@ export function editorState(editor: Editor) {
     headingLevel: editor.isActive("heading") ? Number(editor.getAttributes("heading").level) : null,
     bulletList: editor.isActive("bulletList"), orderedList: editor.isActive("orderedList"),
     blockquote: editor.isActive("blockquote"),
+    canIndent: editor.can().sinkListItem("listItem"),
+    canOutdent: editor.can().liftListItem("listItem"),
+    canMakeCard: editor.can().makeCloze(), inCloze: editor.can().removeCloze(),
+    canJoinClozes: editor.can().joinClozes(),
+    folded: editor.can().unfoldCurrentSection(),
+    canFold: editor.can().foldCurrentSection(),
     canUndo: editor.can().undo(), canRedo: editor.can().redo(),
     hasSelection: !editor.state.selection.empty, editable: editor.isEditable,
   };
@@ -46,8 +52,8 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "code": return commands.toggleCode();
     case "paragraph": return commands.setParagraph();
     case "heading":
-      if (args.level !== 1 && args.level !== 2 && args.level !== 3) throw new Error("heading requires level 1, 2 or 3");
-      return commands.setHeading({ level: args.level });
+      if (typeof args.level !== "number" || ![1, 2, 3, 4, 5, 6].includes(args.level)) throw new Error("heading requires level 1–6");
+      return commands.setHeading({ level: args.level as 1 | 2 | 3 | 4 | 5 | 6 });
     case "bulletList": return commands.toggleBulletList();
     case "orderedList": return commands.toggleOrderedList();
     case "blockquote": return commands.toggleBlockquote();
@@ -60,6 +66,18 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "undo": return commands.undo();
     case "redo": return commands.redo();
     case "makeCard": return commands.makeCloze();
+    case "removeCard": return commands.removeCloze();
+    case "joinClozes": return commands.joinClozes();
+    case "codeBlock": return commands.toggleCodeBlock();
+    case "insertSection":
+      if (args.kind !== "sibling" && args.kind !== "subsection") throw new Error("insertSection requires sibling or subsection");
+      return commands.insertSection(args.kind);
+    // These are the list keymap's Tab / Shift-Tab commands. Do not fall
+    // through to prose tab insertion when the selection is outside a list.
+    case "indent": return commands.sinkListItem("listItem");
+    case "outdent": return commands.liftListItem("listItem");
+    case "foldCurrentSection": return commands.foldCurrentSection();
+    case "unfoldCurrentSection": return commands.unfoldCurrentSection();
     case "showDocument": {
       const pos = sectionFocusKey.getState(editor.state);
       const dom = pos == null ? null : editor.view.nodeDOM(pos);

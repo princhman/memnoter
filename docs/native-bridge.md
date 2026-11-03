@@ -111,9 +111,14 @@ All arguments are objects. Omitted arguments mean `{}`.
 | Command | Arguments and effect |
 | --- | --- |
 | `bold`, `italic`, `underline`, `strike`, `code` | Toggle selected text mark or stored mark at caret. |
-| `heading` | `{"level":1}`; only 1, 2 or 3 accepted. Sets heading; shared hierarchy rules can normalize levels (the first heading becomes level 1). |
+| `heading` | `{"level":1}`; integer levels 1–6 accepted. Sets heading; shared hierarchy rules can normalize levels (the first heading becomes level 1). |
 | `paragraph` | Set paragraph. |
 | `bulletList`, `orderedList`, `blockquote` | Toggle wrapper. |
+| `codeBlock` | Toggle code block using the desktop slash-menu command. |
+| `insertSection` | `{"kind":"sibling"}` for New section or `{"kind":"subsection"}` for Subsection; same shared section insertion as desktop. |
+| `indent`, `outdent` | Sink/lift selected list items, matching desktop Tab/Shift-Tab list behavior; false outside an applicable list. |
+| `foldCurrentSection`, `unfoldCurrentSection` | Shared desktop fold/unfold commands at the current selection. |
+| `removeCard`, `joinClozes` | Shared `removeCloze` / `joinClozes` commands; expose only when the corresponding capability is true. |
 | `inlineMath` | Optional `{"tex":"x^2"}`; insert inline formula using the existing command. |
 | `mathBlock` | Toggle current line/selection/formula into or out of display math. |
 | `link` | `{"href":"https://example.com"}`; set selection link. `{"href":null}` or empty string removes it. Use an explicit URL scheme. |
@@ -142,7 +147,7 @@ Handle only `kind: "event"` as events; command replies are separate callbacks.
 | Event | Payload |
 | --- | --- |
 | `ready` | `{"protocolVersion":1}` |
-| `state` | `{moduleId, marks: string[], blockType: string, headingLevel: number|null, headingId: string|null, focusedSectionId: string|null, focusedSectionPath: {id: string, level: number, title: string}[], bulletList: boolean, orderedList: boolean, blockquote: boolean, canUndo: boolean, canRedo: boolean, hasSelection: boolean, editable: boolean}` |
+| `state` | `{moduleId, marks: string[], blockType: string, headingLevel: number|null, headingId: string|null, focusedSectionId: string|null, focusedSectionPath: {id: string, level: number, title: string}[], bulletList: boolean, orderedList: boolean, blockquote: boolean, canIndent: boolean, canOutdent: boolean, canMakeCard: boolean, inCloze: boolean, canJoinClozes: boolean, folded: boolean, canFold: boolean, canUndo: boolean, canRedo: boolean, hasSelection: boolean, editable: boolean}` |
 | `outline` | `{moduleId, headings: [{id: string, level: number, text: string, pos: number, folded: boolean}]}` |
 | `saveStatus` | `{pending: number, failing: boolean, lastError: string|null, imageErrors: string[]}` |
 | `error` | `{moduleId: string|null, message: string}` |
@@ -154,6 +159,12 @@ heading, inlineMath). `headingId` identifies the heading containing the caret, o
 `focusedSectionId` identifies the focused section heading, or null for the whole
 note. Both use current outline IDs and update after focus commands, restored
 view state, and document edits (including deletion of the focused heading).
+List and card capabilities use the same `editor.can()` commands as desktop.
+`inCloze` means Remove card is applicable; otherwise show Make card only when
+`canMakeCard`. Show Join clozes only when `canJoinClozes`. `folded` means the
+shared Unfold current section command is applicable (including a folded
+ancestor); otherwise use Fold current section when `canFold`. Commands preserve
+editor focus and selection without calling `focus()` or `blur()`.
 `state` follows editor transactions; `outline` is emitted
 initially and when its serialized headings change. Empty headings without a TOC
 ID are omitted until the shared extension assigns one. Outline text contains

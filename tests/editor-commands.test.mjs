@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import { HeadingFold } from '../src/lib/heading-fold.ts';
 import { Flashcards } from '../src/lib/flashcards.ts';
 import { execEditor, editorState } from '../src/editor-host/commands.ts';
 
 function createEditor() {
-  const editor = new Editor({ element: null, extensions: [StarterKit, Flashcards],
+  const editor = new Editor({ element: null, extensions: [StarterKit, Flashcards, HeadingFold],
     content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Selected text' }] }] } });
   editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
   editor.commands.setTextSelection({ from: 1, to: 9 });
@@ -48,7 +49,7 @@ test('invalid native commands cannot invoke arbitrary editor methods or mutate c
   const editor = createEditor();
   try {
     const before = editor.getJSON();
-    for (const [command, args] of [['destroy', {}], ['heading', { level: 6 }], ['link', {}], ['insertImage', {}], ['fold', { id: 'missing' }]]) {
+    for (const [command, args] of [['destroy', {}], ['heading', { level: 7 }], ['link', {}], ['insertImage', {}], ['fold', { id: 'missing' }]]) {
       assert.throws(() => execEditor(editor, command, args));
       assert.deepEqual(editor.getJSON(), before);
     }
