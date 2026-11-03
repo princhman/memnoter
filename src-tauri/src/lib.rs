@@ -1741,9 +1741,13 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.menu(menu::build).on_menu_event(menu::handle_event);
 
-    builder
+    // iOS apps update through the App Store and can't restart themselves.
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_process::init());
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let db = init_db(app).expect("Failed to init db.");

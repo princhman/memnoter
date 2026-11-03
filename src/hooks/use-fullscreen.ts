@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { IS_IOS } from "@/lib/platform";
 
+// iOS windows have no title bar or traffic lights, so they count as full screen.
 export function useIsFullscreen() {
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(IS_IOS);
 
   useEffect(() => {
+    if (IS_IOS) return;
     const appWindow = getCurrentWindow();
 
     const update = async () => {

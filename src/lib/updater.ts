@@ -1,5 +1,6 @@
 import { createStore } from "@tanstack/react-store";
 import { check } from "@tauri-apps/plugin-updater";
+import { IS_IOS } from "@/lib/platform";
 
 export type UpdateStatus =
   | { state: "idle" }
@@ -34,7 +35,7 @@ function showUpToDate() {
 export async function checkForUpdates({ manual = false } = {}) {
   const { state } = updateStore.state;
   if (state === "checking" || state === "downloading" || state === "ready") return;
-  if (import.meta.env.DEV && !manual) return;
+  if (IS_IOS || (import.meta.env.DEV && !manual)) return;
 
   updateStore.setState(() => ({ state: "checking" }));
   try {
