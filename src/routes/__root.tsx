@@ -85,12 +85,9 @@ const RootLayout = () => {
           <CreateModule global />
 
           <SidebarInset className="min-h-0 overflow-hidden">
-            <div
-              data-tauri-drag-region
-              className="absolute inset-x-0 top-0 z-50 h-4"
-            />
-
-            <header className="relative z-40 flex h-8 items-center bg-background">
+            {/* Tauri's deep region includes noninteractive breadcrumb wrappers,
+                while links, buttons, inputs and menu items block dragging. */}
+            <header data-tauri-drag-region="deep" className="relative z-40 flex h-8 shrink-0 items-center bg-background">
               <div className="flex min-w-0 items-center">
                 <FileBreadcrumb />
               </div>
@@ -105,8 +102,8 @@ const RootLayout = () => {
               <Outlet />
             </main>
           </SidebarInset>
-          <div ref={toolbar} className="absolute left-0 top-0.5 z-50 flex h-7 items-center">
-            {!isFullScrean && <div className="w-18" />}
+          <div ref={toolbar} data-tauri-drag-region="deep" className="absolute left-0 top-0 z-50 flex h-8 items-center">
+            {!isFullScrean && <div className="h-full w-18" />}
             <div className="flex items-center pl-2 gap-1.5">
               <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
                 <SidebarTrigger aria-label="Toggle sidebar" />
