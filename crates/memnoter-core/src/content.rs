@@ -1,7 +1,12 @@
 use crate::*;
 
 pub fn set_module_numbering(db: &Db, module_id: String, enabled: bool) -> CommandResult<()> {
-    db.lock()?.execute("update modules set heading_numbering = ?2 where id = ?1", params![module_id, enabled]).map_err(db_err)?;
+    db.lock()?
+        .execute(
+            "update modules set heading_numbering = ?2 where id = ?1",
+            params![module_id, enabled],
+        )
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -132,11 +137,7 @@ pub fn delete_module_data(
     Ok(())
 }
 
-pub fn delete_module(
-    data_dir: &Path,
-    db: &Db,
-    module_id: String,
-) -> CommandResult<()> {
+pub fn delete_module(data_dir: &Path, db: &Db, module_id: String) -> CommandResult<()> {
     let files_dir = data_dir.join("files");
     let mut conn = db.lock()?;
     delete_module_data(&mut conn, &files_dir, &module_id)
@@ -194,11 +195,7 @@ pub fn read_content(conn: &Connection, module_id: &str) -> CommandResult<GetCont
     })
 }
 
-pub fn add_update(
-    db: &Db,
-    module_id: String,
-    bytes: Vec<u8>,
-) -> CommandResult<ContentUpdate> {
+pub fn add_update(db: &Db, module_id: String, bytes: Vec<u8>) -> CommandResult<ContentUpdate> {
     let conn = db.lock()?;
 
     conn.execute(
@@ -246,4 +243,3 @@ pub fn compact_content(
     asset_refs::retain_module(&tx, module_id)?;
     tx.commit().map_err(db_err)
 }
-

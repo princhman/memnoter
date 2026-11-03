@@ -1,30 +1,67 @@
 use super::*;
 use memnoter_core::cards::*;
 #[tauri::command(async)]
-pub(crate) fn sync_cards(db: tauri::State<'_, Db>, module_id: String, cards: Vec<CardContent>) -> CommandResult<Vec<String>> {
-    memnoter_core::cards::sync_cards(&db, module_id, cards)
+pub(crate) fn sync_cards(
+    core: tauri::State<'_, std::sync::Arc<Core>>,
+    module_id: String,
+    cards: Vec<CardContent>,
+) -> CommandResult<Vec<String>> {
+    memnoter_core::cards::sync_cards(&core.db, module_id, cards)
 }
 #[tauri::command(async)]
-pub(crate) fn due_cards(db: tauri::State<'_, Db>, module_id: Option<String>, now: i64) -> CommandResult<Vec<Card>> {
-    memnoter_core::cards::due_cards(&db, module_id, now)
+pub(crate) fn due_cards(
+    core: tauri::State<'_, std::sync::Arc<Core>>,
+    module_id: Option<String>,
+    now: i64,
+) -> CommandResult<Vec<Card>> {
+    memnoter_core::cards::due_cards(&core.db, module_id, now)
 }
 #[tauri::command(async)]
-pub(crate) fn card_schedules(db: tauri::State<'_, Db>, module_id: String) -> CommandResult<Vec<CardSchedule>> {
-    memnoter_core::cards::card_schedules(&db, module_id)
+pub(crate) fn card_schedules(
+    core: tauri::State<'_, std::sync::Arc<Core>>,
+    module_id: String,
+) -> CommandResult<Vec<CardSchedule>> {
+    memnoter_core::cards::card_schedules(&core.db, module_id)
 }
 #[tauri::command(async)]
-pub(crate) fn due_counts(db: tauri::State<'_, Db>, now: i64, day_end: i64) -> CommandResult<Vec<DueCount>> {
-    memnoter_core::cards::due_counts(&db, now, day_end)
+pub(crate) fn due_counts(
+    core: tauri::State<'_, std::sync::Arc<Core>>,
+    now: i64,
+    day_end: i64,
+) -> CommandResult<Vec<DueCount>> {
+    memnoter_core::cards::due_counts(&core.db, now, day_end)
 }
 #[tauri::command(async)]
-pub(crate) fn review_card(db: tauri::State<'_, Db>, card_id: String, expected_reps: i64, card: ReviewedCard, log: ReviewLog) -> CommandResult<()> {
-    memnoter_core::cards::review_card(&db, card_id, expected_reps, card, log)
+pub(crate) fn review_card(
+    core: tauri::State<'_, std::sync::Arc<Core>>,
+    card_id: String,
+    expected_reps: i64,
+    card: ReviewedCard,
+    log: ReviewLog,
+) -> CommandResult<()> {
+    memnoter_core::cards::review_card(&core.db, card_id, expected_reps, card, log)
 }
 #[tauri::command(async)]
-pub(crate) fn undo_review(db: tauri::State<'_, Db>, card_id: String, expected_reps: i64, previous: ReviewedCard, previous_fsrs_model: Option<String>, review_time: i64) -> CommandResult<()> {
-    memnoter_core::cards::undo_review(&db, card_id, expected_reps, previous, previous_fsrs_model, review_time)
+pub(crate) fn undo_review(
+    core: tauri::State<'_, std::sync::Arc<Core>>,
+    card_id: String,
+    expected_reps: i64,
+    previous: ReviewedCard,
+    previous_fsrs_model: Option<String>,
+    review_time: i64,
+) -> CommandResult<()> {
+    memnoter_core::cards::undo_review(
+        &core.db,
+        card_id,
+        expected_reps,
+        previous,
+        previous_fsrs_model,
+        review_time,
+    )
 }
 #[tauri::command(async)]
-pub(crate) fn unindexed_card_modules(db: tauri::State<'_, Db>) -> CommandResult<Vec<UnindexedModule>> {
-    memnoter_core::cards::unindexed_card_modules(&db)
+pub(crate) fn unindexed_card_modules(
+    core: tauri::State<'_, std::sync::Arc<Core>>,
+) -> CommandResult<Vec<UnindexedModule>> {
+    memnoter_core::cards::unindexed_card_modules(&core.db)
 }

@@ -2098,9 +2098,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 name = "memnoter"
 version = "0.1.1"
 dependencies = [
- "chrono",
  "memnoter-core",
- "rusqlite",
  "serde",
  "serde_json",
  "tauri",
@@ -2108,8 +2106,6 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-updater",
- "uuid",
- "yrs",
 ]
 
 [[package]]

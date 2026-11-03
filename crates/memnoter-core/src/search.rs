@@ -148,12 +148,7 @@ pub fn unindexed_modules(db: &Db, version: i64) -> CommandResult<Vec<String>> {
     rows.collect::<Result<Vec<String>>>().map_err(db_err)
 }
 
-pub fn search_notes(
-    db: &Db,
-    query: String,
-    limit: i64,
-) -> CommandResult<Vec<SearchResult>> {
+pub fn search_notes(db: &Db, query: String, limit: i64) -> CommandResult<Vec<SearchResult>> {
     let conn = db.lock()?;
     search(&conn, &query, limit)
 }
-

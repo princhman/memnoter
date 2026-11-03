@@ -99,11 +99,7 @@ pub fn list(app_dir: &Path) -> CommandResult<Vec<Backup>> {
 
 // The caller holds the database lock, so no save can land between copying the
 // database and copying the images it references.
-pub fn create(
-    conn: &Connection,
-    app_dir: &Path,
-    now: DateTime<Utc>,
-) -> CommandResult<Backup> {
+pub fn create(conn: &Connection, app_dir: &Path, now: DateTime<Utc>) -> CommandResult<Backup> {
     let dir = backups_dir(app_dir);
     std::fs::create_dir_all(&dir).map_err(db_err)?;
     let mut time = now;
@@ -302,7 +298,6 @@ pub fn restore(
     Ok(())
 }
 
-
 pub fn list_backups(data_dir: &Path) -> CommandResult<Vec<Backup>> {
     list(data_dir)
 }
@@ -315,11 +310,7 @@ pub fn backup_now(data_dir: &Path, db: &Db) -> CommandResult<Backup> {
     Ok(backup)
 }
 
-pub fn restore_backup(
-    data_dir: &Path,
-    db: &Db,
-    id: String,
-) -> CommandResult<()> {
+pub fn restore_backup(data_dir: &Path, db: &Db, id: String) -> CommandResult<()> {
     let dir = data_dir;
     let mut conn = db.lock()?;
     let result = restore(&mut conn, &dir, &id, Utc::now());
@@ -332,7 +323,6 @@ pub fn restore_backup(
     }
     result
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -637,4 +627,18 @@ mod tests {
         assert!(!old.exists());
         assert!(!dir.0.join(RESTORE_STAGING).exists());
     }
+}
+
+/// Run the launch-time daily backup check off the caller's thread.
+/// As on desktop, this checks once; the 24-hour interval is persisted in snapshots.
+pub fn spawn_daily_backup(core: std::sync::Arc<crate::Core>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let result = core
+            .db
+            .lock()
+            .and_then(|conn| backup_if_due(&conn, core.data_dir(), Utc::now()));
+        if let Err(error) = result {
+            eprintln!("Daily backup failed: {error}");
+        }
+    })
 }

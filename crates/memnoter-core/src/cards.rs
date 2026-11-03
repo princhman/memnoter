@@ -520,28 +520,17 @@ pub fn sync_cards(
     sync_module_cards(&mut conn, &module_id, &cards, Utc::now().timestamp_millis())
 }
 
-pub fn due_cards(
-    db: &Db,
-    module_id: Option<String>,
-    now: i64,
-) -> CommandResult<Vec<Card>> {
+pub fn due_cards(db: &Db, module_id: Option<String>, now: i64) -> CommandResult<Vec<Card>> {
     let conn = db.lock()?;
     query_due_cards(&conn, module_id.as_deref(), now)
 }
 
-pub fn card_schedules(
-    db: &Db,
-    module_id: String,
-) -> CommandResult<Vec<CardSchedule>> {
+pub fn card_schedules(db: &Db, module_id: String) -> CommandResult<Vec<CardSchedule>> {
     let conn = db.lock()?;
     query_card_schedules(&conn, &module_id)
 }
 
-pub fn due_counts(
-    db: &Db,
-    now: i64,
-    day_end: i64,
-) -> CommandResult<Vec<DueCount>> {
+pub fn due_counts(db: &Db, now: i64, day_end: i64) -> CommandResult<Vec<DueCount>> {
     let conn = db.lock()?;
     query_due_counts(&conn, now, day_end)
 }
@@ -793,10 +782,13 @@ mod tests {
         f.sync("a", &[basic("1", "Q", "A")], 10);
         let conn = f.db.conn.lock().unwrap();
         // The database as it was before sections.
-        conn.execute_batch("alter table cards drop column section;").unwrap();
+        conn.execute_batch("alter table cards drop column section;")
+            .unwrap();
         migrate_flashcards(&conn).unwrap();
         let indexed: i64 = conn
-            .query_row("select count(*) from card_indexed_modules", [], |row| row.get(0))
+            .query_row("select count(*) from card_indexed_modules", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(indexed, 0);
         drop(conn);
@@ -804,7 +796,10 @@ mod tests {
         // Opening the migrated database again leaves the index alone.
         f.sync("a", &[basic("1", "Q", "A")], 20);
         migrate_flashcards(&f.db.conn.lock().unwrap()).unwrap();
-        assert!(f.column::<bool>("select exists(select 1 from card_indexed_modules where module_id = ?1)", "a"));
+        assert!(f.column::<bool>(
+            "select exists(select 1 from card_indexed_modules where module_id = ?1)",
+            "a"
+        ));
     }
 
     #[test]
@@ -827,8 +822,18 @@ mod tests {
         assert_eq!(
             query_card_schedules(&f.db.conn.lock().unwrap(), "a").unwrap(),
             vec![
-                CardSchedule { id: "1".into(), due_at: 10, last_review_at: None, state: 0 },
-                CardSchedule { id: "2".into(), due_at: 15, last_review_at: Some(100), state: 2 },
+                CardSchedule {
+                    id: "1".into(),
+                    due_at: 10,
+                    last_review_at: None,
+                    state: 0
+                },
+                CardSchedule {
+                    id: "2".into(),
+                    due_at: 15,
+                    last_review_at: Some(100),
+                    state: 2
+                },
             ]
         );
         assert_eq!(
@@ -870,7 +875,10 @@ mod tests {
                 later_review: 1,
             }
         );
-        assert_eq!(query_due_counts(&f.db.conn.lock().unwrap(), 12, 14).unwrap()[0].later_review, 0);
+        assert_eq!(
+            query_due_counts(&f.db.conn.lock().unwrap(), 12, 14).unwrap()[0].later_review,
+            0
+        );
     }
 
     #[test]
@@ -983,10 +991,16 @@ mod tests {
     fn undoing_a_review_restores_the_card_and_drops_its_log_entry() {
         let f = Fixture::new();
         f.sync("a", &[basic("1", "Q", "A")], 10);
-        let before: (i64, i64, String) = f.db.conn.lock().unwrap().query_one(
-            "select due_at, reps, schedule_status from cards where id = '1'", [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).unwrap();
+        let before: (i64, i64, String) =
+            f.db.conn
+                .lock()
+                .unwrap()
+                .query_one(
+                    "select due_at, reps, schedule_status from cards where id = '1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
         review(&f, "1", 0, 5_000).unwrap();
         let mut previous = reviewed(before.0, before.1);
         previous.fsrs.schedule_status = before.2.clone();
@@ -1001,10 +1015,16 @@ mod tests {
         assert!(error.contains("no longer the card's latest"), "{error}");
 
         undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 1, &previous, None, 100).unwrap();
-        let after: (i64, i64, String) = f.db.conn.lock().unwrap().query_one(
-            "select due_at, reps, schedule_status from cards where id = '1'", [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).unwrap();
+        let after: (i64, i64, String) =
+            f.db.conn
+                .lock()
+                .unwrap()
+                .query_one(
+                    "select due_at, reps, schedule_status from cards where id = '1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
         assert_eq!(after, before);
         let logs: i64 = f.column("select count(*) from review_log where card_id = ?1", "1");
         assert_eq!(logs, 0);
@@ -1027,4 +1047,3 @@ mod tests {
         assert_eq!((cards, logs, other), (0, 0, 1));
     }
 }
-

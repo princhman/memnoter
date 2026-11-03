@@ -11,7 +11,7 @@ import { webkit } from "playwright";
 // not a test copy of its clickable-element and double-click rules.
 test("the entire top bar drags while controls and overlays remain interactive", async t => {
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const lock = await readFile(join(root, "src-tauri/Cargo.lock"), "utf8");
+  const lock = await readFile(join(root, "Cargo.lock"), "utf8");
   const version = lock.match(/name = "tauri"\nversion = "([^"]+)"/)[1];
   const registry = join(homedir(), ".cargo/registry/src");
   let dragScript;

@@ -66,9 +66,7 @@ pub fn read_file(
         return Err("Invalid file ID".to_string());
     }
 
-    let expected_path = data_dir
-        .join("files")
-        .join(&file_id);
+    let expected_path = data_dir.join("files").join(&file_id);
     let conn = db.lock()?;
     let (path, file_type): (String, String) = conn
         .query_row(
@@ -86,11 +84,7 @@ pub fn read_file(
     Ok(FileContents { bytes, file_type })
 }
 
-pub fn resolve_card_image(
-    data_dir: &Path,
-    db: &Db,
-    file_id: String,
-) -> CommandResult<String> {
+pub fn resolve_card_image(data_dir: &Path, db: &Db, file_id: String) -> CommandResult<String> {
     if Uuid::parse_str(&file_id).is_err() {
         return Err("Invalid image ID".into());
     }
@@ -100,9 +94,7 @@ pub fn resolve_card_image(
             r.get(0)
         })
         .map_err(db_err)?;
-    let expected = data_dir
-        .join("files")
-        .join(file_id);
+    let expected = data_dir.join("files").join(file_id);
     if Path::new(&path) != expected || !expected.is_file() {
         return Err("Image is unavailable".into());
     }
@@ -197,4 +189,3 @@ pub fn cleanup_files(
         expected_update_id,
     )
 }
-
