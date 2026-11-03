@@ -32,6 +32,7 @@ plan.md
 /apps/ios/MemnoterCore/*.xcframework/
 /apps/ios/*.xcodeproj/
 /apps/ios/build/
+/apps/ios/build-device/
 /apps/ios/Resources/Web/
 
 /apps/ios/build-sidebar/
