@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { sectionFocusKey } from "@/lib/section-focus";
-import { refreshSectionAnchor, revealCaret, sectionToTop } from "./scroll";
+import { observeScroll, traceScroll, refreshSectionAnchor, revealCaret, sectionToTop } from "./scroll";
 import Tiptap from "@/components/Tiptap";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
@@ -33,6 +33,7 @@ export function Host() {
   useLayoutEffect(() => { active.current = activeEditor; }, [activeEditor]);
 
   useEffect(() => {
+    const stopScroll = container.current ? observeScroll(container.current) : () => {};
     const fail = (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       postNativeEvent("error", { moduleId: active.current?.moduleId ?? opening.current?.moduleId ?? null, message });
@@ -46,6 +47,7 @@ export function Host() {
     let queue = Promise.resolve();
     window.memnoterEditor = {
       setTopInset(px) {
+        traceScroll("topInset", { px });
         if (!Number.isFinite(px) || px < 0) throw new Error("Invalid top inset");
         const element = container.current;
         if (!element) return;
@@ -54,6 +56,7 @@ export function Host() {
         refreshSectionAnchor(element);
       },
       setBottomInset(px) {
+        traceScroll("bottomInset", { px });
         if (!Number.isFinite(px) || px < 0) throw new Error("Invalid bottom inset");
         const element = container.current;
         if (!element) return;
@@ -111,7 +114,7 @@ export function Host() {
     const stopImages = imageStatusStore.subscribe(saveStatus);
     saveStatus();
     postNativeEvent("ready", { protocolVersion: 1 });
-    return () => { stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
+    return () => { stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
   }, []);
 
   useEffect(() => {

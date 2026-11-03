@@ -71,6 +71,9 @@ struct EditorState: Decodable {
     }
 }
 @MainActor @Observable final class WebSession: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
+    #if DEBUG
+    private var scrollObservations: [NSKeyValueObservation] = []
+    #endif
     var web: WKWebView!
     var bottomInset: CGFloat = 0 {
         didSet { if ready { reportBottomInset() } }
@@ -113,6 +116,17 @@ struct EditorState: Decodable {
         let editorWeb = EditorWebView(frame: .zero, configuration: config)
         web = editorWeb
         web.scrollView.contentInsetAdjustmentBehavior = .never
+        #if DEBUG
+        config.userContentController.addUserScript(WKUserScript(source: "window.__memnoterScrollDebug = true", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        scrollObservations = [
+            web.scrollView.observe(\.contentOffset, options: [.old, .new]) { _, change in
+                print("[scroll \(Date().timeIntervalSince1970)] native offset \(change)")
+            },
+            web.scrollView.observe(\.contentInset, options: [.old, .new]) { _, change in
+                print("[scroll \(Date().timeIntervalSince1970)] native inset \(change)")
+            }
+        ]
+        #endif
         editorWeb.viewportChanged = { [weak self] in
             guard let self, self.ready else { return }
             self.reportBottomInset()
@@ -123,7 +137,7 @@ struct EditorState: Decodable {
         web.scrollView.backgroundColor = .clear
         web.underPageBackgroundColor = .clear
         hideEditorInputAssistant()
-        for name in [UIResponder.keyboardWillShowNotification, UIResponder.keyboardWillChangeFrameNotification] {
+        for name in [UIResponder.keyboardWillShowNotification, UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillHideNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChange), name: name, object: nil)
         }
         web.uiDelegate = self
@@ -154,7 +168,12 @@ struct EditorState: Decodable {
             if changed && view.isFirstResponder { view.reloadInputViews() }
         }
     }
-    @objc private func keyboardWillChange() { hideEditorInputAssistant() }
+    @objc private func keyboardWillChange(_ notification: Notification) {
+        #if DEBUG
+        print("[scroll \(Date().timeIntervalSince1970)] keyboard \(notification.name) \(notification.userInfo ?? [:])")
+        #endif
+        hideEditorInputAssistant()
+    }
 
     // Keep WebKit's native rich clipboard and paste permission handling.
     func clipboard(_ action: Selector) {
@@ -236,6 +255,9 @@ struct EditorState: Decodable {
         } else if body["kind"] as? String == "event", let event = body["event"] as? String {
             let payload = body["payload"] as? [String: Any] ?? [:]
             switch event {
+            #if DEBUG
+            case "scrollDebug": print("[scroll JS] \(payload)")
+            #endif
             case "viewState":
                 if let data = try? JSONSerialization.data(withJSONObject: payload),
                    let json = String(data: data, encoding: .utf8) {

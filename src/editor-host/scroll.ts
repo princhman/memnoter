@@ -1,3 +1,18 @@
+// Enabled by the native Debug host (or the WebKit regression harness).
+export function traceScroll(reason: string, details: Record<string, unknown> = {}) {
+  if (!(window as Window & { __memnoterScrollDebug?: boolean }).__memnoterScrollDebug) return;
+  const payload = { time: Date.now(), reason, ...details };
+  console.debug("[scroll]", JSON.stringify(payload));
+  (window as Window & { webkit?: { messageHandlers?: { memnoter?: { postMessage(value: unknown): void } } } }).webkit?.messageHandlers?.memnoter?.postMessage({ kind: "event", event: "scrollDebug", payload });
+}
+
+export function observeScroll(container: HTMLElement) {
+  const log = () => traceScroll("scroll", { inner: container.scrollTop, document: document.scrollingElement?.scrollTop });
+  container.addEventListener("scroll", log);
+  document.addEventListener("scroll", log, true);
+  return () => { container.removeEventListener("scroll", log); document.removeEventListener("scroll", log, true); };
+}
+
 import type { Editor } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { suppressesTextInput } from "../lib/editor-input.ts";
@@ -14,6 +29,7 @@ export function revealCaret(view: EditorView) {
   const delta = caret.bottom > bottom ? caret.bottom - bottom : caret.top < top ? caret.top - top : 0;
   if (Math.abs(delta) < 1) return;
   container.dispatchEvent(new Event("memnoter:reveal"));
+  traceScroll("caret", { from: container.scrollTop, delta });
   container.scrollTo({ top: container.scrollTop + delta,
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
 }
@@ -50,6 +66,7 @@ export function sectionToTop(editor: Editor, pos: number, offset = 0) {
     const space = Math.max(0, Math.ceil(target - (container.scrollHeight - extra - container.clientHeight)));
     container.dataset.anchorSpace = String(space);
     container.style.setProperty("--anchor-space", `${space}px`);
+    traceScroll("anchor", { from: container.scrollTop, target, offset });
     container.scrollTo({ top: Math.min(target, Math.max(0, container.scrollHeight - container.clientHeight)), behavior: "instant" });
   };
   const observer = new ResizeObserver(() => {
