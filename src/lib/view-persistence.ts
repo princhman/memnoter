@@ -6,6 +6,7 @@ import { getFoldedIds } from "./heading-fold";
 import {
   appStore,
   saveModuleView,
+  saveState,
   setOpenedModule,
   type ModuleView,
 } from "./store";
@@ -129,6 +130,14 @@ function restoreScroll(
 }
 
 // Stops holding each restored editor's scroll position.
+const activeSaves = new Map<Editor, () => void>();
+
+// Native calls this before switching notes or suspending JavaScript.
+export function flushPersistedViews() {
+  for (const save of activeSaves.values()) save();
+  saveState();
+}
+
 const restoredViews = new WeakMap<Editor, (() => void) | undefined>();
 
 // Puts back the module's saved scroll position, cursor and focused and folded
@@ -201,6 +210,12 @@ export function usePersistedView(
       });
     };
 
+    const saveNow = () => {
+      window.clearTimeout(saveTimeout);
+      save();
+    };
+    activeSaves.set(editor, saveNow);
+
     const scheduleSave = () => {
       if (saveTimeout === undefined) {
         saveTimeout = window.setTimeout(save, SAVE_DELAY_MS);
@@ -211,6 +226,7 @@ export function usePersistedView(
     container.addEventListener("scroll", scheduleSave, { passive: true });
 
     return () => {
+      activeSaves.delete(editor);
       restoredViews.get(editor)?.();
       // A rerun of this effect for the same editor restores again.
       restoredViews.delete(editor);

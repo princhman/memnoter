@@ -83,6 +83,15 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal(focus.path.at(-1).id, focus.id);
     assert.equal(focus.cleared, null);
     assert.ok(Math.abs(focus.delta) < 1);
+    // Flush immediately after a selection change: the view debounce must not
+    // lose the caret when native suspends JS or switches notes.
+    const persisted = await page.evaluate(async () => {
+      window.memnoterEditor.exec('focusSection', { id: window.messages.filter(m => m.event === 'outline').at(-1).payload.headings.find(h => h.text === 'Child').id });
+      await window.memnoterEditor.flush();
+      return window.messages.filter(m => m.event === 'viewState').at(-1)?.payload;
+    });
+    assert.ok(persisted?.viewByModule.one.focusedSection > 0);
+    assert.ok(persisted.viewByModule.one.anchor > 0);
     const result = await page.evaluate(async () => {
       await window.memnoterEditor.open('two');
       return {

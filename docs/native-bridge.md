@@ -244,3 +244,16 @@ All binary values already use JSON arrays of integers 0..255. This includes
 and update bytes, cleanup `expectedState`, and `read_file.bytes`. No raw Tauri
 IPC, ArrayBuffer transfer, base64 conversion, or binary contract change is
 introduced. Yjs document/schema extensions remain shared with desktop.
+
+## Native view persistence
+
+Before loading editor.html, inject `window.__memnoterViewState` at document
+start with the last decoded `viewState` event payload (or `{}`). Native stores
+this payload in app preferences; custom-scheme origins cannot rely on Web
+Storage. `viewState` contains the shared app state, including `viewByModule`:
+scrollTop, block scrollAnchor, selection anchor/head, focusedSection and
+foldedSections. Positions and folds have the same semantics as desktop.
+`open` captures the outgoing view before switching; `flush` captures pending
+view changes synchronously before its async write barrier. Native must retain
+the event handler until that barrier completes. Sidebar visibility and selected
+native destination are stored separately by the SwiftUI host.

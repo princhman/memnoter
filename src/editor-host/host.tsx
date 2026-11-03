@@ -5,6 +5,7 @@ import { postNativeEvent } from "@/lib/backend";
 import { queryClient } from "@/lib/query-client";
 import { saveStatusStore } from "@/lib/saves";
 import { imageStatusStore, exclusiveWrite } from "@/lib/write-lifecycle";
+import { flushPersistedViews } from "@/lib/view-persistence";
 import { editorOutline, editorState, execEditor } from "./commands";
 
 declare global {
@@ -43,6 +44,7 @@ export function Host() {
         const operation = queue.then(async () => {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
           if (active.current?.moduleId === id && active.current.isReady) return;
+          flushPersistedViews();
           await exclusiveWrite(async () => {});
           await new Promise<void>((resolve, reject) => {
             opening.current = { moduleId: id, resolve, reject };
@@ -53,7 +55,7 @@ export function Host() {
         return operation;
       },
       async flush() {
-        try { await exclusiveWrite(async () => {}); }
+        try { flushPersistedViews(); await exclusiveWrite(async () => {}); }
         catch (error) { throw fail(error); }
       },
       exec(command, args) {

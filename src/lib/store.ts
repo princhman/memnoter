@@ -1,3 +1,4 @@
+import { isNativeHost, postNativeEvent } from "./backend";
 import { createStore } from "@tanstack/react-store";
 
 // Where the reader was in a module, restored when it is opened again.
@@ -24,6 +25,10 @@ type appState = {
   learnAhead: boolean;
 };
 
+declare global {
+  interface Window { __memnoterViewState?: Partial<appState>; }
+}
+
 const RECENT_LIMIT = 20;
 
 const STORAGE_KEY = "app-state";
@@ -39,6 +44,10 @@ const defaultState: appState = {
 
 function loadState(): appState {
   try {
+    // Custom WKURLSchemeHandler origins do not provide reliable Web Storage.
+    if (isNativeHost() && window.__memnoterViewState) {
+      return { ...defaultState, ...window.__memnoterViewState };
+    }
     const saved = localStorage.getItem(STORAGE_KEY);
     // Merge so state saved by older versions picks up new fields.
     return saved ? { ...defaultState, ...JSON.parse(saved) } : defaultState;
@@ -52,9 +61,13 @@ export const appStore = createStore(loadState());
 // Scrolling updates the view often; batch the disk writes.
 let saveTimeout: number | undefined;
 
-function saveState() {
+export function saveState() {
   window.clearTimeout(saveTimeout);
   saveTimeout = undefined;
+  if (isNativeHost()) {
+    postNativeEvent("viewState", appStore.state);
+    return;
+  }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(appStore.state));
   } catch (error) {
