@@ -109,8 +109,11 @@ port desktop learn-ahead/preferences or card backfill. Review face segments are
 Codable JSON because their schema varies by card kind.
 
 The editor's trailing material capsule uses keyboard frame notifications for both animated placement and visibility, including the hardware shortcut bar, and hides for an
-undocked/floating keyboard. Its nonmodal Aa popover preserves the editor
-selection and first responder while applying styles, marks, lists and math.
+undocked/floating keyboard. All formatting tools stay in one horizontally scrolling
+row with a stable available-width capsule, edge fades and a native scroll indicator.
+Bold, italic, underline, bullets and inline math lead so frequent actions remain
+visible in narrow windows; styles and the remaining grouped tools follow. Tapping
+formatting actions preserves the editor selection and first responder.
 Link URL entry temporarily takes text focus and returns it to the editor on
 Apply. Section focus is available from body text inside the innermost containing
 section and retains the caret when entered. Photos insertion and undo/redo live in navigation; saving/failure status
