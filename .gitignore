@@ -33,3 +33,5 @@ plan.md
 /apps/ios/*.xcodeproj/
 /apps/ios/build/
 /apps/ios/Resources/Web/
+
+/apps/ios/build-sidebar/

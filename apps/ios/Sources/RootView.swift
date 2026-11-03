@@ -23,17 +23,16 @@ struct RootView: View {
     var module: NoteModule? { store.modules.first { $0.id == selected } }
     var body: some View {
         NavigationSplitView {
-            List {
-                Button { navigate("home") } label: { Label("Home", systemImage: "house") }
-                Button { reviewModule = nil; navigate("review") } label: {
+            List(selection: Binding(get: { selected }, set: { if let destination = $0 { if destination == "review" { reviewModule = nil }; navigate(destination) } })) {
+                NavigationLink(value: "home") { Label("Home", systemImage: "house") }
+                NavigationLink(value: "review") {
                     Label("Review", systemImage: "rectangle.stack").badge(store.counts.reduce(0) { $0 + $1.count })
                 }
                 Section("Modules") {
                     ForEach(store.modules) { module in
-                        Button { navigate(module.id) } label: {
-                            HStack { Text(module.name); Spacer(); Text("\(store.counts.first { $0.moduleId == module.id }?.count ?? 0)").foregroundStyle(.secondary) }
+                        NavigationLink(value: module.id) {
+                            Text(module.name).badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
                         }
-                        .listRowBackground(selected == module.id ? Color.accentColor.opacity(0.15) : Color.clear)
                         .contextMenu { moduleActions(module) }
                         .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
                     }
@@ -41,11 +40,12 @@ struct RootView: View {
                 if !search.isEmpty {
                     Section("Search results") {
                         ForEach(hits, id: \.module_id) { hit in
-                            Button { navigate(hit.module_id) } label: { VStack(alignment: .leading) { Text(hit.name); Text(hit.snippet.filter { !$0.isASCII || !$0.isNewline && !$0.unicodeScalars.contains(where: { $0.value < 32 }) }).font(.caption).lineLimit(2) } }
+                            NavigationLink(value: hit.module_id) { VStack(alignment: .leading) { Text(hit.name); Text(hit.snippet.filter { !$0.isASCII || !$0.isNewline && !$0.unicodeScalars.contains(where: { $0.value < 32 }) }).font(.caption).lineLimit(2) } }
                         }
                     }
                 }
             }
+            .listStyle(.sidebar)
             .searchable(text: $search, isPresented: $showSearch, prompt: "Search notes")
             .task(id: search) {
                 guard let client = store.client else { return }
