@@ -87,14 +87,17 @@ struct RootView: View {
                     if showingFind { TextField("Find in note", text: $find).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
                     WebSurface(session: session)
                         .background(Color(uiColor: .systemBackground))
-                        .overlay(alignment: .bottomTrailing) {
+                        .overlay {
+                            GeometryReader { geometry in
                             if keyboardDocked {
-                                FormattingBar(session: session)
+                                FormattingBar(session: session, panelHeight: max(0, geometry.size.height - 100), panelWidth: min(352, max(0, geometry.size.width - 32)))
                                     .background(.regularMaterial, in: Capsule())
                                     .overlay { Capsule().strokeBorder(.primary.opacity(0.08)) }
                                     .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
                                     .padding(16)
                                     .disabled(!session.state.editable)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                            }
                             }
                         }
 

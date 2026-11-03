@@ -4,11 +4,14 @@ import SwiftUI
 /// WKWebView first responder. These buttons leave its selection and keyboard intact.
 struct FormatPanel: View {
     @Bindable var session: WebSession
+    let maximumHeight: CGFloat
+    let width: CGFloat
     let close: () -> Void
     @State private var editingLink = false
     @State private var link = ""
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        ScrollView {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Format").font(.headline)
                 Spacer()
@@ -16,10 +19,10 @@ struct FormatPanel: View {
                     .buttonStyle(FormatButtonStyle()).accessibilityLabel("Close text styles")
             }
             HStack(spacing: 4) {
-                paragraph("Title", level: 1, size: 22)
-                paragraph("Heading", level: 2, size: 18)
-                paragraph("Subheading", level: 3, size: 15)
-                paragraph("Body", level: nil, size: 17)
+                paragraph("Title", level: 1)
+                paragraph("Heading", level: 2)
+                paragraph("Subheading", level: 3)
+                paragraph("Body", level: nil)
             }
             Divider()
             HStack(spacing: 12) {
@@ -61,20 +64,21 @@ struct FormatPanel: View {
             Button { session.exec("makeCard") } label: { Label("Make card from selection", systemImage: "rectangle.stack.badge.plus") }
                 .font(.subheadline).frame(minHeight: 44)
         }
-        .padding(16).frame(width: 352)
+        .padding(12)
+        }
+        .frame(width: width, height: min(350, maximumHeight))
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
         .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(.primary.opacity(0.08)) }
         .shadow(color: .black.opacity(0.18), radius: 20, y: 6)
         .accessibilityElement(children: .contain)
     }
     private func mark(_ name: String) -> Bool { session.state.marks.contains(name) }
-    private func paragraph(_ title: String, level: Int?, size: CGFloat) -> some View {
+    private func paragraph(_ title: String, level: Int?) -> some View {
         let active = level == nil ? session.state.blockType == "paragraph" : session.state.headingLevel == level
         return Button { session.exec(level == nil ? "paragraph" : "heading", level.map { ["level": $0] } ?? [:]) } label: {
-            VStack(spacing: 6) {
-                Text(title).font(.system(size: size, weight: level == nil ? .regular : .semibold)).lineLimit(1).minimumScaleFactor(0.75)
-                Image(systemName: active ? "checkmark.circle.fill" : "circle").font(.caption).opacity(active ? 1 : 0.25)
-            }.frame(maxWidth: .infinity, minHeight: 64)
+            Text(title).font(.system(size: 13, weight: .semibold))
+                .lineLimit(1).minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity, minHeight: 44)
         }.buttonStyle(FormatButtonStyle(active: active))
             .accessibilityLabel(title).accessibilityAddTraits(active ? .isSelected : [])
     }

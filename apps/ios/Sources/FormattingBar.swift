@@ -15,6 +15,8 @@ struct FormatButtonStyle: ButtonStyle {
 
 struct FormattingBar: View {
     @Bindable var session: WebSession
+    let panelHeight: CGFloat
+    let panelWidth: CGFloat
     @State private var showStyles = false
     var body: some View {
         HStack(spacing: 2) {
@@ -31,7 +33,7 @@ struct FormattingBar: View {
         }.padding(6)
         .overlay(alignment: .bottomTrailing) {
             if showStyles {
-                FormatPanel(session: session, close: { showStyles = false }).padding(.bottom, 68)
+                FormatPanel(session: session, maximumHeight: panelHeight, width: panelWidth, close: { showStyles = false }).padding(.bottom, 68)
             }
         }
 
