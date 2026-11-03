@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/core";
+import { TabSpacing } from "@/lib/tab-spacing";
 import StarterKit from "@tiptap/starter-kit";
 import type * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -44,6 +45,7 @@ export function noteExtensions({
       // Links open in the browser on ⌘-click, through LinkEditor.
       link: { openOnClick: false },
     }),
+    TabSpacing,
     LinkEditor,
     Arrows,
     MoveLines,
