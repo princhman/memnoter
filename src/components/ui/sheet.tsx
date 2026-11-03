@@ -1,3 +1,4 @@
+import { IconTooltip } from "@/components/icon-tooltip";
 import * as React from "react"
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 
@@ -58,6 +59,7 @@ function SheetContent({
       >
         {children}
         {showCloseButton && (
+          <IconTooltip label="Close" hint="Esc">
           <SheetPrimitive.Close
             data-slot="sheet-close"
             render={
@@ -65,6 +67,7 @@ function SheetContent({
                 variant="ghost"
                 className="absolute top-3 right-3"
                 size="icon-sm"
+                aria-label="Close"
               />
             }
           >
@@ -72,6 +75,7 @@ function SheetContent({
             />
             <span className="sr-only">Close</span>
           </SheetPrimitive.Close>
+          </IconTooltip>
         )}
       </SheetPrimitive.Popup>
     </SheetPortal>

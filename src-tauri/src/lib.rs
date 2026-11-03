@@ -54,6 +54,7 @@ fn confirm_restart(app: tauri::AppHandle) {
 struct Module {
     id: String,
     name: String,
+    heading_numbering: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -272,6 +273,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
         )",
     )
     .map_err(db_err)?;
+    migrate_module_numbering(&conn)?;
     migrate_flashcards(&conn)?;
     asset_refs::migrate(&conn)?;
     migrate_search(&conn)?;
@@ -290,6 +292,22 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
 // remove_diacritics folds case and accents; the prefix index keeps type-ahead
 // queries ("integ*") fast. search_index_state records which extractor version
 // produced each row, so the frontend can re-index after the extractor changes.
+fn migrate_module_numbering(conn: &Connection) -> CommandResult<()> {
+    let columns = conn.prepare("pragma table_info(modules)").map_err(db_err)?
+        .query_map([], |row| row.get::<_, String>(1)).map_err(db_err)?
+        .collect::<Result<Vec<_>>>().map_err(db_err)?;
+    if !columns.iter().any(|column| column == "heading_numbering") {
+        conn.execute_batch("alter table modules add column heading_numbering INTEGER NOT NULL DEFAULT 0;").map_err(db_err)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_module_numbering(db: tauri::State<Db>, module_id: String, enabled: bool) -> CommandResult<()> {
+    db.lock()?.execute("update modules set heading_numbering = ?2 where id = ?1", params![module_id, enabled]).map_err(db_err)?;
+    Ok(())
+}
+
 fn migrate_search(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(
         "
@@ -335,7 +353,7 @@ mod tests {
             {
                 let conn = db.conn.lock().unwrap();
                 conn.execute_batch(
-                    "insert into modules values ('note', 'Note'), ('other', 'Other');
+                    "insert into modules (id, name) values ('note', 'Note'), ('other', 'Other');
                      insert into contents values ('note', X'0000'), ('other', X'0000');
                      insert into contents_updates values (7, 'note', X'0000', 0);",
                 )
@@ -393,6 +411,18 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+
+    #[test]
+    fn module_numbering_migration_defaults_off_and_preserves_each_module() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("create table modules(id TEXT PRIMARY KEY, name TEXT NOT NULL); insert into modules (id, name) values ('a', 'A'), ('b', 'B');").unwrap();
+        migrate_module_numbering(&conn).unwrap();
+        assert!(!conn.query_row("select heading_numbering from modules where id='a'", [], |row| row.get::<_, bool>(0)).unwrap());
+        conn.execute("update modules set heading_numbering=1 where id='a'", []).unwrap();
+        migrate_module_numbering(&conn).unwrap();
+        assert!(conn.query_row("select heading_numbering from modules where id='a'", [], |row| row.get::<_, bool>(0)).unwrap());
+        assert!(!conn.query_row("select heading_numbering from modules where id='b'", [], |row| row.get::<_, bool>(0)).unwrap());
     }
 
     #[test]
@@ -975,7 +1005,7 @@ mod tests {
         conn.execute_batch(
             "PRAGMA foreign_keys = ON;
             create table modules (id TEXT PRIMARY KEY);
-            insert into modules values ('note');
+            insert into modules (id) values ('note');
             create table contents_updates (id INTEGER PRIMARY KEY, module_id TEXT NOT NULL,
                 bytes BLOB NOT NULL, created_at INTEGER NOT NULL,
                 FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE);
@@ -1057,7 +1087,7 @@ mod tests {
             .conn
             .lock()
             .unwrap()
-            .execute_batch("insert into modules values ('note', 'Note');")
+            .execute_batch("insert into modules (id, name) values ('note', 'Note');")
             .unwrap();
         // Keep the legacy connection open so its writes are still in the WAL.
         let id = legacy.file("note");
@@ -1142,6 +1172,7 @@ fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
             Ok(Module {
                 id: row.get(0)?,
                 name: row.get(1)?,
+                heading_numbering: row.get(2)?,
             })
         })
         .map_err(db_err)?;
@@ -1788,6 +1819,7 @@ pub fn run() {
             get_content,
             add_update,
             rename_module,
+            set_module_numbering,
             delete_module,
             save_compaction,
             save_file,

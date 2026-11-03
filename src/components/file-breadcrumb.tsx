@@ -1,3 +1,4 @@
+import { IconTooltip } from "@/components/icon-tooltip";
 import {
   Breadcrumb,
   BreadcrumbEllipsis,
@@ -100,12 +101,12 @@ export function FileBreadcrumb() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator>/</BreadcrumbSeparator>
                 <BreadcrumbItem className="shrink-0">
-                  <BreadcrumbPage>Review</BreadcrumbPage>
+                  <BreadcrumbPage data-tauri-drag-region="deep">Review</BreadcrumbPage>
                 </BreadcrumbItem>
               </>
             ) : !moduleId ? (
               <BreadcrumbItem className="shrink-0">
-                <BreadcrumbPage>{isSettings ? "Settings" : "Home"}</BreadcrumbPage>
+                <BreadcrumbPage data-tauri-drag-region="deep">{isSettings ? "Settings" : "Home"}</BreadcrumbPage>
               </BreadcrumbItem>
             ) : (
               <BreadcrumbItem>
@@ -122,7 +123,7 @@ export function FileBreadcrumb() {
                     }
                   />
                 ) : (
-                  <BreadcrumbPage className="font-bold">
+                  <BreadcrumbPage data-tauri-drag-region="deep" className="font-bold">
                     {moduleTitle}
                   </BreadcrumbPage>
                 )}
@@ -133,6 +134,7 @@ export function FileBreadcrumb() {
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
                   <DropdownMenu>
+                    <IconTooltip label="Show parent sections">
                     <DropdownMenuTrigger
                       render={
                         <Button
@@ -144,6 +146,7 @@ export function FileBreadcrumb() {
                         </Button>
                       }
                     />
+                    </IconTooltip>
                     <DropdownMenuContent align="start">
                       <DropdownMenuGroup>
                         {sectionPath
@@ -175,7 +178,7 @@ export function FileBreadcrumb() {
 
                   <BreadcrumbItem>
                     {index === sectionPath.length - 1 ? (
-                      <BreadcrumbPage>{crumb.title}</BreadcrumbPage>
+                      <BreadcrumbPage data-tauri-drag-region="deep">{crumb.title}</BreadcrumbPage>
                     ) : (
                       <BreadcrumbLink
                         render={

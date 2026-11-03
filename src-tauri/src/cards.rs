@@ -618,7 +618,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .execute_batch(
-                    "insert into modules values ('a', 'Algebra'), ('b', 'Biology');
+                    "insert into modules (id, name) values ('a', 'Algebra'), ('b', 'Biology');
                      insert into contents values ('a', X''), ('b', X'');",
                 )
                 .unwrap();

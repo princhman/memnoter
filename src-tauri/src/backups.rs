@@ -400,7 +400,7 @@ mod tests {
     fn clock_rollback_keeps_fresh_and_pre_restore_snapshots() {
         let dir = TempDir::new();
         let mut conn = open_db(&dir.0).unwrap().conn.into_inner().unwrap();
-        conn.execute_batch("insert into modules values ('note', 'Note'); insert into contents values ('note', X'01');").unwrap();
+        conn.execute_batch("insert into modules (id, name) values ('note', 'Note'); insert into contents values ('note', X'01');").unwrap();
         let original = create(&conn, &dir.0, at(20)).unwrap();
         for hour in 21..28 {
             create(&conn, &dir.0, at(hour)).unwrap();
@@ -436,11 +436,11 @@ mod tests {
         let root = TempDir::new();
         let live = root.0.join("current");
         let mut conn = open_db(&live).unwrap().conn.into_inner().unwrap();
-        conn.execute_batch("insert into modules values ('note', 'Note'); insert into contents values ('note', X'02');").unwrap();
+        conn.execute_batch("insert into modules (id, name) values ('note', 'Note'); insert into contents values ('note', X'02');").unwrap();
         conn.close().unwrap();
         let legacy = root.0.join(super::super::LEGACY_IDENTIFIER);
         conn = open_db(&legacy).unwrap().conn.into_inner().unwrap();
-        conn.execute_batch("insert into modules values ('note', 'Note'); insert into contents values ('note', X'01');").unwrap();
+        conn.execute_batch("insert into modules (id, name) values ('note', 'Note'); insert into contents values ('note', X'01');").unwrap();
         conn.close().unwrap();
         std::fs::create_dir(live.join(RESTORE_OLD)).unwrap();
         std::fs::rename(live.join("main.db"), live.join(RESTORE_OLD).join("main.db")).unwrap();
@@ -489,7 +489,7 @@ mod tests {
         let image_path = dir.0.join("files").join(&image);
         std::fs::write(&image_path, b"image bytes").unwrap();
         conn.execute_batch(
-            "insert into modules values ('note', 'Note');
+            "insert into modules (id, name) values ('note', 'Note');
              insert into contents values ('note', X'01');",
         )
         .unwrap();
@@ -506,7 +506,7 @@ mod tests {
 
         conn.execute_batch(
             "update contents set state = X'02';
-             insert into modules values ('later', 'Later');
+             insert into modules (id, name) values ('later', 'Later');
              delete from files;",
         )
         .unwrap();
@@ -561,7 +561,7 @@ mod tests {
         let dir = TempDir::new();
         let mut conn = open_db(&dir.0).unwrap().conn.into_inner().unwrap();
         conn.execute_batch(
-            "insert into modules values ('source', 'Source'), ('copy', 'Copy');
+            "insert into modules (id, name) values ('source', 'Source'), ('copy', 'Copy');
              insert into contents values ('source', X'0000'), ('copy', X'0000');",
         )
         .unwrap();

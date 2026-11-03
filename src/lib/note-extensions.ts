@@ -1,4 +1,7 @@
 import type { Editor } from "@tiptap/core";
+import { TabSpacing } from "@/lib/tab-spacing";
+import { HeadingNumbering } from "@/lib/heading-numbering";
+import { ImageMoveHistory } from "@/lib/image-move-history";
 import StarterKit from "@tiptap/starter-kit";
 import type * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -20,6 +23,7 @@ import { InlineMath } from "@/lib/inline-math";
 import { MathBlock } from "@/lib/math-block";
 import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
+import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
 import { Flashcards } from "@/lib/flashcards";
 
@@ -44,10 +48,13 @@ export function noteExtensions({
       // Links open in the browser on ⌘-click, through LinkEditor.
       link: { openOnClick: false },
     }),
+    TabSpacing,
+    ImageMoveHistory,
     LinkEditor,
     Arrows,
     MoveLines,
     ItalicCaret,
+    TextSelectionHighlight,
     InlineMath,
     MathBlock,
     Flashcards,
@@ -55,6 +62,7 @@ export function noteExtensions({
     SectionFocus,
     Sections,
     HeadingFold,
+    HeadingNumbering,
     SlashCommand.configure({ insertImages }),
     LatexSuggest,
     TableOfContents.configure({

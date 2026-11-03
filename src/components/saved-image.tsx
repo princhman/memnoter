@@ -1,3 +1,4 @@
+import { IconTooltip } from "@/components/icon-tooltip";
 import { imageOperation } from "@/lib/write-lifecycle";
 import { OcclusionEditor } from "@/components/occlusion-editor";
 import { saveQueue } from "@/lib/saves";
@@ -12,11 +13,12 @@ import type { NodeType } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import Image from "@tiptap/extension-image";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { FileType } from "@/lib/content";
+import { startImagePointerMove } from "@/lib/image-pointer-move";
 import { adaptedUrl, cachedAdaptedUrl, scheduleTrim } from "@/lib/image-adapt";
 import { useDarkTheme } from "@/hooks/use-dark-theme";
 import { useSelector } from "@tanstack/react-store";
@@ -106,7 +108,14 @@ function CropDialog({ image, onCancel, onSave }: {
 }
 
 function SavedImageView(props: NodeViewProps) {
-  const { node, selected, editor, updateAttributes, deleteNode } = props;
+  const { node, editor, updateAttributes, deleteNode } = props;
+  const selected = useEditorState({
+    editor,
+    selector: ({ editor }) => {
+      const selection = editor.state.selection;
+      return selection instanceof NodeSelection && selection.from === props.getPos();
+    },
+  });
   const { files, saveImage, readImage } = useContext(FilesContext);
   const file = files.get(node.attrs.fileId);
   const [resolved, setResolved] = useState<{ id: string; path: string }>();
@@ -125,12 +134,20 @@ function SavedImageView(props: NodeViewProps) {
     host.current?.closest<HTMLElement>(".note-image-block")?.parentElement?.clientWidth ?? 0;
   const image = useRef<HTMLImageElement | null>(null);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // Ends an image drag still in progress if this view goes away (editor destroyed).
+  const cancelMove = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; cancelMove.current?.(); };
+  }, []);
   const latest = useRef(props);
   latest.current = props;
   const [failed, setFailed] = useState(false);
   const [occlusionOpen, setOcclusionOpen] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  // The viewer shares the decoded copy shown in the note, including recoloring.
+  const [displayedImage, setDisplayedImage] = useState<{ source: string; url: string } | null>(null);
   const [describing, setDescribing] = useState(false);
   const dark = useDarkTheme();
   const adaptive = Boolean(node.attrs.adaptive);
@@ -184,6 +201,7 @@ function SavedImageView(props: NodeViewProps) {
         img.style.opacity = "0";
       }
     } else img.src = src;
+    setDisplayedImage({ source: src, url: img.style.opacity === "0" ? "" : img.src });
     img.alt = latest.current.node.attrs.alt ?? "";
     img.title = latest.current.node.attrs.title ?? "";
     img.onerror = () => setFailed(true);
@@ -270,10 +288,16 @@ function SavedImageView(props: NodeViewProps) {
       const probe = document.createElement("img");
       probe.src = next;
       await probe.decode();
-      if (!cancelled) swapImage(img, next);
+      if (!cancelled) {
+        swapImage(img, next);
+        setDisplayedImage({ source: src, url: next });
+      }
     })().catch((error) => {
       console.error("Failed to adapt image:", error);
-      if (!cancelled) swapImage(img, src);
+      if (!cancelled) {
+        swapImage(img, src);
+        setDisplayedImage({ source: src, url: src });
+      }
     }).finally(() => release?.());
     return () => {
       cancelled = true;
@@ -294,7 +318,16 @@ function SavedImageView(props: NodeViewProps) {
     const position = latest.current.getPos();
     if (position !== undefined && position >= 0 && position < editor.state.doc.content.size) {
       editor.commands.setNodeSelection(position);
+      editor.view.focus();
     }
+  };
+  // Pressing and dragging the image moves it; a press without moving is a click.
+  const pressImage = (event: ReactPointerEvent) => {
+    if (!editor.isEditable || event.button !== 0 || (event.target as Element).closest("[data-resize-handle]")) return;
+    // No text selection or native image drag while the pointer moves.
+    event.preventDefault();
+    cancelMove.current?.();
+    cancelMove.current = startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent);
   };
 
   const layout: ImageLayout = isInline ? "inline" : node.attrs.wrap ? "wrap" : "break";
@@ -386,11 +419,11 @@ function SavedImageView(props: NodeViewProps) {
   });
 
   return (
-    <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-align={isInline ? undefined : node.attrs.alignment}>
+    <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
       <span ref={infoHost} className="contents" />
       {isInline
-        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" data-drag-handle onClick={selectImage} />
-        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" data-drag-handle onClick={selectImage} />}
+        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onClick={selectImage} onDoubleClick={() => { if (src && !failed) setPreviewOpen(true); }} />
+        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onClick={selectImage} onDoubleClick={() => { if (src && !failed) setPreviewOpen(true); }} />}
       {(!src || failed) && <span className="text-sm text-muted-foreground">Image unavailable</span>}
       {selected && editor.isEditable && (
         <div className="note-image-controls" aria-label="Image controls" contentEditable={false}>
@@ -416,6 +449,7 @@ function SavedImageView(props: NodeViewProps) {
               <ToolbarButton key={alignment} label={layout === "wrap" ? `Image on the ${alignment}, text beside it` : label} pressed={node.attrs.alignment === alignment} onClick={() => updateAttributes({ alignment })}><Icon /></ToolbarButton>
             ))}
             <span className="note-image-divider" />
+            <ToolbarButton label="Open image full screen" disabled={!src || failed} onClick={() => setPreviewOpen(true)}><Maximize2 /></ToolbarButton>
             <ToolbarButton label="Adapt to theme" hint="Swaps the image's background for the page's and recolors it for dark or light mode" pressed={adaptive} disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast /></ToolbarButton>
             <Button size="sm" variant="ghost" disabled={!src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}>Occlusion ({validMasks(node.attrs.masks).length})</Button>
             <ToolbarButton label="Crop" disabled={!src || failed || !node.attrs.fileId} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop /></ToolbarButton>
@@ -433,6 +467,22 @@ function SavedImageView(props: NodeViewProps) {
       )}
       {occlusionOpen && src && <OcclusionEditor src={src} masks={validMasks(node.attrs.masks)} onCancel={() => setOcclusionOpen(false)} onSave={masks => { if (saveQueue.isSuspended() || editor.isDestroyed || !editor.isEditable) return; updateAttributes({ masks, imageId: node.attrs.imageId || crypto.randomUUID() }); setOcclusionOpen(false); }} />}
       {cropOpen && image.current && <CropDialog image={image.current} onCancel={() => setCropOpen(false)} onSave={applyCrop} />}
+      {previewOpen && src && (
+        <Dialog open onOpenChange={setPreviewOpen}>
+          <DialogContent
+            className="h-dvh max-w-none rounded-none p-4 pt-12 sm:max-w-none"
+            finalFocus={() => editor.isDestroyed ? null : editor.view.dom}
+          >
+            <DialogTitle className="sr-only">Image preview</DialogTitle>
+            <img
+              src={displayedImage && displayedImage.source === src && displayedImage.url ? displayedImage.url : undefined}
+              alt={node.attrs.alt || node.attrs.title || "Image"}
+              draggable={false}
+              className="h-full min-h-0 w-full object-contain"
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </NodeViewWrapper>
   );
 }
@@ -597,15 +647,23 @@ function ToolbarButton({ label, hint, pressed, disabled, onClick, children }: {
   children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<Button size="icon-sm" variant="ghost" aria-label={label} aria-pressed={pressed} disabled={disabled} onClick={onClick} />}>
-        {children}
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {hint ? <span className="grid gap-0.5"><strong className="font-medium">{label}</strong><span className="text-muted-foreground">{hint}</span></span> : label}
-      </TooltipContent>
-    </Tooltip>
+    <IconTooltip label={label} hint={hint}>
+<Button size="icon-sm" variant="ghost" aria-label={label} aria-pressed={pressed} disabled={disabled} onClick={onClick} >
+{children}
+</Button>
+</IconTooltip>
   );
+}
+
+// Images move with pointer events (see image-pointer-move.ts), never native
+// drag and drop: ProseMirror would make the node draggable on mousedown, and
+// that drag swallows the click that selects the image and opens its toolbar.
+function imageStopEvent({ event }: { event: Event }) {
+  const { type } = event;
+  // Other content can still be dropped on or beside the image.
+  if (type === "dragover" || type === "dragenter" || type === "drop") return false;
+  if (type === "dragstart") { event.preventDefault(); return true; }
+  return !["copy", "cut", "paste"].includes(type);
 }
 
 export const SavedImage = Image.extend({
@@ -642,7 +700,7 @@ export const SavedImage = Image.extend({
   },
   parseHTML() { return [{ tag: "img[data-file-id]", priority: 60 }, { tag: "img[src]" }]; },
   addNodeView() {
-    return ReactNodeViewRenderer(SavedImageView);
+    return ReactNodeViewRenderer(SavedImageView, { stopEvent: imageStopEvent });
   },
   addProseMirrorPlugins() {
     return [imageTextPlugin(this.type)];

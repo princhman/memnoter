@@ -129,10 +129,23 @@ body,
 
 body {
     margin: 0;
+    /* iPad: keep clear of the status bar and home indicator, and don't let a
+       double tap zoom the page. */
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
 }
 
 .app-scroll-container {
     scrollbar-gutter: stable;
+}
+
+/* The sidebar is fixed to the window, so it skips the body's safe-area padding. */
+[data-slot="sidebar-container"] {
+    top: env(safe-area-inset-top);
+    bottom: env(safe-area-inset-bottom);
+    height: auto;
 }
 
 @layer base {
@@ -229,6 +242,10 @@ body {
     transform-origin: bottom left;
     pointer-events: none;
     animation: italic-caret-blink 1.06s step-end infinite;
+}
+
+.italic-caret.is-upright::after {
+    transform: none;
 }
 
 @keyframes italic-caret-blink {
@@ -392,9 +409,48 @@ body {
     text-underline-offset: 0.18em;
 }
 
-/* Selection */
-.tiptap ::selection {
+/* WebKit paints native selected newlines across entire blocks. All editor
+   content, including noneditable widgets and replaced images, uses our boxes. */
+.tiptap::selection,
+.tiptap *::selection {
+    background: transparent;
+    color: inherit;
+}
+
+/* Keep shaping stable when a selection endpoint introduces an inline span.
+   WebKit cannot kern or form ligatures across DOM element boundaries. */
+.tiptap {
+    font-kerning: none;
+    font-variant-ligatures: none;
+}
+
+.tiptap .text-range-selected {
     background: color-mix(in oklch, var(--primary) 80%, transparent);
+}
+
+/* High-contrast modes recolour backgrounds to the canvas, which would hide the
+   drawn selection. Use the system selection colours there instead. */
+@media (forced-colors: active) {
+    .tiptap .text-range-selected {
+        forced-color-adjust: none;
+        background: Highlight;
+        color: HighlightText;
+    }
+}
+
+.tiptap .ProseMirror-selectednode:has(.note-image-block),
+.tiptap .note-image-block.ProseMirror-selectednode {
+    outline: none;
+}
+
+/* A finger dragging an image must move it, not pan the page and cancel the move. */
+.note-image-host {
+    touch-action: none;
+}
+
+.note-image-block[data-range-selected] .note-image {
+    outline: 2px solid color-mix(in srgb, var(--primary) 35%, transparent);
+    outline-offset: 1px;
 }
 
 /* Empty editor feel */
@@ -467,6 +523,19 @@ body {
     transform: rotate(-90deg);
 }
 
+/* Touch has no hover: keep the toggle faintly visible, and give a finger a
+   bigger target than the chevron. */
+@media (pointer: coarse) {
+    .heading-fold-toggle {
+        opacity: 0.45;
+    }
+    .heading-fold-toggle::after {
+        content: "";
+        position: absolute;
+        inset: -0.5rem -0.35rem;
+    }
+}
+
 /* Saved images use Tiptap's resize handles and persist their node attributes. */
 .note-image-block {
     position: relative;
@@ -525,6 +594,14 @@ body {
 .note-image-block[data-selected="true"] [data-resize-handle],
 .note-image-host [data-resize-state="true"] [data-resize-handle] {
     opacity: 1;
+}
+/* A finger needs more than the drawn 12px square. */
+@media (pointer: coarse) {
+    .note-image-host [data-resize-handle]::after {
+        content: "";
+        position: absolute;
+        inset: -12px;
+    }
 }
 .note-image-host [data-resize-handle="top-left"],
 .note-image-host [data-resize-handle="bottom-right"] {
@@ -877,7 +954,7 @@ body {
     text-align: center;
 }
 
-.tiptap .math-block.ProseMirror-selectednode .math-block-widget {
+.tiptap .math-block:is(.ProseMirror-selectednode, .is-range-selected) .math-block-widget .katex-base {
     background: color-mix(in srgb, var(--primary) 25%, transparent);
 }
 
@@ -963,6 +1040,14 @@ body {
 .toc-dash[data-related="true"] > span,
 .toc-dash[data-related="true"]::before {
     background: var(--chart-1);
+}
+
+/* Taller dashes for a finger; tapping one opens its outline. */
+@media (pointer: coarse) {
+    .toc-dash {
+        height: 14px;
+        padding-left: 1rem;
+    }
 }
 
 .toc-dash[data-active="true"] > span,
@@ -1219,6 +1304,14 @@ body {
     opacity: 1;
 }
 
+@media (pointer: coarse) {
+    .tiptap .card-info::after {
+        content: "";
+        position: absolute;
+        inset: -0.4rem;
+    }
+}
+
 .tiptap .card-info:hover .card-info-popup,
 .tiptap .card-info:focus-within .card-info-popup {
     display: flex;
@@ -1382,3 +1475,29 @@ body {
 .occlusion-number.is-selected { background: var(--color-amber-600); }
 /* The selected mask's box, with the crop dialog's handles. */
 .occlusion-selection { position: absolute; cursor: move; outline: 1.5px dashed white; outline-offset: 2px; }
+
+/* Literal tabs remain note text through Yjs persistence. */
+.tiptap { tab-size: 4; }
+
+.tiptap [data-heading-number]::before {
+  content: attr(data-heading-number) " ";
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+/* Moving an image: press on it and drag (see image-pointer-move.ts). */
+[data-moving] { opacity: 0.4; }
+.is-moving-image, .is-moving-image * { cursor: grabbing !important; user-select: none; }
+.note-image-drop-indicator {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  border-radius: 1px;
+  background: var(--primary);
+}
+
+/* Preserve selection feedback over syntax backgrounds without replacing their
+   arrow image or cloze underline. */
+.tiptap .text-range-selected:is(.card-sep, .cloze-text) {
+    background-color: color-mix(in oklch, var(--primary) 80%, transparent);
+}
