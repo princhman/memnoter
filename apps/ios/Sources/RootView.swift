@@ -21,6 +21,7 @@ struct RootView: View {
     @State private var find = ""
     @State private var showingFind = false
     @State private var keyboardDocked = false
+    @State private var keyboardTop: CGFloat = 0
     @State private var deleting: NoteModule?
     var module: NoteModule? { store.modules.first { $0.id == selected } }
     var body: some View {
@@ -90,11 +91,13 @@ struct RootView: View {
                         .overlay {
                             GeometryReader { geometry in
                             if keyboardDocked {
-                                FormattingBar(session: session, panelHeight: max(0, geometry.size.height - 100), panelWidth: min(352, max(0, geometry.size.width - 32)))
+                                let keyboardInset = max(0, geometry.frame(in: .global).maxY - keyboardTop)
+                                FormattingBar(session: session, panelHeight: max(0, geometry.size.height - keyboardInset - 100), panelWidth: min(352, max(0, geometry.size.width - 32)))
                                     .background(.regularMaterial, in: Capsule())
                                     .overlay { Capsule().strokeBorder(.primary.opacity(0.08)) }
                                     .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
                                     .padding(16)
+                                    .padding(.bottom, keyboardInset)
                                     .disabled(!session.state.editable)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                             }
@@ -106,6 +109,7 @@ struct RootView: View {
                         .disabled(busy)
                 }
             }
+            .ignoresSafeArea(.keyboard)
             .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -196,22 +200,34 @@ struct RootView: View {
                 } catch { store.error = String(describing: error) }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-                  let window = session?.web.window else { keyboardDocked = false; return }
-            let localFrame = window.convert(frame, from: window.screen.coordinateSpace)
-            // The row follows the keyboard safe area, including the hardware shortcut bar.
-            // Floating/undocked keyboards must not leave a row at the bottom of the note.
-            keyboardDocked = localFrame.minY < window.bounds.maxY && localFrame.maxY >= window.bounds.maxY
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            keyboardDocked = false
-        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { updateKeyboard($0) }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { updateKeyboard($0) }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { updateKeyboard($0, hiding: true) }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 let task = UIApplication.shared.beginBackgroundTask(withName: "Save note")
                 Task { defer { UIApplication.shared.endBackgroundTask(task) }; do { try await session?.flush() } catch { store.error = String(describing: error) } }
             } else { Task { await store.refresh() } }
+        }
+    }
+    private func updateKeyboard(_ notification: Notification, hiding: Bool = false) {
+        guard let window = session?.web.window,
+              let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let localFrame = window.convert(frame, from: window.screen.coordinateSpace)
+        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? 0
+        let animation: Animation = switch curve {
+        case 1: .easeIn(duration: duration)
+        case 2: .easeOut(duration: duration)
+        case 3: .linear(duration: duration)
+        default: .timingCurve(0.42, 0, 0.58, 1, duration: duration)
+        }
+        // One destination frame drives visibility and placement, including the
+        // hardware shortcut strip. Floating keyboards do not obscure the bottom.
+        withAnimation(animation) {
+            keyboardDocked = !hiding && localFrame.minY < window.bounds.maxY
+                && localFrame.maxY >= window.bounds.maxY && localFrame.width >= window.bounds.width * 0.9
+            keyboardTop = hiding ? window.bounds.maxY : localFrame.minY
         }
     }
     func newModule() {
