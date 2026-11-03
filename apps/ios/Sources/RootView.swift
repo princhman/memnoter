@@ -124,9 +124,11 @@ struct RootView: View {
                     }
                 }
                 if let session, module != nil {
-                    ToolbarItemGroup(placement: .primaryAction) {
+                    ToolbarItemGroup(placement: .topBarLeading) {
                         Button { session.exec("undo") } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
                         Button { session.exec("redo") } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                    }
+                    ToolbarItemGroup(placement: .primaryAction) {
                         Button { showingFind.toggle() } label: { Image(systemName: "magnifyingglass") }.keyboardShortcut("f")
                         Button { showOutline = true } label: { Image(systemName: "list.bullet.indent") }
                         Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }.labelStyle(.iconOnly)
