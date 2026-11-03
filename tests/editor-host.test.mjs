@@ -4,7 +4,7 @@ import { createServer } from 'vite';
 import { webkit } from 'playwright';
 import { mkdtemp, rm } from 'node:fs/promises';
 
-test('WK host opens shared editors, publishes state and outline, and persists edits without desktop APIs', async () => {
+test('WK host opens shared editors, publishes state and outline, and persists edits without desktop APIs', async t => {
   const root = new URL('../', import.meta.url).pathname;
   const cacheDir = await mkdtemp(`${root}node_modules/.memnoter-host-`);
   const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: 'error' });
@@ -14,9 +14,11 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     browser = await webkit.launch();
     const context = await browser.newContext({ reducedMotion: "reduce" });
     const page = await context.newPage();
+    if (process.env.SCROLL_TRACE) page.on('console', message => { if (message.text().startsWith('[scroll]')) console.log(message.text()); });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await context.addInitScript(() => {
+      window.__memnoterScrollDebug = true;
       window.messages = [];
       window.webkit = { messageHandlers: { memnoter: { postMessage(message) {
         window.messages.push(message);
@@ -199,53 +201,71 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await restored.close();
     await page.bringToFront();
     const exec = (command, args) => page.evaluate(([command, args]) => window.memnoterEditor.exec(command, args), [command, args]);
-    // A short final section still needs to reach the visible top. Keep its
-    // screen position through delayed image/math reflow, with and without
-    // native keyboard occlusion. Exercise the public WK protocol and layout.
-    await page.setViewportSize({ width: 820, height: 1180 });
-    await page.evaluate(() => window.memnoterEditor.open('scroll-regression'));
-    await page.locator('.tiptap').click();
-    await page.keyboard.insertText(('Content above the last section. '.repeat(15) + '\n').repeat(30));
-    await exec('mathBlock');
-    await page.keyboard.type('x^2 + y^2');
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('Enter');
-    await exec('insertImage', { fileId: 'keyboard-regression' });
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('Enter');
-    await exec('heading', { level: 1 });
-    await page.keyboard.type('Final section');
-    await page.keyboard.press('Enter');
-    await page.keyboard.type('Short final body');
-    const finalId = await page.evaluate(() => window.messages.filter(m => m.event === 'outline').at(-1).payload.headings.find(h => h.text === 'Final section').id);
-    const headingTop = () => page.locator('.tiptap h1').filter({ hasText: 'Final section' }).evaluate(node => node.getBoundingClientRect().top);
-    for (const keyboard of [0, 300]) {
-      await page.evaluate(keyboard => {
-        window.memnoterEditor.setTopInset(88);
-        window.memnoterEditor.setBottomInset(keyboard);
-      }, keyboard);
-      await exec('focusSection', { id: finalId });
-      await page.waitForFunction(() => {
-        const heading = document.querySelector('.section-focus-start').getBoundingClientRect();
-        return heading.top >= 88 && heading.top <= 92 && heading.bottom < 1180 - 300;
+    await t.test('iPad typing and section navigation retain the reader position', async () => {
+      // A short final section still needs to reach the visible top. Keep its
+      // screen position through delayed content reflow, with and without
+      // native keyboard occlusion. Exercise the public WK protocol and layout.
+      await page.setViewportSize({ width: 820, height: 1180 });
+      await page.evaluate(() => window.memnoterEditor.open('scroll-regression'));
+      await page.locator('.tiptap').click();
+      await page.keyboard.insertText(('Content above the last section. '.repeat(15) + '\n').repeat(30));
+      await exec('heading', { level: 1 });
+      await page.keyboard.type('Final section');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('Short final body');
+      // Twenty real keystrokes in the middle of a long note must not move a
+      // visible caret. This catches competing reveal/animation writers.
+      await page.locator('.tiptap p').filter({ hasText: 'Content above the last section.' }).first().evaluate(node => {
+        const text = node.firstChild;
+        const range = document.createRange();
+        range.setStart(text, Math.floor(text.textContent.length / 2));
+        range.collapse(true);
+        node.closest('.tiptap').focus({ preventScroll: true });
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
       });
-      const before = await headingTop();
-      await exec('showDocument');
-      // Fonts and image decoding can finish several frames after unhide.
-      // Alter actual NodeView geometry at that boundary rather than mocking
-      // the scroll implementation or inventing an editor-only test API.
-      await page.evaluate(async () => {
-        window.memnoterEditor.setBottomInset(Number(document.querySelector('.app-scroll-container').dataset.bottomInset));
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        const image = document.querySelector('.note-image-host');
-        const math = document.querySelector('.math-block');
-        if (!image || !math) throw Error('Missing reflow fixtures');
-        image.style.height = `${image.getBoundingClientRect().height + 240}px`;
-        math.style.paddingBottom = `${parseFloat(getComputedStyle(math).paddingBottom) + 120}px`;
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      });
-      assert.ok(Math.abs(await headingTop() - before) <= 4, `Unfocus moved final heading with keyboard inset ${keyboard}`);
-    }
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(350);
+      const middleScroll = await page.locator('.app-scroll-container').evaluate(node => node.scrollTop);
+      for (const character of 'abcdefghijklmnopqrst') {
+        await page.keyboard.type(character);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+        assert.ok(Math.abs(await page.locator('.app-scroll-container').evaluate(node => node.scrollTop) - middleScroll) < 1, 'Visible typing moved the note');
+      }
+      const finalId = await page.evaluate(() => window.messages.filter(m => m.event === 'outline').at(-1).payload.headings.find(h => h.text === 'Final section').id);
+      for (const keyboard of [0, 300]) {
+        await page.evaluate(keyboard => {
+          window.memnoterEditor.setTopInset(88);
+          window.memnoterEditor.setBottomInset(keyboard);
+        }, keyboard);
+        await exec('focusSection', { id: finalId });
+        await page.waitForFunction(() => {
+          const heading = document.querySelector('.section-focus-start').getBoundingClientRect();
+          return heading.top >= 88 && heading.top <= 92 && heading.bottom < 1180 - 300;
+        });
+        const delta = await page.evaluate(async () => {
+          const heading = document.querySelector('.section-focus-start');
+          const before = heading.getBoundingClientRect().top;
+          window.memnoterEditor.exec('showDocument');
+          // Reflow during the bounded settle must preserve the heading.
+          // Change actual NodeView geometry through the public WK boundary.
+          window.memnoterEditor.setBottomInset(Number(document.querySelector('.app-scroll-container').dataset.bottomInset));
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          const paragraph = document.querySelector('.tiptap p');
+          paragraph.style.paddingBottom = `${parseFloat(getComputedStyle(paragraph).paddingBottom) + 240}px`;
+          await new Promise(resolve => setTimeout(resolve, 350));
+          return heading.getBoundingClientRect().top - before;
+        });
+        assert.ok(Math.abs(delta) <= 4, `Unfocus moved final heading by ${delta} with keyboard inset ${keyboard}`);
+      }
+      // A finished navigation must release its anchor even without new input.
+      // Later content layout belongs to the reader, not the old command.
+      await page.waitForTimeout(350);
+      const releasedScroll = await page.locator('.app-scroll-container').evaluate(node => node.scrollTop);
+      await page.locator('.tiptap').evaluate(node => { node.style.fontSize = '24px'; });
+      await page.waitForTimeout(350);
+      assert.ok(Math.abs(await page.locator('.app-scroll-container').evaluate(node => node.scrollTop) - releasedScroll) < 1, 'Expired section anchor moved the reader');
+    });
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.evaluate(() => { window.memnoterEditor.setTopInset(0); window.memnoterEditor.setBottomInset(0); });
     const result = await page.evaluate(async () => {
