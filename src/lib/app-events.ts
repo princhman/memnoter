@@ -1,5 +1,5 @@
 import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "./backend.ts";
 
 // AppKit owns unmodified accelerators in the native macOS app.
 export function usesNativeMenuShortcuts() {

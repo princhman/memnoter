@@ -3,7 +3,7 @@ import { saveQueue } from "@/lib/saves";
 import { useBlocker } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect } from "react";
 import type { Editor } from "@tiptap/react";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "./backend.ts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { blockIdOf, extractCards } from "@/lib/cards";
 import type { CardSchedule } from "@/lib/flashcards";

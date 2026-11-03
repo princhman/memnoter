@@ -1,8 +1,8 @@
 import { exclusiveWrite, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call as invoke } from "../lib/backend.ts";
+import { listen } from "../lib/backend.ts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";

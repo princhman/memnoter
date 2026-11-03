@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "./backend.ts";
 
 let nativeHistoryUpdates = Promise.resolve();
 

@@ -12,7 +12,7 @@ import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/stat
 import type { NodeType } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import Image from "@tiptap/extension-image";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { call as invoke, fileUrl as convertFileSrc } from "../lib/backend.ts";
 import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, GripVertical, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
