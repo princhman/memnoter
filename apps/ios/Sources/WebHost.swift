@@ -79,15 +79,20 @@ struct EditorState: Decodable {
         didSet { if ready { reportBottomInset() } }
     }
     private var reportedViewport: [CGFloat] = []
+    private var insetReport: Task<Void, Never>?
     private func reportBottomInset() {
         let viewport = [bottomInset, web.safeAreaInsets.top, web.bounds.height]
         guard viewport != reportedViewport else { return }
-        reportedViewport = viewport
-        Task {
+        insetReport?.cancel()
+        insetReport = Task { @MainActor in
             do {
+                try await Task.sleep(for: .milliseconds(40))
+                guard !Task.isCancelled, ready else { return }
+                reportedViewport = viewport
                 _ = try await run("window.memnoterEditor?.setTopInset(top * window.innerHeight / height); window.memnoterEditor?.setBottomInset(inset * window.innerHeight / height)",
                                   ["inset": bottomInset, "top": web.safeAreaInsets.top, "height": max(1, web.bounds.height)])
-            } catch { self.error = String(describing: error) }
+            } catch is CancellationError { }
+            catch { self.error = String(describing: error) }
         }
     }
     var ready = false
@@ -115,15 +120,19 @@ struct EditorState: Decodable {
         config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: "memnoter-app")
         let editorWeb = EditorWebView(frame: .zero, configuration: config)
         web = editorWeb
+        // The HTML inner container owns scrolling; UIKit must not pan the page
+        // to reveal a caret while JS is revealing it in that container.
+        web.scrollView.isScrollEnabled = false
+        web.scrollView.bounces = false
         web.scrollView.contentInsetAdjustmentBehavior = .never
         #if DEBUG
         config.userContentController.addUserScript(WKUserScript(source: "window.__memnoterScrollDebug = true", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         scrollObservations = [
             web.scrollView.observe(\.contentOffset, options: [.old, .new]) { _, change in
-                print("[scroll \(Date().timeIntervalSince1970)] native offset \(change)")
+                NSLog("[scroll \(Date().timeIntervalSince1970)] native offset \(change)")
             },
             web.scrollView.observe(\.contentInset, options: [.old, .new]) { _, change in
-                print("[scroll \(Date().timeIntervalSince1970)] native inset \(change)")
+                NSLog("[scroll \(Date().timeIntervalSince1970)] native inset \(change)")
             }
         ]
         #endif
@@ -170,7 +179,7 @@ struct EditorState: Decodable {
     }
     @objc private func keyboardWillChange(_ notification: Notification) {
         #if DEBUG
-        print("[scroll \(Date().timeIntervalSince1970)] keyboard \(notification.name) \(notification.userInfo ?? [:])")
+        NSLog("[scroll \(Date().timeIntervalSince1970)] keyboard \(notification.name) \(notification.userInfo ?? [:])")
         #endif
         hideEditorInputAssistant()
     }
@@ -256,7 +265,7 @@ struct EditorState: Decodable {
             let payload = body["payload"] as? [String: Any] ?? [:]
             switch event {
             #if DEBUG
-            case "scrollDebug": print("[scroll JS] \(payload)")
+            case "scrollDebug": NSLog("[scroll JS] \(payload)")
             #endif
             case "viewState":
                 if let data = try? JSONSerialization.data(withJSONObject: payload),
@@ -297,7 +306,7 @@ struct EditorState: Decodable {
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) { self.error = String(describing: error) }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { error = "The editor process stopped. Reopen the app to recover saved notes." }
-    func dispose() { NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
+    func dispose() { insetReport?.cancel(); NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
 }
 struct WebSurface: UIViewRepresentable {
     let session: WebSession
