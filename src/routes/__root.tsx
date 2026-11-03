@@ -2,7 +2,8 @@ import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/lib/card-sync";
 import { backfillCards } from "@/lib/card-backfill";
-import { createRootRoute, Outlet, useNavigate } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useNavigate, useRouter } from "@tanstack/react-router";
+import { MODULE_DELETED_REMOTELY_EVENT, startSync } from "@/lib/sync/manager";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
 import CreateModule from "@/components/create-module";
@@ -31,6 +32,7 @@ const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   const navigate = useNavigate();
+  const router = useRouter();
   const reviewCounts = useSelector(reviewActionsStore, (state) => state?.counts);
 
   useCommand({ id: "review.all", title: "Review all cards", keywords: ["flashcards"],
@@ -55,6 +57,23 @@ const RootLayout = () => {
   useEffect(() => {
     void backfillCards();
   }, []);
+
+  useEffect(() => {
+    void startSync();
+  }, []);
+
+  // Another device deleted the note shown here.
+  useEffect(() => {
+    const leave = (event: Event) => {
+      const moduleId = (event as CustomEvent<string>).detail;
+      const showing = router.state.matches.some(
+        (match) => "moduleId" in match.params && match.params.moduleId === moduleId,
+      );
+      if (showing) void router.navigate({ to: "/", replace: true });
+    };
+    window.addEventListener(MODULE_DELETED_REMOTELY_EVENT, leave);
+    return () => window.removeEventListener(MODULE_DELETED_REMOTELY_EVENT, leave);
+  }, [router]);
 
   // The breadcrumbs start after the toolbar while the sidebar is closed, and
   // the toolbar's buttons depend on the page.

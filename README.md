@@ -62,8 +62,10 @@ changes with it. Everything stays on your machine.
 
 ### Your data is yours
 
-- Notes live in a local SQLite database. There is no account, no cloud and no
-  telemetry.
+- Notes live in a local SQLite database. No account is needed for local use,
+  and there is no telemetry.
+- Optional [end-to-end encrypted cloud sync](docs/sync.md) keeps notes, images
+  and review history up to date across devices. Sign in under Settings > Sync.
 - Saves retry in order, and quitting waits for pending saves.
 - A daily backup of notes and images keeps the last 7 days. You can also back
   up and restore from Settings.
@@ -136,4 +138,9 @@ files are kept and cleaned up.
 
 ## License
 
-[MIT](LICENSE) © Vladyslav Nalyvaiko
+The Memnoter app, including the shared sync client and protocol in
+`src/lib/sync/`, is licensed under [MIT](LICENSE) © Vladyslav Nalyvaiko.
+
+The server in [`sync-server/`](sync-server/) is licensed separately under
+[GNU AGPL-3.0](sync-server/LICENSE). Self-hosting is free; anyone running a
+modified copy as a service must publish their changes.

@@ -304,7 +304,7 @@ pub(crate) fn restore(
 }
 
 fn app_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
-    app.path().app_data_dir().map_err(db_err)
+    crate::data_dir(app)
 }
 
 // Holds the database lock while it runs, like backup_now, so it is consistent.

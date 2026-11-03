@@ -47,3 +47,28 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
+
+  sync-server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sync-server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+          cache-dependency-path: sync-server/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      # Runs the Worker and Durable Objects locally, including two-device sync
+      # through the app's sync engine.
+      - run: pnpm test

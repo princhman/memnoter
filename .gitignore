@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 plan.md
+
+# Throwaway data for scripts/sync-dev.sh
+.sync-dev/
