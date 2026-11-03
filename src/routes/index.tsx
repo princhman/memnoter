@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "../lib/backend.ts";
 import { useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { FileText, Plus } from "lucide-react";

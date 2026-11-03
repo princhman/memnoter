@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "./backend.ts";
 import { queryClient } from "@/lib/query-client";
 import { saveQueue } from "@/lib/saves";
 

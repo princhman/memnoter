@@ -1,5 +1,5 @@
 import { Editor } from "@tiptap/core";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "./backend.ts";
 import * as Y from "yjs";
 import { dueCountsKey, isModuleOpen, startCardSync } from "@/lib/card-sync";
 import {

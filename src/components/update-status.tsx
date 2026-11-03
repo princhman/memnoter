@@ -1,3 +1,4 @@
+import { isTauri } from "@/lib/backend";
 import { useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { getVersion } from "@tauri-apps/api/app";
@@ -14,6 +15,7 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
   const { data: currentVersion } = useQuery({
     queryKey: ["app-version"],
     queryFn: getVersion,
+    enabled: isTauri(),
     staleTime: Infinity,
   });
   const check = () => void checkForUpdates({ manual: true });
@@ -60,7 +62,7 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
       <div className="flex items-center">
         {children}
         {/* The App Store updates iOS apps. */}
-        {!IS_IOS && <IconTooltip label={label} side="top"><Button
+        {isTauri() && !IS_IOS && <IconTooltip label={label} side="top"><Button
                 variant="ghost"
                 size="icon-sm"
                 className="relative text-muted-foreground"

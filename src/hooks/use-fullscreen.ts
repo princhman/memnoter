@@ -1,3 +1,4 @@
+import { isTauri } from "@/lib/backend";
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { IS_IOS } from "@/lib/platform";
@@ -7,7 +8,7 @@ export function useIsFullscreen() {
   const [isFullscreen, setIsFullscreen] = useState(IS_IOS);
 
   useEffect(() => {
-    if (IS_IOS) return;
+    if (IS_IOS || !isTauri()) return;
     const appWindow = getCurrentWindow();
 
     const update = async () => {

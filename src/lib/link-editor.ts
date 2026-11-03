@@ -1,3 +1,4 @@
+import { isTauri } from "./backend.ts";
 import { Extension } from "@tiptap/core";
 import { type EditorState, Plugin, PluginKey } from "@tiptap/pm/state";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -36,6 +37,7 @@ export function normalizeHref(input: string) {
 }
 
 export function openLink(href: string) {
+  if (!isTauri()) { window.open(href, "_blank", "noopener,noreferrer"); return; }
   openUrl(href).catch((error) => console.error("Failed to open link:", error));
 }
 

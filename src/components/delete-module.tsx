@@ -1,7 +1,7 @@
 import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "../lib/backend.ts";
 import { Module } from "@/lib/types";
 import { dueCountsKey } from "@/lib/card-sync";
 import { forgetModule } from "@/lib/store";

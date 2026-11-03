@@ -4,7 +4,7 @@ import { writeCards } from "@/lib/card-writes";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "../lib/backend.ts";
 import { CheckCircle2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardFace } from "@/components/card-face";
@@ -22,7 +22,7 @@ import {
   type StoredCard,
 } from "@/lib/fsrs";
 import { cn } from "@/lib/utils";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "../lib/backend.ts";
 import { blockIdOf } from "@/lib/cards";
 import { requestCardReveal } from "@/lib/card-reveal";
 import { setNativeEditorHistory } from "@/lib/native-history";
