@@ -84,6 +84,7 @@ struct RootView: View {
                 }
             }
             .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let session, module != nil {
                     ToolbarItemGroup(placement: .primaryAction) {
