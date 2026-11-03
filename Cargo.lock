@@ -2112,6 +2112,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "memnoter-core"
+version = "0.1.1"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "uuid",
+ "yrs",
+]
+
+[[package]]
 name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
