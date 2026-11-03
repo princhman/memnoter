@@ -2,7 +2,7 @@
   "name": "memnoter",
   "private": true,
   "license": "MIT",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
@@ -10,7 +10,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "sync-version": "node scripts/sync-version.mjs",
+    "version": "node scripts/sync-version.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
