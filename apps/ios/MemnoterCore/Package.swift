@@ -5,6 +5,6 @@ let package = Package(
     products: [.library(name: "MemnoterCore", targets: ["MemnoterCore"])],
     targets: [
         .binaryTarget(name: "memnoter_ffiFFI", path: "MemnoterFFI.xcframework"),
-        .target(name: "MemnoterCore", dependencies: ["memnoter_ffiFFI"], linkerSettings: [.linkedLibrary("sqlite3")])
+        .target(name: "MemnoterCore", dependencies: ["memnoter_ffiFFI"])
     ]
 )
