@@ -50,6 +50,8 @@ import ImageIO
 struct Heading: Decodable, Identifiable { let id: String; let level: Int; let text: String; let folded: Bool }
 struct EditorState: Decodable {
     var focusedSectionId: String?; var headingId: String?
+    var blockType = "paragraph"; var headingLevel: Int?
+    var bulletList = false; var orderedList = false; var blockquote = false
     var marks: [String] = []; var canUndo = false; var canRedo = false; var editable = false
 }
 @MainActor @Observable final class WebSession: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {

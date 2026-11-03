@@ -81,8 +81,7 @@ struct RootView: View {
                             Label(session.headings.first { $0.id == session.state.focusedSectionId }?.text ?? "Focused section", systemImage: "scope")
                                 .font(.subheadline).lineLimit(1)
                             Spacer(minLength: 8)
-                            Button("Show whole note") { session.exec("showDocument") }
-                                .fixedSize()
+                            Button("Show whole note") { session.exec("showDocument") }.fixedSize()
                         }.padding(.horizontal).padding(.vertical, 8).background(.bar)
                     }
                     if showingFind { TextField("Find in note", text: $find).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
@@ -90,27 +89,12 @@ struct RootView: View {
                         .background(Color(uiColor: .systemBackground))
                         .overlay(alignment: .bottomTrailing) {
                             if keyboardDocked {
-                      HStack {
-                        ForEach([("bold", "B"), ("italic", "I"), ("underline", "U"), ("heading", "H1"), ("bulletList", "List"), ("makeCard", "Card")], id: \.0) { command, title in
-                            Button(title) { session.exec(command, command == "heading" ? ["level": 1] : [:]) }
-                                .tint(session.state.marks.contains(command) ? .accentColor : .secondary)
-                        }
-                        Menu {
-                            ForEach(1...3, id: \.self) { level in Button("Heading \(level)") { session.exec("heading", ["level": level]) } }
-                            ForEach(["paragraph", "orderedList", "blockquote", "code", "strike", "inlineMath", "mathBlock"], id: \.self) { command in Button(command) { session.exec(command) } }
-                        } label: { Image(systemName: "textformat") }.accessibilityLabel("More formatting")
-                        if let headingId = session.state.headingId {
-                            Button { session.exec("focusSection", ["id": headingId]) } label: { Image(systemName: "scope") }
-                                .accessibilityLabel("Focus on section")
-                        }
-                        PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }.disabled(busy)
-                      }.padding(10)
-
-                                .background(.regularMaterial, in: Capsule())
-                                .overlay { Capsule().strokeBorder(.primary.opacity(0.08)) }
-                                .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
-                                .padding(16)
-                                .disabled(!session.state.editable)
+                                FormattingBar(session: session)
+                                    .background(.regularMaterial, in: Capsule())
+                                    .overlay { Capsule().strokeBorder(.primary.opacity(0.08)) }
+                                    .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+                                    .padding(16)
+                                    .disabled(!session.state.editable)
                             }
                         }
 
@@ -140,6 +124,7 @@ struct RootView: View {
                         }
                     }
                     ToolbarItemGroup(placement: .primaryAction) {
+                        PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }.disabled(busy).accessibilityLabel("Insert photo")
                         Button { showingFind.toggle() } label: { Image(systemName: "magnifyingglass") }.keyboardShortcut("f")
                         Button { showOutline = true } label: { Image(systemName: "list.bullet.indent") }
                         Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }.labelStyle(.iconOnly)
