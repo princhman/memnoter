@@ -128,7 +128,8 @@ const AppSidebar = () => {
 
   return (
     <Sidebar>
-      <SidebarContent className="pt-6">
+      <div data-tauri-drag-region="deep" className="h-8 shrink-0" />
+      <SidebarContent>
         <SidebarGroup>
           <SidebarMenu className="gap-0.5">
             <SidebarMenuItem>

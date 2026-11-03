@@ -39,9 +39,12 @@
   overflow, dialog closes and mask tools, including shortcuts and native-dialog
   portals. Escape still closes dialogs; 132 tests, lint and build pass.
 
-- [ ] Expand and normalise the window drag area across the full top bar, including
+- [x] Expand and normalise the window drag area across the full top bar, including
   sidebar and inset backgrounds. Preserve interactive controls, double-click
   maximise, full-screen and collapsed-sidebar behavior without overlay strips.
+  Replaced the strip with full-height native deep regions, including inert
+  breadcrumb labels. The locked Tauri listener passes WebKit checks for drag,
+  maximise dispatch, controls and overlays; 133 tests, lint and build pass.
 
 ## Larger features
 
