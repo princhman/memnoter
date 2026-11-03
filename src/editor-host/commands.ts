@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/core";
+import { sectionFocusKey } from "../lib/section-focus.ts";
 import { headingFoldKey } from "../lib/heading-fold.ts";
 
 export function editorOutline(editor: Editor) {
@@ -15,7 +16,12 @@ export function editorOutline(editor: Editor) {
 
 export function editorState(editor: Editor) {
   const marks = ["bold", "italic", "underline", "strike", "code", "link"].filter(mark => editor.isActive(mark));
+  const focusedPos = sectionFocusKey.getState(editor.state);
+  const focusedHeading = focusedPos == null ? null : editor.state.doc.nodeAt(focusedPos);
+  const caretHeading = editor.state.selection.$from.parent;
   return {
+    focusedSectionId: focusedHeading?.attrs["data-toc-id"] ?? null,
+    headingId: caretHeading.type.name === "heading" ? caretHeading.attrs["data-toc-id"] ?? null : null,
     marks, blockType: editor.state.selection.$from.parent.type.name,
     headingLevel: editor.isActive("heading") ? Number(editor.getAttributes("heading").level) : null,
     bulletList: editor.isActive("bulletList"), orderedList: editor.isActive("orderedList"),

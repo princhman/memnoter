@@ -142,14 +142,18 @@ Handle only `kind: "event"` as events; command replies are separate callbacks.
 | Event | Payload |
 | --- | --- |
 | `ready` | `{"protocolVersion":1}` |
-| `state` | `{moduleId, marks: string[], blockType: string, headingLevel: number|null, bulletList: boolean, orderedList: boolean, blockquote: boolean, canUndo: boolean, canRedo: boolean, hasSelection: boolean, editable: boolean}` |
+| `state` | `{moduleId, marks: string[], blockType: string, headingLevel: number|null, headingId: string|null, focusedSectionId: string|null, bulletList: boolean, orderedList: boolean, blockquote: boolean, canUndo: boolean, canRedo: boolean, hasSelection: boolean, editable: boolean}` |
 | `outline` | `{moduleId, headings: [{id: string, level: number, text: string, pos: number, folded: boolean}]}` |
 | `saveStatus` | `{pending: number, failing: boolean, lastError: string|null, imageErrors: string[]}` |
 | `error` | `{moduleId: string|null, message: string}` |
 
 `marks` contains active entries from bold, italic, underline, strike, code, link.
 `blockType` is the selection's immediate parent node type (e.g. paragraph,
-heading, inlineMath). `state` follows editor transactions; `outline` is emitted
+heading, inlineMath). `headingId` identifies the heading containing the caret, or null outside a heading.
+`focusedSectionId` identifies the focused section heading, or null for the whole
+note. Both use current outline IDs and update after focus commands, restored
+view state, and document edits (including deletion of the focused heading).
+`state` follows editor transactions; `outline` is emitted
 initially and when its serialized headings change. Empty headings without a TOC
 ID are omitted until the shared extension assigns one. Outline text contains
 raw formula source. Fold state is view state, not an edit to Yjs content.
