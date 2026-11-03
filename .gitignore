@@ -26,3 +26,10 @@ plan.md
 
 # Shared Cargo workspace build artifacts
 /target/
+
+# Native iOS generated products (scripts/build-ios-core.sh + xcodegen)
+/apps/ios/MemnoterCore/Sources/
+/apps/ios/MemnoterCore/*.xcframework/
+/apps/ios/*.xcodeproj/
+/apps/ios/build/
+/apps/ios/Resources/Web/
