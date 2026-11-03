@@ -27,7 +27,10 @@ Swift package's XCFramework and bindings. It is safe to rerun. Intel simulator
 slices are not included. Do not link system sqlite3: Rust bundles SQLite.
 `build-ios-web.sh` builds and copies the complete Vite output to Resources/Web.
 Rerun it after shared editor/frontend changes. Rerun the core script after Rust
-changes. Xcode does not rebuild either automatically.
+changes. Xcode does not rebuild either automatically. Its pre-build check fails with a
+setup command if `Resources/Web/editor.html` is missing. XcodeGen includes the
+Web folder through `sources` as a folder reference, preserving asset paths in
+the app bundle.
 
 `project.yml` and Package.swift are committed; generated Xcode projects,
 bindings, XCFrameworks, web resources and build products are ignored. Run

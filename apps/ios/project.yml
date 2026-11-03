@@ -16,10 +16,18 @@ targets:
   Memnoter:
     type: application
     platform: iOS
-    sources: [Sources]
-    resources:
+    sources:
+      - path: Sources
       - path: Resources/Web
         type: folder
+    preBuildScripts:
+      - name: Verify bundled web editor
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ ! -f "$SRCROOT/Resources/Web/editor.html" ]; then
+            echo "error: Missing Resources/Web/editor.html. Run ./scripts/build-ios-web.sh from the repository root, then xcodegen generate in apps/ios."
+            exit 1
+          fi
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vladyslavnalyvaiko.memnoter.ipad
