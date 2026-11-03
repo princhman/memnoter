@@ -1,3 +1,5 @@
+import { headingNumberingKey } from "@/lib/heading-numbering";
+import type { Module } from "@/lib/types";
 import { imageFilesOperation, watchWriteAdmission } from "@/lib/write-lifecycle";
 // src/Tiptap.tsx
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
@@ -41,6 +43,8 @@ type TipTapProps = {
 };
 
 const Tiptap = ({ moduleId }: TipTapProps) => {
+  const { data: modules } = useQuery({ queryKey: ["modules"], queryFn: () => invoke<Module[]>("modules") });
+  const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
   const yDoc = useMemo(() => new Y.Doc(), [moduleId]);
   const persistenceTarget = useRef<Y.Doc | null>(null);
   const queryClient = useQueryClient();
@@ -293,6 +297,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   );
 
   useLayoutEffect(() => {
+    if (editor) editor.view.dispatch(editor.state.tr.setMeta(headingNumberingKey, numbered));
+  }, [editor, numbered]);
+
+  useLayoutEffect(() => {
     editorRef.current = editor;
   }, [editor]);
 
@@ -451,7 +459,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
       <LinkMenu editor={editor} />
-      <TableOfContents editor={editor} store={tocStore} />
+      <TableOfContents editor={editor} store={tocStore} numbered={numbered} />
     </FilesContext.Provider>
   );
 };

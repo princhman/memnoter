@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Module } from "@/lib/types";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
@@ -35,7 +35,12 @@ import { useEffect, useState } from "react";
 import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
 
-const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
+const ModuleMenu = ({ name, moduleId, numbered }: { name: string; moduleId: string; numbered: boolean }) => {
+  const client = useQueryClient();
+  const numbering = useMutation({
+    mutationFn: (enabled: boolean) => invoke("set_module_numbering", { moduleId, enabled }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["modules"] }),
+  });
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -52,6 +57,10 @@ const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
 
         <DropdownMenuContent>
           <DropdownMenuGroup>
+            <DropdownMenuItem disabled={numbering.isPending} onClick={() => numbering.mutate(!numbered)}>
+              {numbered ? "Disable" : "Enable"} chapter numbering
+            </DropdownMenuItem>
+            {numbering.isError && <div role="alert">{numbering.error.message}</div>}
             <DropdownMenuItem onClick={() => setRenameOpen(true)}>
               <Pencil className="size-3" />
               Rename
@@ -155,7 +164,7 @@ const AppSidebar = () => {
                       >
                         <span>{module.name}</span>
                       </SidebarMenuButton>
-                      <ModuleMenu moduleId={module.id} name={module.name} />
+                      <ModuleMenu moduleId={module.id} name={module.name} numbered={module.heading_numbering} />
                     </SidebarMenuItem>
                   );
                 })}

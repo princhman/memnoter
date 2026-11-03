@@ -20,9 +20,11 @@
   Tab actions for suggestion acceptance, LaTeX placeholders and list indentation.
   Added literal prose tabs and two-space code indent/outdent; 129 tests, lint
   and build pass.
-- [ ] Automatic chapter numbering: display numbers on headings and in the outline
+- [x] Automatic chapter numbering: display numbers on headings and in the outline
   without adding them to note text. Decide whether numbering is per module and
   whether it is optional before implementing.
+  Added an off-by-default SQLite module setting and shared display-only heading/
+  outline numbers. 130 frontend tests, 40 Rust tests, lint and build pass.
 - [ ] Move images within a note. Verify drag handles for block and inline images,
   drop placement, preservation of captions and masks, and undo/redo.
 - [ ] Context actions on module rows: rename, review and delete using the existing
