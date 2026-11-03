@@ -1385,3 +1385,9 @@ body {
 
 /* Literal tabs remain note text through Yjs persistence. */
 .tiptap { tab-size: 4; }
+
+.tiptap [data-heading-number]::before {
+  content: attr(data-heading-number) " ";
+  color: var(--muted-foreground);
+  pointer-events: none;
+}

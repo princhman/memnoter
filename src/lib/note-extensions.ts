@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
+import { HeadingNumbering } from "@/lib/heading-numbering";
 import StarterKit from "@tiptap/starter-kit";
 import type * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -57,6 +58,7 @@ export function noteExtensions({
     SectionFocus,
     Sections,
     HeadingFold,
+    HeadingNumbering,
     SlashCommand.configure({ insertImages }),
     LatexSuggest,
     TableOfContents.configure({
