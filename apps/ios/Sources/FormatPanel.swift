@@ -26,20 +26,15 @@ struct FormatPanel: View {
             }
             Divider()
             HStack(spacing: 12) {
-                action("Bold", "bold", "bold", active: mark("bold"))
-                action("Italic", "italic", "italic", active: mark("italic"))
-                action("Underline", "underline", "underline", active: mark("underline"))
                 action("Strikethrough", "strikethrough", "strike", active: mark("strike"))
                 action("Code", "chevron.left.forwardslash.chevron.right", "code", active: mark("code"))
             }
             Divider()
             HStack(spacing: 8) {
-                action("Bullets", "list.bullet", "bulletList", active: session.state.bulletList, caption: true)
                 action("Numbers", "list.number", "orderedList", active: session.state.orderedList, caption: true)
                 action("Quote", "text.quote", "blockquote", active: session.state.blockquote, caption: true)
             }
             HStack(spacing: 8) {
-                action("Inline math", "function", "inlineMath", active: session.state.blockType == "inlineMath", caption: true)
                 action("Math block", "x.squareroot", "mathBlock", active: session.state.blockType == "mathBlock", caption: true)
                 Button { editingLink.toggle() } label: {
                     VStack(spacing: 4) { Image(systemName: "link"); Text("Link").font(.caption) }.frame(maxWidth: .infinity)
@@ -61,14 +56,6 @@ struct FormatPanel: View {
                 Text("Leave empty to remove the link.").font(.caption).foregroundStyle(.secondary)
             }
             Divider()
-            if let id = session.state.headingId {
-                Button {
-                    session.exec("focusSection", ["id": id])
-                    close()
-                } label: {
-                    Label("Focus on this section", systemImage: "arrow.up.left.and.arrow.down.right")
-                }.font(.subheadline).foregroundStyle(.primary).buttonStyle(.plain).frame(minHeight: 44)
-            }
             Button { session.exec("makeCard") } label: { Label("Make card from selection", systemImage: "rectangle.stack.badge.plus") }
                 .font(.subheadline).foregroundStyle(.primary).buttonStyle(.plain).frame(minHeight: 44)
         }
