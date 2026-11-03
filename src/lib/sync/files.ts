@@ -28,6 +28,8 @@ export type FileSyncOptions = {
 export function createFileSync({ generation, server, token, key, onStored, onUnauthorized }: FileSyncOptions) {
   let running = true;
   let busy = false;
+  let drained: Promise<void> = Promise.resolve();
+  let finish: (() => void) | undefined;
   let again = false;
   let kickTimer: number | undefined;
   let retryTimer: number | undefined;
@@ -101,6 +103,7 @@ export function createFileSync({ generation, server, token, key, onStored, onUna
       return;
     }
     busy = true;
+    drained = new Promise<void>((resolve) => { finish = resolve; });
     try {
       do {
         again = false;
@@ -110,6 +113,7 @@ export function createFileSync({ generation, server, token, key, onStored, onUna
       console.error("Image sync failed:", error);
     } finally {
       busy = false;
+      finish?.();
     }
   }
 
@@ -129,6 +133,7 @@ export function createFileSync({ generation, server, token, key, onStored, onUna
       running = false;
       window.clearTimeout(kickTimer);
       window.clearTimeout(retryTimer);
+      return drained;
     },
   };
 }

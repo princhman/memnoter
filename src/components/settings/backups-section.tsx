@@ -1,4 +1,4 @@
-import { exclusiveWrite } from "@/lib/write-lifecycle";
+import { restoreBackup } from "@/lib/sync/manager";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { saveQueue, saveStatusStore } from "@/lib/saves";
+import { saveStatusStore } from "@/lib/saves";
 
 import { useBackupNow, type Backup } from "@/lib/backups";
 
@@ -33,12 +33,7 @@ const RestoreBackup = ({
   const pending = useSelector(saveStatusStore, (state) => state.pending);
   const mutation = useMutation({
     mutationKey: ["restore-backup"],
-    mutationFn: async (id: string) => {
-      await exclusiveWrite(async () => {
-        await invoke("restore_backup", { id });
-        saveQueue.clear();
-      }, { excludedMutation: "restore-backup", retain: true });
-    },
+    mutationFn: restoreBackup,
     // Every cache and open document belongs to the replaced data.
     onSuccess: () => window.location.reload(),
   });

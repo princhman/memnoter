@@ -210,3 +210,9 @@ A mismatch returns the distinct, non-fatal `SYNC_STALE_GENERATION` error and lea
 data unchanged. Clients may discard this obsolete work and reconnect with fresh
 state. This is a local IPC contract only; WebSocket and HTTP server protocols
 are unchanged.
+
+Desktop restore serializes with account transitions, stops the sync engine and
+file worker, and drains queued messages and active transfers before entering the
+exclusive database restore. It reloads sync from the resulting database even if
+restore fails. iOS Settings pauses SyncClient before flushing/restoring and
+resumes it in `defer`; cancelled work is additionally fenced by the core epoch.

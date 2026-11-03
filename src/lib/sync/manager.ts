@@ -10,6 +10,7 @@ import { acknowledgeContent, type ContentUpdate, type FileType, type GetContentR
 import { dueCountsKey, isModuleOpen } from "@/lib/card-sync";
 import { reindexStoredCards } from "@/lib/card-backfill";
 import { queryClient } from "@/lib/query-client";
+import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { saveQueue } from "@/lib/saves";
 import { indexStoredNote } from "@/lib/search-index";
 import { forgetModule } from "@/lib/store";
@@ -65,6 +66,7 @@ let unlisten: (() => void) | null = null;
 // Starting and stopping run one at a time, so two engines never overlap.
 let transitions: Promise<unknown> = Promise.resolve();
 let started: Promise<void> | null = null;
+let draining: Promise<unknown> = Promise.resolve();
 
 function serially<T>(task: () => Promise<T>): Promise<T> {
   const next = transitions.then(task, task);
@@ -78,21 +80,26 @@ function writesAllowed() {
 }
 
 const reindexTimers = new Map<string, number>();
+const reindexing = new Set<Promise<void>>();
 function scheduleReindex(moduleId: string) {
   window.clearTimeout(reindexTimers.get(moduleId));
   reindexTimers.set(
     moduleId,
-    window.setTimeout(async () => {
-      reindexTimers.delete(moduleId);
-      // An open note indexes itself as the editor shows the change.
-      if (isModuleOpen(moduleId)) return;
-      try {
-        await indexStoredNote(moduleId);
-        await reindexStoredCards(moduleId);
-        void queryClient.invalidateQueries({ queryKey: dueCountsKey });
-      } catch (error) {
-        console.error(`Failed to index synced note ${moduleId}:`, error);
-      }
+    window.setTimeout(() => {
+      const task = (async () => {
+        reindexTimers.delete(moduleId);
+        // An open note indexes itself as the editor shows the change.
+        if (isModuleOpen(moduleId)) return;
+        try {
+          await indexStoredNote(moduleId);
+          await reindexStoredCards(moduleId);
+          void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+        } catch (error) {
+          console.error(`Failed to index synced note ${moduleId}:`, error);
+        }
+      })();
+      reindexing.add(task);
+      void task.finally(() => reindexing.delete(task));
     }, REINDEX_DELAY_MS),
   );
 }
@@ -235,7 +242,7 @@ async function readAccount(): Promise<SyncAccount | null> {
 }
 
 async function run(account: SyncAccount) {
-  stopEngine();
+  await stopEngine();
   const { generation } = await invoke<SyncStatusResponse>("sync_status");
   const key = await importKey(account.key);
   const unauthorized = () => {
@@ -297,16 +304,25 @@ function stopEngine() {
   unlisten?.();
   unlisten = null;
   engine?.stop();
+  draining = Promise.all([draining, engine?.idle(), fileSync?.stop()]);
   engine = null;
-  fileSync?.stop();
   fileSync = null;
   setSyncedFileHandler(null);
   activeAccount = null;
+  for (const timer of reindexTimers.values()) window.clearTimeout(timer);
+  reindexTimers.clear();
+  draining = draining.then(async () => {
+    // Completions may have scheduled indexing while the workers drained.
+    for (const timer of reindexTimers.values()) window.clearTimeout(timer);
+    reindexTimers.clear();
+    await Promise.allSettled([...reindexing]);
+  });
+  return draining;
 }
 
 // This device stops syncing and forgets its sync state; its notes stay.
 async function signedOut(message: string | null) {
-  stopEngine();
+  await stopEngine();
   await invoke("sync_disable");
   syncStatusStore.setState(() => ({
     account: null,
@@ -368,4 +384,20 @@ export function deleteCloudData() {
 
 export function retrySync() {
   return serially(loadAndRun);
+}
+
+// Serialize the entire restore with account transitions. Stop producers before
+// exclusiveWrite suspends saves, then drain already-started work before swapping.
+export function restoreBackup(id: string) {
+  return serially(async () => {
+    await stopEngine();
+    try {
+      await exclusiveWrite(async () => {
+        await invoke("restore_backup", { id });
+        saveQueue.clear();
+      }, { excludedMutation: "restore-backup", retain: true });
+    } finally {
+      await loadAndRun();
+    }
+  });
 }

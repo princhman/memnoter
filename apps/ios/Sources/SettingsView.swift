@@ -27,6 +27,8 @@ struct SettingsView: View {
                 .task { run { try await load() } }
                 .confirmationDialog("Replace current notes with this backup?", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) {
                     Button("Restore backup", role: .destructive) { if let selected { run {
+                        sync?.pause()
+                        defer { sync?.resume() }
                         try await beforeRestore()
                         try await client.write("restore_backup", BackupArgs(id: selected.id))
                         await restored(); dismiss()
