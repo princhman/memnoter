@@ -595,3 +595,436 @@ pub fn unindexed_card_modules(db: &Db) -> CommandResult<Vec<UnindexedModule>> {
         .map_err(db_err)?;
     rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{delete_module_data, open_db};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    struct Fixture {
+        dir: std::path::PathBuf,
+        db: Db,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("notes-cards-{}", Uuid::new_v4()));
+            let db = open_db(&dir).unwrap();
+            db.conn
+                .lock()
+                .unwrap()
+                .execute_batch(
+                    "insert into modules (id, name) values ('a', 'Algebra'), ('b', 'Biology');
+                     insert into contents values ('a', X''), ('b', X'');",
+                )
+                .unwrap();
+            Self { dir, db }
+        }
+
+        fn sync(&self, module: &str, cards: &[CardContent], now: i64) -> Vec<String> {
+            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, now).unwrap()
+        }
+
+        fn due(&self, module: Option<&str>, now: i64) -> Vec<Card> {
+            query_due_cards(&self.db.conn.lock().unwrap(), module, now).unwrap()
+        }
+
+        fn column<T: rusqlite::types::FromSql>(&self, sql: &str, id: &str) -> T {
+            self.db
+                .conn
+                .lock()
+                .unwrap()
+                .query_one(sql, [id], |row| row.get(0))
+                .unwrap()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn basic(id: &str, front: &str, back: &str) -> CardContent {
+        CardContent {
+            id: id.into(),
+            kind: "basic".into(),
+            front: json!([{ "type": "text", "text": front }]),
+            back: json!([{ "type": "text", "text": back }]),
+            section: Vec::new(),
+        }
+    }
+
+    fn reviewed(due_at: i64, reps: i64) -> ReviewedCard {
+        ReviewedCard {
+            fsrs: FsrsState {
+                due_at,
+                stability: 3.9,
+                stability_fast: 3.1,
+                difficulty: 3.5,
+                scheduled_days: 4.8,
+                learning_step: 0,
+                state: 2,
+                schedule_status: "review".into(),
+                last_review_at: Some(100),
+            },
+            reps,
+            lapses: 0,
+        }
+    }
+
+    fn log(rating: i64) -> ReviewLog {
+        ReviewLog {
+            before: FsrsState {
+                due_at: 10,
+                stability: 0.0,
+                stability_fast: 0.0,
+                difficulty: 0.0,
+                scheduled_days: 0.0,
+                learning_step: 0,
+                state: 0,
+                schedule_status: "new".into(),
+                last_review_at: None,
+            },
+            rating,
+            review_time: 100,
+            duration_ms: Some(1200),
+            fsrs_model: "fsrs-7".into(),
+        }
+    }
+
+    fn review(f: &Fixture, id: &str, expected_reps: i64, due_at: i64) -> CommandResult<()> {
+        save_review(
+            &mut f.db.conn.lock().unwrap(),
+            id,
+            expected_reps,
+            &reviewed(due_at, expected_reps + 1),
+            &log(3),
+        )
+    }
+
+    #[test]
+    fn occlusion_edit_restore_and_missing_asset_share_the_review_lifecycle() {
+        let f = Fixture::new();
+        f.db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into files values ('asset','a','/synthetic/asset','image/png')",
+                [],
+            )
+            .unwrap();
+        let mut card = CardContent {
+            id: "image:o:mask".into(),
+            kind: "occlusion".into(),
+            front: json!({"fileId":"asset","revealed":false}),
+            back: json!({"fileId":"asset","revealed":true}),
+            section: Vec::new(),
+        };
+        f.sync("a", std::slice::from_ref(&card), 10);
+        review(&f, &card.id, 0, 500).unwrap();
+        card.front["masks"] = json!([{"id":"mask","shape":"rectangle","x":0.1}]);
+        f.sync("a", std::slice::from_ref(&card), 110);
+        f.sync("a", &[], 120);
+        assert!(f.due(None, 1000).is_empty());
+        f.sync("a", std::slice::from_ref(&card), 130);
+        let due = f.due(None, 1000);
+        assert_eq!(due[0].reps, 1);
+        assert_eq!(due[0].fsrs.due_at, 500);
+        assert_eq!(due[0].front, card.front);
+        f.db.conn
+            .lock()
+            .unwrap()
+            .execute("delete from files where id = 'asset'", [])
+            .unwrap();
+        f.sync("a", &[card], 140);
+        assert!(f.due(None, 1000).is_empty());
+        assert_eq!(
+            f.column::<i64>(
+                "select count(*) from review_log where card_id = ?1",
+                "image:o:mask"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn indexing_completeness_requires_a_conflict_free_snapshot_even_for_empty_notes() {
+        let f = Fixture::new();
+        let indexed = |id: &str| -> bool {
+            f.db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "select exists(select 1 from card_indexed_modules where module_id = ?1)",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert!(!indexed("a"));
+        f.sync("a", &[basic("shared", "Q", "A")], 10);
+        assert!(indexed("a"));
+        f.sync("b", &[], 10);
+        assert!(indexed("b"));
+        assert_eq!(f.sync("b", &[basic("shared", "Q", "A")], 20), ["shared"]);
+        assert!(!indexed("b"));
+        f.sync("b", &[basic("repaired", "Q", "A")], 30);
+        assert!(indexed("b"));
+    }
+
+    #[test]
+    fn a_card_keeps_the_latest_section_it_was_synced_with() {
+        let f = Fixture::new();
+        let mut card = basic("1", "Q", "A");
+        card.section = vec!["Logic".into(), "Quantifiers".into()];
+        f.sync("a", std::slice::from_ref(&card), 10);
+        assert_eq!(f.due(None, 10)[0].section, ["Logic", "Quantifiers"]);
+        card.section = vec!["Proofs".into()];
+        f.sync("a", &[card], 20);
+        assert_eq!(f.due(None, 20)[0].section, ["Proofs"]);
+    }
+
+    #[test]
+    fn adding_sections_checks_every_note_again() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A")], 10);
+        let conn = f.db.conn.lock().unwrap();
+        // The database as it was before sections.
+        conn.execute_batch("alter table cards drop column section;").unwrap();
+        migrate_flashcards(&conn).unwrap();
+        let indexed: i64 = conn
+            .query_row("select count(*) from card_indexed_modules", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(indexed, 0);
+        drop(conn);
+        assert_eq!(f.due(None, 10)[0].section, Vec::<String>::new());
+        // Opening the migrated database again leaves the index alone.
+        f.sync("a", &[basic("1", "Q", "A")], 20);
+        migrate_flashcards(&f.db.conn.lock().unwrap()).unwrap();
+        assert!(f.column::<bool>("select exists(select 1 from card_indexed_modules where module_id = ?1)", "a"));
+    }
+
+    #[test]
+    fn new_cards_are_due_immediately_and_counted_per_module() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A"), basic("2", "Q2", "A2")], 10);
+        f.sync("b", &[basic("3", "Q3", "A3")], 20);
+        assert!(f.due(None, 5).is_empty());
+        let due = f.due(None, 20);
+        assert_eq!(
+            due.iter().map(|card| card.id.as_str()).collect::<Vec<_>>(),
+            ["1", "2", "3"]
+        );
+        assert_eq!(due[0].module_name, "Algebra");
+        assert_eq!(due[0].front, json!([{ "type": "text", "text": "Q" }]));
+        assert_eq!(due[0].fsrs.schedule_status, "new");
+        assert_eq!(f.due(Some("b"), 20).len(), 1);
+        // A graduated card due again counts as review, not new.
+        review(&f, "2", 0, 15).unwrap();
+        assert_eq!(
+            query_card_schedules(&f.db.conn.lock().unwrap(), "a").unwrap(),
+            vec![
+                CardSchedule { id: "1".into(), due_at: 10, last_review_at: None, state: 0 },
+                CardSchedule { id: "2".into(), due_at: 15, last_review_at: Some(100), state: 2 },
+            ]
+        );
+        assert_eq!(
+            query_due_counts(&f.db.conn.lock().unwrap(), 20, 20).unwrap(),
+            vec![
+                DueCount {
+                    module_id: "a".into(),
+                    count: 2,
+                    new: 1,
+                    learning: 0,
+                    review: 1,
+                    later_new: 0,
+                    later_learning: 0,
+                    later_review: 0,
+                },
+                DueCount {
+                    module_id: "b".into(),
+                    count: 1,
+                    new: 1,
+                    learning: 0,
+                    review: 0,
+                    later_new: 0,
+                    later_learning: 0,
+                    later_review: 0,
+                },
+            ]
+        );
+        // Before card 2 is due it counts only as later today, until the day ends.
+        assert_eq!(
+            query_due_counts(&f.db.conn.lock().unwrap(), 12, 15).unwrap()[0],
+            DueCount {
+                module_id: "a".into(),
+                count: 1,
+                new: 1,
+                learning: 0,
+                review: 0,
+                later_new: 0,
+                later_learning: 0,
+                later_review: 1,
+            }
+        );
+        assert_eq!(query_due_counts(&f.db.conn.lock().unwrap(), 12, 14).unwrap()[0].later_review, 0);
+    }
+
+    #[test]
+    fn editing_content_keeps_the_schedule_and_history() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A")], 10);
+        review(&f, "1", 0, 5_000).unwrap();
+        f.sync("a", &[basic("1", "Question", "Answer")], 20);
+
+        let card = &f.due(None, 5_000)[0];
+        assert_eq!(card.back, json!([{ "type": "text", "text": "Answer" }]));
+        assert_eq!(card.fsrs, reviewed(5_000, 1).fsrs);
+        assert_eq!(card.reps, 1);
+        assert_eq!(card.fsrs_model.as_deref(), Some("fsrs-7"));
+        let updated: i64 = f.column("select updated_at from cards where id = ?1", "1");
+        assert_eq!(updated, 20);
+        // An unchanged sync is not an edit.
+        f.sync("a", &[basic("1", "Question", "Answer")], 30);
+        let updated: i64 = f.column("select updated_at from cards where id = ?1", "1");
+        assert_eq!(updated, 20);
+    }
+
+    #[test]
+    fn missing_cards_are_soft_deleted_and_restored_with_their_state() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A"), basic("2", "Q2", "A2")], 10);
+        review(&f, "1", 0, 50).unwrap();
+        f.sync("b", &[basic("3", "Q3", "A3")], 10);
+
+        f.sync("a", &[basic("2", "Q2", "A2")], 20);
+        let deleted: Option<i64> = f.column("select deleted_at from cards where id = ?1", "1");
+        assert_eq!(deleted, Some(20));
+        assert_eq!(
+            f.due(None, 100)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["2", "3"],
+            "a deleted card is not due, and other modules are untouched"
+        );
+        assert!(review(&f, "1", 1, 60).is_err());
+
+        f.sync("a", &[basic("1", "Q", "A"), basic("2", "Q2", "A2")], 30);
+        let due = f.due(None, 100);
+        let restored = due.iter().find(|card| card.id == "1").unwrap();
+        assert_eq!(restored.reps, 1);
+        assert_eq!(restored.fsrs.due_at, 50);
+        let logs: i64 = f.column("select count(*) from review_log where card_id = ?1", "1");
+        assert_eq!(logs, 1);
+    }
+
+    #[test]
+    fn a_card_live_in_another_module_is_reported_not_moved() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A")], 10);
+        assert_eq!(
+            f.sync("b", &[basic("1", "Q", "A"), basic("2", "Q", "A")], 20),
+            ["1"]
+        );
+        let module: String = f.column("select module_id from cards where id = ?1", "1");
+        assert_eq!(module, "a");
+        assert_eq!(f.due(Some("b"), 20).len(), 1);
+
+        // Cut from one note and pasted into another: the history moves along.
+        f.sync("a", &[], 30);
+        assert!(f
+            .sync("b", &[basic("1", "Q", "A"), basic("2", "Q", "A")], 40)
+            .is_empty());
+        let module: String = f.column("select module_id from cards where id = ?1", "1");
+        assert_eq!(module, "b");
+    }
+
+    #[test]
+    fn reviews_update_the_card_and_log_atomically_and_reject_stale_submissions() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A")], 10);
+        review(&f, "1", 0, 5_000).unwrap();
+        // A second submission computed from the same pre-review card.
+        let error = review(&f, "1", 0, 9_000).unwrap_err();
+        assert!(error.contains("reviewed elsewhere"), "{error}");
+
+        let due_at: i64 = f.column("select due_at from cards where id = ?1", "1");
+        assert_eq!(due_at, 5_000);
+        let row: (i64, i64, String, i64, Option<i64>) =
+            f.db.conn
+                .lock()
+                .unwrap()
+                .query_one(
+                    "select rating, review_time, schedule_status, due_at, duration_ms
+                 from review_log where card_id = '1'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )
+                .unwrap();
+        assert_eq!(row, (3, 100, "new".into(), 10, Some(1200)));
+        assert!(review(&f, "missing", 0, 1)
+            .unwrap_err()
+            .contains("no longer exists"));
+    }
+
+    #[test]
+    fn undoing_a_review_restores_the_card_and_drops_its_log_entry() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A")], 10);
+        let before: (i64, i64, String) = f.db.conn.lock().unwrap().query_one(
+            "select due_at, reps, schedule_status from cards where id = '1'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        review(&f, "1", 0, 5_000).unwrap();
+        let mut previous = reviewed(before.0, before.1);
+        previous.fsrs.schedule_status = before.2.clone();
+        previous.fsrs.last_review_at = None;
+
+        // Only the review that left the card at this count can be undone.
+        let error = undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 0, &previous, None, 100)
+            .unwrap_err();
+        assert!(error.contains("reviewed elsewhere"), "{error}");
+        let error = undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 1, &previous, None, 99)
+            .unwrap_err();
+        assert!(error.contains("no longer the card's latest"), "{error}");
+
+        undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 1, &previous, None, 100).unwrap();
+        let after: (i64, i64, String) = f.db.conn.lock().unwrap().query_one(
+            "select due_at, reps, schedule_status from cards where id = '1'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(after, before);
+        let logs: i64 = f.column("select count(*) from review_log where card_id = ?1", "1");
+        assert_eq!(logs, 0);
+        // Redo is the same review submitted again.
+        review(&f, "1", 0, 5_000).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_module_removes_its_cards_and_reviews() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("1", "Q", "A")], 10);
+        f.sync("b", &[basic("2", "Q", "A")], 10);
+        review(&f, "1", 0, 50).unwrap();
+        review(&f, "2", 0, 50).unwrap();
+        delete_module_data(&mut f.db.conn.lock().unwrap(), &f.dir.join("files"), "a").unwrap();
+
+        let cards: i64 = f.column("select count(*) from cards where module_id = ?1", "a");
+        let logs: i64 = f.column("select count(*) from review_log where card_id = ?1", "1");
+        let other: i64 = f.column("select count(*) from review_log where card_id = ?1", "2");
+        assert_eq!((cards, logs, other), (0, 0, 1));
+    }
+}
+
