@@ -137,6 +137,8 @@ struct EditorState: Decodable {
         if let url = action.request.url, ["https", "http", "mailto"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
         return nil
     }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) { self.error = String(describing: error) }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { error = "The editor process stopped. Reopen the app to recover saved notes." }
     func dispose() { generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
 }
 struct WebSurface: UIViewRepresentable {

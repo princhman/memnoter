@@ -71,6 +71,10 @@ struct RootView: View {
                             Button(title) { session.exec(command, command == "heading" ? ["level": 1] : [:]) }
                                 .tint(session.state.marks.contains(command) ? .accentColor : .secondary)
                         }
+                        Menu {
+                            ForEach(1...3, id: \.self) { level in Button("Heading \(level)") { session.exec("heading", ["level": level]) } }
+                            ForEach(["paragraph", "orderedList", "blockquote", "code", "strike", "inlineMath", "mathBlock"], id: \.self) { command in Button(command) { session.exec(command) } }
+                        } label: { Image(systemName: "textformat") }.accessibilityLabel("More formatting")
                         Spacer()
                         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }.disabled(busy)
                         Text(session.saveStatus).font(.caption).foregroundStyle(.secondary)
@@ -155,7 +159,26 @@ struct RootView: View {
     }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {
         Button("Rename") { rename = module; name = module.name; editingName = true }
-        Button(module.heading_numbering ? "Hide chapter numbers" : "Show chapter numbers") { Task { await store.perform { try await store.client?.write("set_module_numbering", NumberingArgs(moduleId: module.id, enabled: !module.heading_numbering)) } } }
+        Button(module.heading_numbering ? "Hide chapter numbers" : "Show chapter numbers") {
+            guard !busy else { return }
+            busy = true
+            Task {
+                defer { busy = false }
+                await store.perform {
+                    try await session?.flush()
+                    try await store.client?.write("set_module_numbering", NumberingArgs(moduleId: module.id, enabled: !module.heading_numbering))
+                    // Recreate the provider so its cached module preferences refresh.
+                    if let client = store.client {
+                        session?.dispose()
+                        let replacement = WebSession(client: client, directory: store.directory)
+                        session = replacement
+                        if let selected, store.modules.contains(where: { $0.id == selected }) {
+                            replacement.onReady = { Task { do { try await replacement.open(selected) } catch { store.error = String(describing: error) } } }
+                        }
+                    }
+                }
+            }
+        }
         Button("Review") { reviewModule = module.id; navigate("review") }
         Button("Delete", role: .destructive) { deleting = module }
     }
