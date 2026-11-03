@@ -115,6 +115,10 @@ export function TableOfContents({
   const isFolded = (item: TableOfContentDataItem) =>
     folded.some((range) => range.heading === item.pos);
   const [hovered, setHovered] = useState<HoveredSection | null>(null);
+  // Set while a finger opened the outline: it stays open until a tap elsewhere.
+  const [pinned, setPinned] = useState(false);
+  // The pointer that pressed a dash, so its click knows whether it was a tap.
+  const pressTypeRef = useRef("");
   const navRef = useRef<HTMLElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const safeAreaRef = useRef<HTMLDivElement>(null);
@@ -123,10 +127,23 @@ export function TableOfContents({
   // Showing or hiding sections moves headings, so recompute which one is current.
   useEffect(() => {
     setHovered(null);
+    setPinned(false);
     // A destroyed editor (e.g. replaced during a reload) has empty storage.
     if (!editor || editor.isDestroyed) return;
     editor.storage.tableOfContents.scrollHandler();
   }, [editor, focusRange, foldedRanges]);
+
+  // A tap outside closes an outline a tap opened.
+  useEffect(() => {
+    if (!pinned) return;
+    const close = (event: PointerEvent) => {
+      if (event.target instanceof Node && navRef.current?.contains(event.target)) return;
+      setHovered(null);
+      setPinned(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [pinned]);
 
   useLayoutEffect(() => {
     const nav = navRef.current;
@@ -178,6 +195,19 @@ export function TableOfContents({
     area.style.clipPath = `polygon(${width}px ${event.clientY - top}px, 0 ${panelRect.top - top}px, 0 ${panelRect.bottom - top}px)`;
   }
 
+  function openSection(index: number, dash: HTMLElement) {
+    setHovered({
+      start: index,
+      end: getSectionEnd(items, index),
+      anchor: dash.offsetTop + dash.offsetHeight / 2,
+    });
+  }
+
+  function closeOutline() {
+    setHovered(null);
+    setPinned(false);
+  }
+
   function scrollTo(item: TableOfContentDataItem) {
     // The stored DOM node can be replaced by a re-render, so look it up fresh.
     const heading =
@@ -192,7 +222,9 @@ export function TableOfContents({
       ref={navRef}
       className="toc"
       aria-label="Table of contents"
-      onPointerLeave={() => setHovered(null)}
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "touch" && !pinned) setHovered(null);
+      }}
     >
       {section && (
         // Keyed so a new section starts without the previous dash's triangle.
@@ -211,7 +243,10 @@ export function TableOfContents({
                 paddingLeft: `${0.5 + (item.level - items[section.start].level) * 0.625}rem`,
               }}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => scrollTo(item)}
+              onClick={() => {
+                scrollTo(item);
+                if (pinned) closeOutline();
+              }}
             >
               <span className="toc-item-title">
                 {numberAt(item.pos)}<HeadingTitle node={item.node} />
@@ -235,19 +270,32 @@ export function TableOfContents({
               section !== null && index >= section.start && index < section.end
             }
             onMouseDown={(event) => event.preventDefault()}
-            onPointerEnter={(event) =>
-              setHovered({
-                start: index,
-                end: getSectionEnd(items, index),
-                anchor:
-                  event.currentTarget.offsetTop +
-                  event.currentTarget.offsetHeight / 2,
-              })
-            }
-            onPointerMove={(event) => {
-              if (section?.start === index) updateSafeArea(event);
+            onPointerDown={(event) => {
+              pressTypeRef.current = event.pointerType;
             }}
-            onClick={() => scrollTo(item)}
+            onPointerEnter={(event) => {
+              if (event.pointerType !== "touch" && !pinned) {
+                openSection(index, event.currentTarget);
+              }
+            }}
+            onPointerMove={(event) => {
+              if (event.pointerType !== "touch" && section?.start === index) {
+                updateSafeArea(event);
+              }
+            }}
+            onClick={(event) => {
+              // A finger can't hover, so its first tap opens the outline,
+              // and a second tap on the same dash goes to that heading.
+              const tapped = pressTypeRef.current === "touch";
+              pressTypeRef.current = "";
+              if (tapped && section?.start !== index) {
+                openSection(index, event.currentTarget);
+                setPinned(true);
+                return;
+              }
+              scrollTo(item);
+              if (pinned) closeOutline();
+            }}
           >
             <span
               style={{
