@@ -25,13 +25,14 @@
   whether it is optional before implementing.
   Added an off-by-default SQLite module setting and shared display-only heading/
   outline numbers. 130 frontend tests, 40 Rust tests, lint and build pass.
+  Toggled per module from Settings → Chapter numbering, not the module menu.
 - [x] Move images within a note. Verify drag handles for block and inline images,
   drop placement, preservation of captions and masks, and undo/redo.
   Added visible handles, isolated Yjs move history and repaired invalid restored
   node selections. WebKit covers both layouts; 131 tests, lint and build pass.
 - [x] Context actions on module rows: rename, review and delete using the existing
   actions, with keyboard access and the same delete confirmation.
-  Added right-click/Shift+F10 access, module review and numbering actions.
+  Added right-click/Shift+F10 access and module review.
   WebKit covers menu entry points and dialogs; 132 tests, lint and build pass.
 - [x] Audit button tooltips. The shared IconTooltip component and image toolbar
   tooltips exist; check remaining icon-only actions and expose their shortcuts.

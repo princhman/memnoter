@@ -1,7 +1,5 @@
 import { isTauri } from "@/lib/backend";
-import { useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
-import { getVersion } from "@tauri-apps/api/app";
 import { AlertCircle, Check, Download, Loader2, RefreshCw, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
@@ -12,12 +10,6 @@ import type { ReactNode } from "react";
 // `children` sit beside the update button, e.g. the Settings button.
 const UpdateStatus = ({ children }: { children?: ReactNode }) => {
   const status = useSelector(updateStore, (state) => state);
-  const { data: currentVersion } = useQuery({
-    queryKey: ["app-version"],
-    queryFn: getVersion,
-    enabled: isTauri(),
-    staleTime: Infinity,
-  });
   const check = () => void checkForUpdates({ manual: true });
 
   let icon;
@@ -55,10 +47,7 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
   }
 
   return (
-    <div className="flex items-center justify-between gap-2 pl-2">
-      <span className="text-xs text-muted-foreground">
-        {currentVersion && `Memnoter v${currentVersion}`}
-      </span>
+    <div className="flex items-center justify-end gap-2">
       <div className="flex items-center">
         {children}
         {/* The App Store updates iOS apps. */}

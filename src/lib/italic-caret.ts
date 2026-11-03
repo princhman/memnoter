@@ -11,8 +11,21 @@ function italicMarksAtCursor(state: EditorState) {
   return marks.some((mark) => mark.type.name === "italic") ? marks : null;
 }
 
+// WebKit draws the native caret as tall as the whole line, so beside a tall
+// inline image it spans the image. Those lines get a drawn, text-height caret.
+function besideInlineImage(state: EditorState) {
+  const { selection } = state;
+  if (!selection.empty) return false;
+  let found = false;
+  selection.$from.parent.forEach((node) => {
+    if (node.type.name === "inlineImage") found = true;
+  });
+  return found;
+}
+
 // Browsers always draw the native caret upright, so while typing in italic the
 // native caret is hidden and a slanted one is drawn at the cursor instead.
+// The same drawn caret, upright, replaces the native one beside inline images.
 export const ItalicCaret = Extension.create({
   name: "italic-caret",
   addProseMirrorPlugins() {
@@ -21,23 +34,24 @@ export const ItalicCaret = Extension.create({
         key: italicCaretKey,
         props: {
           attributes: (state): Record<string, string> =>
-            italicMarksAtCursor(state) ? { class: "italic-caret-active" } : {},
+            italicMarksAtCursor(state) || besideInlineImage(state) ? { class: "italic-caret-active" } : {},
           decorations(state) {
-            const marks = italicMarksAtCursor(state);
-            if (!marks) return null;
+            const italic = italicMarksAtCursor(state);
+            if (!italic && !besideInlineImage(state)) return null;
+            const marks = italic ?? state.storedMarks ?? state.selection.$from.marks();
 
             const { head } = state.selection;
             const caret = Decoration.widget(
               head,
               () => {
                 const element = document.createElement("span");
-                element.className = "italic-caret";
+                element.className = italic ? "italic-caret" : "italic-caret is-upright";
                 element.setAttribute("aria-hidden", "true");
                 return element;
               },
               {
                 // A new key per position remakes the element, restarting the blink.
-                key: `italic-caret-${head}`,
+                key: `italic-caret-${head}-${italic ? "slanted" : "upright"}`,
                 side: -1,
                 // Wrap in the cursor's marks so the italic text isn't split around it.
                 marks,

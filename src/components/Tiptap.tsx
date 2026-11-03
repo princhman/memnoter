@@ -270,10 +270,12 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
       },
       // ai-suggested change to prevent double enter lag
       onTransaction: ({ editor, transaction }) => {
+        const before = editor.state.selection.$from.nodeBefore;
         if (
           !transaction.docChanged ||
           !editor.state.selection.empty ||
-          editor.state.selection.$from.nodeBefore?.type.name !== "hardBreak" ||
+          // WebKit can also leave the caret behind after inserted tabs.
+          !(before?.type.name === "hardBreak" || before?.text?.endsWith("\t")) ||
           editor.view.composing ||
           !editor.view.hasFocus()
         ) {

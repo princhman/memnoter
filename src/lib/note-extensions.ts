@@ -23,6 +23,7 @@ import { InlineMath } from "@/lib/inline-math";
 import { MathBlock } from "@/lib/math-block";
 import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
+import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
 import { Flashcards } from "@/lib/flashcards";
 
@@ -53,6 +54,7 @@ export function noteExtensions({
     Arrows,
     MoveLines,
     ItalicCaret,
+    TextSelectionHighlight,
     InlineMath,
     MathBlock,
     Flashcards,

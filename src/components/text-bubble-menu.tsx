@@ -57,6 +57,8 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
   return (
     <BubbleMenu
       editor={editor}
+      role="toolbar"
+      aria-label="Text formatting"
       pluginKey={TEXT_BUBBLE_MENU_KEY}
       // The default 250ms debounce makes the menu lag behind the selection.
       updateDelay={0}
@@ -69,6 +71,12 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         if (!(selection instanceof TextSelection) || selection.empty) return false;
         if (!state.doc.textBetween(from, to).trim()) return false;
 
+        let containsImage = false;
+        state.doc.nodesBetween(from, to, (node) => {
+          if (node.type.name === "image" || node.type.name === "inlineImage") containsImage = true;
+          return !containsImage;
+        });
+        if (containsImage) return false;
         const { $from, $to } = selection;
         for (const $pos of [$from, $to]) {
           for (let depth = $pos.depth; depth > 0; depth--) {

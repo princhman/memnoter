@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Module } from "@/lib/types";
-import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
 import CreateModule from "./create-module";
@@ -28,6 +28,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
@@ -37,77 +44,78 @@ import { useEffect, useState, useRef, type ReactNode } from "react";
 import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
 
-const ModuleMenu = ({ name, moduleId, numbered, children }: { name: string; moduleId: string; numbered: boolean; children: ReactNode }) => {
+const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: string; children: ReactNode }) => {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const showMenu = () => { trigger.current?.focus(); setMenuOpen(true); };
-  const client = useQueryClient();
-  const numbering = useMutation({
-    mutationFn: (enabled: boolean) => invoke("set_module_numbering", { moduleId, enabled }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["modules"] }),
-  });
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  // Shared by the pointer-positioned context menu and the "…" dropdown.
+  const items = (Item: typeof DropdownMenuItem | typeof ContextMenuItem) => (
+    <>
+      <Item onClick={() => void openReview(() => navigate({ to: "/review", search: { module: moduleId } }))}>
+        <Layers className="size-3" />Review
+      </Item>
+      <Item onClick={() => setRenameOpen(true)}>
+        <Pencil className="size-3" />
+        Rename
+      </Item>
+      <Item variant="destructive" onClick={() => setDeleteOpen(true)}>
+        <Trash2 className="size-3" />
+        Delete
+      </Item>
+    </>
+  );
+
   return (
-    <SidebarMenuItem
-      onContextMenu={event => { event.preventDefault(); showMenu(); }}
-      onKeyDown={event => {
-        if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
-          event.preventDefault(); showMenu();
-        }
-      }}
-    >
-      {children}
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <IconTooltip label={`Actions for ${name}`} hint="Shift+F10" side="right">
-        <DropdownMenuTrigger
-          render={
-            <SidebarMenuAction ref={trigger} showOnHover aria-label={`Actions for ${name}`} />
-          }
-        >
-          <Ellipsis />
-        </DropdownMenuTrigger>
-        </IconTooltip>
+    <>
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={<SidebarMenuItem
+          onKeyDown={event => {
+            // The keyboard has no pointer position, so open the "…" menu instead.
+            if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+              event.preventDefault(); showMenu();
+            }
+          }}
+        />}
+      >
+        {children}
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <IconTooltip label={`Actions for ${name}`} hint="Shift+F10" side="right">
+          <DropdownMenuTrigger
+            render={
+              <SidebarMenuAction ref={trigger} showOnHover aria-label={`Actions for ${name}`} />
+            }
+          >
+            <Ellipsis />
+          </DropdownMenuTrigger>
+          </IconTooltip>
 
-        <DropdownMenuContent>
-          <DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => void openReview(() => navigate({ to: "/review", search: { module: moduleId } }))}>
-              <Layers className="size-3" />Review
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={numbering.isPending} onClick={() => numbering.mutate(!numbered)}>
-              {numbered ? "Disable" : "Enable"} chapter numbering
-            </DropdownMenuItem>
-            {numbering.isError && <div role="alert">{numbering.error.message}</div>}
-            <DropdownMenuItem onClick={() => setRenameOpen(true)}>
-              <Pencil className="size-3" />
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => setDeleteOpen(true)}
-            >
-              <Trash2 className="size-3" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <RenameModule
-        moduleName={name}
-        moduleId={moduleId}
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-      />
-      <DeleteModule
-        moduleName={name}
-        moduleId={moduleId}
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-      />
-    </SidebarMenuItem>
+          <DropdownMenuContent>
+            <DropdownMenuGroup>{items(DropdownMenuItem)}</DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuGroup>{items(ContextMenuItem)}</ContextMenuGroup>
+      </ContextMenuContent>
+    </ContextMenu>
+    <RenameModule
+      moduleName={name}
+      moduleId={moduleId}
+      open={renameOpen}
+      onOpenChange={setRenameOpen}
+    />
+    <DeleteModule
+      moduleName={name}
+      moduleId={moduleId}
+      open={deleteOpen}
+      onOpenChange={setDeleteOpen}
+    />
+    </>
   );
 };
 
@@ -172,7 +180,7 @@ const AppSidebar = () => {
                     fuzzy: true,
                   });
                   return (
-                    <ModuleMenu key={module.id} moduleId={module.id} name={module.name} numbered={module.heading_numbering}>
+                    <ModuleMenu key={module.id} moduleId={module.id} name={module.name}>
                       <SidebarMenuButton
                         isActive={isActive}
                         render={
