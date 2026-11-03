@@ -113,8 +113,13 @@ export function createSyncEngine({
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   let awaitingPong = false;
   let attempts = 0;
-  // Server messages are handled strictly one after another.
+  // Server messages are handled strictly one after another. Each task belongs
+  // to the connection that queued it: when that connection fails or closes,
+  // the generation moves on and its remaining tasks are skipped. Otherwise a
+  // "ready" queued behind a failed batch would move the cursor past entries
+  // that were never applied, and they would be skipped for good.
   let chain: Promise<void> = Promise.resolve();
+  let generation = 0;
   let status: SyncStatus = { state: "idle", error: null, lastSyncedAt: null };
 
   function setStatus(next: Partial<SyncStatus>) {
@@ -127,6 +132,7 @@ export function createSyncEngine({
     setStatus({ state: "connecting" });
     ready = false;
     inflight = null;
+    generation += 1;
     const current = connect();
     socket = current;
     current.onopen = () => {
@@ -158,6 +164,7 @@ export function createSyncEngine({
       socket = null;
       ready = false;
       inflight = null;
+      generation += 1;
       stopPing();
       if (!running) return;
       if (code === CLOSE_SIGNED_OUT) {
@@ -176,8 +183,11 @@ export function createSyncEngine({
   }
 
   function enqueue(task: () => Promise<void>) {
-    chain = chain.then(task).catch((error) => {
+    const owner = generation;
+    chain = chain.then(() => (owner === generation ? task() : undefined)).catch((error) => {
       console.error("Sync failed:", error);
+      // Whatever is still queued from this connection must not run.
+      generation += 1;
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof FatalSyncError) {
         stopEngine();
@@ -354,6 +364,7 @@ export function createSyncEngine({
 
   function stopEngine() {
     running = false;
+    generation += 1;
     if (pushTimer) clearTimeout(pushTimer);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     pushTimer = reconnectTimer = null;

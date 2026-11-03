@@ -89,13 +89,23 @@ fn db_err(error: impl std::fmt::Display) -> String {
 // Data dir name used before the app was renamed to memnoter.
 const LEGACY_IDENTIFIER: &str = "com.vladyslavnalyvaiko.notes";
 
-fn init_db(app: &tauri::App) -> CommandResult<Db> {
-    let app_dir = app.path().app_data_dir().map_err(db_err)?;
-    // Development builds can use a separate data dir, e.g. to run two copies
-    // side by side when testing sync, without touching the real notes.
+// Where the database, images and backups live. Development builds can set
+// MEMNOTER_DATA_DIR to use a separate directory, e.g. to run two copies side by
+// side when testing sync without touching the real notes. Everything that
+// stores data must come through here, or a throwaway copy would write into
+// (and prune backups from) the real directory.
+pub(crate) fn data_dir<R: tauri::Runtime>(
+    manager: &impl Manager<R>,
+) -> CommandResult<std::path::PathBuf> {
     #[cfg(debug_assertions)]
-    let app_dir = std::env::var_os("MEMNOTER_DATA_DIR").map(std::path::PathBuf::from).unwrap_or(app_dir);
-    initialize_data(&app_dir)
+    if let Some(dir) = std::env::var_os("MEMNOTER_DATA_DIR") {
+        return Ok(std::path::PathBuf::from(dir));
+    }
+    manager.path().app_data_dir().map_err(db_err)
+}
+
+fn init_db(app: &tauri::App) -> CommandResult<Db> {
+    initialize_data(&data_dir(app)?)
 }
 
 fn initialize_data(app_dir: &Path) -> CommandResult<Db> {
@@ -1198,6 +1208,9 @@ fn delete_module_data(
         [module_id],
     )
     .map_err(db_err)?;
+    // Other devices learn the new owner, or a new device would look for the
+    // image under the deleted note and never download it.
+    sync::publish_file_owners(&tx)?;
     let files = {
         let mut stmt = tx
             .prepare("select id, path from files where module_id = ?1")
@@ -1240,7 +1253,7 @@ fn delete_module(
     db: tauri::State<'_, Db>,
     module_id: String,
 ) -> CommandResult<()> {
-    let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
+    let files_dir = data_dir(&app)?.join("files");
     let mut conn = db.lock()?;
     // Recorded first: if deleting fails halfway, reconciling finishes it.
     let recorded = sync::record_module(&conn, &module_id, sync::VaultChange::Deleted)?;
@@ -1382,7 +1395,7 @@ fn save_file(
     mime_type: String,
 ) -> CommandResult<FileType> {
     let id = Uuid::new_v4().to_string();
-    let app_dir = app.path().app_data_dir().map_err(db_err)?;
+    let app_dir = data_dir(&app)?;
     let path = app_dir.join("files").join(&id);
 
     let path_str = path
@@ -1446,12 +1459,7 @@ fn read_file(
         return Err("Invalid file ID".to_string());
     }
 
-    let expected_path = app
-        .path()
-        .app_data_dir()
-        .map_err(db_err)?
-        .join("files")
-        .join(&file_id);
+    let expected_path = data_dir(&app)?.join("files").join(&file_id);
     let conn = db.lock()?;
     let (path, file_type): (String, String) = conn
         .query_row(
@@ -1484,12 +1492,7 @@ fn resolve_card_image(
             r.get(0)
         })
         .map_err(db_err)?;
-    let expected = app
-        .path()
-        .app_data_dir()
-        .map_err(db_err)?
-        .join("files")
-        .join(file_id);
+    let expected = data_dir(&app)?.join("files").join(file_id);
     if Path::new(&path) != expected || !expected.is_file() {
         return Err("Image is unavailable".into());
     }
@@ -1577,7 +1580,7 @@ fn cleanup_files(
     expected_state: Vec<u8>,
     expected_update_id: i64,
 ) -> CommandResult<Vec<String>> {
-    let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
+    let files_dir = data_dir(&app)?.join("files");
     let conn = db.lock()?;
     cleanup_unused_files(
         &conn,
@@ -1763,6 +1766,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let db = init_db(app).expect("Failed to init db.");
+            // The asset protocol only serves $APPDATA/files; a development
+            // copy with its own data directory needs that one allowed too.
+            #[cfg(debug_assertions)]
+            if std::env::var_os("MEMNOTER_DATA_DIR").is_some() {
+                let files = data_dir(app)?.join("files");
+                app.asset_protocol_scope().allow_directory(files, true)?;
+            }
             app.manage(db);
             app.manage(ExitGate::default());
             backups::spawn_daily_backup(app.handle());

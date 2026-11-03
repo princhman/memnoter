@@ -22,7 +22,7 @@
 use crate::{db_err, delete_module_data, CommandResult, ContentUpdate, Db};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::collections::{BTreeMap, HashMap};
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 use yrs::{updates::decoder::Decode, Any, Doc, Map, Out, ReadTxn, StateVector, Transact, Update};
 
 pub const VAULT_DOC: &str = "vault";
@@ -158,6 +158,45 @@ pub fn record_file(conn: &Connection, file_id: &str, module_id: &str, file_type:
     let update = {
         let mut txn = doc.transact_mut();
         files.insert(&mut txn, file_id, file_record(module_id, file_type));
+        txn.encode_update_v1()
+    };
+    save_vault(conn, &doc)?;
+    push_outbox(conn, VAULT_DOC, &update)?;
+    Ok(true)
+}
+
+// Publishes images whose owning note changed since the vault last named it,
+// e.g. when the owner was deleted and a surviving note took the image over.
+// Only images the vault already knows are touched.
+pub fn publish_file_owners(conn: &Connection) -> CommandResult<bool> {
+    if !is_enabled(conn)? {
+        return Ok(false);
+    }
+    let doc = load_vault(conn)?;
+    let known: BTreeMap<String, String> = string_entries(&doc, FILES_MAP).into_iter().collect();
+    let local: Vec<(String, String, String)> = {
+        let mut stmt = conn.prepare("select id, module_id, file_type from files").map_err(db_err)?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(db_err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(db_err)?
+    };
+    let changed: Vec<(String, String)> = local
+        .into_iter()
+        .filter_map(|(id, module_id, file_type)| {
+            let record = file_record(&module_id, &file_type);
+            known.get(&id).is_some_and(|current| *current != record).then_some((id, record))
+        })
+        .collect();
+    if changed.is_empty() {
+        return Ok(false);
+    }
+    let files = doc.get_or_insert_map(FILES_MAP);
+    let update = {
+        let mut txn = doc.transact_mut();
+        for (id, record) in &changed {
+            files.insert(&mut txn, id.as_str(), record.as_str());
+        }
         txn.encode_update_v1()
     };
     save_vault(conn, &doc)?;
@@ -558,7 +597,7 @@ fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResul
 }
 
 fn files_dir(app: &tauri::AppHandle) -> CommandResult<std::path::PathBuf> {
-    Ok(app.path().app_data_dir().map_err(db_err)?.join("files"))
+    Ok(crate::data_dir(app)?.join("files"))
 }
 
 fn delete_modules(conn: &mut Connection, app: Option<&tauri::AppHandle>, ids: &[String]) -> CommandResult<()> {
@@ -917,7 +956,13 @@ pub fn sync_apply(
     entries: Vec<RemoteEntry>,
     cursor: i64,
 ) -> CommandResult<ApplyResult> {
-    apply_remote(&mut *db.lock()?, Some(&app), entries, cursor)
+    let result = apply_remote(&mut *db.lock()?, Some(&app), entries, cursor)?;
+    // Deleting a note here may have handed its images to another note, which
+    // queued a vault update for the engine to push.
+    if !result.deleted.is_empty() {
+        notify(&app);
+    }
+    Ok(result)
 }
 
 #[tauri::command(async)]
@@ -1282,6 +1327,36 @@ mod tests {
         assert_eq!(missing_files(&b).unwrap().len(), 1);
         // Downloaded images are not uploaded again.
         assert!(pending_uploads(&b).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_shared_image_stays_downloadable_after_its_owner_is_deleted() {
+        let (a_dir, mut a) = db();
+        let (_b_dir, mut b) = db();
+        let file = uuid::Uuid::new_v4().to_string();
+        a.execute_batch(
+            "insert into modules values ('owner', 'Owner'), ('other', 'Other');
+             insert into contents values ('owner', X''), ('other', X'');",
+        )
+        .unwrap();
+        a.execute("insert into files values (?1, 'owner', ?2, 'image/png')", params![file, "/x"]).unwrap();
+        // The other note references the image, as an occlusion card does.
+        a.execute("insert into shared_image_refs values ('other', ?1)", [&file]).unwrap();
+        enable(&mut a, "{}").unwrap();
+        enable(&mut b, "{}").unwrap();
+
+        record_module(&a, "owner", VaultChange::Deleted).unwrap();
+        delete_module_data(&mut a, &a_dir.join("files"), "owner").unwrap();
+        let owner: String = a.query_row("select module_id from files", [], |r| r.get(0)).unwrap();
+        assert_eq!(owner, "other");
+
+        let mut seq = 0;
+        transfer(&a, &mut b, &mut seq);
+        let missing = missing_files(&b).unwrap();
+        assert_eq!(missing.len(), 1, "the surviving note's image must be downloadable");
+        assert_eq!(missing[0].module_id, "other");
+        // Nothing changed, so nothing more is published.
+        assert!(!publish_file_owners(&a).unwrap());
     }
 
     #[test]

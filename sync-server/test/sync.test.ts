@@ -118,6 +118,43 @@ describe("sync between devices", () => {
     a.engine.stop();
   });
 
+  it("never moves the cursor past a batch that failed to apply", async () => {
+    const { token } = await signIn("failed-batch@example.com");
+    const a = await device(token);
+    a.engine.start();
+    await waitFor(synced(a.engine));
+    a.store.doc("note").getText("t").insert(0, "must arrive");
+    a.engine.nudge();
+    await waitFor(() => a.store.outboxEntries.length === 0);
+
+    // The first attempt to store remote changes fails, as a database error
+    // or a failed blob download would. The server has already queued "ready"
+    // right behind that batch.
+    const b = await device(token);
+    const applyRemote = b.store.applyRemote.bind(b.store);
+    let failures = 0;
+    b.store.applyRemote = async (entries, cursor) => {
+      if (failures++ === 0) {
+        // Slow, like a database or blob download, so the server's "ready" is
+        // already queued behind this batch when it fails.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        throw new Error("disk full");
+      }
+      return applyRemote(entries, cursor);
+    };
+    b.engine.start();
+    await waitFor(() => failures >= 1);
+    // Give a queued "ready" time to run (reconnecting takes at least 750 ms).
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await b.store.cursor()).toBe(0);
+
+    // After reconnecting it asks again from the stored cursor and catches up.
+    await waitFor(() => b.store.text("note") === "must arrive", 15_000);
+    expect(failures).toBeGreaterThanOrEqual(2);
+    a.engine.stop();
+    b.engine.stop();
+  });
+
   it("deleting cloud data empties the server and signs out every device", async () => {
     const { token } = await signIn("wipe@example.com");
     const a = await device(token);
