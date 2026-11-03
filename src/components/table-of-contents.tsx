@@ -1,3 +1,5 @@
+import { IconTooltip } from "@/components/icon-tooltip";
+import { headingNumbers } from "@/lib/heading-numbering";
 import {
   useEffect,
   useLayoutEffect,
@@ -72,10 +74,14 @@ function HeadingTitle({ node }: { node: PMNode }) {
 export function TableOfContents({
   editor,
   store,
+  numbered = false,
 }: {
   editor: Editor | null;
   store: TocStore;
+  numbered?: boolean;
 }) {
+  const numbers = useEditorState({ editor, selector: ({ editor }) => editor ? [...headingNumbers(editor.state.doc)] : [] });
+  const numberAt = (pos: number) => numbered ? `${new Map(numbers ?? []).get(pos) ?? ""} ` : "";
   const allItems = useSelector(store, (state) => state);
   // Focus changes don't touch the document, so the TOC extension won't report them.
   const focusRange = useEditorState({
@@ -208,7 +214,7 @@ export function TableOfContents({
               onClick={() => scrollTo(item)}
             >
               <span className="toc-item-title">
-                <HeadingTitle node={item.node} />
+                {numberAt(item.pos)}<HeadingTitle node={item.node} />
               </span>
               {isFolded(item) && <ChevronRight aria-label="Folded" />}
             </button>
@@ -218,11 +224,11 @@ export function TableOfContents({
 
       <div className="toc-rail">
         {items.map((item, index) => (
+          <IconTooltip key={item.id} label={numberAt(item.pos) + item.textContent} side="left">
           <button
-            key={item.id}
             type="button"
             className="toc-dash"
-            aria-label={item.textContent}
+            aria-label={numberAt(item.pos) + item.textContent}
             data-active={item.id === activeId}
             data-folded={isFolded(item)}
             data-related={
@@ -252,6 +258,7 @@ export function TableOfContents({
               }}
             />
           </button>
+          </IconTooltip>
         ))}
       </div>
     </nav>

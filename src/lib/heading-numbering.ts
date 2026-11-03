@@ -1,0 +1,41 @@
+import { Extension } from "@tiptap/core";
+import type { Node } from "@tiptap/pm/model";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
+
+// Missing heading levels do not invent empty chapters: H1 → H3 is 1 → 1.1.
+export function headingNumbers(doc: Node) {
+  const result = new Map<number, string>();
+  const stack: { level: number; number: number }[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name !== "heading") return;
+    const level = Number(node.attrs.level);
+    let previous = 0;
+    while (stack.length && stack[stack.length - 1].level > level) previous = stack.pop()!.number;
+    if (stack[stack.length - 1]?.level === level) stack[stack.length - 1].number++;
+    else stack.push({ level, number: previous + 1 });
+    result.set(pos, stack.map(entry => entry.number).join("."));
+  });
+  return result;
+}
+export const headingNumberingKey = new PluginKey<boolean>("headingNumbering");
+export const HeadingNumbering = Extension.create({
+  name: "headingNumbering",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      key: headingNumberingKey,
+      state: {
+        init: () => false,
+        apply: (tr, enabled) => tr.getMeta(headingNumberingKey) ?? enabled,
+      },
+      props: {
+        decorations(state) {
+          if (!headingNumberingKey.getState(state)) return null;
+          return DecorationSet.create(state.doc, [...headingNumbers(state.doc)].map(([pos, number]) =>
+            Decoration.node(pos, pos + state.doc.nodeAt(pos)!.nodeSize, { "data-heading-number": number }),
+          ));
+        },
+      },
+    })];
+  },
+});

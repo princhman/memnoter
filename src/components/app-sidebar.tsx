@@ -1,3 +1,5 @@
+import { MOD_KEY } from "@/lib/utils";
+import { openReview } from "@/lib/card-sync";
 import {
   Sidebar,
   SidebarContent,
@@ -15,7 +17,7 @@ import {
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Module } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useMatchRoute } from "@tanstack/react-router";
+import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import CreateModule from "./create-module";
 import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
@@ -26,59 +28,93 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useEffect, useState } from "react";
+import { IconTooltip } from "@/components/icon-tooltip";
+import { useEffect, useState, useRef, type ReactNode } from "react";
 import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
 
-const ModuleMenu = ({ name, moduleId }: { name: string; moduleId: string }) => {
+const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: string; children: ReactNode }) => {
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const showMenu = () => { trigger.current?.focus(); setMenuOpen(true); };
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  // Shared by the pointer-positioned context menu and the "…" dropdown.
+  const items = (Item: typeof DropdownMenuItem | typeof ContextMenuItem) => (
+    <>
+      <Item onClick={() => void openReview(() => navigate({ to: "/review", search: { module: moduleId } }))}>
+        <Layers className="size-3" />Review
+      </Item>
+      <Item onClick={() => setRenameOpen(true)}>
+        <Pencil className="size-3" />
+        Rename
+      </Item>
+      <Item variant="destructive" onClick={() => setDeleteOpen(true)}>
+        <Trash2 className="size-3" />
+        Delete
+      </Item>
+    </>
+  );
+
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <SidebarMenuAction showOnHover aria-label={`Actions for ${name}`} />
-          }
-        >
-          <Ellipsis />
-        </DropdownMenuTrigger>
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={<SidebarMenuItem
+          onKeyDown={event => {
+            // The keyboard has no pointer position, so open the "…" menu instead.
+            if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+              event.preventDefault(); showMenu();
+            }
+          }}
+        />}
+      >
+        {children}
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <IconTooltip label={`Actions for ${name}`} hint="Shift+F10" side="right">
+          <DropdownMenuTrigger
+            render={
+              <SidebarMenuAction ref={trigger} showOnHover aria-label={`Actions for ${name}`} />
+            }
+          >
+            <Ellipsis />
+          </DropdownMenuTrigger>
+          </IconTooltip>
 
-        <DropdownMenuContent>
-          <DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => setRenameOpen(true)}>
-              <Pencil className="size-3" />
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => setDeleteOpen(true)}
-            >
-              <Trash2 className="size-3" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <RenameModule
-        moduleName={name}
-        moduleId={moduleId}
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-      />
-      <DeleteModule
-        moduleName={name}
-        moduleId={moduleId}
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-      />
+          <DropdownMenuContent>
+            <DropdownMenuGroup>{items(DropdownMenuItem)}</DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuGroup>{items(ContextMenuItem)}</ContextMenuGroup>
+      </ContextMenuContent>
+    </ContextMenu>
+    <RenameModule
+      moduleName={name}
+      moduleId={moduleId}
+      open={renameOpen}
+      onOpenChange={setRenameOpen}
+    />
+    <DeleteModule
+      moduleName={name}
+      moduleId={moduleId}
+      open={deleteOpen}
+      onOpenChange={setDeleteOpen}
+    />
     </>
   );
 };
@@ -100,7 +136,8 @@ const AppSidebar = () => {
 
   return (
     <Sidebar>
-      <SidebarContent className="pt-6">
+      <div data-tauri-drag-region="deep" className="h-8 shrink-0" />
+      <SidebarContent>
         <SidebarGroup>
           <SidebarMenu className="gap-0.5">
             <SidebarMenuItem>
@@ -143,7 +180,7 @@ const AppSidebar = () => {
                     fuzzy: true,
                   });
                   return (
-                    <SidebarMenuItem key={module.id}>
+                    <ModuleMenu key={module.id} moduleId={module.id} name={module.name}>
                       <SidebarMenuButton
                         isActive={isActive}
                         render={
@@ -155,8 +192,7 @@ const AppSidebar = () => {
                       >
                         <span>{module.name}</span>
                       </SidebarMenuButton>
-                      <ModuleMenu moduleId={module.id} name={module.name} />
-                    </SidebarMenuItem>
+                    </ModuleMenu>
                   );
                 })}
               </SidebarMenu>
@@ -167,22 +203,9 @@ const AppSidebar = () => {
 
       <SidebarFooter>
         <UpdateStatus>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-muted-foreground aria-[current=page]:text-foreground"
-                  aria-label="Settings"
-                  render={<Link to="/settings" />}
-                />
-              }
-            >
-              <Settings />
-            </TooltipTrigger>
-            <TooltipContent side="top">Settings</TooltipContent>
-          </Tooltip>
+          <IconTooltip label="Settings" hint={`${MOD_KEY},`} side="top">
+            <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
+          </IconTooltip>
         </UpdateStatus>
       </SidebarFooter>
     </Sidebar>
