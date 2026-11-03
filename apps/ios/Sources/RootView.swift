@@ -20,6 +20,7 @@ struct RootView: View {
     @State private var image: PhotosPickerItem?
     @State private var find = ""
     @State private var showingFind = false
+    @State private var keyboardDocked = false
     @State private var deleting: NoteModule?
     var module: NoteModule? { store.modules.first { $0.id == selected } }
     var body: some View {
@@ -87,6 +88,7 @@ struct RootView: View {
                     if showingFind { TextField("Find in note", text: $find).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
                     WebSurface(session: session)
                         .background(Color(uiColor: .systemBackground))
+                    if keyboardDocked {
                     ScrollView(.horizontal, showsIndicators: false) {
                       HStack {
                         ForEach([("bold", "B"), ("italic", "I"), ("underline", "U"), ("heading", "H1"), ("bulletList", "List"), ("makeCard", "Card")], id: \.0) { command, title in
@@ -106,6 +108,7 @@ struct RootView: View {
                         Text(session.saveStatus).font(.caption).foregroundStyle(.secondary)
                       }.padding(10)
                     }.background(.bar).disabled(!session.state.editable)
+                    }
                 } else {
                     HomeView(modules: store.modules, recentModules: store.recentModules, newModule: newModule, openModule: navigate)
                         .disabled(busy)
@@ -191,6 +194,17 @@ struct RootView: View {
                     try await session?.flush()
                 } catch { store.error = String(describing: error) }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                  let window = session?.web.window else { keyboardDocked = false; return }
+            let localFrame = window.convert(frame, from: window.screen.coordinateSpace)
+            // The row follows the keyboard safe area, including the hardware shortcut bar.
+            // Floating/undocked keyboards must not leave a row at the bottom of the note.
+            keyboardDocked = localFrame.minY < window.bounds.maxY && localFrame.maxY >= window.bounds.maxY
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardDocked = false
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
