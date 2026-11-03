@@ -42,6 +42,45 @@ struct SyncKeychain {
     }
 }
 
+/// Debouncing never owns a transfer. Wakes during a pass coalesce into one
+/// follow-up pass; only lifecycle cancellation interrupts active work.
+@MainActor final class SyncTransferWorker {
+    private let pass: @MainActor () async throws -> Void
+    private let onError: @MainActor (Error) -> Void
+    private var debounce: Task<Void, Never>?
+    private var worker: Task<Void, Never>?
+    private var again = false
+    private var generation = UUID()
+
+    init(pass: @escaping @MainActor () async throws -> Void,
+         onError: @escaping @MainActor (Error) -> Void) {
+        self.pass = pass; self.onError = onError
+    }
+    func nudge() {
+        if worker != nil { again = true; return }
+        debounce?.cancel()
+        debounce = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+            guard let self else { return }
+            debounce = nil
+            let owner = generation
+            worker = Task {
+                repeat {
+                    again = false
+                    do { try await pass() }
+                    catch { if !Task.isCancelled, owner == generation { onError(error) } }
+                } while again && !Task.isCancelled && owner == generation
+                if owner == generation { worker = nil }
+            }
+        }
+    }
+    func cancel() {
+        generation = UUID()
+        debounce?.cancel(); debounce = nil
+        worker?.cancel(); worker = nil; again = false
+    }
+}
+
 /// URLSession owns transport; Rust owns transactions and wire-compatible crypto.
 /// One connection task serializes receive/apply/ack. Reconnect always reads the durable cursor.
 @MainActor @Observable final class SyncClient {
@@ -57,7 +96,7 @@ struct SyncKeychain {
     var onFile: ((String, String) async throws -> Void)?
     private var connection: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
-    private var wake: Task<Void, Never>?
+    @ObservationIgnored private var transfers: SyncTransferWorker!
     private var socket: URLSessionWebSocketTask?
     private var ready = false
     private var inflight: (id: Int, max: Int)?
@@ -68,6 +107,12 @@ struct SyncKeychain {
     private var fatal = false
     init(core: CoreClient, session: URLSession = .shared, keychain: SyncKeychain = SyncKeychain()) {
         self.core = core; self.session = session; self.keychain = keychain
+        transfers = SyncTransferWorker(pass: { [weak self] in
+            guard let self else { return }
+            try await push()
+            try await files()
+        }, onError: { [weak self] in self?.error = $0.localizedDescription })
+
     }
     func command(_ name: String, _ args: [String: Any] = [:]) async throws -> Any {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
@@ -133,7 +178,7 @@ struct SyncKeychain {
         _ = try await command("sync_disable"); pending = 0; lastSynced = nil; status = "Not running."
     }
     func stop() {
-        generation = UUID(); connection?.cancel(); ticker?.cancel(); wake?.cancel()
+        generation = UUID(); connection?.cancel(); ticker?.cancel(); transfers.cancel()
         connection = nil; ticker = nil; socket?.cancel(with: .goingAway, reason: nil); socket = nil
         ready = false; inflight = nil
     }
@@ -185,16 +230,15 @@ struct SyncKeychain {
             }
         }
     }
-    func syncNow() { fatal = false; stop(); resume() }
+    func syncNow() {
+        fatal = false
+        if connection == nil { resume() } else { nudge() }
+    }
     func nudge() {
         guard !suspended else { return }
-        wake?.cancel()
-        wake = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled, let self else { return }
-            do { try await push(); try await files() } catch { self.error = error.localizedDescription }
-        }
+        transfers.nudge()
     }
+
     private func send(_ value: [String: Any]) async throws {
         guard let socket else { throw URLError(.networkConnectionLost) }
         try await socket.send(.string(String(decoding: JSONSerialization.data(withJSONObject: value), as: UTF8.self)))
@@ -292,6 +336,7 @@ struct SyncKeychain {
         do { try await send(["t": "push", "id": nextId, "entries": entries]) }
         catch { inflight = nil; socket?.cancel(with: .goingAway, reason: nil); throw error }
     }
+
     private func files() async throws {
         guard ready, let account else { return }
         let owner = generation
