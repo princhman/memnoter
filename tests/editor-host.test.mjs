@@ -12,10 +12,11 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
   try {
     await server.listen();
     browser = await webkit.launch();
-    const page = await browser.newPage();
+    const context = await browser.newContext();
+    const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.addInitScript(() => {
+    await context.addInitScript(() => {
       window.messages = [];
       window.webkit = { messageHandlers: { memnoter: { postMessage(message) {
         window.messages.push(message);
@@ -31,6 +32,28 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
         queueMicrotask(() => window.__memnoterBridge.resolve(id, result));
       } } } };
     });
+    // Saved native preferences are untrusted across app upgrades. A bad caret
+    // or missing heading must not turn a successful content read into failure.
+    for (const saved of [
+      { anchor: "invalid", head: 1, scrollTop: 0, focusedSection: null },
+      { anchor: 1, head: 1, scrollTop: 0, focusedSection: 999999, foldedSections: ["deleted-heading"] },
+    ]) {
+      const recovery = await context.newPage();
+      await recovery.addInitScript(saved => {
+        window.__memnoterViewState = { viewByModule: { one: saved } };
+      }, saved);
+      await recovery.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+      await recovery.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+      await recovery.evaluate(() => window.memnoterEditor.open('one'));
+      await recovery.locator('.tiptap[contenteditable=true]').click();
+      await recovery.keyboard.type('Recovered editor');
+      assert.ok((await recovery.locator('.tiptap').textContent()).includes('Recovered editor'));
+      await recovery.evaluate(() => window.memnoterEditor.flush());
+      const view = await recovery.evaluate(() => window.messages.filter(m => m.event === 'viewState').at(-1).payload.viewByModule.one);
+      assert.equal(view.focusedSection, null);
+      assert.deepEqual(view.foldedSections, []);
+      await recovery.close();
+    }
     await page.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
     await page.waitForFunction(() => window.messages.some(message => message.event === 'ready'));
     await page.evaluate(() => window.memnoterEditor.open('one'));

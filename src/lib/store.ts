@@ -42,15 +42,22 @@ const defaultState: appState = {
   learnAhead: false,
 };
 
+function normalizeState(value: Partial<appState> | null): appState {
+  const state = { ...defaultState, ...value };
+  if (!state.viewByModule || typeof state.viewByModule !== "object" || Array.isArray(state.viewByModule)) state.viewByModule = {};
+  if (!Array.isArray(state.recentModuleIds)) state.recentModuleIds = [];
+  return state;
+}
+
 function loadState(): appState {
   try {
     // Custom WKURLSchemeHandler origins do not provide reliable Web Storage.
     if (isNativeHost() && window.__memnoterViewState) {
-      return { ...defaultState, ...window.__memnoterViewState };
+      return normalizeState(window.__memnoterViewState);
     }
     const saved = localStorage.getItem(STORAGE_KEY);
     // Merge so state saved by older versions picks up new fields.
-    return saved ? { ...defaultState, ...JSON.parse(saved) } : defaultState;
+    return saved ? normalizeState(JSON.parse(saved)) : defaultState;
   } catch {
     return defaultState;
   }
@@ -102,6 +109,15 @@ export function saveModuleView(moduleId: string, view: ModuleView) {
     ...state,
     viewByModule: { ...state.viewByModule, [moduleId]: view },
   }));
+}
+
+// Drop only presentation state; note content and recent destinations are separate.
+export function clearModuleView(moduleId: string) {
+  appStore.setState((state) => {
+    const { [moduleId]: _, ...viewByModule } = state.viewByModule;
+    return { ...state, viewByModule };
+  });
+  saveState();
 }
 
 export function forgetModule(moduleId: string) {
