@@ -20,3 +20,12 @@ document is used for startup image cleanup, and local saves keep the query
 cache current without rereading the note on window focus. Formula indexes
 rescan changed ranges. Formula rendering and image loading are deferred until
 near the viewport; rendered formulas retain their DOM when scrolling away.
+
+## License
+
+The Memnoter app is licensed under the [MIT License](LICENSE).
+
+The sync server in [`sync-server/`](sync-server/) is licensed separately under
+the [GNU AGPL-3.0](sync-server/LICENSE): self-hosting it is free, and anyone who
+runs a modified copy as a service must publish their changes. The shared sync
+client and protocol code in `src/lib/sync/` stays MIT.
