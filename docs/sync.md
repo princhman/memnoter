@@ -103,6 +103,27 @@ npx wrangler deploy
 R2 adds $0.015 / GB-month of storage and $4.50 / M uploads; downloads are
 free of egress fees.
 
+## Automatic deploys
+
+Merges to `main` deploy the server through Cloudflare's own Git integration
+(Workers Builds), with no GitHub workflow and no API token stored in GitHub.
+It is set up once in the dashboard: Workers & Pages > `memnoter-sync` >
+Settings > Build > Connect.
+
+| Setting | Value |
+| --- | --- |
+| Repository / production branch | `princhman/memnoter`, `main` |
+| Root directory | `sync-server` |
+| Build command | `pnpm install --frozen-lockfile && pnpm typecheck && pnpm test` |
+| Deploy command | `npx wrangler deploy` |
+
+A failing typecheck or test stops the build, so nothing broken is deployed.
+The server imports `src/lib/sync/` from outside its root directory, which works
+because Cloudflare clones the whole repository. Builds also run for changes
+that do not touch the server; they deploy the same code again, which is
+harmless. The Worker's secrets (`AUTH_SECRET`) stay on Cloudflare and are not
+touched by deploys.
+
 ## Later
 
 - **iOS/iPadOS build**: its own phase.
