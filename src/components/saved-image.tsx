@@ -19,6 +19,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { FileType } from "@/lib/content";
 import { adaptedUrl, cachedAdaptedUrl, scheduleTrim } from "@/lib/image-adapt";
 import { useDarkTheme } from "@/hooks/use-dark-theme";
+import { useSelector } from "@tanstack/react-store";
+import { requestSyncedFile, syncedFilesStore } from "@/lib/sync/file-requests";
 
 type FilesContextValue = {
   files: ReadonlyMap<string, FileType>;
@@ -108,11 +110,13 @@ function SavedImageView(props: NodeViewProps) {
   const { files, saveImage, readImage } = useContext(FilesContext);
   const file = files.get(node.attrs.fileId);
   const [resolved, setResolved] = useState<{ id: string; path: string }>();
+  // An image from another device may still be downloading; look again when one arrives.
+  const syncedFiles = useSelector(syncedFilesStore, (state) => state.version);
   useEffect(() => {
     let active = true;
-    if (!file && node.attrs.fileId) void invoke<string>("resolve_card_image", { fileId: node.attrs.fileId }).then(path => { if (active) setResolved({ id: node.attrs.fileId, path }); }).catch(() => {});
+    if (!file && node.attrs.fileId) void invoke<string>("resolve_card_image", { fileId: node.attrs.fileId }).then(path => { if (active) setResolved({ id: node.attrs.fileId, path }); }).catch(() => { if (active) requestSyncedFile(node.attrs.fileId); });
     return () => { active = false; };
-  }, [file, node.attrs.fileId]);
+  }, [file, node.attrs.fileId, syncedFiles]);
   const src = file ? convertFileSrc(file.path) : resolved && resolved.id === node.attrs.fileId ? convertFileSrc(resolved.path) : node.attrs.src;
   const isInline = node.type.isInline;
   const host = useRef<HTMLElement>(null);

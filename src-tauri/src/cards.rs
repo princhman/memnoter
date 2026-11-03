@@ -287,6 +287,8 @@ fn sync_module_cards(
         )
         .map_err(db_err)?;
     }
+    // Cards first indexed here may have been reviewed on another device.
+    crate::sync::apply_reviews(&tx, module_id)?;
     tx.commit().map_err(db_err)?;
     Ok(conflicts)
 }
@@ -460,8 +462,8 @@ fn save_review(
     tx.execute(
         "insert into review_log (card_id, rating, review_time, duration_ms, fsrs_model,
              state, schedule_status, due_at, last_review_at, stability, stability_fast,
-             difficulty, scheduled_days, learning_step)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             difficulty, scheduled_days, learning_step, sync_id)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, lower(hex(randomblob(16))))",
         params![
             card_id,
             log.rating,
@@ -480,6 +482,8 @@ fn save_review(
         ],
     )
     .map_err(db_err)?;
+    let log_id = tx.last_insert_rowid();
+    crate::sync::record_review(&tx, card_id, Some(log_id), None)?;
     tx.commit().map_err(db_err)
 }
 
@@ -496,18 +500,22 @@ fn undo_last_review(
     review_time: i64,
 ) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
-    let removed = tx
-        .execute(
+    let removed: Option<Option<String>> = tx
+        .query_row(
             "delete from review_log
              where id = (select max(id) from review_log where card_id = ?1)
-               and review_time = ?2",
+               and review_time = ?2
+             returning sync_id",
             params![card_id, review_time],
+            |row| row.get(0),
         )
+        .optional()
         .map_err(db_err)?;
-    if removed == 0 {
+    let Some(sync_id) = removed else {
         return Err("The review to undo is no longer the card's latest".into());
-    }
+    };
     write_card_state(&tx, card_id, expected_reps, previous, previous_fsrs_model)?;
+    crate::sync::record_review(&tx, card_id, None, sync_id.as_deref())?;
     tx.commit().map_err(db_err)
 }
 
@@ -552,6 +560,7 @@ pub(crate) fn due_counts(
 
 #[tauri::command(async)]
 pub(crate) fn review_card(
+    app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     card_id: String,
     expected_reps: i64,
@@ -559,11 +568,15 @@ pub(crate) fn review_card(
     log: ReviewLog,
 ) -> CommandResult<()> {
     let mut conn = db.lock()?;
-    save_review(&mut conn, &card_id, expected_reps, &card, &log)
+    save_review(&mut conn, &card_id, expected_reps, &card, &log)?;
+    drop(conn);
+    crate::sync::notify(&app);
+    Ok(())
 }
 
 #[tauri::command(async)]
 pub(crate) fn undo_review(
+    app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     card_id: String,
     expected_reps: i64,
@@ -579,7 +592,10 @@ pub(crate) fn undo_review(
         &previous,
         previous_fsrs_model.as_deref(),
         review_time,
-    )
+    )?;
+    drop(conn);
+    crate::sync::notify(&app);
+    Ok(())
 }
 
 #[cfg(test)]

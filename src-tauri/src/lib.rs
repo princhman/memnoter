@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 mod asset_refs;
 mod cards;
+mod sync;
 use cards::migrate_flashcards;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -90,6 +91,10 @@ const LEGACY_IDENTIFIER: &str = "com.vladyslavnalyvaiko.notes";
 
 fn init_db(app: &tauri::App) -> CommandResult<Db> {
     let app_dir = app.path().app_data_dir().map_err(db_err)?;
+    // Development builds can use a separate data dir, e.g. to run two copies
+    // side by side when testing sync, without touching the real notes.
+    #[cfg(debug_assertions)]
+    let app_dir = std::env::var_os("MEMNOTER_DATA_DIR").map(std::path::PathBuf::from).unwrap_or(app_dir);
     initialize_data(&app_dir)
 }
 
@@ -260,6 +265,7 @@ fn open_db(app_dir: &Path) -> CommandResult<Db> {
     migrate_flashcards(&conn)?;
     asset_refs::migrate(&conn)?;
     migrate_search(&conn)?;
+    sync::migrate(&conn)?;
 
     migrate_update_ids(&conn)?;
 
@@ -1083,8 +1089,9 @@ mod tests {
 }
 
 #[tauri::command]
-fn create_module(db: tauri::State<Db>, name: String) -> CommandResult<String> {
-    let conn = db.lock()?;
+fn create_module(app: tauri::AppHandle, db: tauri::State<Db>, name: String) -> CommandResult<String> {
+    let mut conn = db.lock()?;
+    let conn = conn.transaction().map_err(db_err)?;
     let id = Uuid::new_v4().to_string();
 
     conn.execute(
@@ -1108,6 +1115,11 @@ fn create_module(db: tauri::State<Db>, name: String) -> CommandResult<String> {
     )
     .map_err(db_err)?;
 
+    let recorded = sync::record_module(&conn, &id, sync::VaultChange::Name(&name))?;
+    conn.commit().map_err(db_err)?;
+    if recorded {
+        sync::notify(&app);
+    }
     Ok(id)
 }
 
@@ -1130,8 +1142,14 @@ fn modules(db: tauri::State<Db>) -> CommandResult<Vec<Module>> {
 }
 
 #[tauri::command]
-fn rename_module(db: tauri::State<Db>, module_id: String, name: String) -> CommandResult<()> {
-    let conn = db.lock()?;
+fn rename_module(
+    app: tauri::AppHandle,
+    db: tauri::State<Db>,
+    module_id: String,
+    name: String,
+) -> CommandResult<()> {
+    let mut conn = db.lock()?;
+    let conn = conn.transaction().map_err(db_err)?;
 
     conn.execute(
         "update modules set name = ?2 where id = ?1",
@@ -1145,6 +1163,11 @@ fn rename_module(db: tauri::State<Db>, module_id: String, name: String) -> Comma
     )
     .map_err(db_err)?;
 
+    let recorded = sync::record_module(&conn, &module_id, sync::VaultChange::Name(&name))?;
+    conn.commit().map_err(db_err)?;
+    if recorded {
+        sync::notify(&app);
+    }
     Ok(())
 }
 
@@ -1219,7 +1242,14 @@ fn delete_module(
 ) -> CommandResult<()> {
     let files_dir = app.path().app_data_dir().map_err(db_err)?.join("files");
     let mut conn = db.lock()?;
-    delete_module_data(&mut conn, &files_dir, &module_id)
+    // Recorded first: if deleting fails halfway, reconciling finishes it.
+    let recorded = sync::record_module(&conn, &module_id, sync::VaultChange::Deleted)?;
+    delete_module_data(&mut conn, &files_dir, &module_id)?;
+    drop(conn);
+    if recorded {
+        sync::notify(&app);
+    }
+    Ok(())
 }
 
 // Reading and serializing a long edit history must not block the native UI.
@@ -1280,22 +1310,29 @@ fn read_content(conn: &Connection, module_id: &str) -> CommandResult<GetContentR
 // write off the native UI thread so rapid input can continue while it saves.
 #[tauri::command(async)]
 fn add_update(
-    db: tauri::State<Db>,
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
     module_id: String,
     bytes: Vec<u8>,
 ) -> CommandResult<ContentUpdate> {
-    let conn = db.lock()?;
+    let mut conn = db.lock()?;
+    // The outbox row commits with the update, so no saved edit goes unsynced.
+    let tx = conn.transaction().map_err(db_err)?;
 
-    conn.execute(
+    tx.execute(
         "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
         params![module_id, bytes, Utc::now().timestamp_millis()],
     )
     .map_err(db_err)?;
+    let id = tx.last_insert_rowid();
+    let recorded = sync::record_update(&tx, &module_id, &bytes)?;
+    tx.commit().map_err(db_err)?;
+    drop(conn);
+    if recorded {
+        sync::notify(&app);
+    }
 
-    Ok(ContentUpdate {
-        id: conn.last_insert_rowid(),
-        bytes,
-    })
+    Ok(ContentUpdate { id, bytes })
 }
 
 #[tauri::command(async)]
@@ -1365,11 +1402,19 @@ fn save_file(
     std::fs::write(&path, &bytes).map_err(db_err)?;
 
     // ai-suggested error handling - cleanup if failed
-    if let Err(error) = conn.execute(
-        "insert into files (id, module_id, path, file_type)
-         values (?1, ?2, ?3, ?4)",
-        params![id, module_id, path_str, mime_type],
-    ) {
+    // The file row and its upload record commit together.
+    let inserted = (|| -> CommandResult<()> {
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        tx.execute(
+            "insert into files (id, module_id, path, file_type)
+             values (?1, ?2, ?3, ?4)",
+            params![id, module_id, path_str, mime_type],
+        )
+        .map_err(db_err)?;
+        sync::record_file(&tx, &id, &module_id, &mime_type)?;
+        tx.commit().map_err(db_err)
+    })();
+    if let Err(error) = inserted {
         if let Err(cleanup_error) = std::fs::remove_file(&path) {
             return Err(format!(
                 "Database insert failed: {error}. \
@@ -1379,6 +1424,8 @@ fn save_file(
 
         return Err(db_err(error));
     }
+    drop(conn);
+    sync::notify(&app);
 
     Ok(FileType {
         id,
@@ -1749,7 +1796,20 @@ pub fn run() {
             search_notes,
             backups::list_backups,
             backups::backup_now,
-            backups::restore_backup
+            backups::restore_backup,
+            sync::sync_status,
+            sync::sync_enable,
+            sync::sync_disable,
+            sync::sync_outbox,
+            sync::sync_ack,
+            sync::sync_set_cursor,
+            sync::sync_apply,
+            sync::sync_snapshot,
+            sync::sync_missing_files,
+            sync::sync_pending_uploads,
+            sync::sync_upload_done,
+            sync::sync_store_file,
+            sync::sync_reconcile
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
