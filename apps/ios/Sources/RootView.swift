@@ -172,7 +172,7 @@ struct RootView: View {
                         _ = try await session.run("window.memnoterEditor.applyRemote(JSON.parse(json))", ["json": json])
                     }
                     await store.refresh()
-                    if let selected, selected != "home", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
+                    if let selected, selected != "home", selected != "review", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
                 }
                 store.sync?.onFile = { module, json in
                     if let session, session.ready {

@@ -162,7 +162,7 @@ struct SyncKeychain {
                         catch { }
                     }
                     if fatal || socket?.closeCode == .policyViolation {
-                        self.error = error.localizedDescription; status = "Sync stopped."; return
+                        stop(); self.error = error.localizedDescription; status = "Sync stopped."; return
                     }
                     self.error = error.localizedDescription
                     status = "Offline. Changes are kept on this device and sync when you're back online."
@@ -219,20 +219,24 @@ struct SyncKeychain {
                 var entries: [[String: Any]] = []
                 for entry in msg["entries"] as? [[String: Any]] ?? [] {
                     guard let doc = entry["doc"] as? String, let encoded = entry["data"] as? String, var blob = Data(base64Encoded: encoded) else { throw SyncFailure(message: "Invalid sync entry") }
-                    if blob.count == 33 && blob.first == 2 { blob = try await object("blobs", String(decoding: blob.dropFirst(), as: UTF8.self)) }
+                    if blob.count == 33 && blob.first == 2 { blob = try await object("blobs", String(decoding: blob.dropFirst(), as: UTF8.self), account: account) }
                     let bytes: [UInt8]
                     do { bytes = try nativeCrypt(key: account.key, doc: doc, bytes: Array(blob), decrypt: true) }
                     catch { fatal = true; throw SyncFailure(message: "Synced data could not be decrypted. Check your sync passphrase.") }
                     entries.append(["seq": entry["seq"] ?? 0, "doc": doc, "bytes": bytes])
                 }
                 let cursor = (entries.compactMap { $0["seq"] as? Int }).max() ?? 0
+                guard owner == generation else { return }
                 if !entries.isEmpty { let result = try await command("sync_apply", ["entries": entries, "cursor": cursor]); try await deliver(result) }
             case "ready":
-                _ = try await command("sync_set_cursor", ["cursor": msg["head"] ?? 0]); ready = true
+                _ = try await command("sync_set_cursor", ["cursor": msg["head"] ?? 0])
+                guard owner == generation else { return }
+                ready = true
                 lastSynced = Date(); status = "Up to date"; nudge()
             case "ack":
                 if let inflight, msg["id"] as? Int == inflight.id {
                     _ = try await command("sync_ack", ["maxId": inflight.max])
+                    guard owner == generation else { return }
                     _ = try await command("sync_set_cursor", ["cursor": msg["seq"] ?? 0])
                     self.inflight = nil; lastSynced = Date(); status = "Up to date"; nudge()
                 }
@@ -241,7 +245,8 @@ struct SyncKeychain {
                     let state = try await command("sync_status") as? [String: Any] ?? [:]
                     if let cursor = state["cursor"] as? Int, cursor >= upTo {
                         if let bytes = try await command("sync_snapshot", ["doc": doc]) as? [UInt8] {
-                            let data = try await storable(Data(nativeCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)))
+                            let data = try await storable(Data(nativeCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)), account: account)
+                            guard owner == generation else { return }
                             try await send(["t": "compact", "doc": doc, "upTo": cursor, "data": data.base64EncodedString()])
                         } else { try await send(["t": "drop", "doc": doc]) }
                     }
@@ -256,14 +261,13 @@ struct SyncKeychain {
         try await onRemote?(json)
         NotificationCenter.default.post(name: .syncDidApply, object: nil)
     }
-    private func object(_ kind: String, _ id: String, put: Data? = nil) async throws -> Data {
-        guard let account else { throw URLError(.userAuthenticationRequired) }
+    private func object(_ kind: String, _ id: String, account: SyncAccount, put: Data? = nil) async throws -> Data {
         return try await request(server: account.server, path: "/v1/\(kind)/\(id)", token: account.token, method: put == nil ? "GET" : "PUT", body: put, binary: true)
     }
-    private func storable(_ blob: Data) async throws -> Data {
+    private func storable(_ blob: Data, account: SyncAccount) async throws -> Data {
         if blob.count <= 1_900_000 { return blob }
         let id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        _ = try await object("blobs", id, put: blob)
+        _ = try await object("blobs", id, account: account, put: blob)
         return Data([2]) + Data(id.utf8)
     }
     private func push() async throws {
@@ -273,12 +277,14 @@ struct SyncKeychain {
         let owner = generation
         let rows = try await command("sync_outbox", ["limitBytes": 1_048_576]) as? [[String: Any]] ?? []
         guard let max = rows.last?["id"] as? Int else { return }
+        guard owner == generation else { return }
         let dropped = Set(rows.filter { ($0["bytes"] as? [UInt8])?.isEmpty == true }.compactMap { $0["doc"] as? String })
         var entries: [[String: Any]] = []
         for row in rows {
+            guard owner == generation else { return }
             guard let doc = row["doc"] as? String, let bytes = row["bytes"] as? [UInt8] else { continue }
             if dropped.contains(doc) { entries.append(["doc": doc, "drop": true]); continue }
-            let blob = try await storable(Data(nativeCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)))
+            let blob = try await storable(Data(nativeCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)), account: account)
             entries.append(["doc": doc, "data": blob.base64EncodedString()])
         }
         guard owner == generation, ready else { return }
@@ -293,13 +299,13 @@ struct SyncKeychain {
             guard owner == generation else { return }
             let file = try await command("read_file", ["moduleId": "", "fileId": id]) as? [String: Any] ?? [:]
             guard let bytes = file["bytes"] as? [UInt8] else { continue }
-            _ = try await object("files", id, put: Data(nativeCrypt(key: account.key, doc: "file:" + id, bytes: bytes, decrypt: false)))
+            _ = try await object("files", id, account: account, put: Data(nativeCrypt(key: account.key, doc: "file:" + id, bytes: bytes, decrypt: false)))
             guard owner == generation else { return }
             _ = try await command("sync_upload_done", ["fileId": id])
         }
         for file in try await command("sync_missing_files") as? [[String: String]] ?? [] {
             guard owner == generation, let id = file["fileId"], let module = file["moduleId"] else { return }
-            let blob = try await object("files", id)
+            let blob = try await object("files", id, account: account)
             let bytes = try nativeCrypt(key: account.key, doc: "file:" + id, bytes: Array(blob), decrypt: true)
             guard owner == generation else { return }
             let stored = try await command("sync_store_file", ["fileId": id, "moduleId": module, "fileType": file["fileType"] ?? "", "bytes": bytes])
