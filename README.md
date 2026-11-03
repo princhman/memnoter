@@ -148,3 +148,8 @@ modified copy as a service must publish their changes.
 ## Native iPad app and shared core
 
 See [apps/ios/README.md](apps/ios/README.md) for the native SwiftUI iPad app and build instructions, and [crates/memnoter-core/README.md](crates/memnoter-core/README.md) for the shared Rust core and dispatch API.
+
+## Releasing
+
+See [the release guide](docs/releasing.md) for version bumps, desktop releases,
+iPad TestFlight uploads, signing secrets, and local archive verification.
