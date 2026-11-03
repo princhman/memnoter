@@ -8,6 +8,8 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  // WKWebView loads editor.html from the bundled dist directory.
+  base: "./",
   plugins: [
     tanstackRouter({
       target: "react",
