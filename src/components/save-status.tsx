@@ -1,3 +1,4 @@
+import { isTauri } from "@/lib/backend";
 import { exclusiveWrite, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
@@ -55,6 +56,7 @@ const SaveStatus = () => {
   const [confirmClose, setConfirmClose] = useState(false);
 
   useEffect(() => {
+    if (!isTauri()) return;
     let disposed = false;
 
     let busy = false;
