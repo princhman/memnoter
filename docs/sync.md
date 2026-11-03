@@ -126,7 +126,6 @@ touched by deploys.
 
 ## Later
 
-- **iOS/iPadOS build**: its own phase.
 - **Billing**: `hasSyncAccess` in `sync-server/src/index.ts` is the hook.
 - Images removed from every note stay in R2 until the cloud data is deleted;
   a periodic cleanup would need devices to report unused images.
@@ -163,8 +162,36 @@ WebCrypto, and accesses commands/events through `src/lib/backend.ts`.
 The debug-only desktop data-directory override also scopes images and backups
 to that directory, as required by `scripts/sync-dev.sh`.
 
-The native iPad UI still needs sync account/settings UI, network-engine lifecycle
-and foreground/background reconnect handling, secure credential/key storage,
-outbox wakeups after native writes, and applying remote changes to its native
-view state. It can use the existing dispatch bridge or wrap the portable Rust
-sync/crypto APIs in typed UniFFI methods. No Tauri runtime is required by core.
+The native iPad app uses the dispatch bridge for sync storage and typed
+UniFFI crypto helpers. SwiftUI owns account settings and URLSession owns
+network lifecycle, with Keychain credentials and desktop receipt delivery
+into the web editor as described below. No Tauri runtime is required by core.
+
+### Native iPad adapter
+
+`apps/ios/Sources/SyncClient.swift` uses URLSession HTTP/WebSockets with the
+same v1 subprotocol, encrypted blobs, acknowledgement rules and durable cursor.
+Desktop networking is TypeScript, so there is no portable Rust transport to
+reuse. UniFFI exposes the existing core crypto, including off-main-thread
+PBKDF2. Large updates use R2 blob references; images use `file:<id>` AAD.
+
+The token and raw AES key live together in one atomic generic-password Keychain
+item (`AfterFirstUnlockThisDeviceOnly`). The core account field contains only
+the user ID, which enables transactional outbox hooks. Sign-out deletes the
+Keychain item and disables sync while retaining notes. Switching accounts
+resets the cursor/outbox before seeding the new account.
+
+Launch/foreground reconnect, writes debounce for 400 ms, and a 15-second active
+sweep retries images/outbox work. Network failures reconnect with capped
+exponential backoff; decryption/protocol failures stop for explicit retry.
+Backgrounding first flushes the web editor, permits a short sync under a UIKit
+background task, then disconnects. iOS may suspend before completion; unacked
+rows remain durable and resend on foreground. This is not background fetch.
+
+Native tests include a URLProtocol auth server, real Keychain persistence, and
+a two-database URLSession/Worker test. Start the local Worker on port 8787 with `DEV_RETURN_CODE=1` and a
+throwaway `AUTH_SECRET` in its `.dev.vars` before `xcodebuild test`
+(use normal simulator signing so Keychain is available); the native E2E test skips when no local
+Worker is reachable. It uses unique disposable accounts and data directories,
+and verifies concurrent independent Yjs edits against a Node-generated merged
+snapshot, plus outbox drain and note retention after sign-out.

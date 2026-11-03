@@ -57,6 +57,31 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       assert.deepEqual(view.foldedSections, []);
       await recovery.close();
     }
+    // A native sync receipt must merge into the live Y.Doc while a draft is
+    // still being edited, without replacing its DOM selection or local text.
+    const synced = await context.newPage();
+    await synced.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+    await synced.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+    await synced.evaluate(() => window.memnoterEditor.open('two'));
+    await synced.locator('.tiptap').click();
+    await synced.keyboard.type('Local draft');
+    const selectionBefore = await synced.evaluate(() => window.getSelection().focusOffset);
+    await synced.evaluate(async () => {
+      const Y = await import('/node_modules/yjs/dist/yjs.mjs');
+      const remote = new Y.Doc();
+      const paragraph = new Y.XmlElement('paragraph');
+      const text = new Y.XmlText();
+      text.insert(0, 'Remote paragraph'); paragraph.insert(0, [text]);
+      remote.getXmlFragment('default').insert(0, [paragraph]);
+      window.memnoterEditor.applyRemote({ updates: [{ moduleId: 'two', update: { id: 100000, bytes: [...Y.encodeStateAsUpdate(remote)] } }], modulesChanged: false, deleted: [], reviewsChanged: false, filesChanged: false });
+    });
+    await synced.waitForFunction(() => document.querySelector('.tiptap').textContent.includes('Remote paragraph'));
+    assert.ok((await synced.locator('.tiptap').textContent()).includes('Local draft'));
+    assert.equal(await synced.evaluate(() => window.getSelection().focusOffset), selectionBefore);
+    await synced.keyboard.type('!');
+    assert.ok((await synced.locator('.tiptap').textContent()).includes('Local draft!'));
+    await synced.evaluate(() => window.memnoterEditor.flush());
+    await synced.close();
     await page.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
     await page.waitForFunction(() => window.messages.some(message => message.event === 'ready'));
     await page.evaluate(() => window.memnoterEditor.open('one'));
