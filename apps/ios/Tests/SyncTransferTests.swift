@@ -53,6 +53,34 @@ final class SyncTransferTests: XCTestCase {
 }
 
 final class SyncFileTransferTests: XCTestCase {
+    @MainActor func testRemovedImagesLoseBackoffBeforeTheyBecomePendingAgain() async throws {
+        let account = SyncAccount(server: "https://mock.local", email: "a@example.com", userId: "a", token: "token", key: Array(repeating: 17, count: 32))
+        let ids = (0..<100).map { "image-\($0)" }
+        var pending = ids
+        var attempts = 0
+        let files = SyncFileTransfers(command: { name, _ in
+            switch name {
+            case "sync_pending_uploads": return pending
+            case "sync_missing_files": return pending.map { ["fileId": $0, "moduleId": "note"] }
+            case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]
+            default: XCTFail("Unexpected command: \(name)"); return NSNull()
+            }
+        }, object: { _, _, _ in
+            attempts += 1
+            throw SyncHTTPFailure(status: 404, message: "Missing image")
+        }, isCurrent: { _ in true }, onFile: { _, _ in XCTFail("Failed download was stored") }, onError: { XCTFail("Unexpected error: \($0)") })
+        let owner = UUID()
+        try await files.run(account: account, owner: owner)
+        XCTAssertEqual(attempts, 200)
+        try await files.run(account: account, owner: owner)
+        XCTAssertEqual(attempts, 200, "Images still pending retain backoff")
+        pending = []
+        try await files.run(account: account, owner: owner)
+        pending = ids
+        try await files.run(account: account, owner: owner)
+        XCTAssertEqual(attempts, 400, "Removed uploads and downloads must lose their retry deadlines")
+    }
+
     @MainActor func testUnavailableImageDoesNotBlockAvailableImageAndBacksOff() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

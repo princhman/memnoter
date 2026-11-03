@@ -392,7 +392,14 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         }
     }
     func run(account: SyncAccount, owner: UUID) async throws {
-        for id in try await command("sync_pending_uploads", [:]) as? [String] ?? [] {
+        let uploads = try await command("sync_pending_uploads", [:]) as? [String] ?? []
+        let downloads = try await command("sync_missing_files", [:]) as? [[String: String]] ?? []
+        guard isCurrent(owner) && !Task.isCancelled else { return }
+        let pending = Set(uploads.map { "upload:" + $0 } + downloads.compactMap { file in
+            file["fileId"].map { "download:" + $0 }
+        })
+        retryAfter = retryAfter.filter { pending.contains($0.key) }
+        for id in uploads {
             guard isCurrent(owner) && !Task.isCancelled else { return }
             try await attempt("upload:" + id) {
                 let file = try await command("read_file", ["moduleId": "", "fileId": id]) as? [String: Any] ?? [:]
@@ -402,7 +409,7 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
                 _ = try await command("sync_upload_done", ["fileId": id])
             }
         }
-        for file in try await command("sync_missing_files", [:]) as? [[String: String]] ?? [] {
+        for file in downloads {
             guard isCurrent(owner) && !Task.isCancelled, let id = file["fileId"], let module = file["moduleId"] else { return }
             try await attempt("download:" + id) {
                 let blob = try await object(id, account, nil)
