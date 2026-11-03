@@ -1,0 +1,48 @@
+name: Memnoter
+options:
+  bundleIdPrefix: com.vladyslavnalyvaiko.memnoter
+  deploymentTarget:
+    iOS: '17.0'
+packages:
+  MemnoterCore:
+    path: MemnoterCore
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    SWIFT_STRICT_CONCURRENCY: complete
+    TARGETED_DEVICE_FAMILY: '2'
+    CODE_SIGN_STYLE: Automatic
+targets:
+  Memnoter:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    resources:
+      - path: Resources/Web
+        type: folder
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vladyslavnalyvaiko.memnoter.ipad
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+    dependencies:
+      - package: MemnoterCore
+  MemnoterTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Memnoter
+schemes:
+  Memnoter:
+    build:
+      targets:
+        Memnoter: all
+        MemnoterTests: [test]
+    test:
+      targets: [MemnoterTests]
