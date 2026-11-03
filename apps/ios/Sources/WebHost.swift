@@ -78,6 +78,12 @@ struct EditorState: Decodable {
         super.init()
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "memnoter")
+        // Inject decoded JSON before the shared store mounts, independent of
+        // Web Storage support for our custom scheme origin.
+        let savedView = UserDefaults.standard.string(forKey: "editorViewState") ?? "{}"
+        config.userContentController.addUserScript(WKUserScript(
+            source: "window.__memnoterViewState = \(savedView);",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.setURLSchemeHandler(ResourceHandler(root: directory, images: true), forURLScheme: "memnoter-file")
         config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: "memnoter-app")
         web = WKWebView(frame: .zero, configuration: config)
@@ -159,6 +165,11 @@ struct EditorState: Decodable {
         } else if body["kind"] as? String == "event", let event = body["event"] as? String {
             let payload = body["payload"] as? [String: Any] ?? [:]
             switch event {
+            case "viewState":
+                if let data = try? JSONSerialization.data(withJSONObject: payload),
+                   let json = String(data: data, encoding: .utf8) {
+                    UserDefaults.standard.set(json, forKey: "editorViewState")
+                }
             case "ready": ready = true; onReady?()
             case "outline":
                 guard payload["moduleId"] as? String == moduleId else { return }

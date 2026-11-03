@@ -6,7 +6,12 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var session: WebSession?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var selected: String? = "home"
+    @AppStorage("selectedDestination") private var savedDestination = "home"
+    private var selected: String? {
+        get { savedDestination }
+        nonmutating set { savedDestination = newValue ?? "home" }
+    }
+    @AppStorage("sidebarVisible") private var sidebarVisible = true
     @State private var reviewModule: String?
     @State private var search = ""
     @State private var hits: [SearchHit] = []
@@ -144,7 +149,16 @@ struct RootView: View {
             }
         }
         .task(id: store.client != nil) {
-            if let client = store.client, session == nil { session = WebSession(client: client, directory: store.directory) }
+            if let client = store.client, session == nil {
+                await store.refresh()
+                columnVisibility = sidebarVisible ? .all : .detailOnly
+                let restored = WebSession(client: client, directory: store.directory)
+                session = restored
+                restored.onReady = {
+                    guard let selected, store.modules.contains(where: { $0.id == selected }) else { return }
+                    Task { do { try await restored.open(selected) } catch { store.error = String(describing: error) } }
+                }
+            }
         }
         .alert(rename == nil ? "New module" : "Rename module", isPresented: $editingName) {
             TextField("Name", text: $name)
@@ -189,6 +203,10 @@ struct RootView: View {
             }
         }
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
+        .onChange(of: columnVisibility) { _, visibility in
+            if visibility == .all { sidebarVisible = true }
+            else if visibility == .detailOnly { sidebarVisible = false }
+        }
         .onChange(of: showingFind) { _, shown in findFocused = shown }
         .onChange(of: image) { _, item in
             guard let item, let id = module?.id, let client = store.client else { return }

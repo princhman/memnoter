@@ -110,10 +110,12 @@ Codable JSON because their schema varies by card kind.
 
 The editor's trailing material capsule uses keyboard frame notifications for both animated placement and visibility, including the hardware shortcut bar, and hides for an
 undocked/floating keyboard. All formatting tools stay in one horizontally scrolling
-row with a stable available-width capsule, edge fades and a native scroll indicator.
+row with a stable available-width capsule and a native scroll indicator.
 The material capsule is 38pt tall; 30pt visible buttons use transparent padding
 for 44pt vertical touch targets. Decorative capsule layers ignore hit testing so
 horizontal pans and taps reach the scroll row rather than its border overlay.
+The row is a UIKit UIScrollView hosting the SwiftUI buttons. It cancels button
+touches when a pan wins and does not delay taps.
 Bold, italic, underline, bullets and inline math lead so frequent actions remain
 visible in narrow windows; styles and the remaining grouped tools follow. Tapping
 formatting actions preserves the editor selection and first responder.
@@ -180,3 +182,23 @@ below navigation and scrolls internally. Smaller-device sizing was checked
 from this geometry, not on a separate simulator. Neutral states checked in
 light and dark. Restored light mode and closed the Device panel without
 shutdown. No web bridge changes were needed.
+
+
+View persistence follow-up (80): the host now stores shared per-module view state
+in UserDefaults, injected before editor mount, because the custom scheme cannot
+rely on Web Storage. Open/flush capture pending view saves. Native preferences
+also retain the selected destination and sidebar visibility. Web regression
+fails before the fix and passes after; TypeScript, lint, all 141 tests and the
+web bundle build passed. Simulator and signed device builds passed, and the
+physical iPad install and launch succeeded.
+
+On Memnoter iPad Air (E3D6F644-C5D2-4C12-8A20-69F065491CD1), horizontal swipes
+scrolled both the baseline and UIKit rows with the sidebar open; UIKit also
+scrolled with it hidden. Quote and heading taps applied formatting after swipes.
+The original physical-device failure was not reproduced, so its exact cause
+remains unconfirmed. Screenshots: build/screenshots/80-before.png,
+80-baseline-after-swipe.png, 80-uikit-before.png, 80-uikit-after.png,
+80-wide-before.png, 80-wide-after.png. Long-text entry exceeded the device
+runner watchdog; its prescribed coordinate retry also failed while draining.
+Full module-switch/relaunch view restoration remains unverified on simulator.
+The Device panel was closed without simulator shutdown.
