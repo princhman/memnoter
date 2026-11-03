@@ -3,7 +3,7 @@ import SwiftUI
 @main struct MemnoterApp: App {
     @State private var store = AppStore()
     var body: some Scene {
-        WindowGroup { RootView(store: store).task { await store.start() } }
+        WindowGroup { RootView(store: store).defaultAppStorage(store.preferences).task { await store.start() } }
     }
 }
 
@@ -12,7 +12,25 @@ import SwiftUI
     var sync: SyncClient?
     var modules: [NoteModule] = []
     var counts: [DueCount] = []
-    private var recentModuleIds = UserDefaults.standard.stringArray(forKey: "recentModuleIds") ?? []
+    let preferences: UserDefaults
+    private let uiTesting: Bool
+    private var recentModuleIds: [String]
+    init() {
+        var testID: String?
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "--ui-testing-data-id"),
+           arguments.indices.contains(index + 1), let id = UUID(uuidString: arguments[index + 1]) {
+            testID = id.uuidString
+        }
+        #endif
+        uiTesting = testID != nil
+        if let testID {
+            directory = URL.applicationSupportDirectory.appendingPathComponent("MemnoterUITests/\(testID)", isDirectory: true)
+            preferences = UserDefaults(suiteName: "com.memnoter.uitests.\(testID)")!
+        } else { preferences = .standard }
+        recentModuleIds = preferences.stringArray(forKey: "recentModuleIds") ?? []
+    }
     var recentModules: [NoteModule] {
         let byId = Dictionary(uniqueKeysWithValues: modules.map { ($0.id, $0) })
         let recent = recentModuleIds.compactMap { byId[$0] }
@@ -21,7 +39,7 @@ import SwiftUI
     }
     func recordOpenedModule(_ id: String) {
         recentModuleIds = [id] + recentModuleIds.filter { $0 != id }.prefix(4)
-        UserDefaults.standard.set(recentModuleIds, forKey: "recentModuleIds")
+        preferences.set(recentModuleIds, forKey: "recentModuleIds")
     }
     var error: String?
     var directory = URL.applicationSupportDirectory.appendingPathComponent("Memnoter", isDirectory: true)
@@ -32,7 +50,9 @@ import SwiftUI
                 let sync = SyncClient(core: client)
                 self.sync = sync
                 sync.onRemote = { [weak self] _ in await self?.refresh() }
-                await sync.start()
+                // Keep the coordinator available to the normal view lifecycle,
+                // but never load a real Keychain account during an isolated UI test.
+                if !uiTesting { await sync.start() }
             }
             try await client?.dailyBackup() }
         catch { self.error = error.localizedDescription }

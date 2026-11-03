@@ -4,6 +4,9 @@ final class SectionFocusUITests: XCTestCase {
     @MainActor func testFocusUnfocusKeepsTitleAndRestoresContent() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
+        // Reuse this namespace on relaunch to test persistence, but never reuse
+        // another run's notes, navigation preferences, or sync account.
+        app.launchArguments = ["--ui-testing-data-id", UUID().uuidString]
         app.launch()
         let home = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Home")).firstMatch
         if !home.waitForExistence(timeout: 2) {
@@ -21,14 +24,15 @@ final class SectionFocusUITests: XCTestCase {
         app.buttons["Save"].tap()
         let editor = app.webViews.textViews.firstMatch
         XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitUntilEnabled(editor))
         editor.tap()
-        app.buttons["Heading 1"].tap()
+        tapFormat("Heading 1", in: app)
         editor.typeText("Parent heading\n")
-        app.buttons["Text"].tap()
+        tapFormat("Text", in: app)
         editor.typeText("Outside sentinel\n")
-        app.buttons["Heading 2"].tap()
+        tapFormat("Heading 2", in: app)
         editor.typeText("Child section\n")
-        app.buttons["Text"].tap()
+        tapFormat("Text", in: app)
         editor.typeText("Inside sentinel\n")
         let outside = app.webViews.staticTexts["Outside sentinel"].firstMatch
         let inside = app.webViews.staticTexts["Inside sentinel"].firstMatch
@@ -61,8 +65,7 @@ final class SectionFocusUITests: XCTestCase {
         XCTAssertFalse(clear.exists, "Focus must not leak into the other module")
         if app.buttons["Show Sidebar"].waitForExistence(timeout: 2) { app.buttons["Show Sidebar"].tap() }
         let module = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", name)).firstMatch
-        // Retained simulators accumulate modules between runs. SwiftUI lazily
-        // exposes sidebar rows, so scroll to this run's module before tapping.
+        // SwiftUI lazily exposes sidebar rows, so reveal the module if needed.
         let sidebar = app.collectionViews.firstMatch
         for _ in 0..<30 {
             if module.exists && module.isHittable { break }
@@ -99,5 +102,18 @@ final class SectionFocusUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.webViews.staticTexts["Outside sentinel"].firstMatch.waitForExistence(timeout: 15))
         XCTAssertFalse(app.buttons["sectionFocus.clear"].exists, "Unfocus must survive relaunch")
+    }
+
+    @MainActor private func waitUntilEnabled(_ element: XCUIElement) -> Bool {
+        let ready = NSPredicate(format: "exists == true AND enabled == true")
+        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: element)], timeout: 15) == .completed
+    }
+
+    @MainActor private func tapFormat(_ label: String, in app: XCUIApplication) {
+        let button = app.buttons[label]
+        // tap() scrolls an offscreen action into view in the horizontal row;
+        // requiring isHittable before that would deadlock on narrower iPads.
+        XCTAssertTrue(waitUntilEnabled(button), "Formatting action \(label) must be ready. Alerts: \(app.alerts.debugDescription)")
+        button.tap()
     }
 }
