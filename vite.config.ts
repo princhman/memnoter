@@ -20,7 +20,7 @@ export default defineConfig(async () => ({
   ],
   build: {
     rollupOptions: {
-      input: { main: new URL("./index.html", import.meta.url).pathname, editor: new URL("./editor.html", import.meta.url).pathname },
+      input: { review: new URL("./review-native.html", import.meta.url).pathname, main: new URL("./index.html", import.meta.url).pathname, editor: new URL("./editor.html", import.meta.url).pathname },
     },
   },
   resolve: {
