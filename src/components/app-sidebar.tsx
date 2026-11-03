@@ -28,6 +28,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
@@ -45,60 +52,70 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  // Shared by the pointer-positioned context menu and the "…" dropdown.
+  const items = (Item: typeof DropdownMenuItem | typeof ContextMenuItem) => (
+    <>
+      <Item onClick={() => void openReview(() => navigate({ to: "/review", search: { module: moduleId } }))}>
+        <Layers className="size-3" />Review
+      </Item>
+      <Item onClick={() => setRenameOpen(true)}>
+        <Pencil className="size-3" />
+        Rename
+      </Item>
+      <Item variant="destructive" onClick={() => setDeleteOpen(true)}>
+        <Trash2 className="size-3" />
+        Delete
+      </Item>
+    </>
+  );
+
   return (
-    <SidebarMenuItem
-      onContextMenu={event => { event.preventDefault(); showMenu(); }}
-      onKeyDown={event => {
-        if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
-          event.preventDefault(); showMenu();
-        }
-      }}
-    >
-      {children}
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <IconTooltip label={`Actions for ${name}`} hint="Shift+F10" side="right">
-        <DropdownMenuTrigger
-          render={
-            <SidebarMenuAction ref={trigger} showOnHover aria-label={`Actions for ${name}`} />
-          }
-        >
-          <Ellipsis />
-        </DropdownMenuTrigger>
-        </IconTooltip>
+    <>
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={<SidebarMenuItem
+          onKeyDown={event => {
+            // The keyboard has no pointer position, so open the "…" menu instead.
+            if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+              event.preventDefault(); showMenu();
+            }
+          }}
+        />}
+      >
+        {children}
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <IconTooltip label={`Actions for ${name}`} hint="Shift+F10" side="right">
+          <DropdownMenuTrigger
+            render={
+              <SidebarMenuAction ref={trigger} showOnHover aria-label={`Actions for ${name}`} />
+            }
+          >
+            <Ellipsis />
+          </DropdownMenuTrigger>
+          </IconTooltip>
 
-        <DropdownMenuContent>
-          <DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => void openReview(() => navigate({ to: "/review", search: { module: moduleId } }))}>
-              <Layers className="size-3" />Review
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setRenameOpen(true)}>
-              <Pencil className="size-3" />
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => setDeleteOpen(true)}
-            >
-              <Trash2 className="size-3" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <RenameModule
-        moduleName={name}
-        moduleId={moduleId}
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-      />
-      <DeleteModule
-        moduleName={name}
-        moduleId={moduleId}
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-      />
-    </SidebarMenuItem>
+          <DropdownMenuContent>
+            <DropdownMenuGroup>{items(DropdownMenuItem)}</DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuGroup>{items(ContextMenuItem)}</ContextMenuGroup>
+      </ContextMenuContent>
+    </ContextMenu>
+    <RenameModule
+      moduleName={name}
+      moduleId={moduleId}
+      open={renameOpen}
+      onOpenChange={setRenameOpen}
+    />
+    <DeleteModule
+      moduleName={name}
+      moduleId={moduleId}
+      open={deleteOpen}
+      onOpenChange={setDeleteOpen}
+    />
+    </>
   );
 };
 

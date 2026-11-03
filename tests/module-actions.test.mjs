@@ -17,7 +17,14 @@ test("module actions open from right-click and keyboard, reuse dialogs and revie
     await page.getByRole("button", { name: "Actions for Algebra" }).hover();
     await page.getByRole("button", { name: "Actions for Algebra" }).focus();
     await page.getByRole("tooltip").filter({ hasText: "Shift+F10" }).waitFor();
-    await row.click({ button: "right" });
+    const rowBox = await row.boundingBox();
+    const point = { x: rowBox.x + 30, y: rowBox.y + rowBox.height / 2 };
+    await page.mouse.click(point.x, point.y, { button: "right" });
+    const contextMenu = page.getByRole("menu");
+    await contextMenu.waitFor();
+    const menuBox = await contextMenu.boundingBox();
+    // Opens at the pointer, as a context menu, not anchored to the "…" button.
+    assert.ok(Math.abs(menuBox.x - point.x) <= 8 && Math.abs(menuBox.y - point.y) <= 8, `menu at pointer: ${JSON.stringify({ point, menuBox })}`);
     await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
     await page.getByRole("dialog", { name: "Rename module" }).waitFor();
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
