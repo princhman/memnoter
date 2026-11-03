@@ -15,17 +15,11 @@ struct FormatButtonStyle: ButtonStyle {
 
 struct FormattingBar: View {
     @Bindable var session: WebSession
+    @State private var showStyles = false
     var body: some View {
         HStack(spacing: 2) {
-            Menu {
-                Button("Title") { session.exec("heading", ["level": 1]) }
-                Button("Body") { session.exec("paragraph") }
-                Button("Strikethrough") { session.exec("strike") }
-                Button("Code") { session.exec("code") }
-                Button("Math block") { session.exec("mathBlock") }
-                Button("Make card") { session.exec("makeCard") }
-            } label: { Image(systemName: "textformat") }
-                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Text styles")
+            Button { showStyles.toggle() } label: { Image(systemName: "textformat") }
+                .buttonStyle(FormatButtonStyle(active: showStyles)).accessibilityLabel("Text styles")
             formatButton("Bold", "bold", "bold", active: session.state.marks.contains("bold"))
             formatButton("Italic", "italic", "italic", active: session.state.marks.contains("italic"))
             formatButton("Underline", "underline", "underline", active: session.state.marks.contains("underline"))
@@ -35,6 +29,12 @@ struct FormattingBar: View {
             Button { session.web.endEditing(true) } label: { Image(systemName: "keyboard.chevron.compact.down") }
                 .buttonStyle(FormatButtonStyle()).accessibilityLabel("Hide keyboard")
         }.padding(6)
+        .overlay(alignment: .bottomTrailing) {
+            if showStyles {
+                FormatPanel(session: session, close: { showStyles = false }).padding(.bottom, 68)
+            }
+        }
+
     }
 
     func formatButton(_ title: String, _ symbol: String, _ command: String, active: Bool = false, args: [String: Any] = [:]) -> some View {

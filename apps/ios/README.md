@@ -108,10 +108,12 @@ requires older/imported notes to be opened once for card indexing. It does not
 port desktop learn-ahead/preferences or card backfill. Review face segments are
 Codable JSON because their schema varies by card kind.
 
-The editor's formatting row follows the keyboard through SwiftUI's keyboard
-safe area. It provides common marks, headings, lists, math, card creation and
-Photos insertion. It is not a custom UIKit inputAccessoryView. Native link
-editing is not exposed yet. Chapter numbering reloads editor providers after
+The editor's trailing material capsule follows the keyboard through SwiftUI's keyboard safe area, including the hardware shortcut bar, and hides for an
+undocked/floating keyboard. Its nonmodal Aa popover preserves the editor
+selection and first responder while applying styles, marks, lists and math.
+Link URL entry temporarily takes text focus and returns it to the editor on
+Apply. Photos insertion and undo/redo live in navigation; saving/failure status
+appears there only while needed. It is not a custom UIKit inputAccessoryView. Chapter numbering reloads editor providers after
 flushing to invalidate cached preferences. Search covers core-indexed notes;
 older notes need opening to refresh their index. Home mirrors the desktop welcome screen, with up to five recent modules and
 muted iPad keyboard shortcuts. Recently opened modules are remembered locally.
@@ -144,3 +146,13 @@ and a Recent row opened its note. Screenshots are in `build/screenshots/`:
 The device tool reported successful portrait rotation but the simulator stayed
 in landscape, so portrait layout still needs a manual check. The Device panel
 was closed without shutting down the retained simulator.
+
+Formatting follow-up: XcodeGen, simulator build and signed device build passed.
+Installed and launched on physical iPad `00008101-0013399E0CD8001E`. Captured
+`12-formatting-before.png`, `13-formatting-light.png`, `14-formatting-dark.png`,
+`15-format-panel-light.png` and `15-format-panel-dark.png` in build/screenshots.
+Verified docked software keyboard and hardware shortcut bar placement; panel
+Body/Italic actions updated live states without losing editor focus, and typing
+continued at the retained caret with italic applied. Floating keyboards are
+excluded by the docked-frame check; floating keyboard interaction and link URL
+entry were not manually exercised. Simulator restored to light and left running.
