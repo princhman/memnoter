@@ -24,6 +24,7 @@ struct RootView: View {
     @State private var keyboardDocked = false
     @State private var keyboardTop: CGFloat = 0
     @State private var deleting: NoteModule?
+    @State private var detailWidth: CGFloat = 0
     var module: NoteModule? { store.modules.first { $0.id == selected } }
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -82,14 +83,6 @@ struct RootView: View {
                     ReviewView(client: client, directory: store.directory, moduleId: reviewModule)
                         .id(reviewModule ?? "all")
                 } else if module != nil, let session {
-                    if session.state.focusedSectionId != nil {
-                        HStack {
-                            Label(session.headings.first { $0.id == session.state.focusedSectionId }?.text ?? "Focused section", systemImage: "scope")
-                                .font(.subheadline).lineLimit(1)
-                            Spacer(minLength: 8)
-                            Button("Show whole note") { session.exec("showDocument") }.fixedSize()
-                        }.padding(.horizontal).padding(.vertical, 8).background(.bar)
-                    }
                     if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
                     WebSurface(session: session)
                         .background(Color(uiColor: .systemBackground))
@@ -114,18 +107,11 @@ struct RootView: View {
                         .disabled(busy)
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
             .ignoresSafeArea(.keyboard)
             .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if let session, let module, !session.state.focusedSectionPath.isEmpty {
-                    ToolbarItem(placement: .principal) {
-                        SectionBreadcrumb(module: module.name, path: session.state.focusedSectionPath) { id in
-                            if let id { session.exec("focusSection", ["id": id]) }
-                            else { session.exec("showDocument") }
-                        }
-                    }
-                }
                 if columnVisibility == .detailOnly {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
@@ -136,6 +122,14 @@ struct RootView: View {
                     ToolbarItemGroup(placement: .topBarLeading) {
                         Button { session.exec("undo") } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
                         Button { session.exec("redo") } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                    }
+                    if session.state.focusedSectionId != nil || session.state.headingId != nil {
+                        if #available(iOS 26.0, *) {
+                            ToolbarSpacer(.fixed, placement: .topBarLeading)
+                        }
+                        ToolbarItem(placement: .topBarLeading) {
+                            SectionFocusControl(session: session, moduleName: module?.name ?? "", compact: detailWidth < 600)
+                        }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         if !session.saveStatus.isEmpty {

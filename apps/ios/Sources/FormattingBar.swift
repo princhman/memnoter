@@ -27,11 +27,6 @@ struct FormattingBar: View {
             formatButton("Underline", "underline", "underline", active: session.state.marks.contains("underline"))
             formatButton("Bullet list", "list.bullet", "bulletList", active: session.state.bulletList)
             formatButton("Inline math", "function", "inlineMath", active: session.state.blockType == "inlineMath")
-            if let id = session.state.headingId {
-                Button { session.exec("focusSection", ["id": id]) } label: {
-                    Label("Focus", systemImage: "arrow.up.left.and.arrow.down.right").font(.subheadline)
-                }.buttonStyle(FormatButtonStyle()).accessibilityLabel("Focus on this section")
-            }
             Divider().frame(height: 24).padding(.horizontal, 4)
             Button { session.web.endEditing(true) } label: { Image(systemName: "keyboard.chevron.compact.down") }
                 .buttonStyle(FormatButtonStyle()).accessibilityLabel("Hide keyboard")
