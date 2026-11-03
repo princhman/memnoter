@@ -13,7 +13,7 @@ let shownAt = Date.now();
 const api = {
   show(card: StoredCard, revealed: boolean) {
     if (!revealed) shownAt = Date.now();
-    root.render(<main className="review-scroll-container p-8"><CardFace key={`${card.id}:${card.reps}`} kind={card.kind} front={card.front} back={card.back} revealed={revealed} /></main>);
+    root.render(<main key={`${card.id}:${card.reps}`} className="review-scroll-container p-8"><CardFace kind={card.kind} front={card.front} back={card.back} revealed={revealed} /></main>);
   },
   async rate(card: StoredCard, rating: Grade) {
     const result = scheduleReview(await getScheduler(), card, rating, Date.now(), Date.now() - shownAt);

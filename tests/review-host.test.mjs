@@ -39,6 +39,25 @@ test('WK review host scrolls long questions and revealed answers within its view
       assert.ok(geometry.bottom <= geometry.viewport - 31, 'Last line must clear bottom padding');
       assert.equal(geometry.pageScroll, 0);
     }
+    for (const [id, reps] of [['next', 0], ['next', 1]]) {
+      await page.evaluate(({ id, reps }) => window.memnoterReview.show({
+        id, reps, kind: 'basic',
+        front: [{ type: 'text', text: id + reps + '\nQuestion line'.repeat(100) }],
+        back: [{ type: 'text', text: 'Answer line\n'.repeat(100) }],
+      }, false), { id, reps });
+      await page.waitForFunction(({ id, reps }) =>
+        document.querySelectorAll('.card-face').length === 1 &&
+        document.querySelector('.card-face').textContent.startsWith(id + reps), { id, reps });
+      assert.equal(await page.locator('main').evaluate(node => node.scrollTop), 0, 'New card attempt starts at the top');
+      await page.locator('main').evaluate(node => { node.scrollTop = 300; });
+      await page.evaluate(({ id, reps }) => window.memnoterReview.show({
+        id, reps, kind: 'basic',
+        front: [{ type: 'text', text: id + reps + '\nQuestion line'.repeat(100) }],
+        back: [{ type: 'text', text: 'Answer line\n'.repeat(100) }],
+      }, true), { id, reps });
+      await page.waitForFunction(() => document.querySelectorAll('.card-face').length === 2);
+      assert.equal(await page.locator('main').evaluate(node => node.scrollTop), 300, 'Reveal preserves reading position');
+    }
   } finally {
     await browser?.close();
     await server.close();
