@@ -4,7 +4,7 @@ import { BubbleMenu } from "@tiptap/react/menus";
 import { TextSelection } from "@tiptap/pm/state";
 import { Check, ExternalLink, Pencil, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { IconTooltip } from "@/components/icon-tooltip";
 import {
   isLinkEditorOpen,
   LINK_MENU_KEY,
@@ -226,30 +226,16 @@ function IconButton({
   children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
+    <IconTooltip label={label} hint={hint}>
+<Button
             size="icon-sm"
             variant="ghost"
             type={type}
             aria-label={label}
             onClick={onClick}
-          />
-        }
-      >
-        {children}
-      </TooltipTrigger>
-      <TooltipContent>
-        {hint ? (
-          <span className="grid gap-0.5">
-            <strong className="font-medium">{label}</strong>
-            <span className="text-muted-foreground">{hint}</span>
-          </span>
-        ) : (
-          label
-        )}
-      </TooltipContent>
-    </Tooltip>
+          >
+{children}
+</Button>
+</IconTooltip>
   );
 }

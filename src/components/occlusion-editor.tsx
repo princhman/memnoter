@@ -1,3 +1,4 @@
+import { IconTooltip } from "@/components/icon-tooltip";
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Circle, Combine, MousePointer2, PenLine, Split, Square, Trash2, Undo2 } from "lucide-react";
 import { drawMask, maskBounds, maskCards, normalizedPoint, validMasks, withBounds, type Mask, type Point } from "@/lib/occlusion";
@@ -190,18 +191,18 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
     <div className="occlusion-toolbar">
       <div className="flex items-center gap-0.5" role="toolbar" aria-label="Mask tools">
         {TOOLS.map(({ tool: t, label, key, Icon }) => (
-            <Button key={t} size="icon-sm" variant={tool === t ? "secondary" : "ghost"} aria-label={label} title={`${label} (${key})`} aria-pressed={tool === t} onClick={() => setTool(t)}>
+            <IconTooltip key={t} label={label} hint={key} container={dialog}><Button size="icon-sm" variant={tool === t ? "secondary" : "ghost"} aria-label={label} aria-pressed={tool === t} onClick={() => setTool(t)}>
               <Icon />
-            </Button>
+            </Button></IconTooltip>
         ))}
       </div>
       <div className="flex items-center gap-0.5">
         <span className="mr-2 text-xs text-muted-foreground tabular-nums">{cards.length} {cards.length === 1 ? "card" : "cards"}</span>
           <Button size="sm" variant="ghost" title="Ask the selected masks as one card" disabled={!canJoin} onClick={join}><Combine />Join</Button>
           <Button size="sm" variant="ghost" title="Make each selected mask its own card" disabled={!canSeparate} onClick={separate}><Split />Separate</Button>
-          <Button size="icon-sm" variant="ghost" aria-label="Undo" title={`Undo (${MOD_KEY}Z)`} disabled={!history.length} onClick={undo}><Undo2 /></Button>
+          <IconTooltip label="Undo" hint={`${MOD_KEY}Z`} container={dialog}><Button size="icon-sm" variant="ghost" aria-label="Undo" disabled={!history.length} onClick={undo}><Undo2 /></Button></IconTooltip>
 
-          <Button size="icon-sm" variant="ghost" aria-label="Delete mask" title="Delete mask (⌫)" disabled={!selected.length} onClick={remove}><Trash2 /></Button>
+          <IconTooltip label="Delete mask" hint="Backspace / Delete" container={dialog}><Button size="icon-sm" variant="ghost" aria-label="Delete mask" disabled={!selected.length} onClick={remove}><Trash2 /></Button></IconTooltip>
 
       </div>
     </div>
