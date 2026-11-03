@@ -41,6 +41,46 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       window.memnoterEditor.exec('heading', { level: 2 });
     });
     await page.waitForFunction(() => window.messages.some(message => message.event === 'outline' && message.payload.headings.some(heading => heading.level === 1)));
+    // The exec boundary must reveal only the requested section, move a stale
+    // caret into it, and preserve its screen position when restoring the note.
+    await page.locator('.tiptap').click();
+    await page.keyboard.press('Meta+a');
+    await page.evaluate(() => window.memnoterEditor.exec('heading', { level: 1 }));
+    await page.keyboard.type('First');
+    await page.evaluate(() => window.memnoterEditor.exec('heading', { level: 1 }));
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('First body');
+    await page.keyboard.press('Enter');
+    await page.evaluate(() => window.memnoterEditor.exec('heading', { level: 1 }));
+    await page.keyboard.type('Second');
+    await page.keyboard.press('Enter');
+    await page.evaluate(() => window.memnoterEditor.exec('heading', { level: 2 }));
+    await page.keyboard.type('Child');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Child body');
+    await page.keyboard.press('Enter');
+    await page.keyboard.insertText('Tail '.repeat(2000));
+    const focus = await page.evaluate(() => {
+      const outline = window.messages.filter(m => m.event === 'outline').at(-1).payload.headings;
+      const first = outline.find(h => h.text === 'First');
+      const child = outline.find(h => h.text === 'Child');
+      window.memnoterEditor.exec('focusSection', { id: first.id });
+      const firstVisible = [...document.querySelectorAll('.tiptap > *')].filter(n => n.getBoundingClientRect().height).map(n => n.textContent).filter(t => t && !t.startsWith('Tail '));
+      window.memnoterEditor.exec('focusSection', { id: child.id });
+      const state = window.messages.filter(m => m.event === 'state').at(-1).payload;
+      const visible = [...document.querySelectorAll('.tiptap > *')].filter(n => n.getBoundingClientRect().height).map(n => n.textContent).filter(t => t && !t.startsWith('Tail '));
+      const heading = document.querySelector(`[data-toc-id="${child.id}"]`);
+      const before = heading.getBoundingClientRect().top;
+      window.memnoterEditor.exec('showDocument');
+      return { firstVisible, visible, caret: state.headingId, id: child.id,
+        cleared: window.messages.filter(m => m.event === 'state').at(-1).payload.focusedSectionId,
+        delta: heading.getBoundingClientRect().top - before };
+    });
+    assert.deepEqual(focus.firstVisible, ['First', 'First body']);
+    assert.deepEqual(focus.visible, ['Child', 'Child body']);
+    assert.equal(focus.caret, focus.id);
+    assert.equal(focus.cleared, null);
+    assert.ok(Math.abs(focus.delta) < 1);
     const result = await page.evaluate(async () => {
       await window.memnoterEditor.open('two');
       return {

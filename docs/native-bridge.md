@@ -119,8 +119,8 @@ All arguments are objects. Omitted arguments mean `{}`.
 | `link` | `{"href":"https://example.com"}`; set selection link. `{"href":null}` or empty string removes it. Use an explicit URL scheme. |
 | `undo`, `redo` | Shared collaboration/history commands. |
 | `fold`, `unfold` | `{"id":"heading-toc-id"}`; idempotently set fold state. |
-| `focusSection` | `{"id":"heading-toc-id"}`; show that section. |
-| `showDocument` | Clear section focus. |
+| `focusSection` | `{"id":"heading-toc-id"}`; show that section, move the caret to its heading, and scroll it into view. |
+| `showDocument` | Clear section focus while keeping the focused heading at its screen position. |
 | `scrollToHeading` | `{"id":"heading-toc-id"}`; clear section focus, set caret inside heading (revealing folded ancestors), scroll heading into view. |
 | `insertImage` | `{"fileId":"saved-file-uuid","alt":"Optional description"}`; insert block image at selection. |
 | `makeCard` | Existing `makeCloze` command, wraps selected text as a cloze; false for unsupported selections. Existing `Q :: A` syntax also creates cards. |

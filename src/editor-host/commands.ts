@@ -56,7 +56,16 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "undo": return commands.undo();
     case "redo": return commands.redo();
     case "makeCard": return commands.makeCloze();
-    case "showDocument": return commands.showDocument();
+    case "showDocument": {
+      const pos = sectionFocusKey.getState(editor.state);
+      const dom = pos == null ? null : editor.view.nodeDOM(pos);
+      const heading = dom instanceof HTMLElement ? dom : null;
+      const container = heading?.closest<HTMLElement>(".app-scroll-container");
+      const before = heading?.getBoundingClientRect().top ?? 0;
+      const result = commands.showDocument();
+      if (heading && container) container.scrollTop += heading.getBoundingClientRect().top - before;
+      return result;
+    }
     case "insertImage":
       if (typeof args.fileId !== "string" || !args.fileId) throw new Error("insertImage requires fileId");
       return commands.insertContent({ type: "image", attrs: { fileId: args.fileId, alt: typeof args.alt === "string" ? args.alt : null } });
@@ -66,7 +75,14 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "scrollToHeading": {
       const heading = editorOutline(editor).find(item => item.id === args.id);
       if (!heading) throw new Error("Unknown heading id");
-      if (command === "focusSection") return commands.showSection(heading.pos);
+      if (command === "focusSection") {
+        // Outline/breadcrumb actions can target a section outside the selection.
+        // Move the caret with focus so WebKit never tries to reveal hidden text.
+        const result = editor.chain().setTextSelection(heading.pos + 1).showSection(heading.pos).run();
+        const dom = editor.view.nodeDOM(heading.pos);
+        if (dom instanceof HTMLElement) dom.scrollIntoView({ block: "start" });
+        return result;
+      }
       if (command === "scrollToHeading") {
         commands.showDocument();
         commands.setTextSelection(heading.pos + 1);
