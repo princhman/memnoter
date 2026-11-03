@@ -27,11 +27,15 @@ test("module actions open from right-click and keyboard, reuse dialogs and revie
     assert.equal((await page.evaluate(() => calls)).some(call => call.command === "delete_module"), false);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: "Actions for Algebra" }).click();
-    await page.getByRole("menuitem", { name: "Enable chapter numbering" }).click();
-    await page.getByRole("button", { name: "Actions for Algebra" }).click();
-    await page.getByRole("menuitem", { name: "Disable chapter numbering" }).waitFor();
+    assert.equal(await page.getByRole("menuitem", { name: /chapter numbering/i }).count(), 0);
     await page.getByRole("menuitem", { name: "Review", exact: true }).click();
     await page.waitForURL("**/review?module=algebra");
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    const numbering = page.getByRole("switch", { name: "Algebra" });
+    assert.equal(await numbering.getAttribute("aria-checked"), "false");
+    await numbering.click();
+    await page.waitForFunction(() => calls.some(call => call.command === "set_module_numbering" && call.args.enabled === true));
+    await page.waitForFunction(() => document.querySelector('[role="switch"]')?.getAttribute("aria-checked") === "true");
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/tooltips.html`);
     await page.getByRole("button", { name: "Rectangle", exact: true }).hover();
     const tooltip = page.getByRole("tooltip", { name: "Rectangle R", exact: true });
