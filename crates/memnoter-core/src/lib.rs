@@ -62,3 +62,6 @@ pub use search::*;
 
 #[cfg(test)]
 mod tests;
+
+mod dispatch;
+pub use dispatch::{dispatch, DATA_COMMANDS};
