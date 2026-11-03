@@ -6,8 +6,8 @@ struct FormatButtonStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 18, weight: .semibold))
             .frame(minWidth: 44, minHeight: 44)
-            .foregroundStyle(active ? Color.accentColor : Color.primary)
-            .background(Color.accentColor.opacity(active ? 0.16 : configuration.isPressed ? 0.10 : 0), in: RoundedRectangle(cornerRadius: 12))
+            .foregroundStyle(Color.primary)
+            .background(Color(uiColor: .tertiarySystemFill).opacity(active || configuration.isPressed ? 1 : 0), in: RoundedRectangle(cornerRadius: 12))
             .opacity(configuration.isPressed ? 0.65 : 1)
             .contentShape(Rectangle())
     }

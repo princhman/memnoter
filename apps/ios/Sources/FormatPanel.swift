@@ -62,7 +62,7 @@ struct FormatPanel: View {
             }
             Divider()
             Button { session.exec("makeCard") } label: { Label("Make card from selection", systemImage: "rectangle.stack.badge.plus") }
-                .font(.subheadline).frame(minHeight: 44)
+                .font(.subheadline).foregroundStyle(.primary).buttonStyle(.plain).frame(minHeight: 44)
         }
         .padding(12)
         }
