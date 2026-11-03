@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { getFocusedSectionPath, sectionFocusKey } from "../lib/section-focus.ts";
+import { currentSection } from "../lib/sections.ts";
 import { headingFoldKey } from "../lib/heading-fold.ts";
 
 export function editorOutline(editor: Editor) {
@@ -19,7 +20,13 @@ export function editorState(editor: Editor) {
   const focusedPos = sectionFocusKey.getState(editor.state);
   const focusedHeading = focusedPos == null ? null : editor.state.doc.nodeAt(focusedPos);
   const caretHeading = editor.state.selection.$from.parent;
+  const { heading } = currentSection(editor.state);
+  const sectionNode = heading ? editor.state.doc.nodeAt(heading.pos) : null;
   return {
+    focusableSection: heading && sectionNode ? {
+      pos: heading.pos, id: sectionNode.attrs["data-toc-id"] ?? null,
+      title: sectionNode.textContent || "Untitled section", level: heading.level,
+    } : null,
     focusedSectionPath: getFocusedSectionPath(editor).map(crumb => ({
       id: editor.state.doc.nodeAt(crumb.pos)?.attrs["data-toc-id"],
       level: crumb.level, title: crumb.title,
@@ -78,6 +85,10 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "outdent": return commands.liftListItem("listItem");
     case "foldCurrentSection": return commands.foldCurrentSection();
     case "unfoldCurrentSection": return commands.unfoldCurrentSection();
+    case "focusCurrentSection": {
+      const { heading } = currentSection(editor.state);
+      return heading !== null && commands.showSection(heading.pos);
+    }
     case "showDocument": {
       const pos = sectionFocusKey.getState(editor.state);
       const dom = pos == null ? null : editor.view.nodeDOM(pos);

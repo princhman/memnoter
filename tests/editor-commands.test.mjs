@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { HeadingFold } from '../src/lib/heading-fold.ts';
+import { SectionFocus, sectionFocusKey } from '../src/lib/section-focus.ts';
+import { HeadingHieararchy } from '../src/lib/heading-hierarchy.ts';
 import { Flashcards } from '../src/lib/flashcards.ts';
 import { execEditor, editorState } from '../src/editor-host/commands.ts';
 
@@ -53,5 +55,36 @@ test('invalid native commands cannot invoke arbitrary editor methods or mutate c
       assert.throws(() => execEditor(editor, command, args));
       assert.deepEqual(editor.getJSON(), before);
     }
+  } finally { editor.destroy(); }
+});
+
+
+test('native focus follows the innermost section through body text and section boundaries', () => {
+  const paragraph = text => ({ type: 'paragraph', content: [{ type: 'text', text }] });
+  const heading = (level, text) => ({ type: 'heading', attrs: { level }, content: [{ type: 'text', text }] });
+  const editor = new Editor({ element: null, extensions: [StarterKit, Flashcards, HeadingFold, SectionFocus, HeadingHieararchy],
+    content: { type: 'doc', content: [paragraph('Preface'), heading(1, 'Root'), heading(2, 'Child'), paragraph('Body'),
+      heading(3, 'Nested'), { type: 'bulletList', content: [{ type: 'listItem', content: [paragraph('List body')] }] },
+      heading(2, 'Sibling'), paragraph('Last body')] } });
+  editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+  try {
+    const cases = [ ['Preface', null], ['Root', ['Root', 1]], ['Body', ['Child', 2]],
+      ['List body', ['Nested', 3]], ['Sibling', ['Sibling', 2]], ['Last body', ['Sibling', 2]] ];
+    for (const [text, expected] of cases) {
+      let pos;
+      editor.state.doc.descendants((node, offset) => { if (node.isText && node.text === text) pos = offset; });
+      editor.commands.setTextSelection(pos + 1);
+      const selection = editor.state.selection.from;
+      const section = editorState(editor).focusableSection;
+      assert.deepEqual(section && [section.title, section.level], expected, text);
+      assert.equal(execEditor(editor, 'focusCurrentSection'), expected !== null);
+      assert.equal(sectionFocusKey.getState(editor.state), section?.pos ?? null);
+      assert.equal(editor.state.selection.from, selection, 'focusing from body retains the caret');
+      editor.commands.showDocument();
+    }
+    // Shared hierarchy correction changes the heading levels consumed by state.
+    editor.commands.setTextSelection(1);
+    editor.commands.setHeading({ level: 6 });
+    assert.equal(editorState(editor).focusableSection.level, 1);
   } finally { editor.destroy(); }
 });

@@ -125,6 +125,7 @@ All arguments are objects. Omitted arguments mean `{}`.
 | `undo`, `redo` | Shared collaboration/history commands. |
 | `fold`, `unfold` | `{"id":"heading-toc-id"}`; idempotently set fold state. |
 | `focusSection` | `{"id":"heading-toc-id"}`; show that section, move the caret to its heading, and scroll it into view. |
+| `focusCurrentSection` | Focus the innermost section containing the current caret, keeping the selection. False before the first heading. No arguments; resolves the current position at execution time. |
 | `showDocument` | Clear section focus while keeping the focused heading at its screen position. |
 | `scrollToHeading` | `{"id":"heading-toc-id"}`; clear section focus, set caret inside heading (revealing folded ancestors), scroll heading into view. |
 | `insertImage` | `{"fileId":"saved-file-uuid","alt":"Optional description"}`; insert block image at selection. |
@@ -147,7 +148,7 @@ Handle only `kind: "event"` as events; command replies are separate callbacks.
 | Event | Payload |
 | --- | --- |
 | `ready` | `{"protocolVersion":1}` |
-| `state` | `{moduleId, marks: string[], blockType: string, headingLevel: number|null, headingId: string|null, focusedSectionId: string|null, focusedSectionPath: {id: string, level: number, title: string}[], bulletList: boolean, orderedList: boolean, blockquote: boolean, canIndent: boolean, canOutdent: boolean, canMakeCard: boolean, inCloze: boolean, canJoinClozes: boolean, folded: boolean, canFold: boolean, canUndo: boolean, canRedo: boolean, hasSelection: boolean, editable: boolean}` |
+| `state` | `{moduleId, marks: string[], blockType: string, headingLevel: number|null, headingId: string|null, focusableSection: {pos: number, id: string|null, title: string, level: number}|null, focusedSectionId: string|null, focusedSectionPath: {id: string, level: number, title: string}[], bulletList: boolean, orderedList: boolean, blockquote: boolean, canIndent: boolean, canOutdent: boolean, canMakeCard: boolean, inCloze: boolean, canJoinClozes: boolean, folded: boolean, canFold: boolean, canUndo: boolean, canRedo: boolean, hasSelection: boolean, editable: boolean}` |
 | `outline` | `{moduleId, headings: [{id: string, level: number, text: string, pos: number, folded: boolean}]}` |
 | `saveStatus` | `{pending: number, failing: boolean, lastError: string|null, imageErrors: string[]}` |
 | `error` | `{moduleId: string|null, message: string}` |
@@ -155,6 +156,11 @@ Handle only `kind: "event"` as events; command replies are separate callbacks.
 `marks` contains active entries from bold, italic, underline, strike, code, link.
 `blockType` is the selection's immediate parent node type (e.g. paragraph,
 heading, inlineMath). `headingId` identifies the heading containing the caret, or null outside a heading.
+`focusableSection` identifies the nearest preceding heading whose section contains
+the selection start, including body paragraphs, lists and other nested content.
+It is null before the first heading. Section boundaries and normalized heading
+levels follow the shared desktop section/hierarchy logic. Its optional ID may
+still be pending TOC assignment; `focusCurrentSection` works without one.
 `focusedSectionPath` lists ancestors through the focused heading in document order; it is empty for the whole note. Segment IDs can be passed to `focusSection`.
 `focusedSectionId` identifies the focused section heading, or null for the whole
 note. Both use current outline IDs and update after focus commands, restored
