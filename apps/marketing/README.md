@@ -9,8 +9,8 @@ It uses the approved assets in `../../brand/` without maintaining another master
 From the repository root, with Node 22+ and internet access:
 
 ```sh
-node apps/website/build.mjs
-cd apps/website
+node apps/marketing/build.mjs
+cd apps/marketing
 python3 -m http.server 4173 --bind 127.0.0.1 --directory dist
 ```
 
@@ -29,8 +29,8 @@ Cloudflare Workers static assets (`wrangler.jsonc`), serving `memnoter.com`
 and `www.memnoter.com`. To deploy by hand:
 
 ```sh
-node apps/website/build.mjs
-cd apps/website && npx wrangler@4 deploy
+node apps/marketing/build.mjs
+cd apps/marketing && npx wrangler@4 deploy
 ```
 
 ## Editing

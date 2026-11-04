@@ -120,16 +120,23 @@ You need Node 22.6+, [pnpm](https://pnpm.io), a Rust toolchain and the
 
 ```sh
 pnpm install
-pnpm tauri dev      # run the app with hot reload
+pnpm dev            # run the desktop app with hot reload
 ```
+
+| Command | Runs |
+| --- | --- |
+| `pnpm dev` | Desktop app |
+| `pnpm dev:ui` | Shared UI in a browser, without native data |
+| `pnpm dev:sync` | Sync server on port 8787 |
+| `pnpm dev:sync-test` | Sync server and two desktop copies, with throwaway data |
+| `pnpm dev:marketing` | Build and serve the marketing site on port 4173 |
+| `pnpm dev:ios` | Build the iPad dependencies and open Xcode |
+| `pnpm check` | Lint, build and every test |
 
 Before opening a pull request:
 
 ```sh
-pnpm test                                          # frontend and integration tests
-cargo test --workspace                             # Rust tests
-pnpm lint                                          # style rules
-pnpm build                                         # typecheck and bundle
+pnpm check
 ```
 
 ## License

@@ -17,6 +17,7 @@ if [[ "${1:-}" == "--reset" ]]; then
   rm -rf "$data"
 fi
 mkdir -p "$data/a" "$data/b"
+"$root/scripts/ensure-sync-vars.sh"
 
 pids=()
 cleanup() { kill "${pids[@]}" 2>/dev/null || true; }
