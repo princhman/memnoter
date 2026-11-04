@@ -1,3 +1,4 @@
+// Sync service entry point for sync.memnoter.com.
 import { TOKEN_TTL_MS, signToken, verifyToken, type Claims } from "./token";
 import type { Env } from "./env";
 import type { KeyInfo } from "./vault";
