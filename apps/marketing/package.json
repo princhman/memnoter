@@ -1,6 +1,7 @@
 {
   "name": "memnoter-marketing",
   "private": true,
+  "packageManager": "pnpm@10.5.2",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
