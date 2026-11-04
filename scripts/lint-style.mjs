@@ -46,7 +46,7 @@ for (const file of files) {
   lines.set(file, source.split("\n"));
 
   lines.get(file).forEach((text, index) => {
-    if (text.includes("—")) report(file, index + 1, "em-dash", "use a comma, colon or full stop");
+    if (text.includes("\u2014")) report(file, index + 1, "em-dash", "use a comma, colon or full stop");
     if (/[·•⋅]/.test(text)) {
       report(file, index + 1, "middle-dot", "write the parts as words, or split them");
     }
