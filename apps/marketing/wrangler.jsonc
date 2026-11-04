@@ -1,0 +1,14 @@
+{
+  "name": "memnoter-website",
+  "account_id": "2ebb0c0a3055bf941210dc29d1e53ca2",
+  "compatibility_date": "2026-10-01",
+  // Static site only: no Worker script. Run `node apps/marketing/build.mjs` first.
+  "assets": {
+    "directory": "./dist"
+  },
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "memnoter.com", "custom_domain": true },
+    { "pattern": "www.memnoter.com", "custom_domain": true }
+  ]
+}

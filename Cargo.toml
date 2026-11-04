@@ -1,3 +1,3 @@
 [workspace]
-members = ["src-tauri", "crates/memnoter-core", "crates/memnoter-ffi"]
+members = ["apps/desktop", "crates/memnoter-core", "crates/memnoter-ffi"]
 resolver = "2"

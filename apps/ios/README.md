@@ -1,7 +1,7 @@
 # Memnoter for iPad
 
 Native SwiftUI iPadOS 17+ host, bundle ID `com.vladyslavnalyvaiko.memnoter.ipad`.
-The desktop/Tauri project (including `src-tauri/gen/apple`) is independent.
+The desktop/Tauri project (including `apps/desktop/gen/apple`) is independent.
 Data lives in Application Support/Memnoter: main.db, files/, backups/.
 
 ## Build
@@ -93,7 +93,7 @@ The native two-database E2E test needs a local Worker on port 8787 with developm
 sign-in codes enabled. Start only the Worker (no desktop apps required):
 
 ```sh
-cd sync-server
+cd apps/sync
 pnpm install --frozen-lockfile
 # In .dev.vars, set AUTH_SECRET to a local random value and DEV_RETURN_CODE=1.
 # Never commit .dev.vars or use production credentials.
@@ -118,7 +118,7 @@ save behavior on a physical iPad.
 ## Architecture and current limits
 
 CoreClient is an actor; opening and all Rust work run off the main actor.
-WebSession follows docs/native-bridge.md with decoded JSON replies and safe JS
+WebSession uses decoded JSON replies and safe JS
 arguments. It retains the editor across module switches, serializes open/flush,
 and requests a background task for the lifecycle barrier. Navigation waits for
 flush and reports failures. No mobile host can guarantee completion after a
