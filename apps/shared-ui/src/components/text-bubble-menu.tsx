@@ -85,7 +85,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         }
         return true;
       }}
-      className="z-40 flex items-center gap-0.5 rounded-lg bg-popover p-1 text-popover-foreground shadow-md"
+      className="z-40 flex items-center gap-0.5 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md"
       // Keep the editor selection while clicking menu buttons.
       onMouseDown={(event) => event.preventDefault()}
     >
@@ -205,7 +205,7 @@ function MarkButton({
             aria-pressed={pressed}
             disabled={disabled}
             className={cn(
-              pressed && "bg-primary/15 text-primary hover:bg-primary/20",
+              pressed && "bg-primary/15 text-primary hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground",
             )}
             onClick={onToggle}
           >

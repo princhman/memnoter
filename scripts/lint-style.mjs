@@ -3,7 +3,8 @@
 //   middle-dot     no dot symbols (· • ⋅) used as separators within text;
 //   surface-outline  no outline around floating surfaces (popups, popovers,
 //                  menus, dialogs, tooltips) or cards, including tinted
-//                  buttons: their shadow or background sets them apart.
+//                  buttons: their shadow or background sets them apart in light mode.
+//                  Dark floating surfaces rely on fill plus a stronger shadow.
 //                  Dividers inside them are fine.
 // A line containing `lint-allow: <rule>` is exempt, for text that has to show
 // the character itself.

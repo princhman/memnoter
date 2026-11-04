@@ -288,7 +288,7 @@ export function FindBar() {
   };
 
   return (
-    <div className="absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 rounded-lg bg-popover p-1 text-popover-foreground shadow-md">
+    <div className="absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md">
       <div className="flex items-center gap-1">
         <IconTooltip
           label="Toggle replace"
@@ -445,7 +445,7 @@ function ToggleButton({
         variant="ghost"
         aria-label={label}
         aria-pressed={pressed}
-        className={cn(pressed && "bg-primary/15 text-primary hover:bg-primary/20")}
+        className={cn(pressed && "bg-primary/15 text-primary hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground")}
         onClick={onToggle}
       >
         {children}
