@@ -1,9 +1,9 @@
 import { sectionOffset, sectionToTop } from "./scroll.ts";
 import { suppressesTextInput } from "../lib/editor-input.ts";
 import type { Editor } from "@tiptap/core";
-import { getFocusedSectionPath, sectionFocusKey } from "../lib/section-focus.ts";
+import { getFocusedSectionPath, getFocusedSectionRange, sectionFocusKey } from "../lib/section-focus.ts";
 import { currentSection } from "../lib/sections.ts";
-import { headingFoldKey } from "../lib/heading-fold.ts";
+import { headingFoldKey, getFoldedRanges } from "../lib/heading-fold.ts";
 
 // TOC deliberately skips empty headings. Native focus still needs an opaque,
 // resolvable ID for every section, including empty ancestors. Position IDs are
@@ -13,7 +13,7 @@ function sectionId(node: { attrs: Record<string, unknown> }, pos: number): strin
   return typeof id === "string" && id ? id : `native-section:${pos}`;
 }
 
-export function editorOutline(editor: Editor) {
+function allHeadings(editor: Editor) {
   const folded = headingFoldKey.getState(editor.state)?.folded ?? [];
   const headings: { id: string; level: number; text: string; pos: number; folded: boolean }[] = [];
   editor.state.doc.descendants((node, pos) => {
@@ -23,6 +23,15 @@ export function editorOutline(editor: Editor) {
     }
   });
   return headings;
+}
+
+// Use document positions from the same state as the visibility plugins.
+export function editorOutline(editor: Editor) {
+  const focus = getFocusedSectionRange(editor.state);
+  const folded = getFoldedRanges(editor.state);
+  return allHeadings(editor).filter(item =>
+    (!focus || (item.pos >= focus.from && item.pos < focus.to)) &&
+    !folded.some(range => item.pos >= range.from && item.pos < range.to));
 }
 
 export function editorState(editor: Editor) {
@@ -63,6 +72,9 @@ export function editorState(editor: Editor) {
 export function execEditor(editor: Editor, command: string, args: Record<string, unknown> = {}): boolean {
   const commands = editor.commands;
   switch (command) {
+    case "contents":
+      window.dispatchEvent(new Event("memnoter:contents"));
+      return true;
     case "bold": return commands.toggleBold();
     case "italic": return commands.toggleItalic();
     case "underline": return commands.toggleUnderline();
@@ -117,7 +129,7 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "unfold":
     case "focusSection":
     case "scrollToHeading": {
-      const heading = editorOutline(editor).find(item => item.id === args.id);
+      const heading = allHeadings(editor).find(item => item.id === args.id);
       if (!heading) throw new Error("Unknown heading id");
       if (command === "focusSection") {
         // Outline/breadcrumb actions can target a section outside the selection.
@@ -127,7 +139,8 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
         return result;
       }
       if (command === "scrollToHeading") {
-        commands.showDocument();
+        // Navigation within Contents preserves the current section focus.
+        // Moving the caret also prevents a later inset update returning to it.
         commands.setTextSelection(heading.pos + 1);
         sectionToTop(editor, heading.pos);
         return true;

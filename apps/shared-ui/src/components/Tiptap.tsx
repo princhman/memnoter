@@ -467,7 +467,10 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
   return (
     <FilesContext.Provider value={filesContext}>
       {!hostOnly && <CardNavigationGuard editor={editor} ready={isSuccess} />}
-      {hostOnly ? <EditorContent editor={editor} /> : <>
+      {hostOnly ? <>
+        <EditorContent editor={editor} />
+        <TableOfContents editor={editor} store={tocStore} numbered={numbered} />
+      </> : <>
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>

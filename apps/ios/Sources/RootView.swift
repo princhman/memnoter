@@ -18,7 +18,6 @@ struct RootView: View {
     @State private var hits: [SearchHit] = []
     @State private var showSearch = false
     @State private var showSettings = false
-    @State private var showOutline = false
     @State private var editingName = false
     @State private var rename: NoteModule?
     @State private var name = ""
@@ -148,10 +147,12 @@ struct RootView: View {
                     }
 
                     ToolbarItem(placement: .primaryAction) {
+                        Button { session.exec("contents") } label: { Label("Contents", systemImage: "list.bullet.indent") }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
                         Menu {
                             PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
                             Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }.keyboardShortcut("f")
-                            Button { showOutline = true } label: { Label("Outline", systemImage: "list.bullet.indent") }
                             Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }
                             if !session.saveStatus.isEmpty { Text(session.saveStatus) }
                         } label: { Image(systemName: "ellipsis") }
@@ -210,24 +211,6 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
-        .sheet(isPresented: $showOutline) {
-            NavigationStack {
-                List(session?.headings ?? []) { heading in
-                    HStack {
-                        Button(heading.text) { session?.exec("scrollToHeading", ["id": heading.id]); showOutline = false }.padding(.leading, CGFloat(heading.level - 1) * 16)
-                        Spacer()
-                        if session?.state.focusedSectionId == heading.id {
-                            Image(systemName: "scope").foregroundStyle(.tint).accessibilityLabel("Focused section")
-                        }
-                        Button { focusSection(heading) } label: { Image(systemName: "viewfinder") }
-                            .accessibilityLabel("Focus on section: \(heading.text)")
-                        Button { session?.exec(heading.folded ? "unfold" : "fold", ["id": heading.id]) } label: { Image(systemName: heading.folded ? "chevron.right" : "chevron.down") }
-                    }
-                    .buttonStyle(.borderless)
-                    .contextMenu { Button("Focus on section", systemImage: "scope") { focusSection(heading) } }
-                }.navigationTitle("Outline").toolbar { Button("Done") { showOutline = false } }
-            }
-        }
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
         .onChange(of: columnVisibility) { _, visibility in
             if visibility == .all { sidebarVisible = true }
@@ -302,10 +285,6 @@ struct RootView: View {
         rename = nil
         name = ""
         editingName = true
-    }
-    func focusSection(_ heading: Heading) {
-        session?.exec("focusSection", ["id": heading.id])
-        showOutline = false
     }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {
         Button("Rename") { rename = module; name = module.name; editingName = true }

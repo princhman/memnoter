@@ -94,3 +94,26 @@ test('native focus follows the innermost section through body text and section b
     assert.equal(editorState(editor).focusableSection.level, 1);
   } finally { editor.destroy(); }
 });
+
+test('native outline hides folded descendants and headings outside focus, and navigation retains focus', async () => {
+  const { editorOutline } = await import('../src/editor-host/commands.ts');
+  const HeadingIds = (await import('@tiptap/core')).Extension.create({
+    name: 'outlineIds',
+    addGlobalAttributes() { return [{ types: ['heading'], attributes: { 'data-toc-id': { default: null } } }]; },
+  });
+  const h = (level, text) => ({ type: 'heading', attrs: { level, 'data-toc-id': text }, content: [{ type: 'text', text }] });
+  const editor = new Editor({ element: null, extensions: [StarterKit, HeadingIds, HeadingFold, SectionFocus],
+    content: { type: 'doc', content: [h(1, 'Parent'), h(2, 'Child'), h(3, 'Grandchild'), h(1, 'Other')] } });
+  editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+  try {
+    execEditor(editor, 'fold', { id: 'Child' });
+    assert.deepEqual(editorOutline(editor).map(h => [h.id, h.folded]), [['Parent', false], ['Child', true], ['Other', false]]);
+    execEditor(editor, 'focusSection', { id: 'Parent' });
+    assert.deepEqual(editorOutline(editor).map(h => h.id), ['Parent', 'Child']);
+    const focused = sectionFocusKey.getState(editor.state);
+    execEditor(editor, 'scrollToHeading', { id: 'Child' });
+    assert.equal(sectionFocusKey.getState(editor.state), focused);
+    execEditor(editor, 'unfold', { id: 'Child' });
+    assert.deepEqual(editorOutline(editor).map(h => h.id), ['Parent', 'Child', 'Grandchild']);
+  } finally { editor.destroy(); }
+});
