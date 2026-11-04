@@ -42,3 +42,7 @@ html, body, #root, .app-scroll-container, .tiptap-shell, .tiptap {
 .tiptap.section-focused {
   min-height: 100vh;
 }
+
+.image-preview-dialog [data-slot="dialog-close"] { min-width: 44px; min-height: 44px; }
+
+.native-image-preview { min-height: 44px; min-width: 44px; }
