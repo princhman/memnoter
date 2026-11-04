@@ -13,7 +13,10 @@ test("chapter decorations share hierarchical numbering and never change persiste
   assert.equal(plugin.props.decorations(state), null);
   state = state.apply(state.tr.setMeta(headingNumberingKey, true));
   assert.deepEqual([...headingNumbers(state.doc).values()], ["1", "1.1", "1.2", "1.3", "2"]);
-  assert.deepEqual(plugin.props.decorations(state).find().map(d => d.type.attrs["data-heading-number"]), ["1", "1.1", "1.2", "1.3", "2"]);
+  const decorations = plugin.props.decorations(state).find();
+  // Read the rendered labels without needing a global browser document.
+  const view = { dom: { ownerDocument: { createElement: () => ({ setAttribute() {} }) } } };
+  assert.deepEqual(decorations.map(d => d.type.toDOM(view).textContent), ["1\u00a0", "1.1\u00a0", "1.2\u00a0", "1.3\u00a0", "2\u00a0"]);
   assert.deepEqual(state.doc.toJSON(), doc.toJSON());
   state = state.apply(state.tr.setMeta(headingNumberingKey, false));
   assert.equal(plugin.props.decorations(state), null);

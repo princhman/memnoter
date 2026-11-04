@@ -32,7 +32,20 @@ export const HeadingNumbering = Extension.create({
         decorations(state) {
           if (!headingNumberingKey.getState(state)) return null;
           return DecorationSet.create(state.doc, [...headingNumbers(state.doc)].map(([pos, number]) =>
-            Decoration.node(pos, pos + state.doc.nodeAt(pos)!.nodeSize, { "data-heading-number": number }),
+            Decoration.widget(pos + 1, (view) => {
+              const span = view.dom.ownerDocument.createElement("span");
+              span.className = "heading-number";
+              span.contentEditable = "false";
+              span.setAttribute("aria-hidden", "true");
+              span.textContent = `${number}\u00a0`;
+              return span;
+            }, {
+              // Keep the caret and newly typed text after the number, including
+              // in an empty heading with only ProseMirror's trailing break.
+              side: -1,
+              ignoreSelection: true,
+              key: `heading-number-${number}`,
+            }),
           ));
         },
       },

@@ -1479,10 +1479,11 @@ body {
 /* Literal tabs remain note text through Yjs persistence. */
 .tiptap { tab-size: 4; }
 
-.tiptap [data-heading-number]::before {
-  content: attr(data-heading-number) " ";
+.tiptap .heading-number {
   color: var(--muted-foreground);
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Moving an image: press on it and drag (see image-pointer-move.ts). */
