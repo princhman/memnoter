@@ -55,7 +55,7 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ". -> target"
 
       - run: pnpm install --frozen-lockfile
 

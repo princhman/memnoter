@@ -29,7 +29,7 @@ impl Drop for Fixture {
 // whitespace do not affect the contract.
 #[test]
 fn dispatch_and_desktop_register_the_same_data_commands() {
-    let source = include_str!("../../../src-tauri/src/lib.rs");
+    let source = include_str!("../../../apps/desktop/src/lib.rs");
     let handler = source
         .split("tauri::generate_handler![")
         .nth(1)

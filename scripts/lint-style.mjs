@@ -9,10 +9,7 @@
 // the character itself.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.resolve("vite"));
-const postcss = require("postcss");
+import postcss from "postcss";
 
 const CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html)$/;
 const SKIPPED = /(^|\/)(node_modules|dist|target)\/|routeTree\.gen\.ts$|pnpm-lock/;
@@ -58,7 +55,7 @@ for (const file of files) {
     }
     if (
       /\.(tsx?|jsx?)$/.test(file) &&
-      !file.startsWith("src/components/ui/") &&
+      !file.startsWith("apps/shared-ui/src/components/ui/") &&
       BORDER_CLASS.test(text) &&
       ROUNDED_CLASS.test(text)
     ) {

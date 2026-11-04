@@ -11,17 +11,17 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Expected a numeric app ve
 // XcodeGen runs this before generation, including for local builds.
 write('apps/ios/Version.xcconfig', `// Generated from package.json; do not edit.\nMARKETING_VERSION = ${version}\nCURRENT_PROJECT_VERSION = 1\n`);
 if (!process.argv.includes('--ios-only')) {
-  const config = JSON.parse(read('src-tauri/tauri.conf.json'));
+  const config = JSON.parse(read('apps/desktop/tauri.conf.json'));
   config.version = version;
-  write('src-tauri/tauri.conf.json', `${JSON.stringify(config, null, 2)}\n`);
-  for (const path of ['src-tauri/Cargo.toml', 'crates/memnoter-core/Cargo.toml', 'crates/memnoter-ffi/Cargo.toml']) {
+  write('apps/desktop/tauri.conf.json', `${JSON.stringify(config, null, 2)}\n`);
+  for (const path of ['apps/desktop/Cargo.toml', 'crates/memnoter-core/Cargo.toml', 'crates/memnoter-ffi/Cargo.toml']) {
     write(path, read(path).replace(/^version = "[^"]+"/m, `version = "${version}"`));
   }
   write('Cargo.lock', read('Cargo.lock').replace(/(name = "memnoter(?:-core|-ffi)?"\nversion = ")[^"]+/g, `$1${version}`));
   // Retained Tauri-generated iOS project (the native iPad app lives in apps/ios).
-  write('src-tauri/gen/apple/project.yml', read('src-tauri/gen/apple/project.yml')
+  write('apps/desktop/gen/apple/project.yml', read('apps/desktop/gen/apple/project.yml')
     .replace(/CFBundleShortVersionString: .*/, `CFBundleShortVersionString: ${version}`)
     .replace(/CFBundleVersion: .*/, `CFBundleVersion: "${version}"`));
-  write('src-tauri/gen/apple/memnoter_iOS/Info.plist', read('src-tauri/gen/apple/memnoter_iOS/Info.plist')
+  write('apps/desktop/gen/apple/memnoter_iOS/Info.plist', read('apps/desktop/gen/apple/memnoter_iOS/Info.plist')
     .replace(/(<key>CFBundle(?:ShortVersionString|Version)<\/key>\s*<string>)[^<]+/g, `$1${version}`));
 }

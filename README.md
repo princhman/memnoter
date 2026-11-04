@@ -64,7 +64,7 @@ changes with it. Everything stays on your machine.
 
 - Notes live in a local SQLite database. No account is needed for local use,
   and there is no telemetry.
-- Optional [end-to-end encrypted cloud sync](docs/sync.md) keeps notes, images
+- Optional end-to-end encrypted cloud sync keeps notes, images
   and review history up to date across devices. Sign in under Settings > Sync.
 - Saves retry in order, and quitting waits for pending saves.
 - A daily backup of notes and images keeps the last 7 days. You can also back
@@ -127,29 +127,21 @@ Before opening a pull request:
 
 ```sh
 pnpm test                                          # frontend and integration tests
-cargo test --manifest-path src-tauri/Cargo.toml    # Rust tests
+cargo test --workspace                             # Rust tests
 pnpm lint                                          # style rules
 pnpm build                                         # typecheck and bundle
 ```
 
-Design notes live in [`docs/`](docs). [`docs/flashcards.md`](docs/flashcards.md)
-covers card syntax, card identity, scheduling, image occlusion and how image
-files are kept and cleaned up.
-
 ## License
 
 The Memnoter app, including the shared sync client and protocol in
-`src/lib/sync/`, is licensed under [MIT](LICENSE) © Vladyslav Nalyvaiko.
+`apps/shared-ui/src/lib/sync/`, is licensed under [MIT](LICENSE) © Vladyslav Nalyvaiko.
 
-The server in [`sync-server/`](sync-server/) is licensed separately under
-[GNU AGPL-3.0](sync-server/LICENSE). Self-hosting is free; anyone running a
+The server in [`apps/sync/`](apps/sync/) is licensed separately under
+[GNU AGPL-3.0](apps/sync/LICENSE). Self-hosting is free; anyone running a
 modified copy as a service must publish their changes.
 
 ## Native iPad app and shared core
 
 See [apps/ios/README.md](apps/ios/README.md) for the native SwiftUI iPad app and build instructions, and [crates/memnoter-core/README.md](crates/memnoter-core/README.md) for the shared Rust core and dispatch API.
 
-## Releasing
-
-See [the release guide](docs/releasing.md) for version bumps, desktop releases,
-iPad TestFlight uploads, signing secrets, and local archive verification.

@@ -35,8 +35,8 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
 
-      # tests/math-caret.test.mjs drives the editor in WebKit.
-      - run: pnpm exec playwright install webkit
+      # apps/shared-ui/tests/math-caret.test.mjs drives the editor in WebKit.
+      - run: pnpm --filter memnoter-shared-ui exec playwright install webkit
 
       - run: pnpm test
 
@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sync-server
+        working-directory: apps/sync
 
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +63,6 @@ jobs:
         with:
           node-version: lts/*
           cache: pnpm
-          cache-dependency-path: sync-server/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck

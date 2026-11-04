@@ -268,7 +268,7 @@ fn unopened_plain_copy_survives_owner_cleanup_after_restart() {
     // Real Yjs bytes guard the JS/Rust storage protocol, including nested
     // inline masked images and an ordinary image with no card face.
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/shared-images-yjs.json"
+        "../../../apps/shared-ui/tests/fixtures/shared-images-yjs.json"
     ))
     .unwrap();
     let id = f.file_with_id("note", fixture["fileId"].as_str().unwrap().to_owned());

@@ -1,22 +1,11 @@
-# Memnoter: consistent Paper Mark assets
+# Memnoter brand assets
 
-Every current asset is built programmatically from `icon-white.png`. The master is unchanged, with its SHA-256 recorded in `manifest.json`. No independent image generation is used for these exports.
+- `icon-white.png`: original approved master, 1254 × 1254. Keep this one.
+- `app-icon.png`: `icon-purple-1024.png` as a macOS-style rounded square. The app icons in `apps/desktop/icons` are generated from it with `pnpm tauri icon brand/app-icon.png`.
+- `icon-purple-1024.png`, `icon-reversed-transparent.png`: iOS app icon sources.
+- `icon-purple-256.png`: welcome mark in the apps and social icon on the website.
+- `icon-transparent.png`, `favicon.ico`: website.
+- `logo-horizontal-transparent.svg`, `logo-stacked-transparent.svg`: wordmarks. Text is outlined, so no font is needed; the icon inside is raster.
+- `memnoter-dm-sans-650.ttf`, `FONT-LICENSE.txt`: DM Sans at weight 650, the wordmark font.
 
-- `icon-white.png`: original approved master, 1254 × 1254.
-- `icon-purple.png`: same geometry and placement; indigo ink becomes white, lavender stays lavender, background becomes purple.
-- `icon-transparent.png` / `icon-reversed-transparent.png`: extracted original and reversed marks, with matching alpha masks.
-- `logo-stacked-{white,purple,transparent}.{png,svg}`: name below mark.
-- `logo-horizontal-{white,purple,transparent}.{png,svg}`: name right of mark.
-- `icon-purple-{16,32,48,64,128,256,512,1024}.png`: square icon exports.
-- `favicon.ico`: multiple sizes in one file.
-- `preview.jpg`: overview assembled from the actual assets.
-
-Typography: **DM Sans, weight 650**, from the project's existing font package. The generated concept did not identify a real font; these wordmarks use the actual DM Sans font consistently. The instantiated font and its license are included. Purple `#432fc8` is sampled from the master.
-
-SVG wordmarks contain embedded raster icons and outlined text. They need no installed font, but the icon itself remains raster, not a vector trace. PNGs retain the original raster texture. Transparency is extracted by removing the white matte and recovering edge colours; the mark has not been redrawn.
-
-Regenerate from the repository root using `python scripts/generate-brand-assets.py` with Pillow, numpy, fonttools and brotli installed. Project dependencies supply the source DM Sans WOFF2 font. `manifest.json` lists the current deliverables. The script is also included in the ZIP.
-
-Obsolete concepts, independently generated variants and draft exports have been removed. This directory contains only the current asset set and its supporting files.
-
-`app-icon.png` is `icon-purple-1024.png` as a macOS-style rounded square (824 px on a transparent 1024 px canvas). The app icons in `src-tauri/icons` are generated from it with `pnpm tauri icon brand/app-icon.png`.
+Brand purple is `#432fc8`, sampled from the master. Other sizes and colour variants are in git history if you need them.

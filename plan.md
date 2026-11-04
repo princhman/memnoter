@@ -1,21 +1,64 @@
-## Current pass
+## Todo:
+- [ ] Add beta label - bugs are expected
+- [ ] maybe I am wrong about no borders thing
+- [ ] review & restructure the app (move sync server, landing, desktopinto apps), figure out what is not supposed to be online what I put online (on gh)
+- [ ] clean up brand
 
-- [x] Compare the old backlog with the current code and record what already exists.
-- [x] Open images full screen from their toolbar or by double-clicking, for both
-  block and inline images. Fit the image to the window, support Escape
-  and a close button, and return focus to the editor without changing the note.
-  Verified in WebKit for block and inline images; all 127 frontend tests,
-  `pnpm build` and `pnpm lint` pass.
-  Full-screen viewing also preserves theme-adapted colours and follows theme
-  changes while open, using the same displayed copy as the note.
-- [x] Recheck the reported math issues. Adjacent typing in a collaborative editor
-  stayed stable in WebKit: the rendered math block and its KaTeX DOM were retained.
-  On 2026-11-03, the user said the issue was likely fixed earlier and asked to
-  leave it alone. Both the blinking and highlighting investigations are parked;
-  no math code was changed. Reopen only with a current reproduction.
+## Bugs / missing
+- [ ] with automatic numeration enabled, after creating a title, the caret goes in front of the numeration for some reason
+- [ ] TOC is completely broken and unusable on ipad
+- [ ] No zooming in on the image on the ipad
+- [ ] Setting to ignore today's created cards
+- [ ] it is very hard to see I when it is selected in bubble menu
+- [ ] ::: is missing for both ways cards
+- [ ] in the hover popup - Card, New - is waste of space
 
-## Editor improvements
+- [ ] big flashcards? when does it stop?
 
+
+## Maybe
+- [ ] Offer Markdown export with images and LaTeX. Document how flashcards and
+- [ ] Image viewer zoom and pan, with a reset-to-fit action for detailed diagrams.
+- [ ] when title folded leave one line underneath that is empty and does not fold so it is would be easy to start typing there
+- [ ] Let the image viewer switch between the original and theme-adapted image (when zoomed in)
+- [ ] preview cards
+- [ ] no need for the { }, having space 
+
+
+## Larger features
+
+- [ ] tables
+- [ ] Drawings - ipad fist best possible experience
+- [ ] Highligting
+- [ ] Files and file annotations
+- [ ] Mermaid diagrams, using obsidian fast rendering
+- [ ] Unlimited whiteboards
+- [ ] Web experience
+- [ ] voice recordings 
+- [ ] study sessions - connecting edits to sessions
+- [ ] question database & practice
+- [ ] mindmap
+- [ ] technique for remembering by dumping everything down
+- [ ] Mobile app
+
+
+
+## Historical completions
+- [x] Prepare for the ipad
+- [x] Slash menu for sections, headings, lists, quotes, code, images and math.
+  See `src/components/slash-menu.tsx`.
+- [x] LaTeX command suggestions and placeholder navigation.
+  See `src/components/latex-menu.tsx`.
+- [x] Preserve the open module, cursor, scroll position, focused section and folds.
+  See `src/lib/view-persistence.ts` and `src/lib/store.ts`.
+- [x] Folding headings, including keyboard fold/unfold commands.
+  See `src/lib/heading-fold.ts`.
+- [x] Adapt image colors and background to the current theme.
+  See `src/lib/image-adapt.ts` and the image toolbar.
+- [x] Sibling and subsection insertion commands and shortcuts.
+  See `src/lib/sections.ts`. The remaining heading action is tracked above.
+- [x] Flashcards: basic cards, clozes, image occlusion and scheduled review.
+  See `docs/flashcards.md`.
 - [x] Tab for spacing: define behavior in prose, lists and code. Preserve existing
   Tab actions for suggestion acceptance, LaTeX placeholders and list indentation.
   Added literal prose tabs and two-space code indent/outdent; 129 tests, lint
@@ -39,54 +82,25 @@
   Shared icon tooltips now cover toolbars, module actions, outline, breadcrumb
   overflow, dialog closes and mask tools, including shortcuts and native-dialog
   portals. Escape still closes dialogs; 132 tests, lint and build pass.
-
 - [x] Expand and normalise the window drag area across the full top bar, including
   sidebar and inset backgrounds. Preserve interactive controls, double-click
   maximise, full-screen and collapsed-sidebar behavior without overlay strips.
   Replaced the strip with full-height native deep regions, including inert
   breadcrumb labels. The locked Tauri listener passes WebKit checks for drag,
   maximise dispatch, controls and overlays; 133 tests, lint and build pass.
-
-## Larger features
-
-- [ ] Drawings: define a first version with pen, eraser, undo and local persistence.
-  Decide whether drawings are editable embedded assets or exported images.
-- [ ] Prepare for the ipad
-
-## Proposed additions
-
-These are new backlog ideas, not commitments for this pass.
-
-- [ ] Image viewer zoom and pan, with a reset-to-fit action for detailed diagrams.
-- [ ] Let the image viewer switch between the original and theme-adapted image.
-- [ ] Add a searchable keyboard-shortcut reference using the existing action names.
-- [ ] Offer Markdown export with images and LaTeX. Document how flashcards and
-  occlusion masks are represented so export does not silently lose study content.
-- [ ] Provide recovery help when loading a note fails: retry and access backups
-  while retaining unsaved edits.
-
-## Implemented since the original backlog
-
-Confirmed in source; this is not a claim that every interaction has been re-tested
-on every desktop platform during this pass.
-
-- [x] Slash menu for sections, headings, lists, quotes, code, images and math.
-  See `src/components/slash-menu.tsx`.
-- [x] LaTeX command suggestions and placeholder navigation.
-  See `src/components/latex-menu.tsx`.
-- [x] Preserve the open module, cursor, scroll position, focused section and folds.
-  See `src/lib/view-persistence.ts` and `src/lib/store.ts`.
-- [x] Folding headings, including keyboard fold/unfold commands.
-  See `src/lib/heading-fold.ts`.
-- [x] Adapt image colors and background to the current theme.
-  See `src/lib/image-adapt.ts` and the image toolbar.
-- [x] Sibling and subsection insertion commands and shortcuts.
-  See `src/lib/sections.ts`. The remaining heading action is tracked above.
-- [x] Flashcards: basic cards, clozes, image occlusion and scheduled review.
-  See `docs/flashcards.md`.
-
-## Historical completions
-
+- [x] Compare the old backlog with the current code and record what already exists.
+- [x] Open images full screen from their toolbar or by double-clicking, for both
+  block and inline images. Fit the image to the window, support Escape
+  and a close button, and return focus to the editor without changing the note.
+  Verified in WebKit for block and inline images; all 127 frontend tests,
+  `pnpm build` and `pnpm lint` pass.
+  Full-screen viewing also preserves theme-adapted colours and follows theme
+  changes while open, using the same displayed copy as the note.
+- [x] Recheck the reported math issues. Adjacent typing in a collaborative editor
+  stayed stable in WebKit: the rendered math block and its KaTeX DOM were retained.
+  On 2026-11-03, the user said the issue was likely fixed earlier and asked to
+  leave it alone. Both the blinking and highlighting investigations are parked;
+  no math code was changed. Reopen only with a current reproduction.
 - [x] bubble functionality? When highlighting could operate on the piece of text
 - [x] allow images within text 
 - [x] image inline like in google docs, with ability to write around
