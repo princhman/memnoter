@@ -20,8 +20,8 @@ export default function ReviewSection() {
       </label>
       <label className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="font-medium">Skip cards created today</h2>
-          <p className="text-sm text-muted-foreground">New cards become available after local midnight.</p>
+          <h2 className="font-medium">Skip cards added to this device today</h2>
+          <p className="text-sm text-muted-foreground">Unreviewed cards first indexed on this device today become available after local midnight, including cards from older synced notes.</p>
         </div>
         <Switch checked={skipToday} onCheckedChange={setSkipCardsCreatedToday} />
       </label>

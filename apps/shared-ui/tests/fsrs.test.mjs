@@ -4,6 +4,8 @@ import {
   formatInterval,
   getScheduler,
   nextInQueue,
+  reviewDueAt,
+  separateSibling,
   previewDue,
   scheduleReview,
 } from "../src/lib/fsrs.ts";
@@ -111,4 +113,30 @@ test("the queue shows the most overdue card, and none before it is due", () => {
   assert.equal(nextInQueue([{ id: "far", dueAt: now + 21 * MINUTE }], now, true), undefined);
   assert.equal(nextInQueue([{ id: "far", dueAt: now + DAY }], now), undefined);
   assert.equal(nextInQueue([], now), undefined);
+});
+
+test("sibling cooldown cannot be bypassed by learn ahead or Show now", () => {
+  const sibling = { id: "block:reverse", dueAt: 10, availableAt: 600_100 };
+  const other = { id: "other", dueAt: 20 };
+  assert.equal(nextInQueue([sibling, other], 100, true)?.id, "other");
+  assert.equal(nextInQueue([sibling], 100, true), undefined);
+  assert.equal(nextInQueue([sibling], 600_100, false, 100), undefined);
+  assert.equal(nextInQueue([sibling], 600_100)?.id, sibling.id);
+});
+
+
+test("a session defers only the exact basic sibling and preserves its FSRS due date", () => {
+  for (const [id, siblingId] of [["block", "block:reverse"], ["block:reverse", "block"]]) {
+    const reviewed = storedCard({ id, kind: "basic", moduleId: "m" });
+    const sibling = storedCard({ id: siblingId, kind: "basic", moduleId: "m" });
+    const cloze = storedCard({ id: "block:cloze" });
+    const otherNote = storedCard({ id: siblingId, kind: "basic", moduleId: "other" });
+    const before = [sibling, cloze, otherNote];
+    const after = separateSibling(before, reviewed, now);
+    assert.equal(after[0].dueAt, sibling.dueAt);
+    assert.equal(reviewDueAt(after[0]), now + 10 * MINUTE);
+    assert.equal(nextInQueue(after, now)?.id, cloze.id);
+    assert.deepEqual(after.slice(1), before.slice(1));
+    assert.equal(before[0].availableAt, undefined, "undo snapshot is unchanged");
+  }
 });

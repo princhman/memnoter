@@ -15,6 +15,8 @@ import {
   getScheduler,
   GRADES,
   nextInQueue,
+  reviewDueAt,
+  separateSibling,
   previewDue,
   scheduleReview,
   type Grade,
@@ -57,7 +59,10 @@ function reviewedFields(card: StoredCard) {
 // due later today.
 function countByState(queue: StoredCard[], now: number) {
   const counts = { new: 0, learning: 0, review: 0, laterToday: { new: 0, learning: 0, review: 0 } };
-  for (const { state, dueAt } of queue) {
+  for (const card of queue) {
+    const { state } = card;
+    const dueAt = reviewDueAt(card);
+    if (dueAt > endOfDay(now)) continue;
     const split = dueAt <= now ? counts : counts.laterToday;
     // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
     if (state === 0) split.new++;
@@ -170,13 +175,18 @@ function Review() {
   // Set by "Show now": cards due by then may be shown early, until a grade.
   const [earlyUntil, setEarlyUntil] = useState<number | null>(null);
   const card = queue
-    ? nextInQueue(queue, now, learnAhead) ?? (earlyUntil === null ? undefined : nextInQueue(queue, earlyUntil))
+    ? nextInQueue(queue, now, learnAhead) ?? (earlyUntil === null ? undefined : nextInQueue(queue, earlyUntil, false, now))
     : undefined;
   // The card due next after now, if the session has one.
   const nextDueAt = queue?.reduce<number | null>(
-    (soonest, { dueAt }) => (dueAt > now && (soonest === null || dueAt < soonest) ? dueAt : soonest),
+    (soonest, card) => {
+      const dueAt = reviewDueAt(card);
+      return dueAt > now && (soonest === null || dueAt < soonest) ? dueAt : soonest;
+    },
     null,
   ) ?? null;
+  const canShowNow = queue !== null && nextDueAt !== null
+    && nextInQueue(queue, nextDueAt, false, now) !== undefined;
   // Shows that card, and moves it into the due counts, once it is due. While
   // waiting for it, the countdown on the page also refreshes.
   useEffect(() => {
@@ -226,7 +236,7 @@ function Review() {
         }));
         if (session.current !== mine) return;
         const queueBefore = queue ?? [];
-        const rest = queueBefore.filter((queued) => queued.id !== card.id);
+        const rest = separateSibling(queueBefore.filter((queued) => queued.id !== card.id), card, reviewTime);
         // A card due again today comes back in this session once due.
         const queueAfter = result.card.dueAt < endOfDay(reviewTime)
           ? [...rest, { ...card, ...result.card }]
@@ -369,7 +379,7 @@ function Review() {
       const onButton = target?.closest("button");
       if ((event.key === " " || event.key === "Enter") && !onButton) {
         event.preventDefault();
-        if (!card && nextDueAt !== null) setEarlyUntil(nextDueAt);
+        if (!card && canShowNow) setEarlyUntil(nextDueAt);
         else if (!revealed) reveal();
         return;
       }
@@ -381,7 +391,7 @@ function Review() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [reveal, rate, revealed, card, nextDueAt]);
+  }, [reveal, rate, revealed, card, nextDueAt, canShowNow]);
 
 
   return (
@@ -412,7 +422,7 @@ function Review() {
             <Clock className="size-10 text-muted-foreground" />
             <h1 className="text-2xl font-semibold">Next card in {formatInterval(nextDueAt - now)}</h1>
             <p className="text-muted-foreground">It shows here once it is due.</p>
-            <Button variant="secondary" className="mt-2" onClick={() => setEarlyUntil(nextDueAt)}>
+            <Button variant="secondary" className="mt-2" disabled={!canShowNow} onClick={() => setEarlyUntil(nextDueAt)}>
               Show now
               <kbd className="font-sans text-xs text-muted-foreground">Space</kbd>
             </Button>
