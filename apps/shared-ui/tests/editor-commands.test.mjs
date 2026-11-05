@@ -117,3 +117,104 @@ test('native outline hides folded descendants and headings outside focus, and na
     assert.deepEqual(editorOutline(editor).map(h => h.id), ['Parent', 'Child', 'Grandchild']);
   } finally { editor.destroy(); }
 });
+
+// Exercise the installed keymaps in their real priority order, without a DOM.
+function pressBackspace(editor) {
+  return editor.state.plugins.some(plugin => plugin.props.handleKeyDown?.(
+    editor.view, { key: 'Backspace', keyCode: 8, preventDefault() {} },
+  ));
+}
+
+test('Backspace at a heading start removes its format in place before joining rows', async t => {
+  const { Extension } = await import('@tiptap/core');
+  const { HeadingNumbering, headingNumberingKey } = await import('../src/lib/heading-numbering.ts');
+  const { getFoldedIds, headingFoldKey } = await import('../src/lib/heading-fold.ts');
+  const HeadingIds = Extension.create({
+    name: 'backspaceHeadingIds',
+    addGlobalAttributes() { return [{ types: ['heading'], attributes: { 'data-toc-id': { default: null } } }]; },
+  });
+  const p = text => ({ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] });
+  const h = (text, level = 1) => ({ ...p(text), type: 'heading', attrs: { level, 'data-toc-id': text || null } });
+  const makeEditor = (content, numbered) => {
+    const editor = new Editor({ element: null,
+      extensions: [StarterKit, HeadingIds, HeadingHieararchy, HeadingFold, HeadingNumbering],
+      content: { type: 'doc', content } });
+    editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+    editor.view.dispatch(editor.state.tr.setMeta(headingNumberingKey, numbered));
+    return editor;
+  };
+  for (const numbered of [false, true]) {
+    for (const text of ['', 'Title']) {
+      for (const above of [null, p(''), p('Previous'), h('Previous')]) {
+        await t.test(`numbered=${numbered}, text=${JSON.stringify(text)}, above=${above?.type ?? 'none'}:${above?.content[0]?.text ?? ''}`, () => {
+          const editor = makeEditor([...(above ? [above] : []), h(text), p('Body'), h('Next')], numbered);
+          try {
+            const position = above ? editor.state.doc.firstChild.nodeSize : 0;
+            editor.commands.setTextSelection(position + 1);
+            if (text) editor.commands.toggleFold(position);
+            const before = editor.state.doc;
+            assert.equal(pressBackspace(editor), true);
+            assert.equal(editor.state.doc.childCount, before.childCount, 'keep the row');
+            assert.equal(editor.state.doc.nodeAt(position).type.name, 'paragraph');
+            assert.equal(editor.state.doc.nodeAt(position).textContent, text);
+            assert.equal(editor.state.selection.from, position + 1);
+            assert.equal(editor.state.selection.empty, true);
+            assert.equal(editor.state.doc.child(above ? 2 : 1).textContent, 'Body');
+            assert.deepEqual(getFoldedIds(editor.state), [], 'converted heading no longer hides its body');
+            assert.equal(headingFoldKey.getState(editor.state).hidden.find().length, 0);
+            const numbers = editor.state.plugins.find(plugin => plugin.key === headingNumberingKey.key).props.decorations(editor.state);
+            assert.equal(numbers?.find().length ?? 0, numbered ? (above?.type === 'heading' ? 2 : 1) : 0);
+            assert.equal(editor.commands.undo(), true);
+            assert.ok(editor.state.doc.eq(before), 'one undo restores the heading and content');
+            assert.deepEqual(getFoldedIds(editor.state), text ? [text] : [], 'undo restores the fold');
+            assert.equal(pressBackspace(editor), true);
+            if (above) {
+              assert.equal(pressBackspace(editor), true);
+              assert.equal(editor.state.doc.childCount, before.childCount - 1, 'second press joins normally');
+            }
+          } finally { editor.destroy(); }
+        });
+      }
+    }
+  }
+  for (const container of ['blockquote', 'bulletList']) {
+    await t.test(`heading inside ${container}`, () => {
+      const content = container === 'blockquote'
+        ? [{ type: container, content: [h('Title')] }]
+        : [{ type: container, content: [{ type: 'listItem', content: [p('Item'), h('Title')] }] }];
+      const editor = makeEditor(content, true);
+      try {
+        let position;
+        editor.state.doc.descendants((node, pos) => { if (node.type.name === 'heading') position = pos; });
+        editor.commands.setTextSelection(position + 1);
+        const before = editor.state.doc;
+        assert.equal(pressBackspace(editor), true);
+        assert.equal(editor.state.doc.nodeAt(position).type.name, 'paragraph');
+        assert.equal(editor.state.doc.nodeAt(position).textContent, 'Title');
+        assert.equal(editor.state.selection.from, position + 1);
+        assert.equal(editor.state.doc.firstChild.type.name, container);
+        assert.equal(editor.commands.undo(), true);
+        assert.ok(editor.state.doc.eq(before));
+      } finally { editor.destroy(); }
+    });
+  }
+  await t.test('hierarchy correction, middle caret and range selections', () => {
+    const editor = makeEditor([h('Root'), h('Child', 2), h('Nested', 3)], true);
+    try {
+      editor.commands.setTextSelection(1);
+      const before = editor.state.doc;
+      assert.equal(pressBackspace(editor), true);
+      assert.deepEqual(editor.getJSON().content.map(node => [node.type, node.attrs?.level]),
+        [['paragraph', undefined], ['heading', 1], ['heading', 2], ['paragraph', undefined]]);
+      assert.equal(editor.commands.undo(), true);
+      assert.ok(editor.state.doc.eq(before), 'hierarchy correction shares the undo step');
+      editor.commands.setTextSelection(3);
+      assert.equal(pressBackspace(editor), false, 'middle caret falls through to native text deletion');
+      assert.ok(editor.state.doc.eq(before));
+      editor.commands.setTextSelection({ from: 1, to: 3 });
+      assert.equal(pressBackspace(editor), true);
+      assert.equal(editor.state.doc.firstChild.type.name, 'heading');
+      assert.equal(editor.state.doc.firstChild.textContent, 'ot');
+    } finally { editor.destroy(); }
+  });
+});
