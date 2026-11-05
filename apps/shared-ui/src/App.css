@@ -461,7 +461,7 @@ body {
 
 /* Dark mode tuning */
 .dark .tiptap pre {
-    background: oklch(0.19 0 0);
+    background: oklch(0.25 0 0);
 }
 
 /* Keep headings clear of the top edge when jumped to from the TOC. */
@@ -1507,11 +1507,15 @@ body {
 
 /* Scope muted state fills to floating content without changing page tokens. */
 .dark .floating-surface,
+.dark .note-image-controls,
+.dark .tiptap .inline-math-preview > span,
 .dark .tiptap .card-info-popup {
     --muted: var(--accent);
 }
 
-.dark .floating-surface [data-slot="button"][class~="dark:hover:bg-muted/50"]:hover {
+.dark .floating-surface [data-slot="button"][class~="dark:hover:bg-muted/50"]:hover,
+.dark .note-image-controls [data-slot="button"][class~="dark:hover:bg-muted/50"]:hover,
+.dark .tiptap .inline-math-preview > span [data-slot="button"][class~="dark:hover:bg-muted/50"]:hover {
     background-color: var(--accent);
 }
 
