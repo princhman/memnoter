@@ -147,6 +147,21 @@ function SavedImageView(props: NodeViewProps) {
   const [occlusionOpen, setOcclusionOpen] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const lastTap = useRef<{ time: number; x: number; y: number } | null>(null);
+  const touchPress = useRef<{ id: number; time: number; x: number; y: number } | null>(null);
+  const endImageTap = (event: ReactPointerEvent, cancelled = false) => {
+    const down = touchPress.current;
+    touchPress.current = null;
+    if (!down || down.id !== event.pointerId) return;
+    if (cancelled || event.timeStamp - down.time > 280 || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) { lastTap.current = null; return; }
+    const previous = lastTap.current;
+    lastTap.current = { time: event.timeStamp, x: event.clientX, y: event.clientY };
+    if (!previous || event.timeStamp - previous.time > 320 || Math.hypot(event.clientX - previous.x, event.clientY - previous.y) > 32 || !src || failed) return;
+    event.preventDefault();
+    cancelMove.current?.();
+    lastTap.current = null;
+    setPreviewOpen(true);
+  };
   // The viewer shares the decoded copy shown in the note, including recoloring.
   const [displayedImage, setDisplayedImage] = useState<{ source: string; url: string } | null>(null);
   const [describing, setDescribing] = useState(false);
@@ -325,6 +340,10 @@ function SavedImageView(props: NodeViewProps) {
   // Pressing and dragging the image moves it; a press without moving is a click.
   const pressImage = (event: ReactPointerEvent) => {
     if (!editor.isEditable || event.button !== 0 || (event.target as Element).closest("[data-resize-handle]")) return;
+    if (isNativeHost() && event.pointerType === "touch") {
+      if (!event.isPrimary) { touchPress.current = null; lastTap.current = null; return; }
+      touchPress.current = { id: event.pointerId, time: event.timeStamp, x: event.clientX, y: event.clientY };
+    }
     // No text selection or native image drag while the pointer moves.
     event.preventDefault();
     // Select before tracking a touch drag so the native host suppresses its
@@ -426,9 +445,8 @@ function SavedImageView(props: NodeViewProps) {
     <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
       <span ref={infoHost} className="contents" />
       {isInline
-        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onClick={selectImage} onDoubleClick={() => { if (src && !failed) setPreviewOpen(true); }} />
-        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onClick={selectImage} onDoubleClick={() => { if (src && !failed) setPreviewOpen(true); }} />}
-      {isNativeHost() && src && !failed && <Button variant="ghost" className="native-image-preview" aria-label="Preview image" onClick={() => setPreviewOpen(true)}><Maximize2 />Preview</Button>}
+        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = touchPress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) { touchPress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!isNativeHost() && src && !failed) { setPreviewOpen(true); } }} />
+        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = touchPress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) { touchPress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!isNativeHost() && src && !failed) { setPreviewOpen(true); } }} />}
       {(!src || failed) && <span className="text-sm text-muted-foreground">Image unavailable</span>}
       {selected && editor.isEditable && (
         <div className="note-image-controls" aria-label="Image controls" contentEditable={false}>
@@ -454,7 +472,7 @@ function SavedImageView(props: NodeViewProps) {
               <ToolbarButton key={alignment} label={layout === "wrap" ? `Image on the ${alignment}, text beside it` : label} pressed={node.attrs.alignment === alignment} onClick={() => updateAttributes({ alignment })}><Icon /></ToolbarButton>
             ))}
             <span className="note-image-divider" />
-            <ToolbarButton label="Open image full screen" disabled={!src || failed} onClick={() => setPreviewOpen(true)}><Maximize2 /></ToolbarButton>
+            <ToolbarButton label="Open image full screen" disabled={!src || failed} onClick={() => { setPreviewOpen(true); }}><Maximize2 /></ToolbarButton>
             <ToolbarButton label="Adapt to theme" hint="Swaps the image's background for the page's and recolors it for dark or light mode" pressed={adaptive} disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast /></ToolbarButton>
             <Button size="sm" variant="ghost" disabled={!src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}>Occlusion ({validMasks(node.attrs.masks).length})</Button>
             <ToolbarButton label="Crop" disabled={!src || failed || !node.attrs.fileId} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop /></ToolbarButton>
@@ -476,7 +494,10 @@ function SavedImageView(props: NodeViewProps) {
         <Dialog open onOpenChange={setPreviewOpen}>
           <DialogContent
             className="image-preview-dialog h-dvh max-w-none overflow-hidden rounded-none p-4 pt-12 sm:max-w-none"
-            finalFocus={() => editor.isDestroyed ? null : editor.view.dom}
+            // Focusing the native contenteditable materializes the image's node
+            // range as iOS text-selection handles, including its control toolbar.
+            // Keep the node outline without requesting text input on return.
+            finalFocus={isNativeHost() ? false : () => editor.isDestroyed ? null : editor.view.dom}
           >
             <DialogTitle className="sr-only">Image preview</DialogTitle>
             <ImagePreview

@@ -1,6 +1,4 @@
 import { isNativeHost } from "@/lib/backend";
-import { execEditor, editorOutline } from "@/editor-host/commands";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { headingNumbers } from "@/lib/heading-numbering";
 import {
@@ -316,52 +314,6 @@ function DesktopTableOfContents({
   );
 }
 
-// The host toolbar opens this panel. Keep math in the shared renderer instead
-// of flattening LaTeX into a native Text label.
 export function TableOfContents(props: { editor: Editor | null; store: TocStore; numbered?: boolean }) {
-  return isNativeHost() ? <NativeContents editor={props.editor} numbered={props.numbered} /> : <DesktopTableOfContents {...props} />;
-}
-
-function NativeContents({ editor, numbered }: { editor: Editor | null; numbered?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const [, refresh] = useState(0);
-  useEffect(() => {
-    if (!editor) return;
-    const update = () => refresh(value => value + 1);
-    const show = () => setOpen(true);
-    const container = editor.view.dom.closest(".app-scroll-container");
-    editor.on("transaction", update);
-    container?.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("memnoter:contents", show);
-    return () => {
-      editor.off("transaction", update);
-      container?.removeEventListener("scroll", update);
-      window.removeEventListener("memnoter:contents", show);
-    };
-  }, [editor]);
-  useEffect(() => setOpen(false), [editor]);
-  if (!editor || editor.isDestroyed) return null;
-  const items = editorOutline(editor);
-  const numbers = numbered ? headingNumbers(editor.state.doc) : new Map<number, string>();
-  const container = editor.view.dom.closest<HTMLElement>(".app-scroll-container");
-  const top = (container?.getBoundingClientRect().top ?? 0) + Number(container?.dataset.topInset ?? 0) + 24;
-  const active = [...items].reverse().find(item => {
-    const node = editor.view.nodeDOM(item.pos);
-    return node instanceof HTMLElement && node.getBoundingClientRect().top <= top;
-  })?.id ?? items[0]?.id;
-  const minLevel = Math.min(...items.map(item => item.level));
-  return <Dialog open={open} onOpenChange={setOpen}>
-    <DialogContent className="native-contents" finalFocus={false}>
-      <DialogTitle>Contents</DialogTitle>
-      <div className="native-contents-list">
-        {items.length === 0 && <p>No headings in this note.</p>}
-        {items.map(item => <button key={item.id} type="button" className="native-contents-item" aria-current={item.id === active ? "location" : undefined}
-          style={{ paddingLeft: 16 + (item.level - minLevel) * 20 }}
-          onClick={() => { setOpen(false); requestAnimationFrame(() => execEditor(editor, "scrollToHeading", { id: item.id })); }}>
-          <span>{numbers.has(item.pos) ? `${numbers.get(item.pos)} ` : ""}<HeadingTitle node={editor.state.doc.nodeAt(item.pos)!} /></span>
-          {item.folded && <ChevronRight aria-label="Folded" />}
-        </button>)}
-      </div>
-    </DialogContent>
-  </Dialog>;
+  return isNativeHost() ? null : <DesktopTableOfContents {...props} />;
 }

@@ -104,17 +104,42 @@ test("block and inline images open full screen and close without changing the no
     await touch.addInitScript(() => { window.webkit = { messageHandlers: { memnoter: { postMessage() {} } } }; });
     await touch.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/images.html`);
     await touch.waitForFunction(() => "editor" in window);
-    await touch.evaluate(src => editor.commands.setContent({ type: "doc", content: [{ type: "image", attrs: { src, alt: "Touch diagram", width: 200, height: 113 } }] }), src);
+    await touch.evaluate(src => {
+      editor.setOptions({ editorProps: { attributes: { "data-native-editor": "true", inputmode: "none" } } });
+      editor.commands.setContent({ type: "doc", content: [
+        { type: "paragraph", content: [{ type: "text", text: "Tap here afterwards" }] },
+        { type: "image", attrs: { src, alt: "Touch diagram", width: 200, height: 113 } },
+      ] });
+    }, src);
     await touch.waitForFunction(() => document.querySelector(".note-image-host img")?.naturalWidth > 0);
-    await touch.getByRole("button", { name: "Preview image", exact: true }).tap();
+    await touch.locator(".note-image-host img").tap();
+    await touch.locator(".note-image-host img").tap();
     const touchDialog = touch.getByRole("dialog", { name: "Image preview" });
     await touchDialog.waitFor();
+    await touch.waitForFunction(() => document.querySelector('[role="dialog"] img')?.style.transform.includes("scale(1)"));
     await touchDialog.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
     const touchBounds = await touchDialog.locator(".image-preview-viewport").boundingBox();
     for (let i = 0; i < 2; i++) await touch.touchscreen.tap(touchBounds.x + touchBounds.width / 2, touchBounds.y + touchBounds.height / 2);
-    assert.match(await touchDialog.getByRole("img").getAttribute("style"), /scale\(2.5\)/);
+    assert.match(await touchDialog.getByRole("img").getAttribute("style"), /scale\(2.5\)/, "double tap inside the viewer zooms from fit");
+    for (let i = 0; i < 2; i++) await touch.touchscreen.tap(touchBounds.x + touchBounds.width / 2, touchBounds.y + touchBounds.height / 2);
+    assert.match(await touchDialog.getByRole("img").getAttribute("style"), /scale\(1\)/, "another double tap returns to fit");
     await touchDialog.getByRole("button", { name: "Close", exact: true }).tap();
     await touchDialog.waitFor({ state: "hidden" });
+    const assertNativeReturn = async () => {
+      assert.equal(await touch.evaluate(() => editor.view.hasFocus()), false,
+        "closing an image viewer must not focus the native contenteditable and expose its node range");
+      assert.equal(await touch.locator('.note-image-block[data-selected="true"]').count(), 1);
+      assert.equal(await touch.getByRole("button", { name: "Open image full screen", exact: true }).isVisible(), true);
+      assert.equal(await touch.evaluate(() => window.getSelection()?.isCollapsed ?? true), true);
+    };
+    await assertNativeReturn();
+    await touch.getByRole("button", { name: "Open image full screen", exact: true }).tap();
+    await touchDialog.waitFor();
+    await touchDialog.getByRole("button", { name: "Close", exact: true }).tap();
+    await touchDialog.waitFor({ state: "hidden" });
+    await assertNativeReturn();
+    await touch.getByText("Tap here afterwards", { exact: true }).tap();
+    await touch.waitForFunction(() => editor.view.hasFocus() && editor.state.selection.empty);
     await touch.close();
   } finally {
     await browser?.close();

@@ -25,7 +25,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
         if (message.kind !== 'call') return;
         const { id, command, args } = message;
         let result;
-        if (command === 'modules') result = [{ id: 'one' }, { id: 'two' }];
+        if (command === 'modules') result = [{ id: 'one' }, { id: 'two' }, { id: 'numbered', heading_numbering: window.numberingEnabled ?? true }];
         else if (command === 'get_content') result = { state: [], updates: [], files: [] };
         else if (command === 'add_update') result = { id: window.messages.length, bytes: args.bytes };
         else if (['sync_cards', 'card_schedules'].includes(command)) result = [];
@@ -57,6 +57,40 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       assert.deepEqual(view.foldedSections, []);
       await recovery.close();
     }
+    await t.test('numbering in the note and native outline follows module preferences and the whole document', async () => {
+      const numbered = await context.newPage();
+      await numbered.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+      await numbered.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+      await numbered.evaluate(() => window.memnoterEditor.open('numbered'));
+      await numbered.locator('.tiptap').click();
+      for (const [level, title] of [[1, 'Parent'], [2, 'Nested'], [1, 'Second']]) {
+        await numbered.evaluate(level => window.memnoterEditor.exec('heading', { level }), level);
+        await numbered.keyboard.type(title);
+        await numbered.keyboard.press('Enter');
+      }
+      const outline = () => numbered.evaluate(() => window.messages.filter(m => m.event === 'outline').at(-1).payload.headings);
+      assert.deepEqual((await outline()).map(h => h.number), ['1', '1.1', '2']);
+      assert.deepEqual(await numbered.locator('.heading-number').allTextContents(), ['1 ', '1.1 ', '2 ']);
+      const second = (await outline())[2].id;
+      await numbered.evaluate(id => window.memnoterEditor.exec('focusSection', { id }), second);
+      assert.deepEqual((await outline()).map(h => h.number), ['2'], 'focus preserves the full-document chapter number');
+      await numbered.evaluate(() => window.memnoterEditor.exec('showDocument'));
+      const parent = (await outline())[0].id;
+      await numbered.evaluate(id => window.memnoterEditor.exec('focusSection', { id }), parent);
+      assert.deepEqual((await outline()).map(h => h.number), ['1', '1.1']);
+      await numbered.evaluate(id => window.memnoterEditor.exec('foldCurrentSection'), parent);
+      assert.equal((await outline()).at(-1).number, '1');
+      await numbered.evaluate(() => window.memnoterEditor.exec('showDocument'));
+      for (const enabled of [false, true]) {
+        await numbered.evaluate(async enabled => {
+          window.numberingEnabled = enabled;
+          await window.memnoterEditor.refreshModules();
+        }, enabled);
+        await numbered.waitForFunction(enabled => !!document.querySelector('.heading-number') === enabled, enabled);
+        assert.equal((await outline()).at(-1).number, enabled ? '2' : null);
+      }
+      await numbered.close();
+    });
     // A native sync receipt must merge into the live Y.Doc while a draft is
     // still being edited, without replacing its DOM selection or local text.
     const synced = await context.newPage();
@@ -368,13 +402,9 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal((await state()).folded, false);
     assert.equal(await page.locator('.toc').count(), 0, 'native host has no hover rail');
     const focusedBeforeContents = (await state()).focusedSectionId;
-    await exec('contents');
-    const contents = page.getByRole('dialog', { name: 'Contents', exact: true });
-    await contents.waitFor();
-    const expectedContents = await page.evaluate(() => window.messages.filter(m => m.event === 'outline').at(-1).payload.headings.map(h => h.text));
-    assert.deepEqual(await contents.locator('.native-contents-item').allTextContents(), expectedContents);
-    await contents.locator('.native-contents-item').first().click();
-    await contents.waitFor({ state: 'hidden' });
+    const headings = await page.evaluate(() => window.messages.filter(m => m.event === 'outline').at(-1).payload.headings);
+    assert.ok(headings.length > 0);
+    await exec('scrollToHeading', { id: headings.find(h => h.level === 2).id });
     assert.equal((await state()).focusedSectionId, focusedBeforeContents);
     await exec('insertSection', { kind: 'sibling' });
     await page.keyboard.type('Sibling section');

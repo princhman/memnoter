@@ -47,7 +47,7 @@ import ImageIO
         pending.removeValue(forKey: ObjectIdentifier(task))?.cancel()
     }
 }
-struct Heading: Decodable, Identifiable { let id: String; let level: Int; let text: String; let folded: Bool }
+struct Heading: Decodable, Identifiable { let id: String; let level: Int; let text: String; let folded: Bool; let number: String? }
 struct SectionCrumb: Decodable, Identifiable { let id: String; let level: Int; let title: String }
 struct FocusableSection: Decodable { let pos: Int; let id: String?; let title: String; let level: Int }
 struct EditorState: Decodable {
@@ -95,26 +95,33 @@ struct EditorState: Decodable {
             catch { self.error = String(describing: error) }
         }
     }
+    var imagePreviewOpen = false
     var ready = false
     var headings: [Heading] = []
+    var currentHeadingId: String?
+    func trackOutline(_ enabled: Bool) {
+        Task { do { _ = try await run("window.memnoterEditor.setOutlineTracking(enabled)", ["enabled": enabled]) } catch { self.error = String(describing: error) } }
+    }
     var state = EditorState()
     var error: String?
     var saveStatus = ""
     var onReady: (() -> Void)?
     let client: CoreClient
+    private let preferences: UserDefaults
     private var moduleId: String?
     private var generation = UUID()
     private var barrier: Task<Void, Error>?
-    init(client: CoreClient, directory: URL, entry: String = "editor.html") {
+    init(client: CoreClient, directory: URL, entry: String = "editor.html", preferences: UserDefaults = .standard) {
         self.client = client
+        self.preferences = preferences
         super.init()
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "memnoter")
         // Inject decoded JSON before the shared store mounts, independent of
         // Web Storage support for our custom scheme origin.
-        let savedView = UserDefaults.standard.string(forKey: "editorViewState") ?? "{}"
+        let savedView = preferences.string(forKey: "editorViewState") ?? "{}"
         config.userContentController.addUserScript(WKUserScript(
-            source: "window.__memnoterViewState = \(savedView);",
+            source: "window.__memnoterViewState = \(savedView); window.__memnoterViewState.skipCardsCreatedToday = \(preferences.bool(forKey: "skipCardsCreatedToday"));",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.setURLSchemeHandler(ResourceHandler(root: directory, images: true), forURLScheme: "memnoter-file")
         config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: "memnoter-app")
@@ -228,7 +235,7 @@ struct EditorState: Decodable {
     func open(_ id: String) async throws {
         if moduleId != id {
             moduleId = id
-            state = EditorState(); headings = []
+            state = EditorState(); headings = []; currentHeadingId = nil
         }
         try await serialized("await window.memnoterEditor.open(id)", ["id": id])
     }
@@ -270,14 +277,20 @@ struct EditorState: Decodable {
             case "viewState":
                 if let data = try? JSONSerialization.data(withJSONObject: payload),
                    let json = String(data: data, encoding: .utf8) {
-                    UserDefaults.standard.set(json, forKey: "editorViewState")
+                    preferences.set(json, forKey: "editorViewState")
                 }
             case "ready":
                 ready = true
+                Task { await updateCardPreference() }
                 reportBottomInset()
                 let callback = onReady
                 onReady = nil
                 callback?()
+            case "imagePreview":
+                imagePreviewOpen = payload["open"] as? Bool == true
+            case "outlineCurrent":
+                guard payload["moduleId"] as? String == moduleId else { return }
+                currentHeadingId = payload["currentHeadingId"] as? String
             case "outline":
                 guard payload["moduleId"] as? String == moduleId else { return }
                 if let data = try? JSONSerialization.data(withJSONObject: payload["headings"] ?? []) { headings = (try? JSONDecoder().decode([Heading].self, from: data)) ?? [] }
@@ -311,6 +324,11 @@ struct EditorState: Decodable {
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) { self.error = String(describing: error) }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { error = "The editor process stopped. Reopen the app to recover saved notes." }
+    func updateCardPreference() async {
+        guard ready else { return }
+        do { _ = try await run("window.__memnoterBridge.emit('skip-cards-created-today', enabled)", ["enabled": preferences.bool(forKey: "skipCardsCreatedToday")]) }
+        catch { self.error = String(describing: error) }
+    }
     func dispose() { onReady = nil; insetReport?.cancel(); insetReport = nil; NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
 }
 struct WebSurface: UIViewRepresentable {

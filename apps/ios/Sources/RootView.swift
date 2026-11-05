@@ -6,12 +6,14 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var session: WebSession?
     @State private var backgroundWork: Task<Void, Never>?
+    @State private var previewColumnVisibility: NavigationSplitViewVisibility?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @AppStorage("selectedDestination") private var savedDestination = "home"
     private var selected: String? {
         get { savedDestination }
         nonmutating set { savedDestination = newValue ?? "home" }
     }
+    @AppStorage("skipCardsCreatedToday") private var skipCardsCreatedToday = false
     @AppStorage("sidebarVisible") private var sidebarVisible = true
     @State private var reviewModule: String?
     @State private var search = ""
@@ -24,6 +26,7 @@ struct RootView: View {
     @State private var busy = false
     @State private var image: PhotosPickerItem?
     @State private var find = ""
+    @State private var showingContents = false
     @State private var showingFind = false
     @FocusState private var findFocused: Bool
     @State private var keyboardDocked = false
@@ -116,6 +119,9 @@ struct RootView: View {
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
             .ignoresSafeArea(.keyboard)
+            .ignoresSafeArea(.container, edges: session?.imagePreviewOpen == true ? .all : [])
+            .toolbar(session?.imagePreviewOpen == true ? .hidden : .automatic, for: .navigationBar)
+            .statusBarHidden(session?.imagePreviewOpen == true)
             .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -147,7 +153,14 @@ struct RootView: View {
                     }
 
                     ToolbarItem(placement: .primaryAction) {
-                        Button { session.exec("contents") } label: { Label("Contents", systemImage: "list.bullet.indent") }
+                        Button { showingContents.toggle() } label: { Label("Contents", systemImage: "list.bullet.indent") }
+                            .accessibilityLabel("Contents")
+                            .popover(isPresented: $showingContents) {
+                                ContentsPopover(session: session) { heading in
+                                    session.exec("scrollToHeading", ["id": heading.id])
+                                    showingContents = false
+                                }
+                            }
                     }
                     ToolbarItem(placement: .primaryAction) {
                         Menu {
@@ -166,7 +179,7 @@ struct RootView: View {
             if let client = store.client, session == nil {
                 await store.refresh()
                 columnVisibility = sidebarVisible ? .all : .detailOnly
-                let restored = WebSession(client: client, directory: store.directory)
+                let restored = WebSession(client: client, directory: store.directory, preferences: store.preferences)
                 session = restored
                 store.sync?.onRemote = { json in
                     if let session, session.ready {
@@ -210,9 +223,19 @@ struct RootView: View {
                 } }
             }
         }
-        .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
+        .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, modules: store.modules, setChapterNumbering: setChapterNumbering, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory, preferences: store.preferences); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
+        .onChange(of: session?.imagePreviewOpen) { _, open in
+            if open == true {
+                previewColumnVisibility = columnVisibility
+                columnVisibility = .detailOnly
+            } else if let previous = previewColumnVisibility {
+                columnVisibility = previous
+                previewColumnVisibility = nil
+            }
+        }
         .onChange(of: columnVisibility) { _, visibility in
+            if session?.imagePreviewOpen == true { return }
             if visibility == .all { sidebarVisible = true }
             else if visibility == .detailOnly { sidebarVisible = false }
         }
@@ -235,6 +258,7 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { updateKeyboard($0) }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { updateKeyboard($0, hiding: true) }
         .onReceive(NotificationCenter.default.publisher(for: .coreDidWrite)) { _ in store.sync?.nudge() }
+        .onChange(of: skipCardsCreatedToday) { _, _ in Task { await store.refresh(); await session?.updateCardPreference() } }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 backgroundWork?.cancel()
@@ -288,30 +312,22 @@ struct RootView: View {
     }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {
         Button("Rename") { rename = module; name = module.name; editingName = true }
-        Button(module.heading_numbering ? "Hide chapter numbers" : "Show chapter numbers") {
-            guard !busy else { return }
-            busy = true
-            Task {
-                defer { busy = false }
-                await store.perform {
-                    try await session?.flush()
-                    try await store.client?.write("set_module_numbering", NumberingArgs(moduleId: module.id, enabled: !module.heading_numbering))
-                    // Recreate the provider so its cached module preferences refresh.
-                    if let client = store.client {
-                        session?.dispose()
-                        let replacement = WebSession(client: client, directory: store.directory)
-                        session = replacement
-                        if let selected, store.modules.contains(where: { $0.id == selected }) {
-                            replacement.onReady = { [weak replacement] in
-                                guard let replacement else { return }
-                                Task { do { try await replacement.open(selected) } catch { store.error = String(describing: error) } } }
-                        }
-                    }
-                }
-            }
-        }
         Button("Review") { reviewModule = module.id; navigate("review") }
         Button("Delete", role: .destructive) { deleting = module }
+    }
+    private func setChapterNumbering(_ moduleId: String, _ enabled: Bool) async throws {
+        guard let client = store.client else { throw URLError(.cannotConnectToHost) }
+        try await session?.flush()
+        do {
+            try await client.write("set_module_numbering", NumberingArgs(moduleId: moduleId, enabled: enabled))
+            store.modules = try await client.call("modules", Empty())
+            // Refresh the displayed editor and its live Contents without replacing the web view.
+            _ = try await session?.run("await window.memnoterEditor.refreshModules()")
+        } catch {
+            // A write may have succeeded before a refresh failed; show persisted state on retry.
+            if let modules: [NoteModule] = try? await client.call("modules", Empty()) { store.modules = modules }
+            throw error
+        }
     }
     func navigate(_ destination: String) {
         guard !busy else { return }

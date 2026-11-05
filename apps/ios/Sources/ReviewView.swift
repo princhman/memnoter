@@ -6,6 +6,11 @@ struct ReviewView: View {
     let client: CoreClient
     let directory: URL
     let moduleId: String?
+    @AppStorage("skipCardsCreatedToday") private var skipCardsCreatedToday = false
+    @State private var loadedCutoff: Int64?
+    private var createdAtCutoff: Int64? {
+        skipCardsCreatedToday ? Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000) : nil
+    }
     @State private var session: WebSession?
     @State private var cards: [StoredCard] = []
     @State private var revealed = false
@@ -37,17 +42,20 @@ struct ReviewView: View {
         .task {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
-                if cards.isEmpty && !busy { await load() }
+                if !busy && (cards.isEmpty || loadedCutoff != createdAtCutoff) { await load() }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { _ in
             Task { if !busy { last = nil; await load() } }
         }
+        .onChange(of: skipCardsCreatedToday) { _, _ in Task { if !busy { last = nil; await load() } } }
         .onDisappear { session?.dispose() }
     }
     func load() async {
         do {
-            cards = try await client.call("due_cards", DueArgs(moduleId: moduleId, now: Int64(Date().timeIntervalSince1970 * 1000)))
+            let cutoff = createdAtCutoff
+            cards = try await client.call("due_cards", DueArgs(moduleId: moduleId, now: Int64(Date().timeIntervalSince1970 * 1000), createdAtCutoff: cutoff))
+            loadedCutoff = cutoff
             revealed = false; show()
         } catch { self.error = String(describing: error) }
     }

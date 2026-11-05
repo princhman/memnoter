@@ -72,9 +72,6 @@ export function editorState(editor: Editor) {
 export function execEditor(editor: Editor, command: string, args: Record<string, unknown> = {}): boolean {
   const commands = editor.commands;
   switch (command) {
-    case "contents":
-      window.dispatchEvent(new Event("memnoter:contents"));
-      return true;
     case "bold": return commands.toggleBold();
     case "italic": return commands.toggleItalic();
     case "underline": return commands.toggleUnderline();

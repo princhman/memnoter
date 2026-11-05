@@ -2,8 +2,11 @@ import SwiftUI
 struct SettingsView: View {
     let sync: SyncClient?
     let client: CoreClient
+    let modules: [NoteModule]
+    let setChapterNumbering: (String, Bool) async throws -> Void
     let beforeRestore: () async throws -> Void
     let restored: () async -> Void
+    @AppStorage("skipCardsCreatedToday") private var skipCardsCreatedToday = false
     @Environment(\.dismiss) private var dismiss
     @State private var backups: [Backup] = []
     @State private var selected: Backup?
@@ -12,7 +15,27 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Review") {
+                    Toggle("Skip cards created today", isOn: $skipCardsCreatedToday)
+                    Text("New cards become available after local midnight.").font(.caption).foregroundStyle(.secondary)
+                }
                 if let sync { SyncSettingsView(sync: sync) }
+                Section {
+                    if modules.isEmpty {
+                        Text("No modules yet.").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(modules) { module in
+                            Toggle(module.name, isOn: Binding(
+                                get: { module.heading_numbering },
+                                set: { enabled in run { try await setChapterNumbering(module.id, enabled) } }
+                            ))
+                        }
+                    }
+                } header: {
+                    Text("Chapter numbering")
+                } footer: {
+                    Text("Number headings (1, 1.1, 2 …) in a module's notes and outline. The numbers are only shown on screen and never added to the note text.")
+                }
                 Section { Button("Back up now") { run { let _: Backup = try await client.call("backup_now", Empty()); try await load() } } }
                 Section("Backups") {
                     ForEach(backups) { backup in
@@ -35,9 +58,13 @@ struct SettingsView: View {
                     } } }
                 }
         }.interactiveDismissDisabled(busy)
+            .alert("Memnoter", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                Button("OK") { error = nil }
+            } message: { Text(error ?? "") }
     }
     func load() async throws { backups = try await client.call("list_backups", Empty()) }
     func run(_ operation: @escaping @MainActor () async throws -> Void) {
+        guard !busy else { return }
         busy = true
         Task { defer { busy = false }; do { try await operation() } catch { self.error = String(describing: error) } }
     }
