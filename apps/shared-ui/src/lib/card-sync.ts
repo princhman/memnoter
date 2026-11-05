@@ -1,12 +1,16 @@
 import { writeCards } from "@/lib/card-writes";
 import { saveQueue } from "@/lib/saves";
 import { useBlocker } from "@tanstack/react-router";
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { call as invoke } from "./backend.ts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { blockIdOf, extractCards } from "@/lib/cards";
 import type { CardSchedule } from "@/lib/flashcards";
+
+import { appStore } from "./store.ts";
+import { useSelector } from "@tanstack/react-store";
+import { queryClient } from "./query-client.ts";
 
 const SYNC_DEBOUNCE_MS = 800;
 const DUE_REFRESH_MS = 60_000;
@@ -33,6 +37,38 @@ export async function openReview(navigate: () => Promise<unknown>) {
 }
 
 export const dueCountsKey = ["cards", "due-counts"];
+let skipToday = appStore.state.skipCardsCreatedToday;
+appStore.subscribe(() => {
+  if (skipToday === appStore.state.skipCardsCreatedToday) return;
+  skipToday = appStore.state.skipCardsCreatedToday;
+  void queryClient.invalidateQueries({ queryKey: dueCountsKey });
+});
+
+export function startOfDay(now: number) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  return start.getTime();
+}
+
+// Refresh open sessions at local midnight, including after waking from sleep.
+export function useCreatedAtCutoff() {
+  const enabled = useSelector(appStore, (state) => state.skipCardsCreatedToday);
+  const [day, setDay] = useState(() => startOfDay(Date.now()));
+  useEffect(() => {
+    const refresh = () => setDay(startOfDay(Date.now()));
+    const timer = window.setInterval(refresh, DUE_REFRESH_MS);
+    const midnight = window.setTimeout(refresh, endOfDay(Date.now()) - Date.now() + 50);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(midnight);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [day]);
+  return enabled ? day : null;
+}
 
 // Notes open in an editor, which keeps their cards in sync itself.
 const openModules = new Map<string, number>();
@@ -141,6 +177,7 @@ export function isModuleOpen(moduleId: string) {
 // card in the editor. Under the due counts' key, so every change that
 // refreshes the counts (syncs, grades, deletions) refreshes these too.
 export function useCardSchedules(editor: Editor | null, moduleId: string, ready: boolean) {
+  const cutoff = useCreatedAtCutoff();
   const { data, dataUpdatedAt } = useQuery({
     queryKey: [...dueCountsKey, "schedules", moduleId],
     queryFn: () => invoke<CardSchedule[]>("card_schedules", { moduleId }),
@@ -152,8 +189,10 @@ export function useCardSchedules(editor: Editor | null, moduleId: string, ready:
   useEffect(() => {
     if (!editor || editor.isDestroyed || !data) return;
     // As of the fetch, which repeats every minute.
-    editor.commands.setCardSchedules(data, dataUpdatedAt);
-  }, [editor, data, dataUpdatedAt]);
+    editor.commands.setCardSchedules(data.map((card) =>
+      cutoff !== null && card.state === 0 && card.lastReviewAt === null && card.createdAt >= cutoff
+        ? { ...card, dueAt: Math.max(card.dueAt, endOfDay(Date.now())) } : card), dataUpdatedAt);
+  }, [editor, data, dataUpdatedAt, cutoff]);
 }
 
 // Cards due now, split like Anki: never reviewed, in (re)learning steps, and
@@ -174,14 +213,15 @@ export function endOfDay(now: number) {
 }
 
 export function useDueCounts() {
+  const cutoff = useCreatedAtCutoff();
   const { data } = useQuery({
-    queryKey: dueCountsKey,
+    queryKey: [...dueCountsKey, cutoff],
     queryFn: () => {
       const now = Date.now();
       return invoke<({ moduleId: string; count: number; laterNew: number;
         laterLearning: number; laterReview: number } & Split)[]>(
         "due_counts",
-        { now, dayEnd: endOfDay(now) },
+        { now, dayEnd: endOfDay(now), createdAtCutoff: cutoff },
       );
     },
     // Cards fall due as time passes, not only after edits.

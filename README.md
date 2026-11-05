@@ -28,7 +28,11 @@ changes with it. Everything stays on your machine.
 
 ### Write cards where you write notes
 
-- **Basic cards:** `Question :: answer` on any line or heading.
+- **Basic cards:** `Question :: answer` in a paragraph or heading.
+- **Two-way cards:** `Front ::: Back` creates forward and reverse basic cards.
+  Separators need whitespace on both sides; `a:::b` and `::::` stay prose.
+  Inline code is never card syntax, and clozes take precedence.
+  Use Shift+Enter for multiple lines within either side of a card.
 - **Clozes:** wrap text in `{{…}}`, or select it and press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>C</kbd>.
   Each cloze is its own card, and several clozes can be joined into one.
 - **Image occlusion:** draw rectangles, ellipses or freehand masks over a

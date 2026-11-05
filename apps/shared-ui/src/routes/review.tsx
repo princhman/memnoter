@@ -8,7 +8,7 @@ import { call as invoke } from "../lib/backend.ts";
 import { CheckCircle2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardFace } from "@/components/card-face";
-import { dueCountsKey, endOfDay, flushCardSyncs } from "@/lib/card-sync";
+import { dueCountsKey, endOfDay, flushCardSyncs, useCreatedAtCutoff } from "@/lib/card-sync";
 import { backfillCards } from "@/lib/card-backfill";
 import {
   formatInterval,
@@ -98,6 +98,7 @@ function Review() {
   const { module: moduleId } = Route.useSearch();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const createdAtCutoff = useCreatedAtCutoff();
 
   const [unindexed, setUnindexed] = useState<{ id: string; name: string }[]>([]);
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
@@ -142,7 +143,7 @@ function Review() {
           invoke<{ id: string; name: string }[]>("unindexed_card_modules"),
           flushCardSyncs().then(() =>
             // Cards due later today join the session, to be shown once due.
-            invoke<StoredCard[]>("due_cards", { moduleId: moduleId ?? null, now: endOfDay(Date.now()) }),
+            invoke<StoredCard[]>("due_cards", { moduleId: moduleId ?? null, now: endOfDay(Date.now()), createdAtCutoff }),
           ),
         ]),
       ),
@@ -163,7 +164,7 @@ function Review() {
     return () => {
       cancelled = true;
     };
-  }, [moduleId]);
+  }, [moduleId, createdAtCutoff]);
 
   const learnAhead = useSelector(appStore, (state) => state.learnAhead);
   // Set by "Show now": cards due by then may be shown early, until a grade.

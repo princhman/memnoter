@@ -12,7 +12,8 @@ register(`data:text/javascript,${encodeURIComponent(`
     return next(specifier, context);
   }
 `)}`, import.meta.url);
-globalThis.window = { setTimeout, clearTimeout };
+const windowEvents = new EventTarget();
+globalThis.window = { setTimeout, clearTimeout, addEventListener: windowEvents.addEventListener.bind(windowEvents) };
 const { exclusiveWrite, imageOperation, imageFilesOperation, imageStatusStore, discardFailedImages, watchWriteAdmission } = await import('../src/lib/write-lifecycle.ts');
 const { saveQueue } = await import('../src/lib/saves.ts');
 const { queryClient } = await import('../src/lib/query-client.ts');
