@@ -366,6 +366,16 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal((await state()).folded, true);
     assert.equal(await exec('unfoldCurrentSection'), true);
     assert.equal((await state()).folded, false);
+    assert.equal(await page.locator('.toc').count(), 0, 'native host has no hover rail');
+    const focusedBeforeContents = (await state()).focusedSectionId;
+    await exec('contents');
+    const contents = page.getByRole('dialog', { name: 'Contents', exact: true });
+    await contents.waitFor();
+    const expectedContents = await page.evaluate(() => window.messages.filter(m => m.event === 'outline').at(-1).payload.headings.map(h => h.text));
+    assert.deepEqual(await contents.locator('.native-contents-item').allTextContents(), expectedContents);
+    await contents.locator('.native-contents-item').first().click();
+    await contents.waitFor({ state: 'hidden' });
+    assert.equal((await state()).focusedSectionId, focusedBeforeContents);
     await exec('insertSection', { kind: 'sibling' });
     await page.keyboard.type('Sibling section');
     assert.equal((await state()).headingLevel, 2);

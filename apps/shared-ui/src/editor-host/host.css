@@ -42,3 +42,30 @@ html, body, #root, .app-scroll-container, .tiptap-shell, .tiptap {
 .tiptap.section-focused {
   min-height: 100vh;
 }
+
+.native-contents {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(680px, calc(100dvh - 64px));
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-top: 24px;
+}
+.native-contents-list { overflow-y: auto; overscroll-behavior: contain; }
+.native-contents-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 16px;
+  text-align: left;
+  border-radius: 8px;
+}
+.native-contents-item > span { min-width: 0; overflow-wrap: anywhere; }
+.native-contents-item > svg { flex-shrink: 0; width: 18px; height: 18px; }
+.native-contents-item[aria-current] { background: var(--accent); color: var(--accent-foreground); }
+.native-contents [data-slot="dialog-close"] { min-width: 44px; min-height: 44px; }
+
+.image-preview-dialog [data-slot="dialog-close"] { min-width: 44px; min-height: 44px; }
+
+.native-image-preview { min-height: 44px; min-width: 44px; }

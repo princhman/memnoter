@@ -93,7 +93,7 @@ export function LinkMenu({ editor }: { editor: Editor | null }) {
         if (isLinkEditorOpen(state)) return true;
         return view.hasFocus() && state.selection.empty && editor.isActive("link");
       }}
-      className="z-40 flex items-center gap-0.5 rounded-lg bg-popover p-1 text-popover-foreground shadow-md"
+      className="z-40 flex items-center gap-0.5 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md"
     >
       {state.editing ? (
         <LinkField

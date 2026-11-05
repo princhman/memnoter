@@ -46,7 +46,8 @@
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);
     --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
+    --popover: oklch(0.26 0 0);
+    --floating-shadow: 0 8px 24px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.4);
     --popover-foreground: oklch(0.985 0 0);
     --primary: oklch(0.398 0.195 277.366);
     --primary-foreground: oklch(0.962 0.018 272.314);
@@ -54,7 +55,7 @@
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
     --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
+    --accent: oklch(0.31 0 0);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
@@ -371,7 +372,6 @@ body {
 /* Code blocks */
 .tiptap pre {
     margin: 1.25rem 0;
-    border: 1px solid var(--border);
     border-radius: 0.75rem;
     background: var(--secondary);
     color: var(--secondary-foreground);
@@ -461,7 +461,7 @@ body {
 
 /* Dark mode tuning */
 .dark .tiptap pre {
-    background: oklch(0.19 0 0);
+    background: oklch(0.25 0 0);
 }
 
 /* Keep headings clear of the top edge when jumped to from the TOC. */
@@ -1479,10 +1479,11 @@ body {
 /* Literal tabs remain note text through Yjs persistence. */
 .tiptap { tab-size: 4; }
 
-.tiptap [data-heading-number]::before {
-  content: attr(data-heading-number) " ";
+.tiptap .heading-number {
   color: var(--muted-foreground);
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Moving an image: press on it and drag (see image-pointer-move.ts). */
@@ -1500,4 +1501,31 @@ body {
    arrow image or cloze underline. */
 .tiptap .text-range-selected:is(.card-sep, .cloze-text) {
     background-color: color-mix(in oklch, var(--primary) 80%, transparent);
+}
+
+
+
+/* Scope muted state fills to floating content without changing page tokens. */
+.dark .floating-surface,
+.dark .note-image-controls,
+.dark .tiptap .inline-math-preview > span,
+.dark .tiptap .card-info-popup {
+    --muted: var(--accent);
+}
+
+.dark .floating-surface [data-slot="button"][class~="dark:hover:bg-muted/50"]:hover,
+.dark .note-image-controls [data-slot="button"][class~="dark:hover:bg-muted/50"]:hover,
+.dark .tiptap .inline-math-preview > span [data-slot="button"][class~="dark:hover:bg-muted/50"]:hover {
+    background-color: var(--accent);
+}
+
+/* Dark floating surfaces use fill and shadow for separation. */
+.dark .floating-surface,
+.dark .note-image-controls,
+.dark .image-crop-dialog,
+.dark .tiptap .inline-math-preview > span,
+.dark .toc-panel,
+.dark .tiptap .card-info-popup,
+.dark .occlusion-dialog {
+    box-shadow: var(--floating-shadow);
 }

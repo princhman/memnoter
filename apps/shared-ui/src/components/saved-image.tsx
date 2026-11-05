@@ -1,3 +1,4 @@
+import { ImagePreview } from "@/components/image-preview";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { imageOperation } from "@/lib/write-lifecycle";
 import { OcclusionEditor } from "@/components/occlusion-editor";
@@ -12,7 +13,7 @@ import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/stat
 import type { NodeType } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import Image from "@tiptap/extension-image";
-import { call as invoke, fileUrl as convertFileSrc } from "../lib/backend.ts";
+import { call as invoke, fileUrl as convertFileSrc, isNativeHost } from "../lib/backend.ts";
 import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -427,6 +428,7 @@ function SavedImageView(props: NodeViewProps) {
       {isInline
         ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onClick={selectImage} onDoubleClick={() => { if (src && !failed) setPreviewOpen(true); }} />
         : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onClick={selectImage} onDoubleClick={() => { if (src && !failed) setPreviewOpen(true); }} />}
+      {isNativeHost() && src && !failed && <Button variant="ghost" className="native-image-preview" aria-label="Preview image" onClick={() => setPreviewOpen(true)}><Maximize2 />Preview</Button>}
       {(!src || failed) && <span className="text-sm text-muted-foreground">Image unavailable</span>}
       {selected && editor.isEditable && (
         <div className="note-image-controls" aria-label="Image controls" contentEditable={false}>
@@ -473,15 +475,13 @@ function SavedImageView(props: NodeViewProps) {
       {previewOpen && src && (
         <Dialog open onOpenChange={setPreviewOpen}>
           <DialogContent
-            className="h-dvh max-w-none rounded-none p-4 pt-12 sm:max-w-none"
+            className="image-preview-dialog h-dvh max-w-none overflow-hidden rounded-none p-4 pt-12 sm:max-w-none"
             finalFocus={() => editor.isDestroyed ? null : editor.view.dom}
           >
             <DialogTitle className="sr-only">Image preview</DialogTitle>
-            <img
+            <ImagePreview
               src={displayedImage && displayedImage.source === src && displayedImage.url ? displayedImage.url : undefined}
               alt={node.attrs.alt || node.attrs.title || "Image"}
-              draggable={false}
-              className="h-full min-h-0 w-full object-contain"
             />
           </DialogContent>
         </Dialog>

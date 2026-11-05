@@ -46,3 +46,16 @@ test("clean files and allowed lines pass", () => {
   });
   assert.equal(status, 0, stderr);
 });
+
+test("surface outline shadows are rejected", () => {
+  for (const shadow of [
+    "inset 0 0 0 1px var(--surface-edge), 0 4px 16px black",
+    "0 0 0 1px var(--surface-edge)",
+    "inset 0 0 0 1px red",
+    "inset 0 0 0 1px var(--surface-edge), 0 0 0 1px red",
+  ]) {
+    const rejected = lint({ "a.css": `.menu { box-shadow: ${shadow}; }` });
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /surface-outline/);
+  }
+});
