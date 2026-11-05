@@ -99,8 +99,15 @@ struct EditorState: Decodable {
     var ready = false
     var headings: [Heading] = []
     var currentHeadingId: String?
+    private var outlineTracking = false
     func trackOutline(_ enabled: Bool) {
-        Task { do { _ = try await run("window.memnoterEditor.setOutlineTracking(enabled)", ["enabled": enabled]) } catch { self.error = String(describing: error) } }
+        outlineTracking = enabled
+        guard ready else { return }
+        Task {
+            guard ready else { return }
+            do { _ = try await run("window.memnoterEditor?.setOutlineTracking(enabled)", ["enabled": outlineTracking]) }
+            catch { self.error = String(describing: error) }
+        }
     }
     var state = EditorState()
     var error: String?
@@ -281,6 +288,7 @@ struct EditorState: Decodable {
                 }
             case "ready":
                 ready = true
+                trackOutline(outlineTracking)
                 Task { await updateCardPreference() }
                 reportBottomInset()
                 let callback = onReady

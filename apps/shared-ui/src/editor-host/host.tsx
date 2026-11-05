@@ -49,9 +49,9 @@ export function Host() {
       postNativeEvent("error", { moduleId: active.current?.moduleId ?? opening.current?.moduleId ?? null, message });
       return new Error(message);
     };
-    const getEditor = () => {
+    const getEditor = (readOnly = false) => {
       const current = active.current;
-      if (opening.current || !current?.isReady || current.editor.isDestroyed || !current.editor.isEditable) throw new Error("Editor is not ready");
+      if (opening.current || !current?.isReady || current.editor.isDestroyed || (!readOnly && !current.editor.isEditable)) throw new Error("Editor is not ready");
       return current.editor;
     };
     let queue = Promise.resolve();
@@ -97,7 +97,7 @@ export function Host() {
         catch (error) { throw fail(error); }
       },
       exec(command, args) {
-        try { return execEditor(getEditor(), command, args); }
+        try { return execEditor(getEditor(["scrollToHeading", "focusSection", "focusCurrentSection", "showDocument", "find"].includes(command)), command, args); }
         catch (error) { fail(error); return false; }
       },
       focus() {
@@ -125,19 +125,9 @@ export function Host() {
     const saveStatus = () => postNativeEvent("saveStatus", { ...saveStatusStore.state, imageErrors: imageStatusStore.state.errors });
     const stopSaves = saveStatusStore.subscribe(saveStatus);
     const stopImages = imageStatusStore.subscribe(saveStatus);
-    // Portaled dialogs live outside the editor tree. Keep native chrome in sync
-    // through their complete lifetime, including any closing transition.
-    let previewOpen = false;
-    const previewObserver = new MutationObserver(() => {
-      const open = !!document.querySelector(".image-preview-dialog");
-      if (open === previewOpen) return;
-      previewOpen = open;
-      postNativeEvent("imagePreview", { open });
-    });
-    previewObserver.observe(document.body, { childList: true, subtree: true });
     saveStatus();
     postNativeEvent("ready", { protocolVersion: 1 });
-    return () => { previewObserver.disconnect(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
+    return () => { stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
   }, []);
 
   useEffect(() => {
