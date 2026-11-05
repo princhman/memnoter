@@ -104,6 +104,9 @@ function Review() {
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
   // The session's cards, loaded once: syncs made meanwhile do not reshuffle it.
   const [queue, setQueue] = useState<StoredCard[] | null>(null);
+  // A cutoff reload keeps this attempt visible until a grade/undo changes the queue.
+  const [reloadAttempt, setReloadAttempt] = useState<{ queue: StoredCard[]; card: StoredCard } | null>(null);
+  const loadedSession = useRef<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [now, setNow] = useState(Date.now);
@@ -125,16 +128,21 @@ function Review() {
   };
 
   useEffect(() => {
-    let cancelled = false;
     session.current++;
-    // Keep the mounted card while changing scope so shared cards do not flash.
-    const previousCard = displayedCard.current;
-    scopeLoading.current = true;
+    setReloadAttempt(null);
     setError(null);
     setReviewed(0);
     setEarlyUntil(null);
     setUndoSteps([]);
     setRedoSteps([]);
+  }, [moduleId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sameSession = loadedSession.current === session.current;
+    // Keep the mounted card while loading; cutoff changes keep its answer too.
+    let previousCard = displayedCard.current;
+    scopeLoading.current = true;
     writing.current.then(() => Promise.all([
       getScheduler(),
       // Notes never checked for cards are checked first, in the background.
@@ -150,7 +158,14 @@ function Review() {
     ]))
       .then(([scheduler, [unindexed, cards]]) => {
         if (cancelled) return;
-        const nextCard = nextInQueue(cards, Date.now(), appStore.state.learnAhead);
+        if (sameSession) previousCard = displayedCard.current;
+        if (sameSession && previousCard) {
+          const retainedCard = previousCard;
+          cards = [retainedCard, ...cards.filter((card) => card.id !== retainedCard.id)];
+          setReloadAttempt({ queue: cards, card: previousCard });
+        }
+        loadedSession.current = session.current;
+        const nextCard = sameSession ? previousCard : nextInQueue(cards, Date.now(), appStore.state.learnAhead);
         if (nextCard?.id !== previousCard?.id || nextCard?.reps !== previousCard?.reps) {
           setRevealed(false);
           setNow(Date.now());
@@ -169,7 +184,7 @@ function Review() {
   const learnAhead = useSelector(appStore, (state) => state.learnAhead);
   // Set by "Show now": cards due by then may be shown early, until a grade.
   const [earlyUntil, setEarlyUntil] = useState<number | null>(null);
-  const card = queue
+  const card = reloadAttempt?.queue === queue ? reloadAttempt.card : queue
     ? nextInQueue(queue, now, learnAhead) ?? (earlyUntil === null ? undefined : nextInQueue(queue, earlyUntil))
     : undefined;
   // The card due next after now, if the session has one.

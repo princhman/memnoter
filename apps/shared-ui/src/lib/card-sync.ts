@@ -1,7 +1,7 @@
 import { writeCards } from "@/lib/card-writes";
 import { saveQueue } from "@/lib/saves";
 import { useBlocker } from "@tanstack/react-router";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import type { Editor } from "@tiptap/react";
 import { call as invoke } from "./backend.ts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +10,6 @@ import type { CardSchedule } from "@/lib/flashcards";
 
 import { appStore } from "./store.ts";
 import { useSelector } from "@tanstack/react-store";
-import { queryClient } from "./query-client.ts";
 
 const SYNC_DEBOUNCE_MS = 800;
 const DUE_REFRESH_MS = 60_000;
@@ -37,37 +36,55 @@ export async function openReview(navigate: () => Promise<unknown>) {
 }
 
 export const dueCountsKey = ["cards", "due-counts"];
-let skipToday = appStore.state.skipCardsCreatedToday;
-appStore.subscribe(() => {
-  if (skipToday === appStore.state.skipCardsCreatedToday) return;
-  skipToday = appStore.state.skipCardsCreatedToday;
-  void queryClient.invalidateQueries({ queryKey: dueCountsKey });
-});
-
 export function startOfDay(now: number) {
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
   return start.getTime();
 }
 
-// Refresh open sessions at local midnight, including after waking from sleep.
-export function useCreatedAtCutoff() {
-  const enabled = useSelector(appStore, (state) => state.skipCardsCreatedToday);
-  const [day, setDay] = useState(() => startOfDay(Date.now()));
-  useEffect(() => {
-    const refresh = () => setDay(startOfDay(Date.now()));
+// All cutoff consumers share one clock, only while the setting is enabled.
+const dayListeners = new Set<() => void>();
+let stopDayClock: (() => void) | undefined;
+const currentDay = () => startOfDay(Date.now());
+const noDay = () => null;
+const subscribeNoDay = () => () => {};
+
+function subscribeDay(listener: () => void) {
+  dayListeners.add(listener);
+  if (!stopDayClock) {
+    const refresh = () => {
+      for (const notify of dayListeners) notify();
+    };
+    let midnight: number;
+    const scheduleMidnight = () => {
+      midnight = window.setTimeout(() => {
+        refresh();
+        scheduleMidnight();
+      }, endOfDay(Date.now()) - Date.now() + 50);
+    };
     const timer = window.setInterval(refresh, DUE_REFRESH_MS);
-    const midnight = window.setTimeout(refresh, endOfDay(Date.now()) - Date.now() + 50);
+    scheduleMidnight();
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
-    return () => {
+    stopDayClock = () => {
       window.clearInterval(timer);
       window.clearTimeout(midnight);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [day]);
-  return enabled ? day : null;
+  }
+  return () => {
+    dayListeners.delete(listener);
+    if (dayListeners.size === 0) {
+      stopDayClock?.();
+      stopDayClock = undefined;
+    }
+  };
+}
+
+export function useCreatedAtCutoff() {
+  const enabled = useSelector(appStore, (state) => state.skipCardsCreatedToday);
+  return useSyncExternalStore(enabled ? subscribeDay : subscribeNoDay, enabled ? currentDay : noDay);
 }
 
 // Notes open in an editor, which keeps their cards in sync itself.
@@ -216,6 +233,7 @@ export function useDueCounts() {
   const cutoff = useCreatedAtCutoff();
   const { data } = useQuery({
     queryKey: [...dueCountsKey, cutoff],
+    placeholderData: (previous) => previous,
     queryFn: () => {
       const now = Date.now();
       return invoke<({ moduleId: string; count: number; laterNew: number;
