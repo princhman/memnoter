@@ -1,0 +1,712 @@
+{
+  "fullFolder": {
+    "before": {
+      "stats": {
+        "nodes": 7143,
+        "characters": 127210,
+        "opening": {
+          "p50": 684,
+          "p95": 727
+        }
+      },
+      "results": {
+        "middle:typing": {
+          "p50": 26,
+          "p95": 34
+        },
+        "middle:Enter": {
+          "p50": 32,
+          "p95": 36
+        },
+        "middle:selection": {
+          "p50": 13,
+          "p95": 16
+        },
+        "middle:scroll": {
+          "p50": 15,
+          "p95": 16
+        },
+        "end:typing": {
+          "p50": 26,
+          "p95": 31
+        },
+        "end:Enter": {
+          "p50": 34,
+          "p95": 40
+        },
+        "end:selection": {
+          "p50": 14,
+          "p95": 20
+        },
+        "end:scroll": {
+          "p50": 15,
+          "p95": 30
+        }
+      },
+      "plugins": [
+        {
+          "name": "tableOfContents:onTransaction",
+          "calls": 288,
+          "total": 1253,
+          "p95": 13
+        },
+        {
+          "name": "headingNumbering$:decorations",
+          "calls": 288,
+          "total": 426,
+          "p95": 2
+        },
+        {
+          "name": "tableOfContent$9:append",
+          "calls": 288,
+          "total": 84,
+          "p95": 1
+        },
+        {
+          "name": "flashcardIds$:append",
+          "calls": 288,
+          "total": 60,
+          "p95": 1
+        },
+        {
+          "name": "heading-fold$:apply",
+          "calls": 289,
+          "total": 53,
+          "p95": 1
+        },
+        {
+          "name": "y-undo$:apply",
+          "calls": 289,
+          "total": 50,
+          "p95": 1
+        },
+        {
+          "name": "inlineMath$9:decorations",
+          "calls": 288,
+          "total": 33,
+          "p95": 1
+        },
+        {
+          "name": "autolink$9:append",
+          "calls": 289,
+          "total": 15,
+          "p95": 1
+        },
+        {
+          "name": "heading-fold$:append",
+          "calls": 288,
+          "total": 13,
+          "p95": 0
+        },
+        {
+          "name": "slash-command$9:apply",
+          "calls": 289,
+          "total": 5,
+          "p95": 0
+        },
+        {
+          "name": "latex-suggest$:apply",
+          "calls": 289,
+          "total": 4,
+          "p95": 0
+        },
+        {
+          "name": "findAndReplace$:apply",
+          "calls": 289,
+          "total": 3,
+          "p95": 0
+        },
+        {
+          "name": "inlineMath$9:apply",
+          "calls": 289,
+          "total": 3,
+          "p95": 0
+        },
+        {
+          "name": "heading-hierarchy$:append",
+          "calls": 289,
+          "total": 3,
+          "p95": 0
+        },
+        {
+          "name": "flashcardDecorations$:apply",
+          "calls": 289,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "selectingCells$:append",
+          "calls": 288,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "selectingCells$:decorations",
+          "calls": 288,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "heading-hierarchy$:apply",
+          "calls": 289,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "plugin$837:apply",
+          "calls": 289,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "section-focus-marks$:apply",
+          "calls": 289,
+          "total": 1,
+          "p95": 0
+        }
+      ],
+      "background": {
+        "incrementalUpdateBytes": 102,
+        "samples": {
+          "cards": {
+            "p50": 1,
+            "p95": 2
+          },
+          "search": {
+            "p50": 2,
+            "p95": 3
+          },
+          "fullYjsSnapshot": {
+            "p50": 3,
+            "p95": 4
+          },
+          "incrementalSaveEnqueue": {
+            "p50": 0,
+            "p95": 1
+          }
+        }
+      }
+    },
+    "after": {
+      "stats": {
+        "nodes": 7143,
+        "characters": 127210,
+        "opening": {
+          "p50": 275,
+          "p95": 801
+        }
+      },
+      "results": {
+        "middle:typing": {
+          "p50": 17,
+          "p95": 21
+        },
+        "middle:Enter": {
+          "p50": 24,
+          "p95": 27
+        },
+        "middle:selection": {
+          "p50": 14,
+          "p95": 24
+        },
+        "middle:scroll": {
+          "p50": 14,
+          "p95": 16
+        },
+        "end:typing": {
+          "p50": 19,
+          "p95": 29
+        },
+        "end:Enter": {
+          "p50": 28,
+          "p95": 32
+        },
+        "end:selection": {
+          "p50": 13,
+          "p95": 26
+        },
+        "end:scroll": {
+          "p50": 16,
+          "p95": 17
+        }
+      },
+      "plugins": [
+        {
+          "name": "headingNumbering$:decorations",
+          "calls": 192,
+          "total": 312,
+          "p95": 2
+        },
+        {
+          "name": "tableOfContents:onTransaction",
+          "calls": 192,
+          "total": 206,
+          "p95": 3
+        },
+        {
+          "name": "tableOfContent$9:append",
+          "calls": 192,
+          "total": 94,
+          "p95": 1
+        },
+        {
+          "name": "flashcardIds$:append",
+          "calls": 192,
+          "total": 83,
+          "p95": 1
+        },
+        {
+          "name": "heading-fold$:apply",
+          "calls": 193,
+          "total": 57,
+          "p95": 2
+        },
+        {
+          "name": "y-undo$:apply",
+          "calls": 193,
+          "total": 55,
+          "p95": 1
+        },
+        {
+          "name": "inlineMath$9:decorations",
+          "calls": 192,
+          "total": 31,
+          "p95": 1
+        },
+        {
+          "name": "heading-fold$:append",
+          "calls": 192,
+          "total": 20,
+          "p95": 1
+        },
+        {
+          "name": "autolink$9:append",
+          "calls": 193,
+          "total": 11,
+          "p95": 1
+        },
+        {
+          "name": "flashcardDecorations$:apply",
+          "calls": 193,
+          "total": 6,
+          "p95": 0
+        },
+        {
+          "name": "latex-suggest$:apply",
+          "calls": 193,
+          "total": 5,
+          "p95": 0
+        },
+        {
+          "name": "findAndReplace$:apply",
+          "calls": 193,
+          "total": 5,
+          "p95": 0
+        },
+        {
+          "name": "textSelectionHighlight$:decorations",
+          "calls": 192,
+          "total": 5,
+          "p95": 0
+        },
+        {
+          "name": "selectingCells$:append",
+          "calls": 192,
+          "total": 4,
+          "p95": 0
+        },
+        {
+          "name": "italic-caret$:decorations",
+          "calls": 192,
+          "total": 3,
+          "p95": 0
+        },
+        {
+          "name": "slash-command$9:apply",
+          "calls": 193,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "inlineMath$9:apply",
+          "calls": 193,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "heading-hierarchy$:append",
+          "calls": 193,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "heading-hierarchy$:apply",
+          "calls": 193,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "plugin$837:apply",
+          "calls": 193,
+          "total": 1,
+          "p95": 0
+        }
+      ],
+      "background": {
+        "incrementalUpdateBytes": 102,
+        "samples": {
+          "cards": {
+            "p50": 1,
+            "p95": 2
+          },
+          "search": {
+            "p50": 3,
+            "p95": 26
+          },
+          "fullYjsSnapshot": {
+            "p50": 4,
+            "p95": 17
+          },
+          "incrementalSaveEnqueue": {
+            "p50": 0,
+            "p95": 1
+          }
+        }
+      }
+    }
+  },
+  "lectureFolder": {
+    "before": {
+      "stats": {
+        "nodes": 3634,
+        "characters": 66872,
+        "opening": {
+          "p50": 367,
+          "p95": 613
+        }
+      },
+      "results": {
+        "middle:typing": {
+          "p50": 15,
+          "p95": 16
+        },
+        "middle:Enter": {
+          "p50": 14,
+          "p95": 16
+        },
+        "middle:selection": {
+          "p50": 14,
+          "p95": 16
+        },
+        "middle:scroll": {
+          "p50": 15,
+          "p95": 17
+        },
+        "end:typing": {
+          "p50": 15,
+          "p95": 16
+        },
+        "end:Enter": {
+          "p50": 14,
+          "p95": 16
+        },
+        "end:selection": {
+          "p50": 14,
+          "p95": 15
+        },
+        "end:scroll": {
+          "p50": 15,
+          "p95": 16
+        }
+      },
+      "plugins": [
+        {
+          "name": "tableOfContents:onTransaction",
+          "calls": 286,
+          "total": 370,
+          "p95": 4
+        },
+        {
+          "name": "headingNumbering$:decorations",
+          "calls": 286,
+          "total": 144,
+          "p95": 1
+        },
+        {
+          "name": "tableOfContent$9:append",
+          "calls": 286,
+          "total": 30,
+          "p95": 1
+        },
+        {
+          "name": "flashcardIds$:append",
+          "calls": 286,
+          "total": 28,
+          "p95": 1
+        },
+        {
+          "name": "y-undo$:apply",
+          "calls": 286,
+          "total": 22,
+          "p95": 1
+        },
+        {
+          "name": "inlineMath$9:decorations",
+          "calls": 286,
+          "total": 13,
+          "p95": 0
+        },
+        {
+          "name": "heading-fold$:apply",
+          "calls": 286,
+          "total": 6,
+          "p95": 0
+        },
+        {
+          "name": "heading-fold$:append",
+          "calls": 286,
+          "total": 6,
+          "p95": 0
+        },
+        {
+          "name": "autolink$9:append",
+          "calls": 286,
+          "total": 5,
+          "p95": 0
+        },
+        {
+          "name": "slash-command$9:apply",
+          "calls": 286,
+          "total": 4,
+          "p95": 0
+        },
+        {
+          "name": "findAndReplace$:apply",
+          "calls": 286,
+          "total": 3,
+          "p95": 0
+        },
+        {
+          "name": "flashcardDecorations$:apply",
+          "calls": 286,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "textSelectionHighlight$:decorations",
+          "calls": 286,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "y-sync$:apply",
+          "calls": 286,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "latex-suggest$:apply",
+          "calls": 286,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "inlineMath$9:apply",
+          "calls": 286,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "plugin$881:apply",
+          "calls": 286,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "heading-hierarchy$:append",
+          "calls": 286,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "plugin$857:append",
+          "calls": 286,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "selectingCells$:append",
+          "calls": 286,
+          "total": 1,
+          "p95": 0
+        }
+      ]
+    },
+    "after": {
+      "stats": {
+        "nodes": 3634,
+        "characters": 66872,
+        "opening": {
+          "p50": 271,
+          "p95": 469
+        }
+      },
+      "results": {
+        "middle:typing": {
+          "p50": 15,
+          "p95": 16
+        },
+        "middle:Enter": {
+          "p50": 15,
+          "p95": 16
+        },
+        "middle:selection": {
+          "p50": 15,
+          "p95": 16
+        },
+        "middle:scroll": {
+          "p50": 15,
+          "p95": 17
+        },
+        "end:typing": {
+          "p50": 14,
+          "p95": 15
+        },
+        "end:Enter": {
+          "p50": 13,
+          "p95": 17
+        },
+        "end:selection": {
+          "p50": 10,
+          "p95": 14
+        },
+        "end:scroll": {
+          "p50": 7,
+          "p95": 16
+        }
+      },
+      "plugins": [
+        {
+          "name": "headingNumbering$:decorations",
+          "calls": 190,
+          "total": 106,
+          "p95": 1
+        },
+        {
+          "name": "tableOfContents:onTransaction",
+          "calls": 190,
+          "total": 62,
+          "p95": 1
+        },
+        {
+          "name": "flashcardIds$:append",
+          "calls": 190,
+          "total": 36,
+          "p95": 1
+        },
+        {
+          "name": "tableOfContent$9:append",
+          "calls": 190,
+          "total": 32,
+          "p95": 1
+        },
+        {
+          "name": "y-undo$:apply",
+          "calls": 190,
+          "total": 19,
+          "p95": 1
+        },
+        {
+          "name": "heading-fold$:apply",
+          "calls": 190,
+          "total": 10,
+          "p95": 1
+        },
+        {
+          "name": "heading-fold$:append",
+          "calls": 190,
+          "total": 8,
+          "p95": 0
+        },
+        {
+          "name": "inlineMath$9:decorations",
+          "calls": 190,
+          "total": 7,
+          "p95": 0
+        },
+        {
+          "name": "inlineMath$9:apply",
+          "calls": 190,
+          "total": 6,
+          "p95": 0
+        },
+        {
+          "name": "autolink$9:append",
+          "calls": 190,
+          "total": 5,
+          "p95": 0
+        },
+        {
+          "name": "selectingCells$:append",
+          "calls": 190,
+          "total": 4,
+          "p95": 0
+        },
+        {
+          "name": "findAndReplace$:apply",
+          "calls": 190,
+          "total": 3,
+          "p95": 0
+        },
+        {
+          "name": "textSelectionHighlight$:decorations",
+          "calls": 190,
+          "total": 3,
+          "p95": 0
+        },
+        {
+          "name": "latex-suggest$:apply",
+          "calls": 190,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "heading-hierarchy$:append",
+          "calls": 190,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "flashcardDecorations$:decorations",
+          "calls": 190,
+          "total": 2,
+          "p95": 0
+        },
+        {
+          "name": "slash-command$9:apply",
+          "calls": 190,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "plugin$877:apply",
+          "calls": 190,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "plugin$864:append",
+          "calls": 190,
+          "total": 1,
+          "p95": 0
+        },
+        {
+          "name": "trailingNode$9:append",
+          "calls": 190,
+          "total": 1,
+          "p95": 0
+        }
+      ]
+    }
+  }
+}
