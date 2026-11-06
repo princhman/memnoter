@@ -1,3 +1,4 @@
+import { MarkdownPaste } from "./markdown-paste-plugin";
 import type { Editor } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
@@ -48,6 +49,7 @@ export function noteExtensions({
       // Links open in the browser on ⌘-click, through LinkEditor.
       link: { openOnClick: false },
     }),
+    MarkdownPaste,
     TabSpacing,
     ImageMoveHistory,
     LinkEditor,
