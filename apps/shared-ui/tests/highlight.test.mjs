@@ -32,6 +32,10 @@ test("highlight picker, syntax, bridge and old-schema compatibility", async () =
     await toolbar.waitFor({ state: "visible" });
     assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "blue");
     assert.deepEqual(await page.evaluate(() => [editor.state.selection.from, editor.state.selection.to]), [1, 5]);
+    // Wait for the portaled menu's exit animation and final focus restoration
+    // before beginning a second, keyboard interaction.
+    await page.locator('[data-slot="dropdown-menu-content"]').waitFor({ state: "detached" });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     // Keyboard opens the picker and chooses its first colour.
     await page.getByRole("button", { name: "Highlight colours" }).focus();
     await page.keyboard.press("ArrowDown");
