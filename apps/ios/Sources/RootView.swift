@@ -88,7 +88,7 @@ struct RootView: View {
         } detail: {
             VStack(spacing: 0) {
                 if selected == "review", let client = store.client {
-                    ReviewView(client: client, directory: store.directory, moduleId: reviewModule)
+                    ReviewView(client: client, directory: store.directory, moduleId: reviewModule, editCard: editReviewCard)
                         .id(reviewModule ?? "all")
                 } else if module != nil, let session {
                     if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
@@ -328,6 +328,21 @@ struct RootView: View {
             // A write may have succeeded before a refresh failed; show persisted state on retry.
             if let modules: [NoteModule] = try? await client.call("modules", Empty()) { store.modules = modules }
             throw error
+        }
+    }
+    func editReviewCard(_ card: StoredCard) {
+        guard !busy, let session else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                try await session.flush()
+                // Queue the shared reveal before opening, so it waits for note restoration.
+                _ = try await session.run("window.memnoterEditor.revealCard(moduleId, cardId)", ["moduleId": card.moduleId, "cardId": card.id])
+                try await session.open(card.moduleId)
+                store.recordOpenedModule(card.moduleId)
+                selected = card.moduleId
+            } catch { store.error = String(describing: error) }
         }
     }
     func navigate(_ destination: String) {

@@ -1,6 +1,8 @@
 import { onRemote, onFileStored, type ApplyResult } from "@/lib/sync/manager";
 import type { FileType } from "@/lib/content";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { requestCardReveal } from "@/lib/card-reveal";
+import { blockIdOf } from "@/lib/cards";
 import { sectionFocusKey } from "@/lib/section-focus";
 import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop } from "./scroll";
 import Tiptap from "@/components/Tiptap";
@@ -21,6 +23,7 @@ declare global {
       fileStored(moduleId: string, file: FileType): void;
       setBottomInset(px: number): void;
       setTopInset(px: number): void;
+      revealCard(moduleId: string, cardId: string): void;
       open(moduleId: string): Promise<void>;
       flush(): Promise<void>;
       refreshModules(): Promise<void>;
@@ -100,6 +103,7 @@ export function Host() {
         try { return execEditor(getEditor(["scrollToHeading", "focusSection", "focusCurrentSection", "showDocument", "find"].includes(command)), command, args); }
         catch (error) { fail(error); return false; }
       },
+      revealCard(moduleId, cardId) { requestCardReveal({ moduleId, blockId: blockIdOf(cardId) }); },
       focus() {
         try { return getEditor().commands.focus(); }
         catch (error) { fail(error); return false; }
