@@ -20,7 +20,7 @@ const schema = new Schema({
     hardBreak: { group: "inline", inline: true },
     text: { group: "inline" },
   },
-  marks: { bold: {}, italic: {} },
+  marks: { bold: {}, italic: {}, highlight: { attrs: { color: { default: "purple" } } } },
 });
 
 const n = schema.nodes;
@@ -32,7 +32,7 @@ const doc = n.doc.create(null, [
   n.paragraph.create(null, [
     text("The "),
     text("bold", "bold"),
-    text("er", "bold", "italic"),
+    text("er", "bold", "italic", "highlight"),
     text(" part"),
     n.inlineMath.create(null, text("a_n")),
     text("is"),

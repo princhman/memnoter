@@ -22,7 +22,7 @@ const schema = new Schema({
     hardBreak: { group: "inline", inline: true },
     text: { group: "inline" },
   },
-  marks: { bold: {}, code: { code: true }, link: {} },
+  marks: { highlight: { attrs: { color: { default: "yellow" } } }, bold: {}, code: { code: true }, link: {} },
 });
 const { doc, paragraph, heading, codeBlock, blockquote, inlineMath, hardBreak } = schema.nodes;
 
@@ -279,4 +279,23 @@ test("cloze extraction validates metadata and uses only matching active ranges",
     assert.deepEqual(extractCards(doc.create(null, block)).map(({ id }) => id),
       expected.map((id) => `reviewed:${id}`), JSON.stringify(clozeIds));
   }
+});
+
+
+test("card colours survive adjacent runs, clozes and inline math", () => {
+  const mark = color => schema.marks.highlight.create({ color });
+  const block = paragraph.create({ cardId: "colours" }, [
+    schema.text("Q :: {{"), schema.text("blue", [mark("blue")]),
+    schema.text("pink", [mark("pink")]),
+    inlineMath.create(null, schema.text("x"), [mark("purple")]), schema.text("}}"),
+  ]);
+  const [card] = extractCards(doc.create(null, block));
+  assert.deepEqual(card.back, [
+    { type: "text", text: "Q :: " },
+    { type: "cloze", children: [
+      { type: "text", text: "blue", marks: ["highlight"], highlightColor: "blue" },
+      { type: "text", text: "pink", marks: ["highlight"], highlightColor: "pink" },
+      { type: "math", tex: "x", highlightColor: "purple" },
+    ] },
+  ]);
 });
