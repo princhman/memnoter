@@ -1,9 +1,11 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { TextSelection } from "@tiptap/pm/state";
 import {
   Bold,
+  Highlighter,
+  ChevronDown,
   Braces,
   Combine,
   Code,
@@ -14,6 +16,8 @@ import {
   Strikethrough,
   Underline,
 } from "lucide-react";
+import { HIGHLIGHT_COLORS, highlightColor } from "@/lib/highlight";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
@@ -24,6 +28,7 @@ import { cn, MOD_KEY } from "@/lib/utils";
 const RAW_TEXT_NODES = new Set(["codeBlock", "mathBlock", "inlineMath"]);
 
 export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
+  const pickerOpen = useRef(false);
   // The editor does not re-render on transactions, so track mark state here.
   const active = useEditorState({
     editor,
@@ -37,6 +42,8 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       });
       return {
         inlineMath,
+        highlight: editor.isActive("highlight"),
+        highlightColor: highlightColor(editor.getAttributes("highlight").color),
         bold: editor.isActive("bold"),
         italic: editor.isActive("italic"),
         underline: editor.isActive("underline"),
@@ -65,7 +72,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       options={{ placement: "top", offset: 8, flip: true, shift: true }}
       shouldShow={({ editor, state, from, to }) => {
         const { selection } = state;
-        if (!editor.isEditable || !editor.view.hasFocus()) return false;
+        if (!editor.isEditable || !editor.view.hasFocus() && !pickerOpen.current && !document.activeElement?.closest('[aria-label="Text formatting"]')) return false;
         // The link menu's URL field takes its place.
         if (isLinkEditorOpen(state)) return false;
         if (!(selection instanceof TextSelection) || selection.empty) return false;
@@ -85,7 +92,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         }
         return true;
       }}
-      className="z-40 flex items-center gap-0.5 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md"
+      className="z-40 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-0.5 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md"
       // Keep the editor selection while clicking menu buttons.
       onMouseDown={(event) => event.preventDefault()}
     >
@@ -129,6 +136,28 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       >
         <Code />
       </MarkButton>
+      <div className="flex items-center">
+        <IconTooltip label="Highlight" hint={`${MOD_KEY}Shift+H`}>
+          <Button size="icon-sm" variant="ghost" aria-label="Highlight" aria-pressed={active.highlight}
+            className={active.highlight ? "note-highlight" : undefined}
+            data-color={active.highlight ? active.highlightColor : undefined}
+            onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Button>
+        </IconTooltip>
+        <DropdownMenu onOpenChange={open => { pickerOpen.current = open; }}>
+          <DropdownMenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Highlight colours" />}>
+            <ChevronDown />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-40" onMouseDown={event => event.preventDefault()}
+            finalFocus={() => { editor.commands.focus(); return false; }}>
+            {HIGHLIGHT_COLORS.map(color => <DropdownMenuItem key={color}
+              onClick={() => editor.chain().focus().setHighlight({ color }).run()}>
+              <span className="note-highlight size-4 rounded-sm" data-color={color} />
+              {color[0].toUpperCase() + color.slice(1)}{active.highlight && active.highlightColor === color ? " ✓" : ""}
+            </DropdownMenuItem>)}
+            <DropdownMenuItem onClick={() => editor.chain().focus().unsetHighlight().run()}>Remove highlight</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       <MarkButton
         label="Link"
         hint={`${MOD_KEY}L`}

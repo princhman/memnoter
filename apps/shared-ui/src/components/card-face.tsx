@@ -1,3 +1,4 @@
+import { highlightColor } from "@/lib/highlight";
 import katex from "katex";
 import { validatedOcclusionPair } from "@/lib/occlusion-face-validation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -46,7 +47,7 @@ function Segments({ segments }: { segments: Segment[] }) {
   return segments.map((segment, index) => {
     switch (segment.type) {
       case "math":
-        return <TexMath key={index} tex={segment.tex} />;
+        return <span key={index} className={segment.highlightColor ? "note-highlight" : undefined} data-color={segment.highlightColor ? highlightColor(segment.highlightColor) : undefined}><TexMath tex={segment.tex} /></span>;
       case "break":
         return <br key={index} />;
       case "blank":
@@ -70,7 +71,8 @@ function Segments({ segments }: { segments: Segment[] }) {
         let node: ReactNode = segment.text;
         for (const mark of segment.marks ?? []) {
           const Tag = MARK_TAGS[mark];
-          if (Tag) node = <Tag>{node}</Tag>;
+          if (mark === "highlight") node = <mark className="note-highlight" data-color={highlightColor(segment.highlightColor)}>{node}</mark>;
+          else if (Tag) node = <Tag>{node}</Tag>;
         }
         return <span key={index}>{node}</span>;
       }
