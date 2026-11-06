@@ -47,3 +47,14 @@ test("rendered cloze math shares the tint and has a square underline", () => {
   assert.equal(style(".dark .tiptap .cloze-math .inline-math-widget").get("background-color"),
     style(".dark .tiptap .cloze-text").get("background-color"));
 });
+
+test("two-way arrow keeps full-size heads and a longer shaft in both appearances", () => {
+  for (const selector of [".tiptap .card-sep-both", ".dark .tiptap .card-sep-both"]) {
+    const svg = decodeURIComponent(style(selector).get("background-image"));
+    assert.ok(svg.includes("viewBox='0 0 24 16'"));
+    assert.ok(svg.includes("stroke-width='1.4'"));
+    assert.ok(svg.includes("M3 8h18"));
+  }
+  assert.equal(style(".tiptap .card-sep-both").get("background-size"), "1.5em 1em");
+  assert.ok(parseFloat(style(".tiptap .card-sep-both").get("padding-inline")) >= 0.4);
+});
