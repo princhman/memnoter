@@ -26,8 +26,6 @@ struct ReviewView: View {
     struct GradeStep {
         let card: StoredCard
         let result: ReviewResult
-        let queueBefore: [StoredCard]
-        let queueAfter: [StoredCard]
     }
     @State private var undoSteps: [GradeStep] = []
     @State private var redoSteps: [GradeStep] = []
@@ -202,17 +200,26 @@ struct ReviewView: View {
         }
     }
     func applyPendingSync() async {
-        guard syncPending else { return }
-        syncPending = false
+        guard syncPending, !busy else { return }
         busy = true
         defer { busy = false }
-        undoSteps = []; redoSteps = []
-        await load()
+        // A sync arriving during the reload only sets the flag, so go round again.
+        while syncPending {
+            syncPending = false
+            undoSteps = []; redoSteps = []
+            await load()
+        }
     }
-    func load() async {
+    // `front` is a card to ask next whatever the queue says: one just taken back.
+    func load(front: StoredCard? = nil) async {
         do {
             let cutoff = createdAtCutoff
-            cards = try await client.call("due_cards", DueArgs(moduleId: moduleId, now: Int64(Date().timeIntervalSince1970 * 1000), createdAtCutoff: cutoff))
+            var queue: [StoredCard] = try await client.call("due_cards", DueArgs(moduleId: moduleId, now: Int64(Date().timeIntervalSince1970 * 1000), createdAtCutoff: cutoff))
+            if let front {
+                queue.removeAll { $0.id == front.id }
+                queue.insert(front, at: 0)
+            }
+            cards = queue
             loadedCutoff = cutoff
             error = nil; intervals = []; revealed = false; show()
             await refreshCounts()
@@ -231,11 +238,10 @@ struct ReviewView: View {
                 let value = try await session.run("return await window.memnoterReview.rate(card, rating)", ["card": try object(card), "rating": rating])
                 let result = try JSONDecoder().decode(ReviewResult.self, from: JSONSerialization.data(withJSONObject: value ?? [:]))
                 try await client.write("review_card", ReviewArgs(cardId: card.id, expectedReps: card.reps, card: result.card, log: result.log))
-                let queueBefore = cards
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 cards.removeAll { $0.id == card.id }
                 await load()
-                undoSteps.append(GradeStep(card: card, result: result, queueBefore: queueBefore, queueAfter: cards))
+                undoSteps.append(GradeStep(card: card, result: result))
                 redoSteps = []
             } catch { self.error = String(describing: error) }
         }
@@ -251,8 +257,7 @@ struct ReviewView: View {
             do {
                 try await client.write("undo_review", UndoArgs(cardId: step.card.id, expectedReps: step.result.card.reps, previous: step.card.previous, previousFsrsModel: step.card.fsrsModel, reviewTime: step.result.log.reviewTime))
                 undoSteps.removeLast(); redoSteps.append(step)
-                cards = step.queueBefore; revealed = false; error = nil; show()
-                await refreshCounts()
+                await load(front: step.card)
             } catch { self.error = String(describing: error) }
         }
     }
@@ -264,8 +269,7 @@ struct ReviewView: View {
             do {
                 try await client.write("review_card", ReviewArgs(cardId: step.card.id, expectedReps: step.card.reps, card: step.result.card, log: step.result.log))
                 redoSteps.removeLast(); undoSteps.append(step)
-                cards = step.queueAfter; revealed = false; error = nil; show()
-                await refreshCounts()
+                await load()
             } catch { self.error = String(describing: error) }
         }
     }
