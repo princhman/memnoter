@@ -1,10 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { Switch } from "@/components/ui/switch";
-import { appStore, setLearnAhead } from "@/lib/store";
+import { appStore, setLearnAhead, setSkipCardsCreatedToday } from "@/lib/store";
 import { LEARN_AHEAD_MS } from "@/lib/fsrs";
 
 export default function ReviewSection() {
   const learnAhead = useSelector(appStore, (state) => state.learnAhead);
+  const skipToday = useSelector(appStore, (state) => state.skipCardsCreatedToday);
   return (
     <section className="flex flex-col gap-3">
       <label className="flex items-start justify-between gap-4">
@@ -16,6 +17,13 @@ export default function ReviewSection() {
           </p>
         </div>
         <Switch checked={learnAhead} onCheckedChange={setLearnAhead} />
+      </label>
+      <label className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="font-medium">Skip cards added to this device today</h2>
+          <p className="text-sm text-muted-foreground">Unreviewed cards first indexed on this device today become available after local midnight, including cards from older synced notes.</p>
+        </div>
+        <Switch checked={skipToday} onCheckedChange={setSkipCardsCreatedToday} />
       </label>
     </section>
   );

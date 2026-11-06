@@ -10,6 +10,8 @@ import { queryClient } from "@/lib/query-client";
 import { saveStatusStore } from "@/lib/saves";
 import { imageStatusStore, exclusiveWrite } from "@/lib/write-lifecycle";
 import { flushPersistedViews } from "@/lib/view-persistence";
+import { headingMathLabel } from "@/lib/heading-label";
+import { headingNumbers, headingNumberingKey } from "@/lib/heading-numbering";
 import { editorOutline, editorState, execEditor } from "./commands";
 
 declare global {
@@ -21,7 +23,9 @@ declare global {
       setTopInset(px: number): void;
       open(moduleId: string): Promise<void>;
       flush(): Promise<void>;
+      refreshModules(): Promise<void>;
       exec(command: string, args?: Record<string, unknown>): boolean;
+      setOutlineTracking(enabled: boolean): void;
       focus(): boolean;
       blur(): boolean;
     };
@@ -33,6 +37,8 @@ export function Host() {
   const { activeEditor } = useActiveEditor();
   const active = useRef(activeEditor);
   const container = useRef<HTMLElement>(null);
+  const outlineTracking = useRef(false);
+  const refreshOutline = useRef(() => {});
   const opening = useRef<{ moduleId: string; resolve(): void; reject(error: Error): void } | null>(null);
   useLayoutEffect(() => { active.current = activeEditor; }, [activeEditor]);
 
@@ -43,13 +49,15 @@ export function Host() {
       postNativeEvent("error", { moduleId: active.current?.moduleId ?? opening.current?.moduleId ?? null, message });
       return new Error(message);
     };
-    const getEditor = () => {
+    const getEditor = (readOnly = false) => {
       const current = active.current;
-      if (opening.current || !current?.isReady || current.editor.isDestroyed || !current.editor.isEditable) throw new Error("Editor is not ready");
+      if (opening.current || !current?.isReady || current.editor.isDestroyed || (!readOnly && !current.editor.isEditable)) throw new Error("Editor is not ready");
       return current.editor;
     };
     let queue = Promise.resolve();
     window.memnoterEditor = {
+      setOutlineTracking(enabled) { outlineTracking.current = enabled; refreshOutline.current(); },
+      async refreshModules() { await queryClient.invalidateQueries({ queryKey: ["modules"] }); },
       applyRemote: onRemote,
       fileStored: onFileStored,
       setTopInset(px) {
@@ -89,7 +97,7 @@ export function Host() {
         catch (error) { throw fail(error); }
       },
       exec(command, args) {
-        try { return execEditor(getEditor(), command, args); }
+        try { return execEditor(getEditor(["scrollToHeading", "focusSection", "focusCurrentSection", "showDocument", "find"].includes(command)), command, args); }
         catch (error) { fail(error); return false; }
       },
       focus() {
@@ -126,15 +134,42 @@ export function Host() {
     if (!activeEditor?.isReady) return;
     const { editor, moduleId: id } = activeEditor;
     let lastOutline = "";
+    let lastCurrent: string | null | undefined;
+    const publishCurrent = () => {
+      if (!outlineTracking.current || editor.isDestroyed) return;
+      const headings = editorOutline(editor);
+      const top = (container.current?.getBoundingClientRect().top ?? 0) + Number(container.current?.dataset.topInset ?? 0) + 24;
+      const currentHeadingId = [...headings].reverse().find(item => {
+        const node = editor.view.nodeDOM(item.pos);
+        return node instanceof HTMLElement && node.getBoundingClientRect().top <= top;
+      })?.id ?? headings[0]?.id ?? null;
+      if (currentHeadingId !== lastCurrent) {
+        lastCurrent = currentHeadingId;
+        postNativeEvent("outlineCurrent", { moduleId: id, currentHeadingId });
+      }
+    };
+    refreshOutline.current = publishCurrent;
+    let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      if (!outlineTracking.current || scrollTimer) return;
+      scrollTimer = setTimeout(() => { scrollTimer = undefined; publishCurrent(); }, 120);
+    };
+    container.current?.addEventListener("scroll", onScroll, { passive: true });
     const publish = () => {
       if (editor.isDestroyed) return;
       postNativeEvent("state", { moduleId: id, ...editorState(editor) });
-      const headings = editorOutline(editor);
+      const numbers = headingNumberingKey.getState(editor.state) ? headingNumbers(editor.state.doc) : new Map<number, string>();
+      const headings = editorOutline(editor).map(item => {
+        let text = "";
+        editor.state.doc.nodeAt(item.pos)?.forEach(child => { text += child.type.name === "inlineMath" ? headingMathLabel(child.textContent) : child.textContent; });
+        return { ...item, text, number: numbers.get(item.pos) ?? null };
+      });
       const encoded = JSON.stringify(headings);
       if (encoded !== lastOutline) {
         lastOutline = encoded;
         postNativeEvent("outline", { moduleId: id, headings });
       }
+      publishCurrent();
     };
     publish();
     const focused = sectionFocusKey.getState(editor.state);
@@ -155,6 +190,9 @@ export function Host() {
     editor.on("update", reveal);
     editor.on("focus", reveal);
     return () => {
+      clearTimeout(scrollTimer);
+      container.current?.removeEventListener("scroll", onScroll);
+      refreshOutline.current = () => {};
       cancelAnimationFrame(frame);
       editor.off("transaction", publish);
       editor.off("selectionUpdate", reveal);

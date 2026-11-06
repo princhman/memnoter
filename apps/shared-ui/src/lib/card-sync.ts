@@ -1,12 +1,15 @@
 import { writeCards } from "@/lib/card-writes";
 import { saveQueue } from "@/lib/saves";
 import { useBlocker } from "@tanstack/react-router";
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import type { Editor } from "@tiptap/react";
 import { call as invoke } from "./backend.ts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { blockIdOf, extractCards } from "@/lib/cards";
 import type { CardSchedule } from "@/lib/flashcards";
+
+import { appStore } from "./store.ts";
+import { useSelector } from "@tanstack/react-store";
 
 const SYNC_DEBOUNCE_MS = 800;
 const DUE_REFRESH_MS = 60_000;
@@ -33,6 +36,56 @@ export async function openReview(navigate: () => Promise<unknown>) {
 }
 
 export const dueCountsKey = ["cards", "due-counts"];
+export function startOfDay(now: number) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  return start.getTime();
+}
+
+// All cutoff consumers share one clock, only while the setting is enabled.
+const dayListeners = new Set<() => void>();
+let stopDayClock: (() => void) | undefined;
+const currentDay = () => startOfDay(Date.now());
+const noDay = () => null;
+const subscribeNoDay = () => () => {};
+
+function subscribeDay(listener: () => void) {
+  dayListeners.add(listener);
+  if (!stopDayClock) {
+    const refresh = () => {
+      for (const notify of dayListeners) notify();
+    };
+    let midnight: number;
+    const scheduleMidnight = () => {
+      midnight = window.setTimeout(() => {
+        refresh();
+        scheduleMidnight();
+      }, endOfDay(Date.now()) - Date.now() + 50);
+    };
+    const timer = window.setInterval(refresh, DUE_REFRESH_MS);
+    scheduleMidnight();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    stopDayClock = () => {
+      window.clearInterval(timer);
+      window.clearTimeout(midnight);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }
+  return () => {
+    dayListeners.delete(listener);
+    if (dayListeners.size === 0) {
+      stopDayClock?.();
+      stopDayClock = undefined;
+    }
+  };
+}
+
+export function useCreatedAtCutoff() {
+  const enabled = useSelector(appStore, (state) => state.skipCardsCreatedToday);
+  return useSyncExternalStore(enabled ? subscribeDay : subscribeNoDay, enabled ? currentDay : noDay);
+}
 
 // Notes open in an editor, which keeps their cards in sync itself.
 const openModules = new Map<string, number>();
@@ -141,6 +194,7 @@ export function isModuleOpen(moduleId: string) {
 // card in the editor. Under the due counts' key, so every change that
 // refreshes the counts (syncs, grades, deletions) refreshes these too.
 export function useCardSchedules(editor: Editor | null, moduleId: string, ready: boolean) {
+  const cutoff = useCreatedAtCutoff();
   const { data, dataUpdatedAt } = useQuery({
     queryKey: [...dueCountsKey, "schedules", moduleId],
     queryFn: () => invoke<CardSchedule[]>("card_schedules", { moduleId }),
@@ -152,8 +206,10 @@ export function useCardSchedules(editor: Editor | null, moduleId: string, ready:
   useEffect(() => {
     if (!editor || editor.isDestroyed || !data) return;
     // As of the fetch, which repeats every minute.
-    editor.commands.setCardSchedules(data, dataUpdatedAt);
-  }, [editor, data, dataUpdatedAt]);
+    editor.commands.setCardSchedules(data.map((card) =>
+      cutoff !== null && card.state === 0 && card.lastReviewAt === null && card.createdAt >= cutoff
+        ? { ...card, dueAt: Math.max(card.dueAt, endOfDay(Date.now())) } : card), dataUpdatedAt);
+  }, [editor, data, dataUpdatedAt, cutoff]);
 }
 
 // Cards due now, split like Anki: never reviewed, in (re)learning steps, and
@@ -174,14 +230,16 @@ export function endOfDay(now: number) {
 }
 
 export function useDueCounts() {
+  const cutoff = useCreatedAtCutoff();
   const { data } = useQuery({
-    queryKey: dueCountsKey,
+    queryKey: [...dueCountsKey, cutoff],
+    placeholderData: (previous) => previous,
     queryFn: () => {
       const now = Date.now();
       return invoke<({ moduleId: string; count: number; laterNew: number;
         laterLearning: number; laterReview: number } & Split)[]>(
         "due_counts",
-        { now, dayEnd: endOfDay(now) },
+        { now, dayEnd: endOfDay(now), createdAtCutoff: cutoff },
       );
     },
     // Cards fall due as time passes, not only after edits.

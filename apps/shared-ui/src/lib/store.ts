@@ -1,4 +1,4 @@
-import { isNativeHost, postNativeEvent } from "./backend";
+import { isNativeHost, postNativeEvent, listen } from "./backend.ts";
 import { createStore } from "@tanstack/react-store";
 
 // Where the reader was in a module, restored when it is opened again.
@@ -23,6 +23,7 @@ type appState = {
   recentModuleIds: string[];
   // Review shows a card due soon when none is due yet, as Anki does.
   learnAhead: boolean;
+  skipCardsCreatedToday: boolean;
 };
 
 declare global {
@@ -40,6 +41,7 @@ const defaultState: appState = {
   sidebarOpen: true,
   recentModuleIds: [],
   learnAhead: false,
+  skipCardsCreatedToday: false,
 };
 
 function normalizeState(value: Partial<appState> | null): appState {
@@ -139,4 +141,14 @@ export function setSidebarOpen(open: boolean) {
 
 export function setLearnAhead(learnAhead: boolean) {
   appStore.setState((state) => ({ ...state, learnAhead }));
+}
+
+export function setSkipCardsCreatedToday(skipCardsCreatedToday: boolean) {
+  appStore.setState((state) => ({ ...state, skipCardsCreatedToday }));
+}
+
+if (isNativeHost()) {
+  void listen<boolean>("skip-cards-created-today", ({ payload }) => {
+    if (appStore.state.skipCardsCreatedToday !== payload) setSkipCardsCreatedToday(payload);
+  });
 }

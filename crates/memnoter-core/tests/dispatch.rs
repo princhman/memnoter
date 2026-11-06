@@ -126,6 +126,36 @@ fn frontend_payloads_keep_camel_case_bytes_null_and_storage_errors() {
         .map(|_| unreachable!())
     );
     assert_eq!(f.call("due_cards", json!({"now":0})), json!([])); // omitted Option follows Tauri
+    f.call(
+        "sync_cards",
+        json!({"moduleId":id,"cards":[{"id":"card","kind":"basic","front":[],"back":[]}]}),
+    );
+    let now = i64::MAX - 1;
+    assert_eq!(
+        f.call("due_cards", json!({"now":now}))
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        f.call("due_cards", json!({"now":now,"createdAtCutoff":0})),
+        json!([])
+    );
+    assert_eq!(
+        f.call(
+            "due_counts",
+            json!({"now":now,"dayEnd":now,"createdAtCutoff":0})
+        ),
+        json!([])
+    );
+    assert_eq!(
+        f.call(
+            "due_counts",
+            json!({"now":now,"dayEnd":now,"createdAtCutoff":null})
+        )[0]["new"],
+        1
+    );
     assert_eq!(f.call("delete_module", json!({"moduleId":id})), Value::Null);
     assert_eq!(f.call("modules", json!({})), json!([]));
 }

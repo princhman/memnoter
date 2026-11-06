@@ -43,29 +43,52 @@ html, body, #root, .app-scroll-container, .tiptap-shell, .tiptap {
   min-height: 100vh;
 }
 
-.native-contents {
-  width: min(560px, calc(100vw - 32px));
-  max-height: min(680px, calc(100dvh - 64px));
-  grid-template-rows: auto minmax(0, 1fr);
-  padding-top: 24px;
+/* Images remain scrollable, without WebKit's image callout or text selection. */
+.note-image-host, .note-image-host * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
-.native-contents-list { overflow-y: auto; overscroll-behavior: contain; }
-.native-contents-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+/* Override the shared floating surface in either theme, including animation
+   keyframes: fading or scaling the black canvas exposes the grey backdrop. */
+html .image-preview-dialog.floating-surface {
+  position: fixed;
+  inset: 0;
   width: 100%;
-  min-height: 48px;
-  padding: 12px 16px;
-  text-align: left;
-  border-radius: 8px;
+  height: 100dvh;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  color: #fff;
+  box-shadow: none;
+  backdrop-filter: none;
+  transform: none;
+  translate: none;
+  scale: none;
+  opacity: 1;
+  animation: none;
+  transition: none;
 }
-.native-contents-item > span { min-width: 0; overflow-wrap: anywhere; }
-.native-contents-item > svg { flex-shrink: 0; width: 18px; height: 18px; }
-.native-contents-item[aria-current] { background: var(--accent); color: var(--accent-foreground); }
-.native-contents [data-slot="dialog-close"] { min-width: 44px; min-height: 44px; }
-
-.image-preview-dialog [data-slot="dialog-close"] { min-width: 44px; min-height: 44px; }
-
-.native-image-preview { min-height: 44px; min-width: 44px; }
+body:has(.image-preview-dialog) [data-slot="dialog-overlay"] {
+  background: #000;
+  backdrop-filter: none;
+  opacity: 1;
+  animation: none;
+  transition: none;
+}
+html .image-preview-dialog [data-slot="dialog-close"] {
+  top: max(8px, env(safe-area-inset-top));
+  right: max(8px, env(safe-area-inset-right));
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  color: #fff;
+  background: #000;
+  z-index: 1;
+}

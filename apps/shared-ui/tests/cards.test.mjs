@@ -4,6 +4,7 @@ import { Schema } from "@tiptap/pm/model";
 import { Transform } from "@tiptap/pm/transform";
 import {
   blockIdOf,
+  cardIdsOf,
   changedRanges,
   extractCards,
   parseBlock,
@@ -63,12 +64,33 @@ test("basic cards split at the first spaced :: and trim both sides", () => {
 });
 
 test("prose and code that contain :: are not cards", () => {
-  for (const source of ["use std::vector here", "a::b", "x ::: y", "f `a :: b` g", ":: answer", "question ::", "  ::  "]) {
+  for (const source of ["use std::vector here", "a::b", "a:::b", "x :::: y", "x ::::: y", "f `a :: b` g", ":: answer", "question ::", "  ::  "]) {
     assert.deepEqual(parseBlock(p(source)).cards, [], source);
   }
   // A recognised separator without an answer is still styled, but no card.
   assert.notEqual(parseBlock(p("question ::")).separator, null);
   assert.equal(parseBlock(p("f `a :: b` g")).separator, null);
+});
+
+test("two-way cards keep forward history and have stable, distinct reverse ids", () => {
+  const one = extractCards(doc.create(null, [p("Front :: Back", "stable")]));
+  const block = p("Front ::: Back", "stable");
+  const both = extractCards(doc.create(null, [block]));
+  assert.deepEqual(both.map(({ id }) => id), ["stable", "stable:reverse"]);
+  assert.deepEqual(both.map(({ kind }) => kind), ["basic", "basic"]);
+  assert.deepEqual(both[0].front, one[0].front);
+  assert.deepEqual(both[1].front, one[0].back);
+  assert.deepEqual(both[1].back, one[0].front);
+  assert.deepEqual(cardIdsOf(block), [{ id: "stable", answer: "Forward" }, { id: "stable:reverse", answer: "Reverse" }]);
+  assert.equal(blockIdOf(both[1].id), "stable");
+  assert.deepEqual(planCardIds(doc.create(null, [block]), [{ from: 0, to: 100 }], () => "replacement"), []);
+  assert.deepEqual(extractCards(doc.create(null, [p("Front :: Back", "stable")])), one);
+  assert.deepEqual(extractCards(doc.create(null, [block])), both);
+  assert.deepEqual(parseBlock(p("Front `:::` Back")).cards, []);
+  assert.equal(parseBlock(p("{{Front}} ::: Back")).cards[0].kind, "cloze");
+  const forged = paragraph.create({ cardId: "stable", clozeIds: [{ from: 2, to: 7, id: "reverse", answer: "Front" }] }, inline("{{Front}}"));
+  assert.equal(cardIdsOf(forged)[0].id, "stable:c1", "reverse is reserved outside the cloze namespace");
+  assert.deepEqual(parseBlock(p("A\nB ::: C\nD")).cards[1].front, [text("C"), { type: "break" }, text("D")]);
 });
 
 test("each cloze is a card that hides only itself", () => {

@@ -15,6 +15,25 @@ const headingHierarchyKey = new PluginKey<HeadingHierarchyState>(
 
 export const HeadingHieararchy = Extension.create({
   name: "heading-hierarchy",
+  // Handle heading starts before the list and default Backspace keymaps join
+  // or lift the block. The next press can use normal paragraph behavior.
+  priority: 110,
+  addKeyboardShortcuts() {
+    return {
+      Backspace: () => {
+        const { empty, $from } = this.editor.state.selection;
+        if (
+          !empty ||
+          $from.parentOffset !== 0 ||
+          $from.parent.type.name !== "heading"
+        ) {
+          return false;
+        }
+
+        return this.editor.commands.setParagraph();
+      },
+    };
+  },
   addProseMirrorPlugins() {
     return [
       new Plugin({

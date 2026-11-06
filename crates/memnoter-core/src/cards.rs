@@ -84,6 +84,19 @@ pub fn migrate_flashcards(conn: &Connection) -> CommandResult<()> {
         )
         .map_err(db_err)?;
     }
+    let has_two_way_index = conn
+        .prepare(
+            "select 1 from pragma_table_info('card_indexed_modules') where name = 'syntax_version'",
+        )
+        .and_then(|mut stmt| stmt.exists([]))
+        .map_err(db_err)?;
+    if !has_two_way_index {
+        conn.execute_batch(
+            "alter table card_indexed_modules add column syntax_version INTEGER NOT NULL DEFAULT 1;
+             delete from card_indexed_modules;",
+        )
+        .map_err(db_err)?;
+    }
     Ok(())
 }
 
@@ -118,6 +131,8 @@ pub struct Card {
     id: String,
     module_id: String,
     module_name: String,
+    // Review availability is separate from the unchanged FSRS due date.
+    available_at: i64,
     section: Vec<String>,
     kind: String,
     front: serde_json::Value,
@@ -169,6 +184,7 @@ pub struct DueCount {
 #[derive(Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CardSchedule {
+    created_at: i64,
     id: String,
     due_at: i64,
     last_review_at: Option<i64>,
@@ -297,29 +313,49 @@ fn json_column(text: String) -> serde_json::Value {
     serde_json::from_str(&text).unwrap_or(serde_json::Value::Null)
 }
 
+// A two-way sibling waits ten minutes after the other side's last review.
+// Derived from card state so undo, synced reviews and reloads all agree, without
+// changing either FSRS schedule or adding local burial state. Only exact basic
+// forward/reverse pairs in the same note participate; clozes are independent.
+const REVIEW_AVAILABILITY: &str = "with review_cards as (
+    select c.*, coalesce(s.last_review_at + 600000, 0) as available_at,
+           max(c.due_at, coalesce(s.last_review_at + 600000, 0)) as review_due_at
+    from cards c left join cards s
+      on c.kind = 'basic' and s.kind = 'basic'
+     and s.module_id = c.module_id and s.deleted_at is null
+     and s.id = case
+         when instr(c.id, ':') = 0 then c.id || ':reverse'
+         when substr(c.id, -8) = ':reverse' then substr(c.id, 1, length(c.id) - 8)
+     end
+)";
+
 fn query_due_cards(
     conn: &Connection,
     module_id: Option<&str>,
     now: i64,
+    created_at_cutoff: Option<i64>,
 ) -> CommandResult<Vec<Card>> {
     let mut stmt = conn
-        .prepare(
-            "select c.id, c.module_id, m.name, c.kind, c.front, c.back, c.due_at,
+        .prepare(&format!(
+            "{REVIEW_AVAILABILITY}
+             select c.id, c.module_id, m.name, c.kind, c.front, c.back, c.due_at,
                     c.stability, c.stability_fast, c.difficulty, c.scheduled_days,
                     c.learning_step, c.state, c.schedule_status, c.last_review_at,
-                    c.reps, c.lapses, c.fsrs_model, c.section
-             from cards c join modules m on m.id = c.module_id
-             where c.deleted_at is null and c.due_at <= ?1
+                    c.reps, c.lapses, c.fsrs_model, c.section, c.available_at
+             from review_cards c join modules m on m.id = c.module_id
+             where c.deleted_at is null and c.review_due_at <= ?1
                and (?2 is null or c.module_id = ?2)
-             order by c.due_at, c.id",
-        )
+               and (?3 is null or c.state != 0 or c.last_review_at is not null or c.created_at < ?3)
+             order by c.review_due_at, c.id"
+        ))
         .map_err(db_err)?;
     let rows = stmt
-        .query_map(params![now, module_id], |row| {
+        .query_map(params![now, module_id, created_at_cutoff], |row| {
             Ok(Card {
                 id: row.get(0)?,
                 module_id: row.get(1)?,
                 module_name: row.get(2)?,
+                available_at: row.get(19)?,
                 section: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_default(),
                 kind: row.get(3)?,
                 front: json_column(row.get(4)?),
@@ -344,21 +380,28 @@ fn query_due_cards(
     rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }
 
-fn query_due_counts(conn: &Connection, now: i64, day_end: i64) -> CommandResult<Vec<DueCount>> {
+fn query_due_counts(
+    conn: &Connection,
+    now: i64,
+    day_end: i64,
+    created_at_cutoff: Option<i64>,
+) -> CommandResult<Vec<DueCount>> {
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
-            "select module_id, sum(due_at <= ?1), sum(due_at <= ?1 and state = 0),
-                 sum(due_at <= ?1 and state in (1, 3)), sum(due_at <= ?1 and state = 2),
-                 sum(due_at > ?1 and state = 0), sum(due_at > ?1 and state in (1, 3)),
-                 sum(due_at > ?1 and state = 2)
-             from cards
-             where deleted_at is null and due_at <= max(?1, ?2)
-             group by module_id order by module_id",
-        )
+            "{REVIEW_AVAILABILITY}
+             select module_id, sum(review_due_at <= ?1), sum(review_due_at <= ?1 and state = 0),
+                 sum(review_due_at <= ?1 and state in (1, 3)), sum(review_due_at <= ?1 and state = 2),
+                 sum(review_due_at > ?1 and state = 0), sum(review_due_at > ?1 and state in (1, 3)),
+                 sum(review_due_at > ?1 and state = 2)
+             from review_cards
+             where deleted_at is null and review_due_at <= max(?1, ?2)
+               and (?3 is null or state != 0 or last_review_at is not null or created_at < ?3)
+             group by module_id order by module_id"
+        ))
         .map_err(db_err)?;
     let rows = stmt
-        .query_map([now, day_end], |row| {
+        .query_map(params![now, day_end, created_at_cutoff], |row| {
             Ok(DueCount {
                 module_id: row.get(0)?,
                 count: row.get(1)?,
@@ -377,7 +420,7 @@ fn query_due_counts(conn: &Connection, now: i64, day_end: i64) -> CommandResult<
 fn query_card_schedules(conn: &Connection, module_id: &str) -> CommandResult<Vec<CardSchedule>> {
     let mut stmt = conn
         .prepare(
-            "select id, due_at, last_review_at, state from cards
+            "select id, due_at, last_review_at, state, created_at from cards
              where module_id = ?1 and deleted_at is null order by id",
         )
         .map_err(db_err)?;
@@ -388,6 +431,7 @@ fn query_card_schedules(conn: &Connection, module_id: &str) -> CommandResult<Vec
                 due_at: row.get(1)?,
                 last_review_at: row.get(2)?,
                 state: row.get(3)?,
+                created_at: row.get(4)?,
             })
         })
         .map_err(db_err)?;
@@ -528,9 +572,14 @@ pub fn sync_cards(
     sync_module_cards(&mut conn, &module_id, &cards, Utc::now().timestamp_millis())
 }
 
-pub fn due_cards(db: &Db, module_id: Option<String>, now: i64) -> CommandResult<Vec<Card>> {
+pub fn due_cards(
+    db: &Db,
+    module_id: Option<String>,
+    now: i64,
+    created_at_cutoff: Option<i64>,
+) -> CommandResult<Vec<Card>> {
     let conn = db.lock()?;
-    query_due_cards(&conn, module_id.as_deref(), now)
+    query_due_cards(&conn, module_id.as_deref(), now, created_at_cutoff)
 }
 
 pub fn card_schedules(db: &Db, module_id: String) -> CommandResult<Vec<CardSchedule>> {
@@ -538,9 +587,14 @@ pub fn card_schedules(db: &Db, module_id: String) -> CommandResult<Vec<CardSched
     query_card_schedules(&conn, &module_id)
 }
 
-pub fn due_counts(db: &Db, now: i64, day_end: i64) -> CommandResult<Vec<DueCount>> {
+pub fn due_counts(
+    db: &Db,
+    now: i64,
+    day_end: i64,
+    created_at_cutoff: Option<i64>,
+) -> CommandResult<Vec<DueCount>> {
     let conn = db.lock()?;
-    query_due_counts(&conn, now, day_end)
+    query_due_counts(&conn, now, day_end, created_at_cutoff)
 }
 
 pub fn review_card(
@@ -625,7 +679,7 @@ mod tests {
         }
 
         fn due(&self, module: Option<&str>, now: i64) -> Vec<Card> {
-            query_due_cards(&self.db.conn.lock().unwrap(), module, now).unwrap()
+            query_due_cards(&self.db.conn.lock().unwrap(), module, now, None).unwrap()
         }
 
         fn column<T: rusqlite::types::FromSql>(&self, sql: &str, id: &str) -> T {
@@ -700,6 +754,167 @@ mod tests {
             &reviewed(due_at, expected_reps + 1),
             &log(3),
         )
+    }
+
+    #[test]
+    fn created_today_cutoff_filters_new_cards_without_changing_schedules() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("yesterday", "Q", "A")], 9);
+        f.sync(
+            "a",
+            &[
+                basic("yesterday", "Q", "A"),
+                basic("today", "Q", "A"),
+                basic("reviewed", "Q", "A"),
+                basic("later", "Q", "A"),
+            ],
+            10,
+        );
+        review(&f, "reviewed", 0, 10).unwrap();
+        let conn = f.db.conn.lock().unwrap();
+        conn.execute("update cards set due_at = 15 where id = 'later'", [])
+            .unwrap();
+        let ids = |cutoff| {
+            query_due_cards(&conn, None, 20, cutoff)
+                .unwrap()
+                .into_iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(Some(10)), ["yesterday", "reviewed"]);
+        assert_eq!(ids(None).len(), 4);
+        let filtered = query_due_counts(&conn, 12, 20, Some(10)).unwrap();
+        assert_eq!(
+            (
+                filtered[0].count,
+                filtered[0].new,
+                filtered[0].review,
+                filtered[0].later_new
+            ),
+            (2, 1, 1, 0)
+        );
+        let all = query_due_counts(&conn, 12, 20, None).unwrap();
+        assert_eq!((all[0].count, all[0].new, all[0].later_new), (3, 2, 1));
+        assert_eq!(ids(Some(21)).len(), 4);
+        assert_eq!(
+            conn.query_row("select due_at from cards where id = 'today'", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            10
+        );
+    }
+
+    #[test]
+    fn two_way_siblings_wait_ten_minutes_without_changing_fsrs_or_counts() {
+        for (first, sibling) in [("block", "block:reverse"), ("block:reverse", "block")] {
+            let f = Fixture::new();
+            f.sync(
+                "a",
+                &[
+                    basic("block", "Q", "A"),
+                    basic("block:reverse", "A", "Q"),
+                    basic("other", "Q2", "A2"),
+                    basic("block:cloze", "C", "A"),
+                ],
+                10,
+            );
+            review(&f, first, 0, 900_000).unwrap();
+            let ids = |now| {
+                f.due(None, now)
+                    .into_iter()
+                    .map(|c| c.id)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(ids(100), ["block:cloze", "other"]);
+            let conn = f.db.conn.lock().unwrap();
+            let counts = query_due_counts(&conn, 100, 600_100, None).unwrap();
+            assert_eq!((counts[0].count, counts[0].later_new), (2, 1));
+            assert_eq!(
+                query_due_counts(&conn, 100, 600_099, None).unwrap()[0].later_new,
+                0
+            );
+            drop(conn);
+            assert!(!ids(600_099).contains(&sibling.to_string()));
+            assert!(ids(600_100).contains(&sibling.to_string()));
+            let card = f
+                .due(None, 600_100)
+                .into_iter()
+                .find(|c| c.id == sibling)
+                .unwrap();
+            let payload = serde_json::to_value(card).unwrap();
+            assert_eq!(payload["availableAt"], 600_100);
+            assert_eq!(
+                payload["dueAt"], 10,
+                "the scheduler still receives the FSRS due date"
+            );
+            assert_eq!(
+                f.column::<i64>("select due_at from cards where id = ?1", sibling),
+                10
+            );
+
+            // Undo releases the sibling immediately, including after reload.
+            let mut previous = reviewed(10, 0);
+            previous.fsrs.last_review_at = None;
+            previous.fsrs.state = 0;
+            undo_last_review(
+                &mut f.db.conn.lock().unwrap(),
+                first,
+                1,
+                &previous,
+                None,
+                100,
+            )
+            .unwrap();
+            assert_eq!(ids(100).len(), 4);
+
+            // If only the sibling remains, wait rather than reveal it immediately.
+            review(&f, first, 0, 900_000).unwrap();
+            f.sync(
+                "a",
+                &[basic("block", "Q", "A"), basic("block:reverse", "A", "Q")],
+                110,
+            );
+            assert!(ids(110).is_empty());
+            assert_eq!(ids(600_100), [sibling]);
+        }
+    }
+
+    #[test]
+    fn removing_reverse_soft_deletes_only_reverse_and_restore_keeps_history() {
+        let f = Fixture::new();
+        let forward = basic("block", "Front", "Back");
+        let reverse = basic("block:reverse", "Back", "Front");
+        f.sync("a", &[forward, reverse], 10);
+        review(&f, "block", 0, 10).unwrap();
+        f.sync("a", &[basic("block", "Front", "Back")], 20);
+        assert_eq!(f.due(None, 30).len(), 1);
+        assert_eq!(
+            f.column::<i64>(
+                "select deleted_at from cards where id = ?1",
+                "block:reverse"
+            ),
+            20
+        );
+        f.sync(
+            "a",
+            &[
+                basic("block", "Front", "Back"),
+                basic("block:reverse", "Back", "Front"),
+            ],
+            30,
+        );
+        assert_eq!(
+            f.column::<i64>("select reps from cards where id = ?1", "block"),
+            1
+        );
+        assert_eq!(
+            f.column::<i64>(
+                "select created_at from cards where id = ?1",
+                "block:reverse"
+            ),
+            10
+        );
+        assert_eq!(f.due(None, 600_100).len(), 2);
     }
 
     #[test]
@@ -785,6 +1000,43 @@ mod tests {
     }
 
     #[test]
+    fn two_way_syntax_upgrade_reindexes_closed_notes_only_once() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("forward", "Q", "A")], 10);
+        let conn = f.db.conn.lock().unwrap();
+        conn.execute_batch("alter table card_indexed_modules drop column syntax_version;")
+            .unwrap();
+        migrate_flashcards(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("select count(*) from card_indexed_modules", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        conn.execute(
+            "insert into card_indexed_modules (module_id) values ('a')",
+            [],
+        )
+        .unwrap();
+        migrate_flashcards(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("select count(*) from card_indexed_modules", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "select created_at from cards where id = 'forward'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            10
+        );
+    }
+
+    #[test]
     fn adding_sections_checks_every_note_again() {
         let f = Fixture::new();
         f.sync("a", &[basic("1", "Q", "A")], 10);
@@ -834,18 +1086,20 @@ mod tests {
                     id: "1".into(),
                     due_at: 10,
                     last_review_at: None,
-                    state: 0
+                    state: 0,
+                    created_at: 10,
                 },
                 CardSchedule {
                     id: "2".into(),
                     due_at: 15,
                     last_review_at: Some(100),
-                    state: 2
+                    state: 2,
+                    created_at: 10,
                 },
             ]
         );
         assert_eq!(
-            query_due_counts(&f.db.conn.lock().unwrap(), 20, 20).unwrap(),
+            query_due_counts(&f.db.conn.lock().unwrap(), 20, 20, None).unwrap(),
             vec![
                 DueCount {
                     module_id: "a".into(),
@@ -871,7 +1125,7 @@ mod tests {
         );
         // Before card 2 is due it counts only as later today, until the day ends.
         assert_eq!(
-            query_due_counts(&f.db.conn.lock().unwrap(), 12, 15).unwrap()[0],
+            query_due_counts(&f.db.conn.lock().unwrap(), 12, 15, None).unwrap()[0],
             DueCount {
                 module_id: "a".into(),
                 count: 1,
@@ -884,7 +1138,7 @@ mod tests {
             }
         );
         assert_eq!(
-            query_due_counts(&f.db.conn.lock().unwrap(), 12, 14).unwrap()[0].later_review,
+            query_due_counts(&f.db.conn.lock().unwrap(), 12, 14, None).unwrap()[0].later_review,
             0
         );
     }

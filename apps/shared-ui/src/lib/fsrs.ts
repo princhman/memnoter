@@ -47,6 +47,8 @@ export type StoredCard = FsrsFields & {
   id: string;
   moduleId: string;
   moduleName: string;
+  // Earliest review time imposed by the sibling, independent of FSRS.
+  availableAt?: number;
   // Titles of the headings the card sits under, outermost first.
   section: string[];
   kind: CardKind;
@@ -154,18 +156,41 @@ export function formatInterval(ms: number) {
 // shown instead of waiting for it.
 export const LEARN_AHEAD_MS = 20 * MINUTE;
 
+// Keep this window in step with REVIEW_AVAILABILITY in the Rust core.
+const SIBLING_DELAY_MS = 10 * MINUTE;
+
+type QueueCard = { dueAt: number; availableAt?: number };
+
+export function reviewDueAt(card: QueueCard) {
+  return Math.max(card.dueAt, card.availableAt ?? 0);
+}
+
+// The desktop keeps a session snapshot instead of reloading after each grade.
+// Mirror the core's availability in that snapshot; undo restores queueBefore.
+export function separateSibling(queue: StoredCard[], reviewed: StoredCard, reviewTime: number) {
+  if (reviewed.kind !== "basic") return queue;
+  const siblingId = reviewed.id.endsWith(":reverse")
+    ? reviewed.id.slice(0, -8)
+    : `${reviewed.id}:reverse`;
+  return queue.map((card) => card.kind === "basic" && card.moduleId === reviewed.moduleId && card.id === siblingId
+    ? { ...card, availableAt: reviewTime + SIBLING_DELAY_MS }
+    : card);
+}
+
 // The most overdue card. Without learn ahead a card is never shown before it
 // is due: one graded Again (1m) waits its minute, counted meanwhile as due
 // later today.
-export function nextInQueue<T extends { dueAt: number }>(
+export function nextInQueue<T extends QueueCard>(
   queue: readonly T[],
   now: number,
   learnAhead = false,
+  availableNow = now,
 ) {
   const limit = now + (learnAhead ? LEARN_AHEAD_MS : 0);
   let next: T | undefined;
   for (const card of queue) {
-    if (card.dueAt <= limit && (!next || card.dueAt < next.dueAt)) next = card;
+    if ((card.availableAt ?? 0) <= availableNow && card.dueAt <= limit
+      && (!next || reviewDueAt(card) < reviewDueAt(next))) next = card;
   }
   return next;
 }

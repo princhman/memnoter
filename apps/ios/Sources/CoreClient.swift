@@ -16,7 +16,7 @@ struct ModuleArgs: Encodable, Sendable { let moduleId: String }
 struct RenameArgs: Encodable, Sendable { let moduleId: String; let name: String }
 struct NumberingArgs: Encodable, Sendable { let moduleId: String; let enabled: Bool }
 struct SearchArgs: Encodable, Sendable { let query: String; let limit: Int = 50 }
-struct CountArgs: Encodable, Sendable { let now: Int64; let dayEnd: Int64 }
+struct CountArgs: Encodable, Sendable { let now: Int64; let dayEnd: Int64; var createdAtCutoff: Int64? = nil }
 struct FileArgs: Encodable, Sendable { let moduleId: String; let bytes: [UInt8]; let mimeType: String }
 struct BackupArgs: Encodable, Sendable { let id: String }
 
@@ -120,7 +120,7 @@ struct ReviewLog: Codable, Sendable {
     let fsrsModel: String
 }
 struct ReviewResult: Codable, Sendable { let card: ReviewedCard; let log: ReviewLog }
-struct DueArgs: Encodable, Sendable { let moduleId: String?; let now: Int64 }
+struct DueArgs: Encodable, Sendable { let moduleId: String?; let now: Int64; var createdAtCutoff: Int64? = nil }
 struct ReviewArgs: Encodable, Sendable { let cardId: String; let expectedReps: Int; let card: ReviewedCard; let log: ReviewLog }
 struct UndoArgs: Encodable, Sendable { let cardId: String; let expectedReps: Int; let previous: ReviewedCard; let previousFsrsModel: String?; let reviewTime: Int64 }
 

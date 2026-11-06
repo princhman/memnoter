@@ -5,9 +5,11 @@ import type { StepMap } from "@tiptap/pm/transform";
 // Flashcards written in note text. A paragraph or heading is a card block:
 //   - Basic: `Question :: Answer`. The first `::` with no text character
 //     directly on either side splits the block, so `std::vector` stays prose.
+//   - Two-way: `Front ::: Back` makes forward and reverse basic cards.
+//     Exactly two or three colons match; four colons stay prose.
 //   - Cloze: `{{hidden}}`. Each cloze is its own card; the review shows the
 //     whole block with that cloze hidden and the other clozes as plain text.
-//   - A block with a cloze is a cloze block; any `::` in it is plain text.
+//   - A block with a cloze is a cloze block; any `::` or `:::` in it is plain text.
 // Text in inline code is never syntax. Inline math may appear on either side
 // and inside a cloze. A card needs a non-empty front and answer.
 
@@ -29,7 +31,7 @@ export type Segment =
 export type CardPayload = Segment[] | OcclusionFace;
 
 export type ExtractedCard = {
-  // `<cardId>` for basic cards, `<cardId>:<stable cloze id>` for clozes.
+  // `<cardId>` for basic cards, `<cardId>:reverse` for their reverse, `<cardId>:<stable cloze id>` for clozes.
   id: string;
   blockId: string;
   kind: CardKind;
@@ -165,17 +167,19 @@ export function parseBlock(block: Node): BlockSyntax {
   }
 
   for (let i = 0; i < units.length - 1; i++) {
+    const width = isSyntax(units[i + 2], ":") ? 3 : 2;
     if (
       isSyntax(units[i], ":") &&
       isSyntax(units[i + 1], ":") &&
       !isWordChar(units[i - 1]) &&
-      !isWordChar(units[i + 2])
+      !isWordChar(units[i + width])
     ) {
-      syntax.separator = span(units, i, i + 2);
+      syntax.separator = span(units, i, i + width);
       const front = trim(units.slice(0, i));
-      const back = trim(units.slice(i + 2));
+      const back = trim(units.slice(i + width));
       if (hasContent(front) && hasContent(back)) {
         syntax.cards.push({ kind: "basic", front: segmentsOf(front), back: segmentsOf(back) });
+        if (width === 3) syntax.cards.push({ kind: "basic", front: segmentsOf(back), back: segmentsOf(front) });
       }
       break;
     }
@@ -238,10 +242,11 @@ function clozeSide(block: Node, syntax: BlockSyntax, targets: number[], reveal: 
 }
 
 // Attributes can come from pasted HTML or persisted documents, not just us.
+// Reserve "reverse" for two-way basics; generated cloze ids start with c.
 export function validatedClozeIds(value: unknown): ClozeId[] | null {
   if (!Array.isArray(value) || !value.every((entry) =>
     entry !== null && typeof entry === "object" &&
-    typeof entry.id === "string" &&
+    typeof entry.id === "string" && entry.id !== "reverse" &&
     typeof entry.from === "number" && Number.isFinite(entry.from) &&
     typeof entry.to === "number" && Number.isFinite(entry.to) &&
     typeof entry.answer === "string")) return null;
@@ -261,7 +266,10 @@ export function clozeIdsOf(node: Node, syntax = parseBlock(node)): ClozeId[] {
 function blockCardIds(node: Node, blockId: string, syntax: BlockSyntax) {
   const clozeIds = clozeIdsOf(node, syntax);
   return syntax.cards.map((card, index) => {
-    if (card.kind !== "cloze") return { id: blockId, answer: null };
+    if (card.kind !== "cloze") return {
+      id: index === 0 ? blockId : `${blockId}:reverse`,
+      answer: syntax.cards.length === 2 ? (index === 0 ? "Forward" : "Reverse") : null,
+    };
     const inner = syntax.clozes[index]?.inner;
     const entry = inner && clozeIds.find((entry) =>
       entry.from >= 0 && entry.from === inner.from && entry.to === inner.to);
@@ -340,7 +348,7 @@ export function extractCards(doc: Node): ExtractedCard[] {
 }
 
 export function blockIdOf(cardId: string) {
-  return cardId.replace(/:o:.*$|:c[^:]+$/, "");
+  return cardId.replace(/:o:.*$|:reverse$|:c[^:]+$/, "");
 }
 
 // The ranges of the final document touched by a series of step maps.

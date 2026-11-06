@@ -3,7 +3,13 @@ import SwiftUI
 @main struct MemnoterApp: App {
     @State private var store = AppStore()
     var body: some Scene {
-        WindowGroup { RootView(store: store).defaultAppStorage(store.preferences).task { await store.start() } }
+        WindowGroup { RootView(store: store).defaultAppStorage(store.preferences).task {
+            await store.start()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                await store.refresh()
+            }
+        } }
     }
 }
 
@@ -62,8 +68,8 @@ import SwiftUI
         do {
             modules = try await client.call("modules", Empty())
             let now = Int64(Date().timeIntervalSince1970 * 1000)
-            let end = Int64(Calendar.current.startOfDay(for: Date()).addingTimeInterval(86400).timeIntervalSince1970 * 1000)
-            counts = try await client.call("due_counts", CountArgs(now: now, dayEnd: end))
+            let end = Int64(Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date()))!.timeIntervalSince1970 * 1000)
+            counts = try await client.call("due_counts", CountArgs(now: now, dayEnd: end, createdAtCutoff: preferences.bool(forKey: "skipCardsCreatedToday") ? Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000) : nil))
         } catch { self.error = String(describing: error) }
     }
     func perform(_ body: () async throws -> Void) async {

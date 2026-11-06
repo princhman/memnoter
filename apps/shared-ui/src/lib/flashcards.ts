@@ -30,6 +30,7 @@ declare module "@tiptap/core" {
 export type CardSchedule = {
   id: string;
   dueAt: number;
+  createdAt: number;
   lastReviewAt: number | null;
   state: number;
 };
@@ -75,16 +76,21 @@ export function cardInfo(
     row.className = "card-info-row";
     const heading = document.createElement("span");
     heading.className = "card-info-heading";
-    const name = document.createElement("span");
-    name.className = "card-info-answer";
-    name.textContent = answer ?? "Card";
-    name.title = answer ?? "Card";
-    const badge = document.createElement("span");
-    badge.className = "card-info-state";
-    badge.dataset.state = schedule ? stateName(schedule.state).toLowerCase() : "unsaved";
-    badge.textContent = schedule ? stateName(schedule.state) : "Unsaved";
-    heading.append(name, badge);
-    row.append(heading);
+    if (answer) {
+      const name = document.createElement("span");
+      name.className = "card-info-answer";
+      name.textContent = answer;
+      name.title = answer;
+      heading.append(name);
+    }
+    if (!schedule || schedule.state !== 0) {
+      const badge = document.createElement("span");
+      badge.className = "card-info-state";
+      badge.dataset.state = schedule ? stateName(schedule.state).toLowerCase() : "unsaved";
+      badge.textContent = schedule ? stateName(schedule.state) : "Unsaved";
+      heading.append(badge);
+    }
+    if (heading.childElementCount) row.append(heading);
     const dueText = document.createElement("span");
     dueText.className = "card-info-due";
     dueText.textContent = !schedule ? "Not saved yet" : schedule.dueAt <= now
@@ -159,7 +165,7 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules): Decora
   if (syntax.separator) {
     decorations.push(
       Decoration.inline(start + syntax.separator.from, start + syntax.separator.to, {
-        class: "card-sep",
+        class: syntax.separator.to - syntax.separator.from === 3 ? "card-sep card-sep-both" : "card-sep",
       }, { syntax: true }),
     );
   }

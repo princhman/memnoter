@@ -13,8 +13,9 @@ pub(crate) fn due_cards(
     core: tauri::State<'_, std::sync::Arc<Core>>,
     module_id: Option<String>,
     now: i64,
+    created_at_cutoff: Option<i64>,
 ) -> CommandResult<Vec<Card>> {
-    memnoter_core::cards::due_cards(&core.db, module_id, now)
+    memnoter_core::cards::due_cards(&core.db, module_id, now, created_at_cutoff)
 }
 #[tauri::command(async)]
 pub(crate) fn card_schedules(
@@ -28,8 +29,9 @@ pub(crate) fn due_counts(
     core: tauri::State<'_, std::sync::Arc<Core>>,
     now: i64,
     day_end: i64,
+    created_at_cutoff: Option<i64>,
 ) -> CommandResult<Vec<DueCount>> {
-    memnoter_core::cards::due_counts(&core.db, now, day_end)
+    memnoter_core::cards::due_counts(&core.db, now, day_end, created_at_cutoff)
 }
 #[tauri::command(async)]
 pub(crate) fn review_card(
