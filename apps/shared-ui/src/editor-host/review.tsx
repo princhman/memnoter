@@ -4,6 +4,7 @@ import { getScheduler, scheduleReview, type StoredCard, type Grade } from "../li
 import "../lib/backend";
 import "../App.css";
 import "./review.css";
+import "./theme";
 import "katex/dist/katex.min.css";
 
 // Only rich faces and the canonical scheduler live here. Navigation, queue and
