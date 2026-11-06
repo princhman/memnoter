@@ -56,6 +56,8 @@ export function editorState(editor: Editor) {
     headingLevel: editor.isActive("heading") ? Number(editor.getAttributes("heading").level) : null,
     bulletList: editor.isActive("bulletList"), orderedList: editor.isActive("orderedList"),
     blockquote: editor.isActive("blockquote"),
+    inTable: editor.isActive("table"),
+    canMergeCells: editor.can().mergeCells(), canSplitCell: editor.can().splitCell(),
     canIndent: editor.can().sinkListItem("listItem"),
     canOutdent: editor.can().liftListItem("listItem"),
     canMakeCard: editor.can().makeCloze(), inCloze: editor.can().removeCloze(),
@@ -72,6 +74,17 @@ export function editorState(editor: Editor) {
 export function execEditor(editor: Editor, command: string, args: Record<string, unknown> = {}): boolean {
   const commands = editor.commands;
   switch (command) {
+    case "insertTable": return editor.isActive("table") ? false : commands.insertTable({ rows: 3, cols: 3, withHeaderRow: true });
+    case "addRowBefore": return commands.addRowBefore();
+    case "addRowAfter": return commands.addRowAfter();
+    case "addColumnBefore": return commands.addColumnBefore();
+    case "addColumnAfter": return commands.addColumnAfter();
+    case "deleteRow": return commands.deleteRow();
+    case "deleteColumn": return commands.deleteColumn();
+    case "toggleHeaderRow": return commands.toggleHeaderRow();
+    case "mergeCells": return commands.mergeCells();
+    case "splitCell": return commands.splitCell();
+    case "deleteTable": return commands.deleteTable();
     case "bold": return commands.toggleBold();
     case "italic": return commands.toggleItalic();
     case "underline": return commands.toggleUnderline();

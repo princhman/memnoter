@@ -27,6 +27,7 @@ type SlashItem = {
   title: string;
   keywords: string[];
   hint: string;
+  when?: (editor: Editor) => boolean;
   run: (editor: Editor, range: Range, options: SlashCommandOptions) => void;
 };
 
@@ -84,6 +85,14 @@ const ITEMS: SlashItem[] = [
           .run(),
     }),
   ),
+  {
+    group: "Blocks",
+    title: "Table",
+    keywords: ["table", "grid", "cells"],
+    hint: "3 × 3",
+    when: (editor) => !editor.isActive("table"),
+    run: (editor, range) => editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+  },
   {
     group: "Blocks",
     title: "Bullet list",
@@ -144,14 +153,23 @@ const ITEMS: SlashItem[] = [
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).toggleMathBlock().run(),
   },
+  ...([
+    ["Add row above", "addRowBefore"], ["Add row below", "addRowAfter"],
+    ["Add column left", "addColumnBefore"], ["Add column right", "addColumnAfter"],
+    ["Delete row", "deleteRow"], ["Delete column", "deleteColumn"],
+    ["Toggle header row", "toggleHeaderRow"], ["Delete table", "deleteTable"],
+  ] as const).map(([title, command]): SlashItem => ({
+    group: "Table", title, keywords: ["table", ...title.toLowerCase().split(" ")], hint: "",
+    when: (editor) => editor.isActive("table"),
+    run: (editor, range) => editor.chain().focus().deleteRange(range)[command]().run(),
+  })),
 ];
 
-function filterItems(query: string) {
+function filterItems(query: string, editor: Editor) {
   const q = query.toLowerCase().trim();
-  if (!q) return ITEMS;
-  return ITEMS.filter(
+  return ITEMS.filter(item => !item.when || item.when(editor)).filter(
     (item) =>
-      item.title.toLowerCase().includes(q) ||
+      !q || item.title.toLowerCase().includes(q) ||
       item.keywords.some((keyword) => keyword.startsWith(q)),
   );
 }
@@ -175,7 +193,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         editor: this.editor,
         pluginKey: new PluginKey("slash-command"),
         char: "/",
-        items: ({ query }) => filterItems(query),
+        items: ({ query, editor }) => filterItems(query, editor),
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from);
           for (let depth = $from.depth; depth > 0; depth--) {

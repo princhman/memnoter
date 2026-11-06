@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
+import { CellSelection } from "@tiptap/pm/tables";
+import { TableBubbleActions } from "@/components/table-bubble-actions";
 import { TextSelection } from "@tiptap/pm/state";
 import {
   Bold,
@@ -36,6 +38,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         return !inlineMath;
       });
       return {
+        cells: editor.state.selection instanceof CellSelection,
         inlineMath,
         bold: editor.isActive("bold"),
         italic: editor.isActive("italic"),
@@ -68,6 +71,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         if (!editor.isEditable || !editor.view.hasFocus()) return false;
         // The link menu's URL field takes its place.
         if (isLinkEditorOpen(state)) return false;
+        if (selection instanceof CellSelection) return true;
         if (!(selection instanceof TextSelection) || selection.empty) return false;
         if (!state.doc.textBetween(from, to).trim()) return false;
 
@@ -89,6 +93,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       // Keep the editor selection while clicking menu buttons.
       onMouseDown={(event) => event.preventDefault()}
     >
+      {active.cells ? <TableBubbleActions editor={editor} /> : <>
       <MarkButton
         label="Bold"
         hint={`${MOD_KEY}B`}
@@ -177,6 +182,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
           <Combine />
         </MarkButton>
       )}
+      </>}
     </BubbleMenu>
   );
 }

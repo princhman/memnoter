@@ -128,6 +128,24 @@ struct FormattingBar: View {
             .popover(isPresented: $editingLink) {
                 linkEditor.padding().presentationCompactAdaptation(.popover)
             }
+        Menu {
+            if session.state.inTable {
+                Button("Add row above") { session.exec("addRowBefore") }
+                Button("Add row below") { session.exec("addRowAfter") }
+                Button("Add column left") { session.exec("addColumnBefore") }
+                Button("Add column right") { session.exec("addColumnAfter") }
+                Button("Toggle header row") { session.exec("toggleHeaderRow") }
+                Button("Merge cells") { session.exec("mergeCells") }.disabled(!session.state.canMergeCells)
+                Button("Split cell") { session.exec("splitCell") }.disabled(!session.state.canSplitCell)
+                Button("Delete row", role: .destructive) { session.exec("deleteRow") }
+                Button("Delete column", role: .destructive) { session.exec("deleteColumn") }
+                Button("Delete table", role: .destructive) { session.exec("deleteTable") }
+            } else {
+                Button("Insert table") { session.exec("insertTable") }
+            }
+        } label: { Image(systemName: "tablecells") }
+            .buttonStyle(FormatButtonStyle(active: session.state.inTable))
+            .accessibilityLabel("Table")
         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
             .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
     }

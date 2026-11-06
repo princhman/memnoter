@@ -56,6 +56,7 @@ struct EditorState: Decodable {
     var focusedSectionPath: [SectionCrumb] = []
     var focusedSectionId: String?; var headingId: String?
     var blockType = "paragraph"; var headingLevel: Int?
+    var inTable = false; var canMergeCells = false; var canSplitCell = false
     var canIndent = false; var canOutdent = false
     var canMakeCard = false; var inCloze = false; var canJoinClozes = false
     var folded = false; var canFold = false
