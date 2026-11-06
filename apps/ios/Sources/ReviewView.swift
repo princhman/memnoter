@@ -15,6 +15,7 @@ struct ReviewView: View {
     @State private var cards: [StoredCard] = []
     @State private var revealed = false
     @State private var busy = false
+    @State private var cardsChangedWhileBusy = false
     @State private var error: String?
     @State private var last: (card: StoredCard, result: ReviewResult)?
     var body: some View {
@@ -30,7 +31,7 @@ struct ReviewView: View {
                         }
                     } else { Button("Show answer") { revealed = true; show() }.buttonStyle(.borderedProminent).keyboardShortcut(.space, modifiers: []) }
                 }.padding().disabled(busy)
-            } else { ContentUnavailableView("All caught up", systemImage: "checkmark.circle", description: Text("No cards are due. Open older notes once to check them for cards.")) }
+            } else { ContentUnavailableView("All caught up", systemImage: "checkmark.circle", description: Text("No cards are due.")) }
         }
         .toolbar { Button("Undo rating") { undo() }.disabled(last == nil || busy).keyboardShortcut("z") }
         .task {
@@ -47,6 +48,16 @@ struct ReviewView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { _ in
             Task { if !busy { last = nil; await load() } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cardsDidChange)) { _ in
+            if busy { cardsChangedWhileBusy = true }
+            else { Task { await load() } }
+        }
+        .onChange(of: busy) { _, busy in
+            if !busy && cardsChangedWhileBusy {
+                cardsChangedWhileBusy = false
+                Task { await load() }
+            }
         }
         .onChange(of: skipCardsCreatedToday) { _, _ in Task { if !busy { last = nil; await load() } } }
         .onDisappear { session?.dispose() }

@@ -294,6 +294,8 @@ struct EditorState: Decodable {
                 let callback = onReady
                 onReady = nil
                 callback?()
+            case "cardsChanged":
+                NotificationCenter.default.post(name: .cardsDidChange, object: client)
             case "imagePreview":
                 imagePreviewOpen = payload["open"] as? Bool == true
             case "outlineCurrent":
@@ -344,3 +346,5 @@ struct WebSurface: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView { session.web }
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
+
+extension Notification.Name { static let cardsDidChange = Notification.Name("memnoter.cardsDidChange") }

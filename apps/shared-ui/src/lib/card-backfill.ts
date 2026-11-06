@@ -83,6 +83,9 @@ export function backfillCards() {
       return;
     }
     for (const { id } of modules) {
+      // Yield between hidden editors so a migration cannot monopolize the
+      // webview while the user is typing or navigating on iPad.
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
       // A backup restore swaps the database; its notes are checked next launch.
       if (saveQueue.isSuspended()) return;
       try {
