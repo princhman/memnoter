@@ -49,8 +49,8 @@ struct FormattingBar: View {
         HStack(spacing: 0) {
             // Keep cloze creation visible without scrolling, including in a narrow window.
             Button { session.exec(session.state.inCloze ? "removeCard" : "makeCard") } label: {
-                Label("Cloze",
-                      systemImage: session.state.inCloze ? "rectangle.stack.badge.minus" : "rectangle.stack.badge.plus")
+                // Braces mean cloze on desktop too; the pressed state shows it can be removed.
+                Label("Cloze", systemImage: "curlybraces")
                     .labelStyle(.titleAndIcon)
                     .fixedSize()
                     .padding(.horizontal, 4)
