@@ -181,15 +181,34 @@ export function Host() {
       opening.current = null;
     }
     let frame = 0;
+    let inputScroll: number | undefined;
+    const element = container.current;
     const reveal = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => { if (!editor.isDestroyed) revealCaret(editor.view); });
+      frame = requestAnimationFrame(() => {
+        if (editor.isDestroyed) return;
+        // WebKit may reveal the selection during input even when ProseMirror's
+        // scrolling is handled. Apply our visibility rule from the reader's
+        // pre-input position, rather than from WebKit's unsolicited scroll.
+        if (element && inputScroll !== undefined) element.scrollTop = inputScroll;
+        inputScroll = undefined;
+        revealCaret(editor.view);
+      });
     };
+    const beforeInput = () => {
+      if (element && inputScroll === undefined) inputScroll = element.scrollTop;
+      reveal();
+    };
+    const keydown = (event: KeyboardEvent) => { if (event.key === "Enter") beforeInput(); };
+    element?.addEventListener("beforeinput", beforeInput, true);
+    element?.addEventListener("keydown", keydown, true);
     editor.on("transaction", publish);
     editor.on("selectionUpdate", reveal);
     editor.on("update", reveal);
     editor.on("focus", reveal);
     return () => {
+      element?.removeEventListener("beforeinput", beforeInput, true);
+      element?.removeEventListener("keydown", keydown, true);
       clearTimeout(scrollTimer);
       container.current?.removeEventListener("scroll", onScroll);
       refreshOutline.current = () => {};

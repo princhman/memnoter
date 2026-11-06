@@ -201,6 +201,48 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.keyboard.type('x');
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.ok(Math.abs(await page.locator('.app-scroll-container').evaluate(node => node.scrollTop) - visibleScroll) < 1);
+    // Reuse this page/browser: Enter at the end of a long note must keep a
+    // visible caret still, and reveal an occluded caret to the visible midpoint.
+    const settleScroll = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const caretGeometry = () => page.evaluate(() => {
+      const range = window.getSelection().getRangeAt(0).cloneRange();
+      range.collapse(false);
+      const rect = range.getBoundingClientRect();
+      const container = document.querySelector('.app-scroll-container');
+      const top = container.getBoundingClientRect().top + container.clientTop + Number(container.dataset.topInset ?? 0);
+      const bottom = container.getBoundingClientRect().top + container.clientTop + container.clientHeight - Number(container.dataset.bottomInset ?? 0);
+      return { scroll: container.scrollTop, caret: (rect.top + rect.bottom) / 2, midpoint: (top + bottom) / 2 };
+    });
+    await page.evaluate(() => window.memnoterEditor.setTopInset(60));
+    await page.locator('.tiptap p').filter({ hasText: 'Tail ' }).evaluate(node => {
+      const range = document.createRange();
+      range.setStart(node.firstChild, 4000);
+      range.collapse(true);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
+    await settleScroll();
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Tail Visible caret');
+    await settleScroll();
+    const beforeEnter = await caretGeometry();
+    await page.keyboard.press('Enter');
+    await settleScroll();
+    const afterEnter = await caretGeometry();
+    assert.ok(Math.abs(afterEnter.scroll - beforeEnter.scroll) < 1, JSON.stringify({ beforeEnter, afterEnter }));
+    // Move the reader while leaving the selection in place, then type Enter.
+    await page.evaluate(() => {
+      const range = window.getSelection().getRangeAt(0).cloneRange();
+      range.collapse(false);
+      const container = document.querySelector('.app-scroll-container');
+      const bottom = container.getBoundingClientRect().bottom - Number(container.dataset.bottomInset);
+      container.scrollTop += range.getBoundingClientRect().bottom - bottom - 60;
+    });
+    await page.keyboard.press('Enter');
+    await settleScroll();
+    const revealed = await caretGeometry();
+    assert.ok(Math.abs(revealed.caret - revealed.midpoint) < 20, JSON.stringify(revealed));
+    await page.evaluate(() => window.memnoterEditor.setTopInset(0));
     await page.evaluate(() => window.memnoterEditor.setBottomInset(0));
     const focus = await page.evaluate(() => {
       const outline = window.messages.filter(m => m.event === 'outline').at(-1).payload.headings;
