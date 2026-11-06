@@ -9,8 +9,10 @@ export function IconTooltip({
   side,
   children,
   container,
+  disabled = false,
 }: {
   label: string;
+  disabled?: boolean;
   hint?: string;
   side?: "top" | "bottom" | "left" | "right";
   children: ReactElement;
@@ -18,7 +20,7 @@ export function IconTooltip({
 }) {
   const actions = useRef<{ close: () => void; unmount: () => void } | null>(null);
   return (
-    <Tooltip actionsRef={actions} onOpenChange={(_open, details) => {
+    <Tooltip disabled={disabled} actionsRef={actions} onOpenChange={(_open, details) => {
       if (details.reason === "escape-key") {
         // Let Escape also close the containing menu or native dialog.
         details.cancel();
