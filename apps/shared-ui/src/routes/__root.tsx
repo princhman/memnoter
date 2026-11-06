@@ -34,6 +34,7 @@ const RootLayout = () => {
   const navigate = useNavigate();
   const router = useRouter();
   const reviewCounts = useSelector(reviewActionsStore, (state) => state?.counts);
+  const reviewCurrent = useSelector(reviewActionsStore, (state) => state?.current);
 
   useCommand({ id: "review.all", title: "Review all cards", keywords: ["flashcards"],
     run: () => openReview(() => navigate({ to: "/review", search: {} })),
@@ -112,7 +113,7 @@ const RootLayout = () => {
                 <FileBreadcrumb />
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-2 pr-3">
-                {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} /> : <ModuleReviewButton />}
+                {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} current={reviewCurrent} /> : <ModuleReviewButton />}
               </div>
             </header>
 
