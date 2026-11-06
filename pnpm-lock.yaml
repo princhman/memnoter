@@ -20,6 +20,8 @@ importers:
         specifier: ^8.5.6
         version: 8.5.16
 
+  apps/marketing: {}
+
   apps/shared-ui:
     dependencies:
       '@base-ui/react':
@@ -88,6 +90,9 @@ importers:
       '@tiptap/extension-paragraph':
         specifier: ^3.27.3
         version: 3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))
+      '@tiptap/extension-table':
+        specifier: 3.29.2
+        version: 3.29.2(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
       '@tiptap/extension-table-of-contents':
         specifier: ^3.32.0
         version: 3.32.0(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
@@ -197,8 +202,6 @@ importers:
       yjs:
         specifier: ^13.6.31
         version: 13.6.31
-
-  apps/marketing: {}
 
 packages:
 
@@ -1606,6 +1609,12 @@ packages:
     peerDependencies:
       '@tiptap/core': 3.32.0
       '@tiptap/pm': 3.32.0
+
+  '@tiptap/extension-table@3.29.2':
+    resolution: {integrity: sha512-HY3JWD8i/F8W1oWw56DMqEMqxScIAZFRrhL3rUwiuowHG8LLDqDdQjBV3w1DY8lUZOtNY9grpuMtGlPUFrOVAA==}
+    peerDependencies:
+      '@tiptap/core': 3.29.2
+      '@tiptap/pm': 3.29.2
 
   '@tiptap/extension-text-style@3.31.3':
     resolution: {integrity: sha512-wgjWWrjZwRZHiaDTQPX2am1y/4ePgRgGWF/2MOfSb7g4d5229p4aVtbT1JT7wu9z8OC482pEqcTlhdvgftvW7A==}
@@ -4713,6 +4722,11 @@ snapshots:
       '@tiptap/core': 3.29.2(@tiptap/pm@3.27.1)
       '@tiptap/pm': 3.27.1
       uuid: 14.0.3
+
+  '@tiptap/extension-table@3.29.2(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)':
+    dependencies:
+      '@tiptap/core': 3.29.2(@tiptap/pm@3.27.1)
+      '@tiptap/pm': 3.27.1
 
   '@tiptap/extension-text-style@3.31.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))':
     dependencies:

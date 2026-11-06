@@ -2,6 +2,7 @@ import type { Editor } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
 import { ImageMoveHistory } from "@/lib/image-move-history";
+import { NoteTables } from "@/lib/note-tables";
 import StarterKit from "@tiptap/starter-kit";
 import type * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -48,6 +49,7 @@ export function noteExtensions({
       // Links open in the browser on ⌘-click, through LinkEditor.
       link: { openOnClick: false },
     }),
+    ...NoteTables,
     TabSpacing,
     ImageMoveHistory,
     LinkEditor,
