@@ -1,3 +1,7 @@
+import { importFolder } from "@/lib/import-module";
+import { markdownToJSON } from "@/lib/markdown-paste";
+import { call } from "@/lib/backend";
+import { applySavedContent } from "@/lib/content";
 import * as Y from "yjs";
 import { Editor } from "@tiptap/core";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
@@ -15,7 +19,17 @@ const document = new Y.Doc();
 function TablesEditor() {
   const editor = useEditor({ extensions: noteExtensions({ document }), onCreate: ({ editor }) => {
     Object.assign(window, {
-      editor, documentY: document, extractCards, extractFromDoc, extractFromYDoc, execEditor, editorState,
+      loadImported: async (saved: Parameters<typeof applySavedContent>[1]) => {
+        const doc = new Y.Doc(); applySavedContent(doc, saved);
+        const before = Array.from(Y.encodeStateAsUpdate(doc));
+        const imported = new Editor({ element: window.document.getElementById("root")!.appendChild(window.document.createElement("div")), extensions: noteExtensions({ document: doc }) });
+        await new Promise(resolve => setTimeout(resolve, 100));
+        imported.state.doc.check();
+        let images = 0, codeBlocks = 0, highlights = 0;
+        imported.state.doc.descendants(n => { if (n.type.name === "image") images++; if (n.type.name === "codeBlock") codeBlocks++; if (n.isText && n.marks.some(m => m.type.name === "highlight")) highlights++; });
+        return { images, codeBlocks, highlights, changed: JSON.stringify(before) !== JSON.stringify(Array.from(Y.encodeStateAsUpdate(doc))) };
+      },
+      editor, importFolder, markdownToJSON, call, applySavedContent, Y, documentY: document, extractCards, extractFromDoc, extractFromYDoc, execEditor, editorState,
       stopCapture: () => yUndoPluginKey.getState(editor.state).undoManager.stopCapturing(),
       cloneEditor: (legacy = false) => {
         const clone = new Y.Doc();
