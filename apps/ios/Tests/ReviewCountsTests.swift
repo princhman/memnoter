@@ -15,4 +15,8 @@ final class ReviewCountsTests: XCTestCase {
         XCTAssertEqual(ReviewCounts(rows: rows, moduleId: "missing"), ReviewCounts())
         XCTAssertEqual(ReviewCounts().accessibilityLabel, "0 new, 0 learning, 0 to review")
     }
+
+    func testRelearningCountsAsLearning() {
+        XCTAssertEqual([0, 1, 2, 3].map(ReviewCountKind.init(state:)), [.new, .learning, .review, .learning])
+    }
 }

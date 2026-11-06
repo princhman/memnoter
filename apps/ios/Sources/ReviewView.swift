@@ -109,22 +109,26 @@ struct ReviewView: View {
         Button("Go to card in note", systemImage: "scope") { if let card = cards.first { editCard(card) } }
             .disabled(cards.isEmpty || busy)
     }
+    // The queue the card on screen came from, emphasised in the counts.
+    private var currentKind: ReviewCountKind? { cards.first.map { ReviewCountKind(state: $0.state) } }
     private var countsLabel: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            countLabel(reviewCounts.new, later: reviewCounts.laterNew, light: 0x0284c7, dark: 0x38bdf8)
-            countLabel(reviewCounts.learning, later: reviewCounts.laterLearning, light: 0xdc2626, dark: 0xf87171)
-            countLabel(reviewCounts.review, later: reviewCounts.laterReview, light: 0x059669, dark: 0x34d399)
+            countLabel(reviewCounts.new, later: reviewCounts.laterNew, current: currentKind == .new, light: 0x0284c7, dark: 0x38bdf8)
+            countLabel(reviewCounts.learning, later: reviewCounts.laterLearning, current: currentKind == .learning, light: 0xdc2626, dark: 0xf87171)
+            countLabel(reviewCounts.review, later: reviewCounts.laterReview, current: currentKind == .review, light: 0x059669, dark: 0x34d399)
         }
         .font(.system(size: 14)).monospacedDigit()
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(reviewCounts.accessibilityLabel)
+        .accessibilityLabel(reviewCounts.accessibilityLabel + (currentKind.map { ", reviewing \($0.rawValue)" } ?? ""))
         .accessibilityIdentifier("review.counts")
     }
-    private func countLabel(_ count: Int, later: Int, light: Int, dark: Int) -> some View {
+    private func countLabel(_ count: Int, later: Int, current: Bool, light: Int, dark: Int) -> some View {
         let rgb = colorScheme == .dark ? dark : light
         return HStack(alignment: .firstTextBaseline, spacing: 1) {
-            Text(count.formatted(.number.grouping(.never))).opacity(count > 0 ? 1 : 0.4)
+            Text(count.formatted(.number.grouping(.never)))
+                .fontWeight(current ? .bold : .regular).underline(current)
+                .opacity(count > 0 ? 1 : 0.4)
             if later > 0 {
                 Text("+\(later)").font(.system(size: 9)).baselineOffset(5).opacity(0.7)
             }
@@ -277,6 +281,17 @@ struct ReviewCountRow: Decodable, Sendable {
     let laterNew: Int
     let laterLearning: Int
     let laterReview: Int
+}
+enum ReviewCountKind: String {
+    case new, learning, review = "to review"
+    // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
+    init(state: Int) {
+        switch state {
+        case 0: self = .new
+        case 2: self = .review
+        default: self = .learning
+        }
+    }
 }
 struct ReviewCounts: Equatable {
     var new = 0
