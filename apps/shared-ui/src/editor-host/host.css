@@ -92,3 +92,29 @@ html .image-preview-dialog [data-slot="dialog-close"] {
   background: #000;
   z-index: 1;
 }
+
+/* Native card menus use explicit taps, never WebKit's sticky touch hover or
+   focus. Top-layer placement is bounded by the host's keyboard/nav insets. */
+.tiptap .card-info:is(:hover, :focus-within) .card-info-popup {
+  display: none;
+}
+.tiptap .card-info[data-info-open] {
+  opacity: 1;
+}
+.tiptap .card-info[data-info-open] .card-info-popup {
+  display: flex;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.tiptap .card-info, .tiptap .card-info * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.tiptap .card-info-join {
+  min-height: 44px;
+}

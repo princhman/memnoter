@@ -12,7 +12,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
   try {
     await server.listen();
     browser = await webkit.launch();
-    const context = await browser.newContext({ reducedMotion: "reduce" });
+    const context = await browser.newContext({ reducedMotion: "reduce", hasTouch: true });
     const page = await context.newPage();
     if (process.env.SCROLL_TRACE) page.on('console', message => { if (message.text().startsWith('[scroll]')) console.log(message.text()); });
     const errors = [];
@@ -339,6 +339,56 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await restored.close();
     await page.bringToFront();
     const exec = (command, args) => page.evaluate(([command, args]) => window.memnoterEditor.exec(command, args), [command, args]);
+    await t.test('card info taps preserve focus and selection and consume dismissal', async () => {
+      const menu = await context.newPage();
+      await menu.setViewportSize({ width: 820, height: 1180 });
+      await menu.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+      await menu.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+      await menu.evaluate(() => window.memnoterEditor.open('card-menu'));
+      await menu.locator('.tiptap').click();
+      await menu.keyboard.type('{{first}} {{second}}');
+      await menu.evaluate(() => { window.memnoterEditor.setTopInset(88); window.memnoterEditor.setBottomInset(350); });
+      const dot = menu.locator('.card-info').first();
+      const popup = dot.locator('.card-info-popup');
+      const snapshot = () => menu.evaluate(() => {
+        const selection = window.getSelection();
+        return { focused: document.activeElement === document.querySelector('.tiptap'),
+          anchor: selection.anchorOffset, head: selection.focusOffset,
+          text: selection.anchorNode?.textContent, scroll: document.querySelector('.app-scroll-container').scrollTop };
+      });
+      const tapDot = async () => {
+        const box = await dot.boundingBox();
+        await menu.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+      };
+      for (const focused of [true, false]) {
+        if (!focused) {
+          await menu.evaluate(() => window.memnoterEditor.blur());
+          // Tiptap's blur command releases selection on the next animation frame.
+          await menu.waitForFunction(() => document.activeElement !== document.querySelector('.tiptap') && window.getSelection().rangeCount === 0);
+        }
+        const before = await snapshot();
+        await tapDot();
+        assert.deepEqual(await snapshot(), before);
+        assert.equal(await popup.isVisible(), true);
+        const bounds = await popup.boundingBox();
+        assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 820);
+        assert.ok(bounds.y >= 88 && bounds.y + bounds.height <= 830);
+        await menu.touchscreen.tap(400, 500);
+        assert.equal(await popup.isVisible(), false);
+        assert.deepEqual(await snapshot(), before, 'dismissal must consume the editing tap');
+        await tapDot();
+        await tapDot();
+        assert.equal(await popup.isVisible(), false);
+        assert.deepEqual(await snapshot(), before, 'dot toggling must preserve the responder');
+      }
+      await menu.touchscreen.tap(400, 500);
+      assert.equal((await snapshot()).focused, true, 'the next outside tap edits normally');
+      await tapDot();
+      await menu.getByRole('button', { name: 'Join into one card' }).tap();
+      await menu.waitForFunction(() => !document.querySelector('.card-info-join'));
+      assert.ok((await menu.locator('.tiptap').textContent()).includes('{{first}} {{second}}'));
+      await menu.close();
+    });
     await t.test('iPad typing and section navigation retain the reader position', async () => {
       // A short final section still needs to reach the visible top. Keep its
       // screen position through delayed content reflow, with and without

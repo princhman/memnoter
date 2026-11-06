@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { requestCardReveal } from "@/lib/card-reveal";
 import { blockIdOf } from "@/lib/cards";
 import { sectionFocusKey } from "@/lib/section-focus";
+import { observeCardInfo } from "./card-info";
 import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop } from "./scroll";
 import Tiptap from "@/components/Tiptap";
 import { useActiveEditor } from "@/lib/active-editor-context";
@@ -46,6 +47,7 @@ export function Host() {
   useLayoutEffect(() => { active.current = activeEditor; }, [activeEditor]);
 
   useEffect(() => {
+    const stopCardInfo = container.current ? observeCardInfo(container.current) : () => {};
     const stopScroll = container.current ? observeScroll(container.current) : () => {};
     const fail = (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -131,7 +133,7 @@ export function Host() {
     const stopImages = imageStatusStore.subscribe(saveStatus);
     saveStatus();
     postNativeEvent("ready", { protocolVersion: 1 });
-    return () => { stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
+    return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
   }, []);
 
   useEffect(() => {
