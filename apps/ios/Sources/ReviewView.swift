@@ -257,6 +257,10 @@ struct ReviewView: View {
             do {
                 try await client.write("undo_review", UndoArgs(cardId: step.card.id, expectedReps: step.result.card.reps, previous: step.card.previous, previousFsrsModel: step.card.fsrsModel, reviewTime: step.result.log.reviewTime))
                 undoSteps.removeLast(); redoSteps.append(step)
+                // Right for the write just made, even if the reload below fails.
+                cards.removeAll { $0.id == step.card.id }
+                cards.insert(step.card, at: 0)
+                revealed = false; show()
                 await load(front: step.card)
             } catch { self.error = String(describing: error) }
         }
@@ -269,6 +273,8 @@ struct ReviewView: View {
             do {
                 try await client.write("review_card", ReviewArgs(cardId: step.card.id, expectedReps: step.card.reps, card: step.result.card, log: step.result.log))
                 redoSteps.removeLast(); undoSteps.append(step)
+                cards.removeAll { $0.id == step.card.id }
+                revealed = false; show()
                 await load()
             } catch { self.error = String(describing: error) }
         }
