@@ -49,7 +49,8 @@ fn dispatch_and_desktop_register_the_same_data_commands() {
         .filter(|name| {
             !matches!(
                 *name,
-                "set_editor_history" | "confirm_exit" | "confirm_restart"
+                // Native folder selection belongs to the desktop shell, like menus.
+                "set_editor_history" | "confirm_exit" | "confirm_restart" | "pick_import_folder"
             )
         })
         .collect();
