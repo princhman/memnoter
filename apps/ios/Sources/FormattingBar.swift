@@ -29,8 +29,13 @@ struct FormattingBar: View {
     private var rowWidth: CGFloat { max(36, maximumWidth - 8) }
 
     var body: some View {
-        TouchScrollingRow {
-            buttons.fixedSize(horizontal: true, vertical: false)
+        HStack(spacing: 0) {
+            TouchScrollingRow {
+                buttons.fixedSize(horizontal: true, vertical: false)
+            }
+            divider
+            Button { session.web.endEditing(true) } label: { Image(systemName: "keyboard.chevron.compact.down") }
+                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Hide keyboard")
         }
         .frame(width: rowWidth, height: 44)
         .padding(.horizontal, 4)
@@ -45,81 +50,106 @@ struct FormattingBar: View {
         .accessibilityElement(children: .contain)
     }
 
+    // Left to right: cards, inline style, block type, lists, insertions, note
+    // sections, clipboard. Hide keyboard stays pinned outside the scrolling row.
     private var buttons: some View {
         HStack(spacing: 0) {
-            // Keep cloze creation visible without scrolling, including in a narrow window.
-            Button { session.exec(session.state.inCloze ? "removeCard" : "makeCard") } label: {
-                // Braces mean cloze on desktop too; the pressed state shows it can be removed.
-                Label("Cloze", systemImage: "curlybraces")
-                    .labelStyle(.titleAndIcon)
-                    .fixedSize()
-                    .padding(.horizontal, 4)
-            }
-            .buttonStyle(FormatButtonStyle(active: session.state.inCloze))
-            .disabled(!session.state.inCloze && !session.state.canMakeCard)
-            .accessibilityLabel(session.state.inCloze ? "Remove cloze" : "Make cloze from selection")
-            .accessibilityAddTraits(session.state.inCloze ? .isSelected : [])
+            cardGroup
             divider
-            formatButton("Bold", "bold", "bold", active: mark("bold"))
-            formatButton("Italic", "italic", "italic", active: mark("italic"))
-            formatButton("Underline", "underline", "underline", active: mark("underline"))
-            formatButton("Bullet list", "list.bullet", "bulletList", active: session.state.bulletList)
-            formatButton("Inline math", "function", "inlineMath", active: session.state.blockType == "inlineMath")
+            styleGroup
             divider
-            Button { session.clipboard(#selector(UIResponderStandardEditActions.paste(_:))) } label: { Image(systemName: "doc.on.clipboard") }
-                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Paste")
-            Button { session.clipboard(#selector(UIResponderStandardEditActions.copy(_:))) } label: { Image(systemName: "doc.on.doc") }
-                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Copy")
-            Button { session.clipboard(#selector(UIResponderStandardEditActions.cut(_:))) } label: { Image(systemName: "scissors") }
-                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Cut")
+            blockGroup
             divider
-            ForEach(1...6, id: \.self) { level in paragraph("H\(level)", level: level) }
-            paragraph("Text", level: nil)
+            listGroup
             divider
-            formatButton("Strikethrough", "strikethrough", "strike", active: mark("strike"))
-            formatButton("Code", "chevron.left.forwardslash.chevron.right", "code", active: mark("code"))
+            insertGroup
             divider
-            formatButton("Numbered list", "list.number", "orderedList", active: session.state.orderedList)
-            formatButton("Quote", "text.quote", "blockquote", active: session.state.blockquote)
-            Button { session.exec("codeBlock") } label: {
-                Label("Code block", systemImage: "chevron.left.forwardslash.chevron.right")
-                    .labelStyle(.titleAndIcon)
-                    .fixedSize()
-                    .padding(.horizontal, 4)
-            }
-            .buttonStyle(FormatButtonStyle(active: session.state.blockType == "codeBlock"))
-            .accessibilityLabel("Code block")
-            .accessibilityAddTraits(session.state.blockType == "codeBlock" ? .isSelected : [])
+            sectionGroup
             divider
-            formatButton("Math block", "x.squareroot", "mathBlock", active: session.state.blockType == "mathBlock")
-            Button { editingLink = true } label: { Image(systemName: "link") }
-                .buttonStyle(FormatButtonStyle(active: mark("link")))
-                .accessibilityLabel("Edit link").accessibilityAddTraits(mark("link") ? .isSelected : [])
-                .popover(isPresented: $editingLink) {
-                    linkEditor.padding().presentationCompactAdaptation(.popover)
-                }
-            PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
-                .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
-            divider
-            Button { session.exec("insertSection", ["kind": "sibling"]) } label: { Image(systemName: "text.badge.plus") }
-                .buttonStyle(FormatButtonStyle()).accessibilityLabel("New section")
-            Button { session.exec("insertSection", ["kind": "subsection"]) } label: { Image(systemName: "text.insert") }
-                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Subsection")
-            formatButton("Indent list item", "increase.indent", "indent").disabled(!session.state.canIndent)
-            formatButton("Outdent list item", "decrease.indent", "outdent").disabled(!session.state.canOutdent)
-            formatButton(session.state.folded ? "Unfold current section" : "Fold current section",
-                         session.state.folded ? "chevron.right" : "chevron.down",
-                         session.state.folded ? "unfoldCurrentSection" : "foldCurrentSection", active: session.state.folded)
-                .disabled(!session.state.folded && !session.state.canFold)
-            // Offer joining only when the selection spans separate clozes.
-            if session.state.canJoinClozes {
-                divider
-                formatButton("Join clozes", "rectangle.stack", "joinClozes")
-            }
-            divider
-            Button { session.web.endEditing(true) } label: { Image(systemName: "keyboard.chevron.compact.down") }
-                .buttonStyle(FormatButtonStyle()).accessibilityLabel("Hide keyboard")
+            clipboardGroup
         }
+    }
+
+    @ViewBuilder private var cardGroup: some View {
+        // Keep cloze creation visible without scrolling, including in a narrow window.
+        Button { session.exec(session.state.inCloze ? "removeCard" : "makeCard") } label: {
+            // Braces mean cloze on desktop too; the pressed state shows it can be removed.
+            Label("Cloze", systemImage: "curlybraces")
+                .labelStyle(.titleAndIcon)
+                .fixedSize()
+                .padding(.horizontal, 4)
+        }
+        .buttonStyle(FormatButtonStyle(active: session.state.inCloze))
+        .disabled(!session.state.inCloze && !session.state.canMakeCard)
+        .accessibilityLabel(session.state.inCloze ? "Remove cloze" : "Make cloze from selection")
+        .accessibilityAddTraits(session.state.inCloze ? .isSelected : [])
+        // Offer joining only when the selection spans separate clozes.
+        if session.state.canJoinClozes {
+            formatButton("Join clozes", "rectangle.stack", "joinClozes")
+        }
+    }
+
+    @ViewBuilder private var styleGroup: some View {
+        formatButton("Bold", "bold", "bold", active: mark("bold"))
+        formatButton("Italic", "italic", "italic", active: mark("italic"))
+        formatButton("Underline", "underline", "underline", active: mark("underline"))
+        formatButton("Strikethrough", "strikethrough", "strike", active: mark("strike"))
+        formatButton("Code", "chevron.left.forwardslash.chevron.right", "code", active: mark("code"))
+    }
+
+    @ViewBuilder private var blockGroup: some View {
+        paragraph("Text", level: nil)
+        ForEach(1...6, id: \.self) { level in paragraph("H\(level)", level: level) }
+        formatButton("Quote", "text.quote", "blockquote", active: session.state.blockquote)
+    }
+
+    @ViewBuilder private var listGroup: some View {
+        formatButton("Bullet list", "list.bullet", "bulletList", active: session.state.bulletList)
+        formatButton("Numbered list", "list.number", "orderedList", active: session.state.orderedList)
+        formatButton("Outdent list item", "decrease.indent", "outdent").disabled(!session.state.canOutdent)
+        formatButton("Indent list item", "increase.indent", "indent").disabled(!session.state.canIndent)
+    }
+
+    @ViewBuilder private var insertGroup: some View {
+        formatButton("Inline math", "function", "inlineMath", active: session.state.blockType == "inlineMath")
+        formatButton("Math block", "x.squareroot", "mathBlock", active: session.state.blockType == "mathBlock")
+        Button { session.exec("codeBlock") } label: {
+            Label("Code block", systemImage: "chevron.left.forwardslash.chevron.right")
+                .labelStyle(.titleAndIcon)
+                .fixedSize()
+                .padding(.horizontal, 4)
+        }
+        .buttonStyle(FormatButtonStyle(active: session.state.blockType == "codeBlock"))
+        .accessibilityLabel("Code block")
+        .accessibilityAddTraits(session.state.blockType == "codeBlock" ? .isSelected : [])
+        Button { editingLink = true } label: { Image(systemName: "link") }
+            .buttonStyle(FormatButtonStyle(active: mark("link")))
+            .accessibilityLabel("Edit link").accessibilityAddTraits(mark("link") ? .isSelected : [])
+            .popover(isPresented: $editingLink) {
+                linkEditor.padding().presentationCompactAdaptation(.popover)
+            }
+        PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
+            .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
+    }
+
+    @ViewBuilder private var sectionGroup: some View {
+        Button { session.exec("insertSection", ["kind": "sibling"]) } label: { Image(systemName: "text.badge.plus") }
+            .buttonStyle(FormatButtonStyle()).accessibilityLabel("New section")
+        Button { session.exec("insertSection", ["kind": "subsection"]) } label: { Image(systemName: "text.insert") }
+            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Subsection")
+        formatButton(session.state.folded ? "Unfold current section" : "Fold current section",
+                     session.state.folded ? "chevron.right" : "chevron.down",
+                     session.state.folded ? "unfoldCurrentSection" : "foldCurrentSection", active: session.state.folded)
+            .disabled(!session.state.folded && !session.state.canFold)
+    }
+
+    @ViewBuilder private var clipboardGroup: some View {
+        Button { session.clipboard(#selector(UIResponderStandardEditActions.cut(_:))) } label: { Image(systemName: "scissors") }
+            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Cut")
+        Button { session.clipboard(#selector(UIResponderStandardEditActions.copy(_:))) } label: { Image(systemName: "doc.on.doc") }
+            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Copy")
+        Button { session.clipboard(#selector(UIResponderStandardEditActions.paste(_:))) } label: { Image(systemName: "doc.on.clipboard") }
+            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Paste")
     }
 
     private var linkEditor: some View {
