@@ -8,6 +8,9 @@ struct ReviewView: View {
     let moduleId: String?
     let editCard: (StoredCard) -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var toolbarWidth: CGFloat = 0
+    @State private var reviewCounts = ReviewCounts()
     @State private var controlsWidth: CGFloat = 0
     @State private var intervals: [String] = []
     @AppStorage("skipCardsCreatedToday") private var skipCardsCreatedToday = false
@@ -40,16 +43,30 @@ struct ReviewView: View {
             } else { ContentUnavailableView("All caught up", systemImage: "checkmark.circle", description: Text("No cards are due.")) }
         }
         .background(Color(uiColor: .systemBackground))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
         .toolbar {
-            ToolbarItemGroup(placement: .topBarLeading) {
+            // Break the shared glass background after RootView's sidebar control.
+            if #available(iOS 26.0, *), horizontalSizeClass != .compact {
+                ToolbarSpacer(.fixed, placement: .topBarLeading)
+            }
+            ToolbarItemGroup(placement: horizontalSizeClass == .compact ? .topBarTrailing : .topBarLeading) {
                 Button("Undo", systemImage: "arrow.uturn.backward") { undo() }
                     .disabled(undoSteps.isEmpty || busy).keyboardShortcut("z")
+                    .padding(.leading, legacyToolbarSpacing)
                 Button("Redo", systemImage: "arrow.uturn.forward") { redo() }
                     .disabled(redoSteps.isEmpty || busy).keyboardShortcut("z", modifiers: [.command, .shift])
-                Button("Edit card", systemImage: "pencil") { if let card = cards.first { editCard(card) } }
-                    .disabled(cards.isEmpty || busy)
-                Button("Go to card in note", systemImage: "scope") { if let card = cards.first { editCard(card) } }
-                    .disabled(cards.isEmpty || busy)
+                if toolbarWidth < 700 {
+                    Menu { cardActions } label: { Label("Card actions", systemImage: "ellipsis") }
+                        .disabled(cards.isEmpty || busy)
+                } else {
+                    cardActions
+                }
+            }
+            if #available(iOS 26.0, *), horizontalSizeClass == .compact {
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                countsLabel
             }
         }
         .task {
@@ -61,7 +78,10 @@ struct ReviewView: View {
         .task {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
-                if !busy && (cards.isEmpty || loadedCutoff != createdAtCutoff) { await load() }
+                if !busy {
+                    if cards.isEmpty || loadedCutoff != createdAtCutoff { await load() }
+                    else { await refreshCounts() }
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { _ in
@@ -70,10 +90,51 @@ struct ReviewView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .cardsDidChange)) { _ in
             // Keep the card being answered; each rating reloads the queue anyway.
-            if !busy && cards.isEmpty { Task { await load() } }
+            if !busy { Task { if cards.isEmpty { await load() } else { await refreshCounts() } } }
         }
         .onChange(of: skipCardsCreatedToday) { _, _ in Task { if !busy { await load() } } }
         .onDisappear { session?.dispose() }
+    }
+    private var legacyToolbarSpacing: CGFloat {
+        if #available(iOS 26.0, *) { return 0 }
+        return 16 // Older navigation bars have no shared glass; leave a visible gap.
+    }
+    @ViewBuilder private var cardActions: some View {
+        Button("Edit card", systemImage: "pencil") { if let card = cards.first { editCard(card) } }
+            .disabled(cards.isEmpty || busy)
+        Button("Go to card in note", systemImage: "scope") { if let card = cards.first { editCard(card) } }
+            .disabled(cards.isEmpty || busy)
+    }
+    private var countsLabel: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            countLabel(reviewCounts.new, later: reviewCounts.laterNew, light: 0x0284c7, dark: 0x38bdf8)
+            countLabel(reviewCounts.learning, later: reviewCounts.laterLearning, light: 0xdc2626, dark: 0xf87171)
+            countLabel(reviewCounts.review, later: reviewCounts.laterReview, light: 0x059669, dark: 0x34d399)
+        }
+        .font(.system(size: 14)).monospacedDigit()
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(reviewCounts.accessibilityLabel)
+        .accessibilityIdentifier("review.counts")
+    }
+    private func countLabel(_ count: Int, later: Int, light: Int, dark: Int) -> some View {
+        let rgb = colorScheme == .dark ? dark : light
+        return HStack(alignment: .firstTextBaseline, spacing: 1) {
+            Text(count.formatted(.number.grouping(.never))).opacity(count > 0 ? 1 : 0.4)
+            if later > 0 {
+                Text("+\(later)").font(.system(size: 9)).baselineOffset(5).opacity(0.7)
+            }
+        }
+        .foregroundStyle(Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255))
+    }
+    func refreshCounts() async {
+        do {
+            let now = Date()
+            let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))!
+            let rows: [ReviewCountRow] = try await client.call("due_counts", CountArgs(
+                now: Int64(now.timeIntervalSince1970 * 1000), dayEnd: Int64(dayEnd.timeIntervalSince1970 * 1000), createdAtCutoff: createdAtCutoff))
+            reviewCounts = ReviewCounts(rows: rows, moduleId: moduleId)
+        } catch { self.error = String(describing: error) }
     }
     private let gradeTitles = ["Again", "Hard", "Good", "Easy"]
     private let gradeTints: [Color] = [
@@ -146,6 +207,7 @@ struct ReviewView: View {
             cards = try await client.call("due_cards", DueArgs(moduleId: moduleId, now: Int64(Date().timeIntervalSince1970 * 1000), createdAtCutoff: cutoff))
             loadedCutoff = cutoff
             error = nil; intervals = []; revealed = false; show()
+            await refreshCounts()
         } catch { self.error = String(describing: error) }
     }
     func show() {
@@ -182,6 +244,7 @@ struct ReviewView: View {
                 try await client.write("undo_review", UndoArgs(cardId: step.card.id, expectedReps: step.result.card.reps, previous: step.card.previous, previousFsrsModel: step.card.fsrsModel, reviewTime: step.result.log.reviewTime))
                 undoSteps.removeLast(); redoSteps.append(step)
                 cards = step.queueBefore; revealed = false; error = nil; show()
+                await refreshCounts()
             } catch { self.error = String(describing: error) }
         }
     }
@@ -194,7 +257,39 @@ struct ReviewView: View {
                 try await client.write("review_card", ReviewArgs(cardId: step.card.id, expectedReps: step.card.reps, card: step.result.card, log: step.result.log))
                 redoSteps.removeLast(); undoSteps.append(step)
                 cards = step.queueAfter; revealed = false; error = nil; show()
+                await refreshCounts()
             } catch { self.error = String(describing: error) }
         }
+    }
+}
+
+// The core owns due-time, sibling-delay and created-today rules. Swift only
+// selects/sums its per-module rows, exactly as desktop useDueCounts does.
+struct ReviewCountRow: Decodable, Sendable {
+    let moduleId: String
+    let new: Int
+    let learning: Int
+    let review: Int
+    let laterNew: Int
+    let laterLearning: Int
+    let laterReview: Int
+}
+struct ReviewCounts: Equatable {
+    var new = 0
+    var learning = 0
+    var review = 0
+    var laterNew = 0
+    var laterLearning = 0
+    var laterReview = 0
+    init(rows: [ReviewCountRow] = [], moduleId: String? = nil) {
+        for row in rows where moduleId == nil || row.moduleId == moduleId {
+            new += row.new; learning += row.learning; review += row.review
+            laterNew += row.laterNew; laterLearning += row.laterLearning; laterReview += row.laterReview
+        }
+    }
+    var accessibilityLabel: String {
+        [(new, laterNew, "new"), (learning, laterLearning, "learning"), (review, laterReview, "to review")]
+            .map { count, later, label in "\(count) \(label)" + (later > 0 ? " (+\(later) later today)" : "") }
+            .joined(separator: ", ")
     }
 }

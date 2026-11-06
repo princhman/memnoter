@@ -4,6 +4,7 @@ import PhotosUI
 struct RootView: View {
     @Bindable var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var session: WebSession?
     @State private var backgroundWork: Task<Void, Never>?
     @State private var previewColumnVisibility: NavigationSplitViewVisibility?
@@ -122,17 +123,20 @@ struct RootView: View {
             .ignoresSafeArea(.container, edges: session?.imagePreviewOpen == true ? .all : [])
             .toolbar(session?.imagePreviewOpen == true ? .hidden : .automatic, for: .navigationBar)
             .statusBarHidden(session?.imagePreviewOpen == true)
-            .navigationTitle(module?.name ?? (selected == "review" ? "Review" : "Home"))
+            .navigationTitle(selected == "review" && detailWidth < 500 ? "" : (module?.name ?? (selected == "review" ? "Review" : "Home")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text(module?.name ?? (selected == "review" ? "Review" : "Home"))
-                        .lineLimit(1).truncationMode(.tail)
-                        .accessibilityIdentifier("module.title")
+                // Reserve narrow-window space for review history and counts.
+                if selected != "review" || detailWidth >= 500 {
+                    ToolbarItem(placement: .principal) {
+                        Text(module?.name ?? (selected == "review" ? "Review" : "Home"))
+                            .lineLimit(1).truncationMode(.tail)
+                            .accessibilityIdentifier("module.title")
+                    }
                 }
             }
             .toolbar {
-                if columnVisibility == .detailOnly {
+                if columnVisibility == .detailOnly && (selected != "review" || horizontalSizeClass != .compact) {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
                             .accessibilityLabel("Show Sidebar")
