@@ -187,7 +187,13 @@ export function markdownToJSON(source: string, resolveImage?: ImageResolver): JS
       if (run.length || !result.length) result.push({ ...node, content: run });
       return result;
     }
-    const content = node.content?.flatMap(split);
+    let content = node.content?.flatMap(split);
+    // Note cells allow paragraphs and images. Keep display formulas as inline
+    // math in a paragraph so both paste and folder import fit the same schema.
+    if (node.type === "tableCell" || node.type === "tableHeader") {
+      content = content?.map(child => child.type === "mathBlock"
+        ? paragraph([{ type: "inlineMath", content: child.content }]) : child);
+    }
     // ProseMirror list items require a paragraph first, even when an Obsidian
     // item starts with an image or display formula.
     if (node.type === "listItem" && content?.[0]?.type !== "paragraph") content?.unshift(paragraph());
