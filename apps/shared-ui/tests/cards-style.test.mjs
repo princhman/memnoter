@@ -55,7 +55,10 @@ test("two-way arrow keeps full-size heads and a longer shaft in both appearances
     assert.ok(svg.includes("M3 8h18"));
   }
   assert.equal(style(".tiptap .card-sep-both").get("background-size"), "1.5em 1em");
-  assert.ok(parseFloat(style(".tiptap .card-sep-both").get("padding-inline")) >= 0.4);
+  // Padding would repeat on each span when a selection splits the separator.
+  assert.ok(parseFloat(style(".tiptap .card-sep-both").get("letter-spacing")) * 3 >= 0.8);
+  assert.equal(style(".tiptap .card-sep").get("padding-inline"), undefined);
+  assert.equal(style(".tiptap .card-sep-both").get("padding-inline"), undefined);
 });
 
 test("the card dot's list offset matches one level of list indent", () => {

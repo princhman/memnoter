@@ -1416,8 +1416,10 @@ body {
 
 /* `::` reads as a subtle arrow. The characters stay in place, drawn
    transparent over an arrow image, and show as typed in the caret's block. */
+/* Room for the arrow comes from letter spacing, not padding: a selection splits
+   the separator into several spans, and each would repeat the padding. */
 .tiptap .card-sep {
-    padding-inline: 0.12em;
+    letter-spacing: 0.12em;
     color: transparent;
     background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8h10.5M9.5 4.5 13 8l-3.5 3.5' fill='none' stroke='%23737373' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 1em no-repeat;
 }
@@ -1429,7 +1431,7 @@ body {
 .tiptap .card-sep-both {
     background-size: 1.5em 1em;
     /* Three narrow colon glyphs need room for the wider SVG. */
-    padding-inline: 0.4em;
+    letter-spacing: 0.267em;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 16'%3E%3Cpath d='M3 8h18M6.5 4.5 3 8l3.5 3.5M17.5 4.5 21 8l-3.5 3.5' fill='none' stroke='%23737373' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
