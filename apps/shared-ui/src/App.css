@@ -1564,3 +1564,31 @@ body {
 .dark .occlusion-dialog {
     box-shadow: var(--floating-shadow);
 }
+
+/* Semantic note colours stay softer than amber find matches. Selection's
+   opaque indigo decoration takes precedence; clozes retain their underline. */
+:root {
+    --highlight-yellow: oklch(0.94 0.085 95);
+    --highlight-green: oklch(0.92 0.065 150);
+    --highlight-blue: oklch(0.92 0.05 235);
+    --highlight-pink: oklch(0.93 0.055 355);
+    --highlight-purple: oklch(0.92 0.055 300);
+}
+.dark {
+    --highlight-yellow: oklch(0.39 0.055 95);
+    --highlight-green: oklch(0.36 0.045 150);
+    --highlight-blue: oklch(0.37 0.05 235);
+    --highlight-pink: oklch(0.38 0.05 355);
+    --highlight-purple: oklch(0.38 0.055 300);
+}
+[data-color="yellow"] { --note-highlight: var(--highlight-yellow); }
+[data-color="green"] { --note-highlight: var(--highlight-green); }
+[data-color="blue"] { --note-highlight: var(--highlight-blue); }
+[data-color="pink"] { --note-highlight: var(--highlight-pink); }
+[data-color="purple"] { --note-highlight: var(--highlight-purple); }
+.note-highlight {
+    background-color: color-mix(in oklch, var(--note-highlight, var(--highlight-yellow)) 65%, transparent);
+    color: inherit;
+    border-radius: 0.15em;
+    box-decoration-break: clone;
+}
