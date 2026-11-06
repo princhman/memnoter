@@ -27,8 +27,7 @@ test("cloze braces stay hidden while editing their block", () => {
 test("the hidden answer is tinted and clearly underlined", () => {
   const answer = style(".tiptap .cloze-text");
   assert.equal(answer.get("border-radius"), undefined);
-  assert.equal(answer.get("text-decoration-line"), "underline");
-  assert.ok(Number.parseFloat(answer.get("text-decoration-thickness")) >= 2);
+  assert.match(answer.get("box-shadow"), /^inset 0 -2px 0 0 /);
   assert.ok(answer.get("background-color") && answer.get("background-color") !== "transparent");
 });
 
@@ -43,7 +42,26 @@ test("rendered cloze math shares the tint and has a square underline", () => {
   const math = style(".tiptap .cloze-math .inline-math-widget");
   assert.equal(math.get("background-color"), style(".tiptap .cloze-text").get("background-color"));
   assert.equal(math.get("border-radius"), "0");
-  assert.ok(math.get("box-shadow"));
+  assert.equal(math.get("box-shadow"), style(".tiptap .cloze-text").get("box-shadow"));
   assert.equal(style(".dark .tiptap .cloze-math .inline-math-widget").get("background-color"),
     style(".dark .tiptap .cloze-text").get("background-color"));
+});
+
+test("two-way arrow keeps full-size heads and a longer shaft in both appearances", () => {
+  for (const selector of [".tiptap .card-sep-both", ".dark .tiptap .card-sep-both"]) {
+    const svg = decodeURIComponent(style(selector).get("background-image"));
+    assert.ok(svg.includes("viewBox='0 0 24 16'"));
+    assert.ok(svg.includes("stroke-width='1.4'"));
+    assert.ok(svg.includes("M3 8h18"));
+  }
+  assert.equal(style(".tiptap .card-sep-both").get("background-size"), "1.5em 1em");
+  // Padding would repeat on each span when a selection splits the separator.
+  assert.ok(parseFloat(style(".tiptap .card-sep-both").get("letter-spacing")) * 3 >= 0.8);
+  assert.equal(style(".tiptap .card-sep").get("padding-inline"), undefined);
+  assert.equal(style(".tiptap .card-sep-both").get("padding-inline"), undefined);
+});
+
+test("the card dot's list offset matches one level of list indent", () => {
+  const indent = Number.parseFloat(style(".tiptap ul,\n.tiptap ol").get("padding-left")) + Number.parseFloat(style(".tiptap li").get("padding-left"));
+  assert.equal(Number.parseFloat(style(".tiptap").get("--card-list-indent")), indent);
 });

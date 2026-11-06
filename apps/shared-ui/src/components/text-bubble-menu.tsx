@@ -155,7 +155,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         <Sigma />
       </MarkButton>
       <MarkButton
-        label={active.inCloze ? "Remove card" : "Make card"}
+        label={active.inCloze ? "Remove cloze" : "Cloze"}
         hint={`${MOD_KEY}${MOD_KEY === "⌘" ? "⇧" : "Shift+"}C`}
         pressed={active.inCloze}
         disabled={!active.canMakeCard && !active.inCloze}

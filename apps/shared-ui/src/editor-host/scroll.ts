@@ -11,7 +11,12 @@ export function traceScroll(reason: string, details: Record<string, unknown> = {
 }
 
 export function observeScroll(container: HTMLElement) {
-  const log = () => traceScroll("scroll", { inner: container.scrollTop, document: document.scrollingElement?.scrollTop });
+  const log = () => {
+    traceScroll("scroll", { inner: container.scrollTop, document: document.scrollingElement?.scrollTop });
+    // iOS selection reveal can scroll the document even with overflow:hidden
+    // and native scroll gestures disabled. Only the inner editor may scroll.
+    if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+  };
   container.addEventListener("scroll", log);
   document.addEventListener("scroll", log, true);
   return () => { container.removeEventListener("scroll", log); document.removeEventListener("scroll", log, true); };
@@ -25,12 +30,16 @@ export function revealCaret(view: EditorView, reason = "selection") {
   const inset = Number(container.dataset.bottomInset ?? 0);
   const caret = view.coordsAtPos(view.state.selection.head);
   const top = visibleTop(container);
-  const bottom = container.getBoundingClientRect().top + container.clientTop + container.clientHeight - inset - 24;
-  const delta = caret.bottom > bottom ? caret.bottom - bottom : caret.top < top ? caret.top - top : 0;
+  const bottom = container.getBoundingClientRect().top + container.clientTop + container.clientHeight - inset;
+  if (bottom <= top) return;
+  // A caret below the visible editor moves to its middle. One above it moves
+  // just into view, except while typing: WebKit's layout is still settling then.
+  const delta = caret.bottom > bottom ? (caret.top + caret.bottom) / 2 - (top + bottom) / 2
+    : caret.top < top && reason !== "input" ? caret.top - top : 0;
   if (Math.abs(delta) < 1) return;
   container.dispatchEvent(new Event("memnoter:reveal"));
   traceScroll("caret", { trigger: reason, from: container.scrollTop, delta });
-  container.scrollTo({ top: container.scrollTop + delta,
+  container.scrollTo({ top: Math.max(0, Math.min(container.scrollTop + delta, container.scrollHeight - container.clientHeight)),
     behavior: "instant" });
 }
 

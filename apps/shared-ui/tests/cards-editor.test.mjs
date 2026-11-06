@@ -44,7 +44,7 @@ test("Enter before a card retains its review identity and paste assigns a new id
   }
 });
 
-test("Make card wraps the selection, assigns an id and undoes as a text edit", () => {
+test("Cloze wraps the selection, assigns an id and undoes as a text edit", () => {
   const editor = editorFor([paragraph("A  Paris  B")]);
   try {
     editor.commands.setTextSelection({ from: 2, to: 11 });
@@ -65,7 +65,7 @@ test("Make card wraps the selection, assigns an id and undoes as a text edit", (
   }
 });
 
-test("Remove card unwraps the cloze around the selection instead of nesting braces", () => {
+test("Remove cloze unwraps the cloze around the selection instead of nesting braces", () => {
   const editor = editorFor([paragraph("A {{Paris}} B")]);
   try {
     // Selecting the answer, as the bubble menu needs, offers removal only.

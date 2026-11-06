@@ -53,7 +53,7 @@ function Segments({ segments }: { segments: Segment[] }) {
         return (
           <span
             key={index}
-            className="mx-0.5 inline-block min-w-12 rounded-md bg-primary/10 px-2 text-center text-primary"
+            className="mx-0.5 inline-block min-w-12 rounded-md bg-primary/10 px-2 text-center text-primary dark:bg-chart-1/14 dark:text-chart-1"
           >
             […]
           </span>
@@ -62,7 +62,7 @@ function Segments({ segments }: { segments: Segment[] }) {
         return <HiddenCloze key={index}>{segment.children}</HiddenCloze>;
       case "cloze":
         return (
-          <span key={index} className="rounded-md bg-primary/10 px-1 font-medium text-primary">
+          <span key={index} className="rounded-md bg-primary/10 px-1 font-medium text-primary dark:bg-chart-1/14 dark:text-chart-1">
             <Segments segments={segment.children} />
           </span>
         );

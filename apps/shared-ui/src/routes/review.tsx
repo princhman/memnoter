@@ -29,6 +29,7 @@ import { blockIdOf } from "@/lib/cards";
 import { requestCardReveal } from "@/lib/card-reveal";
 import { setNativeEditorHistory } from "@/lib/native-history";
 import { reviewActionsStore } from "@/lib/review-actions";
+import { cardCountKind } from "@/components/card-counts";
 
 type ReviewSearch = { module?: string };
 
@@ -60,14 +61,10 @@ function reviewedFields(card: StoredCard) {
 function countByState(queue: StoredCard[], now: number) {
   const counts = { new: 0, learning: 0, review: 0, laterToday: { new: 0, learning: 0, review: 0 } };
   for (const card of queue) {
-    const { state } = card;
     const dueAt = reviewDueAt(card);
     if (dueAt > endOfDay(now)) continue;
     const split = dueAt <= now ? counts : counts.laterToday;
-    // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
-    if (state === 0) split.new++;
-    else if (state === 2) split.review++;
-    else split.learning++;
+    split[cardCountKind(card.state)]++;
   }
   return counts;
 }
@@ -349,6 +346,7 @@ function Review() {
   useEffect(() => {
     reviewActionsStore.setState(() => ({
       counts: queue ? countByState(queue, now) : null,
+      current: card ? cardCountKind(card.state) : null,
       canUndo: undoSteps.length > 0,
       canRedo: redoSteps.length > 0,
       undo: () => void undo(),

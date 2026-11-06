@@ -1,7 +1,10 @@
 import { onRemote, onFileStored, type ApplyResult } from "@/lib/sync/manager";
 import type { FileType } from "@/lib/content";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { requestCardReveal } from "@/lib/card-reveal";
+import { blockIdOf } from "@/lib/cards";
 import { sectionFocusKey } from "@/lib/section-focus";
+import { observeCardInfo } from "./card-info";
 import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop } from "./scroll";
 import Tiptap from "@/components/Tiptap";
 import { useActiveEditor } from "@/lib/active-editor-context";
@@ -21,6 +24,7 @@ declare global {
       fileStored(moduleId: string, file: FileType): void;
       setBottomInset(px: number): void;
       setTopInset(px: number): void;
+      revealCard(moduleId: string, cardId: string): void;
       open(moduleId: string): Promise<void>;
       flush(): Promise<void>;
       refreshModules(): Promise<void>;
@@ -31,6 +35,9 @@ declare global {
     };
   }
 }
+
+// How long after typing the caret may not be revealed upward.
+const TYPING_SETTLE_MS = 300;
 
 export function Host() {
   const [moduleId, setModuleId] = useState<string | null>(null);
@@ -43,6 +50,7 @@ export function Host() {
   useLayoutEffect(() => { active.current = activeEditor; }, [activeEditor]);
 
   useEffect(() => {
+    const stopCardInfo = container.current ? observeCardInfo(container.current) : () => {};
     const stopScroll = container.current ? observeScroll(container.current) : () => {};
     const fail = (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -100,6 +108,7 @@ export function Host() {
         try { return execEditor(getEditor(["scrollToHeading", "focusSection", "focusCurrentSection", "showDocument", "find"].includes(command)), command, args); }
         catch (error) { fail(error); return false; }
       },
+      revealCard(moduleId, cardId) { requestCardReveal({ moduleId, blockId: blockIdOf(cardId) }); },
       focus() {
         try { return getEditor().commands.focus(); }
         catch (error) { fail(error); return false; }
@@ -127,7 +136,7 @@ export function Host() {
     const stopImages = imageStatusStore.subscribe(saveStatus);
     saveStatus();
     postNativeEvent("ready", { protocolVersion: 1 });
-    return () => { stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
+    return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
   }, []);
 
   useEffect(() => {
@@ -181,15 +190,42 @@ export function Host() {
       opening.current = null;
     }
     let frame = 0;
+    let inputScroll: number | undefined;
+    let lastInput = Number.NEGATIVE_INFINITY;
+    const element = container.current;
     const reveal = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => { if (!editor.isDestroyed) revealCaret(editor.view); });
+      frame = requestAnimationFrame(() => {
+        if (editor.isDestroyed) return;
+        // WebKit may reveal the selection during input even when ProseMirror's
+        // scrolling is handled. Apply our visibility rule from the reader's
+        // pre-input position, rather than from WebKit's unsolicited scroll.
+        if (element && inputScroll !== undefined) element.scrollTop = inputScroll;
+        inputScroll = undefined;
+        // Selection, update and focus events can trail the input by several
+        // frames, while WebKit's layout is still settling.
+        revealCaret(editor.view, performance.now() - lastInput < TYPING_SETTLE_MS ? "input" : "selection");
+      });
     };
+    const beforeInput = (event: Event) => {
+      // Undo and redo jump to wherever the change was, so they may need to scroll.
+      const history = event instanceof InputEvent && event.inputType.startsWith("history");
+      if (!history) {
+        lastInput = performance.now();
+        if (element && inputScroll === undefined) inputScroll = element.scrollTop;
+      }
+      reveal();
+    };
+    const keydown = (event: KeyboardEvent) => { if (event.key === "Enter") beforeInput(event); };
+    element?.addEventListener("beforeinput", beforeInput, true);
+    element?.addEventListener("keydown", keydown, true);
     editor.on("transaction", publish);
     editor.on("selectionUpdate", reveal);
     editor.on("update", reveal);
     editor.on("focus", reveal);
     return () => {
+      element?.removeEventListener("beforeinput", beforeInput, true);
+      element?.removeEventListener("keydown", keydown, true);
       clearTimeout(scrollTimer);
       container.current?.removeEventListener("scroll", onScroll);
       refreshOutline.current = () => {};

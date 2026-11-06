@@ -18,6 +18,19 @@ test('WK review host scrolls long questions and revealed answers within its view
     });
     await page.goto(`http://localhost:${server.httpServer.address().port}/review-native.html`);
     await page.waitForFunction(() => window.memnoterReview);
+    // The same mounted WK host must follow appearance changes without reloading.
+    for (const colorScheme of ['dark', 'light']) {
+      await page.emulateMedia({ colorScheme });
+      await page.waitForFunction(dark => document.documentElement.classList.contains('dark') === dark, colorScheme === 'dark');
+      const colors = await page.evaluate(() => ({
+        scheme: document.documentElement.style.colorScheme,
+        background: getComputedStyle(document.body).backgroundColor,
+        foreground: getComputedStyle(document.body).color,
+      }));
+      assert.equal(colors.scheme, colorScheme);
+      assert.equal(colors.background, 'rgba(0, 0, 0, 0)', 'Native background shows through');
+      assert.ok(colors.foreground);
+    }
     for (const revealed of [false, true]) {
       await page.evaluate(revealed => window.memnoterReview.show({
         id: 'long', reps: 0, kind: 'basic',

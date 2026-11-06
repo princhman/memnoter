@@ -149,8 +149,9 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
     assert.ok(await page.getByRole("button", { name: "Redo", exact: true }).isEnabled());
     await page.getByRole("button", { name: "Redo", exact: true }).click();
     await page.getByText("Second", { exact: true }).waitFor();
-    await page.keyboard.press("Space");
-    await page.keyboard.press("4");
+    // Clicks, not Space and 4: Redo keeps focus, and Space skips a focused button.
+    await page.getByRole("button", { name: "Show answer" }).click();
+    await page.getByRole("button", { name: /^Easy/ }).click();
     await page.getByText("You reviewed 2 cards.", { exact: true }).waitFor();
   } finally {
     await page.close();

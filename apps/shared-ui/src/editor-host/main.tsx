@@ -11,13 +11,7 @@ import "../App.css";
 import "katex/dist/katex.min.css";
 import "./host.css";
 
-const theme = window.matchMedia("(prefers-color-scheme: dark)");
-const applyTheme = () => {
-  document.documentElement.classList.toggle("dark", theme.matches);
-  document.documentElement.style.colorScheme = theme.matches ? "dark" : "light";
-};
-theme.addEventListener("change", applyTheme);
-applyTheme();
+import "./theme";
 
 // Keep this in the editor entry: review-native.html only renders card faces.
 function CardBackfill() {

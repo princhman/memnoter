@@ -12,7 +12,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
   try {
     await server.listen();
     browser = await webkit.launch();
-    const context = await browser.newContext({ reducedMotion: "reduce" });
+    const context = await browser.newContext({ reducedMotion: "reduce", hasTouch: true });
     const page = await context.newPage();
     if (process.env.SCROLL_TRACE) page.on('console', message => { if (message.text().startsWith('[scroll]')) console.log(message.text()); });
     const errors = [];
@@ -201,6 +201,63 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.keyboard.type('x');
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.ok(Math.abs(await page.locator('.app-scroll-container').evaluate(node => node.scrollTop) - visibleScroll) < 1);
+    // Reuse this page/browser: Enter at the end of a long note must keep a
+    // visible caret still, and reveal an occluded caret to the visible midpoint.
+    const settleScroll = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const caretGeometry = () => page.evaluate(() => {
+      const range = window.getSelection().getRangeAt(0).cloneRange();
+      range.collapse(false);
+      const rect = range.getBoundingClientRect();
+      const container = document.querySelector('.app-scroll-container');
+      const top = container.getBoundingClientRect().top + container.clientTop + Number(container.dataset.topInset ?? 0);
+      const bottom = container.getBoundingClientRect().top + container.clientTop + container.clientHeight - Number(container.dataset.bottomInset ?? 0);
+      return { scroll: container.scrollTop, caret: (rect.top + rect.bottom) / 2, midpoint: (top + bottom) / 2 };
+    });
+    await page.evaluate(() => window.memnoterEditor.setTopInset(60));
+    await page.locator('.tiptap p').filter({ hasText: 'Tail ' }).evaluate(node => {
+      const range = document.createRange();
+      range.setStart(node.firstChild, 4000);
+      range.collapse(true);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
+    await settleScroll();
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Tail Visible caret');
+    await settleScroll();
+    const beforeEnter = await caretGeometry();
+    await page.keyboard.press('Enter');
+    await settleScroll();
+    const afterEnter = await caretGeometry();
+    assert.ok(Math.abs(afterEnter.scroll - beforeEnter.scroll) < 1, JSON.stringify({ beforeEnter, afterEnter }));
+    // Move the reader while leaving the selection in place, then type Enter.
+    await page.evaluate(() => {
+      const range = window.getSelection().getRangeAt(0).cloneRange();
+      range.collapse(false);
+      const container = document.querySelector('.app-scroll-container');
+      const bottom = container.getBoundingClientRect().bottom - Number(container.dataset.bottomInset);
+      container.scrollTop += range.getBoundingClientRect().bottom - bottom - 60;
+    });
+    await page.keyboard.press('Enter');
+    await settleScroll();
+    const revealed = await caretGeometry();
+    assert.ok(Math.abs(revealed.caret - revealed.midpoint) < 20, JSON.stringify(revealed));
+    // Undo can leave the caret above the visible area, and must bring it back.
+    // Typing must not: WebKit reports unsettled positions while it lays out.
+    const revealAbove = reason => page.evaluate(async reason => {
+      const { revealCaret } = await import('/src/editor-host/scroll.ts');
+      const container = document.querySelector('.app-scroll-container');
+      const before = container.scrollTop;
+      const top = container.getBoundingClientRect().top + 60 - 100;
+      revealCaret({
+        isDestroyed: false, hasFocus: () => true, state: { selection: {} },
+        dom: container.querySelector('.tiptap'), coordsAtPos: () => ({ top, bottom: top + 20 }),
+      }, reason);
+      return before - container.scrollTop;
+    }, reason);
+    assert.equal(await revealAbove('input'), 0);
+    assert.equal(await revealAbove('selection'), 100);
+    await page.evaluate(() => window.memnoterEditor.setTopInset(0));
     await page.evaluate(() => window.memnoterEditor.setBottomInset(0));
     const focus = await page.evaluate(() => {
       const outline = window.messages.filter(m => m.event === 'outline').at(-1).payload.headings;
@@ -297,6 +354,56 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await restored.close();
     await page.bringToFront();
     const exec = (command, args) => page.evaluate(([command, args]) => window.memnoterEditor.exec(command, args), [command, args]);
+    await t.test('card info taps preserve focus and selection and consume dismissal', async () => {
+      const menu = await context.newPage();
+      await menu.setViewportSize({ width: 820, height: 1180 });
+      await menu.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+      await menu.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+      await menu.evaluate(() => window.memnoterEditor.open('card-menu'));
+      await menu.locator('.tiptap').click();
+      await menu.keyboard.type('{{first}} {{second}}');
+      await menu.evaluate(() => { window.memnoterEditor.setTopInset(88); window.memnoterEditor.setBottomInset(350); });
+      const dot = menu.locator('.card-info').first();
+      const popup = dot.locator('.card-info-popup');
+      const snapshot = () => menu.evaluate(() => {
+        const selection = window.getSelection();
+        return { focused: document.activeElement === document.querySelector('.tiptap'),
+          anchor: selection.anchorOffset, head: selection.focusOffset,
+          text: selection.anchorNode?.textContent, scroll: document.querySelector('.app-scroll-container').scrollTop };
+      });
+      const tapDot = async () => {
+        const box = await dot.boundingBox();
+        await menu.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+      };
+      for (const focused of [true, false]) {
+        if (!focused) {
+          await menu.evaluate(() => window.memnoterEditor.blur());
+          // Tiptap's blur command releases selection on the next animation frame.
+          await menu.waitForFunction(() => document.activeElement !== document.querySelector('.tiptap') && window.getSelection().rangeCount === 0);
+        }
+        const before = await snapshot();
+        await tapDot();
+        assert.deepEqual(await snapshot(), before);
+        assert.equal(await popup.isVisible(), true);
+        const bounds = await popup.boundingBox();
+        assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 820);
+        assert.ok(bounds.y >= 88 && bounds.y + bounds.height <= 830);
+        await menu.touchscreen.tap(400, 500);
+        assert.equal(await popup.isVisible(), false);
+        assert.deepEqual(await snapshot(), before, 'dismissal must consume the editing tap');
+        await tapDot();
+        await tapDot();
+        assert.equal(await popup.isVisible(), false);
+        assert.deepEqual(await snapshot(), before, 'dot toggling must preserve the responder');
+      }
+      await menu.touchscreen.tap(400, 500);
+      assert.equal((await snapshot()).focused, true, 'the next outside tap edits normally');
+      await tapDot();
+      await menu.getByRole('button', { name: 'Join into one card' }).tap();
+      await menu.waitForFunction(() => !document.querySelector('.card-info-join'));
+      assert.ok((await menu.locator('.tiptap').textContent()).includes('{{first}} {{second}}'));
+      await menu.close();
+    });
     await t.test('iPad typing and section navigation retain the reader position', async () => {
       // A short final section still needs to reach the visible top. Keep its
       // screen position through delayed content reflow, with and without
