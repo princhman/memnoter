@@ -3,6 +3,7 @@ import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
 import { ImageMoveHistory } from "@/lib/image-move-history";
 import { NoteHighlight } from "@/lib/highlight";
+import { NoteTables } from "@/lib/note-tables";
 import StarterKit from "@tiptap/starter-kit";
 import type * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -50,6 +51,7 @@ export function noteExtensions({
       link: { openOnClick: false },
     }),
     NoteHighlight,
+    ...NoteTables,
     TabSpacing,
     ImageMoveHistory,
     LinkEditor,

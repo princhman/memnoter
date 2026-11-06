@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Editor } from '@tiptap/core';
+import { TableKit } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
 import { HeadingFold } from '../src/lib/heading-fold.ts';
 import { SectionFocus, sectionFocusKey } from '../src/lib/section-focus.ts';
@@ -9,7 +10,7 @@ import { Flashcards } from '../src/lib/flashcards.ts';
 import { execEditor, editorState } from '../src/editor-host/commands.ts';
 
 function createEditor() {
-  const editor = new Editor({ element: null, extensions: [StarterKit, Flashcards, HeadingFold],
+  const editor = new Editor({ element: null, extensions: [StarterKit, TableKit, Flashcards, HeadingFold],
     content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Selected text' }] }] } });
   editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
   editor.commands.setTextSelection({ from: 1, to: 9 });
@@ -62,7 +63,7 @@ test('invalid native commands cannot invoke arbitrary editor methods or mutate c
 test('native focus follows the innermost section through body text and section boundaries', () => {
   const paragraph = text => ({ type: 'paragraph', content: [{ type: 'text', text }] });
   const heading = (level, text) => ({ type: 'heading', attrs: { level }, content: [{ type: 'text', text }] });
-  const editor = new Editor({ element: null, extensions: [StarterKit, Flashcards, HeadingFold, SectionFocus, HeadingHieararchy],
+  const editor = new Editor({ element: null, extensions: [StarterKit, TableKit, Flashcards, HeadingFold, SectionFocus, HeadingHieararchy],
     content: { type: 'doc', content: [paragraph('Preface'), heading(1, 'Root'), heading(2, 'Child'), paragraph('Body'),
       heading(3, 'Nested'), { type: 'bulletList', content: [{ type: 'listItem', content: [paragraph('List body')] }] },
       heading(2, 'Sibling'), paragraph('Last body')] } });
@@ -102,7 +103,7 @@ test('native outline hides folded descendants and headings outside focus, and na
     addGlobalAttributes() { return [{ types: ['heading'], attributes: { 'data-toc-id': { default: null } } }]; },
   });
   const h = (level, text) => ({ type: 'heading', attrs: { level, 'data-toc-id': text }, content: [{ type: 'text', text }] });
-  const editor = new Editor({ element: null, extensions: [StarterKit, HeadingIds, HeadingFold, SectionFocus],
+  const editor = new Editor({ element: null, extensions: [StarterKit, TableKit, HeadingIds, HeadingFold, SectionFocus],
     content: { type: 'doc', content: [h(1, 'Parent'), h(2, 'Child'), h(3, 'Grandchild'), h(1, 'Other')] } });
   editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
   try {
@@ -137,7 +138,7 @@ test('Backspace at a heading start removes its format in place before joining ro
   const h = (text, level = 1) => ({ ...p(text), type: 'heading', attrs: { level, 'data-toc-id': text || null } });
   const makeEditor = (content, numbered) => {
     const editor = new Editor({ element: null,
-      extensions: [StarterKit, HeadingIds, HeadingHieararchy, HeadingFold, HeadingNumbering],
+      extensions: [StarterKit, TableKit, HeadingIds, HeadingHieararchy, HeadingFold, HeadingNumbering],
       content: { type: 'doc', content } });
     editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
     editor.view.dispatch(editor.state.tr.setMeta(headingNumberingKey, numbered));

@@ -8,6 +8,9 @@ patchedDependencies:
   '@tanstack/history@1.162.0':
     hash: 80a4783b3989311a7bdd29986dc9511606bc8ee771d45ceee691d1d9a814130f
     path: patches/@tanstack__history@1.162.0.patch
+  '@tiptap/y-tiptap@3.0.6':
+    hash: 10b3295d2c35a5532ebe38b3caafb7bacca53e524598d00ad1c0a573a0f4e5e3
+    path: patches/@tiptap__y-tiptap@3.0.6.patch
 
 importers:
 
@@ -19,6 +22,8 @@ importers:
       postcss:
         specifier: ^8.5.6
         version: 8.5.16
+
+  apps/marketing: {}
 
   apps/shared-ui:
     dependencies:
@@ -69,7 +74,7 @@ importers:
         version: 3.27.1(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
       '@tiptap/extension-collaboration':
         specifier: ^3.27.3
-        version: 3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)(@tiptap/y-tiptap@3.0.6(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31))(yjs@13.6.31)
+        version: 3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)(@tiptap/y-tiptap@3.0.6(patch_hash=10b3295d2c35a5532ebe38b3caafb7bacca53e524598d00ad1c0a573a0f4e5e3)(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31))(yjs@13.6.31)
       '@tiptap/extension-document':
         specifier: ^3.27.3
         version: 3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))
@@ -91,6 +96,9 @@ importers:
       '@tiptap/extension-paragraph':
         specifier: ^3.27.3
         version: 3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))
+      '@tiptap/extension-table':
+        specifier: 3.29.2
+        version: 3.29.2(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
       '@tiptap/extension-table-of-contents':
         specifier: ^3.32.0
         version: 3.32.0(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
@@ -111,7 +119,7 @@ importers:
         version: 3.32.0(@floating-ui/dom@1.7.6)(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
       '@tiptap/y-tiptap':
         specifier: ^3.0.6
-        version: 3.0.6(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
+        version: 3.0.6(patch_hash=10b3295d2c35a5532ebe38b3caafb7bacca53e524598d00ad1c0a573a0f4e5e3)(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -200,8 +208,6 @@ importers:
       yjs:
         specifier: ^13.6.31
         version: 13.6.31
-
-  apps/marketing: {}
 
 packages:
 
@@ -1614,6 +1620,12 @@ packages:
     peerDependencies:
       '@tiptap/core': 3.32.0
       '@tiptap/pm': 3.32.0
+
+  '@tiptap/extension-table@3.29.2':
+    resolution: {integrity: sha512-HY3JWD8i/F8W1oWw56DMqEMqxScIAZFRrhL3rUwiuowHG8LLDqDdQjBV3w1DY8lUZOtNY9grpuMtGlPUFrOVAA==}
+    peerDependencies:
+      '@tiptap/core': 3.29.2
+      '@tiptap/pm': 3.29.2
 
   '@tiptap/extension-text-style@3.31.3':
     resolution: {integrity: sha512-wgjWWrjZwRZHiaDTQPX2am1y/4ePgRgGWF/2MOfSb7g4d5229p4aVtbT1JT7wu9z8OC482pEqcTlhdvgftvW7A==}
@@ -4620,11 +4632,11 @@ snapshots:
     dependencies:
       '@tiptap/core': 3.29.2(@tiptap/pm@3.27.1)
 
-  '@tiptap/extension-collaboration@3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)(@tiptap/y-tiptap@3.0.6(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31))(yjs@13.6.31)':
+  '@tiptap/extension-collaboration@3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)(@tiptap/y-tiptap@3.0.6(patch_hash=10b3295d2c35a5532ebe38b3caafb7bacca53e524598d00ad1c0a573a0f4e5e3)(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31))(yjs@13.6.31)':
     dependencies:
       '@tiptap/core': 3.29.2(@tiptap/pm@3.27.1)
       '@tiptap/pm': 3.27.1
-      '@tiptap/y-tiptap': 3.0.6(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
+      '@tiptap/y-tiptap': 3.0.6(patch_hash=10b3295d2c35a5532ebe38b3caafb7bacca53e524598d00ad1c0a573a0f4e5e3)(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
       yjs: 13.6.31
 
   '@tiptap/extension-document@3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))':
@@ -4726,6 +4738,11 @@ snapshots:
       '@tiptap/pm': 3.27.1
       uuid: 14.0.3
 
+  '@tiptap/extension-table@3.29.2(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)':
+    dependencies:
+      '@tiptap/core': 3.29.2(@tiptap/pm@3.27.1)
+      '@tiptap/pm': 3.27.1
+
   '@tiptap/extension-text-style@3.31.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))':
     dependencies:
       '@tiptap/core': 3.29.2(@tiptap/pm@3.27.1)
@@ -4809,7 +4826,7 @@ snapshots:
       '@tiptap/core': 3.29.2(@tiptap/pm@3.27.1)
       '@tiptap/pm': 3.27.1
 
-  '@tiptap/y-tiptap@3.0.6(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)':
+  '@tiptap/y-tiptap@3.0.6(patch_hash=10b3295d2c35a5532ebe38b3caafb7bacca53e524598d00ad1c0a573a0f4e5e3)(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)':
     dependencies:
       lib0: 0.2.117
       prosemirror-model: 1.25.9
