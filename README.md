@@ -30,6 +30,7 @@ changes with it. Everything stays on your machine.
 
 - **Basic cards:** `Question :: answer` in a paragraph or heading.
 - **Two-way cards:** `Front ::: Back` creates forward and reverse basic cards.
+  After you review one side, the other waits 10 minutes.
   Separators need whitespace on both sides; `a:::b` and `::::` stay prose.
   Inline code is never card syntax, and clozes take precedence.
   Use Shift+Enter for multiple lines within either side of a card.
@@ -49,7 +50,10 @@ changes with it. Everything stays on your machine.
 - <kbd>Space</kbd> reveals the answer and <kbd>1</kbd> to <kbd>4</kbd> grade it.
   Grades can be undone and redone.
 - A card graded Again comes back when it is due, not straight away. The header
-  shows new, learning and review counts, with `+n` for cards due later today.
+  shows new, learning and review counts, with `+n` for cards due later today,
+  and highlights the count of the card on screen.
+- New cards can wait a day: turn on "Skip cards added to this device today" in
+  Settings to hold them back until midnight.
 - Each card shows the heading path it comes from, and opens in its note with one click.
 - Other clozes and masks stay hidden on the front. Click one for context
   without revealing the answer.
@@ -63,6 +67,12 @@ changes with it. Everything stays on your machine.
   scroll position and folds.
 - <kbd>⌘</kbd><kbd>K</kbd> opens one palette that searches module titles, note
   text and math, and also runs commands.
+
+### On iPad too
+
+- A native iPad app shares the same editor and scheduler, with its own
+  formatting bar above the keyboard, a Contents panel and a full review screen.
+- Sync keeps notes and review history the same on Mac and iPad.
 
 ### Your data is yours
 
@@ -90,6 +100,9 @@ Download the latest build from the
 After the first install, new versions download automatically. Each one applies
 the next time you open the app.
 
+The iPad app ships through TestFlight. To build it yourself, see
+[apps/ios/README.md](apps/ios/README.md).
+
 ## Keyboard shortcuts
 
 | Action | Shortcut |
@@ -105,6 +118,7 @@ the next time you open the app.
 | New section / subsection | <kbd>⌘</kbd><kbd>⌥</kbd><kbd>S</kbd> / <kbd>⌘</kbd><kbd>⌥</kbd><kbd>D</kbd> |
 | Reveal answer (review) | <kbd>Space</kbd> |
 | Grade Again, Hard, Good, Easy (review) | <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> |
+| Undo / redo a grade (review) | <kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⌘</kbd><kbd>⇧</kbd><kbd>Z</kbd> |
 
 On Windows and Linux, use <kbd>Ctrl</kbd> instead of <kbd>⌘</kbd> and
 <kbd>Alt</kbd> instead of <kbd>⌥</kbd>.
