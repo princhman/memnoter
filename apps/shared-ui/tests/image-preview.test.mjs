@@ -146,3 +146,74 @@ test("block and inline images open full screen and close without changing the no
     await server.close();
   }
 });
+
+test("native previews accept every primary pointer in read-only notes and signal their portal lifetime", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.messages = [];
+      window.webkit = { messageHandlers: { memnoter: { postMessage(message) { window.messages.push(message); } } } };
+    });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/images.html`);
+    await page.waitForFunction(() => "editor" in window);
+    for (const editable of [true, false]) for (const pointerType of ["pen", "mouse", "touch"]) {
+      await page.evaluate(editable => {
+        editor.setEditable(editable);
+        editor.commands.setContent({ type: "doc", content: [{ type: "image", attrs: { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='100'/>", width: 200, height: 100 } }] });
+        window.messages = [];
+      }, editable);
+      const image = page.locator(".note-image-host");
+      await image.waitFor();
+      const pointer = async (type, x = 50, extra = {}) => image.dispatchEvent(type, { pointerId: 1, pointerType, isPrimary: true, button: 0, clientX: x, clientY: 50, ...extra });
+      // A scroll cancellation and a drag that returns to its origin both break the double tap.
+      for (const cancel of [true, false]) {
+        await pointer("pointerdown");
+        if (!cancel) await pointer("pointermove", 80);
+        await pointer(cancel ? "pointercancel" : "pointerup");
+        await pointer("pointerdown"); await pointer("pointerup");
+        assert.equal(await page.getByRole("dialog", { name: "Image preview" }).count(), 0);
+        await page.waitForTimeout(340);
+      }
+      await pointer("pointerdown"); await pointer("pointerup");
+      await pointer("pointerdown"); await pointer("pointerup");
+      const dialog = page.getByRole("dialog", { name: "Image preview" });
+      await dialog.waitFor({ timeout: 3000 });
+      assert.equal(await page.evaluate(() => messages.filter(m => m.event === "imagePreview").at(-1)?.payload.open), true);
+      await dialog.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+      // Lengthen the real exit animation: native chrome must stay hidden until removal.
+      await page.addStyleTag({ content: '.image-preview-dialog[data-closed] { animation-duration: 500ms !important; }' });
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      assert.equal(await page.evaluate(() => !!document.querySelector(".image-preview-dialog") && messages.filter(m => m.event === "imagePreview").at(-1)?.payload.open), true);
+      await dialog.waitFor({ state: "detached" });
+      assert.equal(await page.evaluate(() => messages.filter(m => m.event === "imagePreview").at(-1)?.payload.open), false);
+      await pointer("pointerdown"); await pointer("pointerup");
+      await pointer("pointerdown"); await pointer("pointerup");
+      await dialog.waitFor();
+      await page.evaluate(() => editor.commands.setContent("<p>Image removed</p>"));
+      await dialog.waitFor({ state: "detached" });
+      assert.equal(await page.evaluate(() => messages.filter(m => m.event === "imagePreview").at(-1)?.payload.open), false);
+    }
+    // Separate node views may overlap during replacement. Removing one must
+    // not expose native chrome while another preview still owns a portal.
+    await page.evaluate(() => {
+      editor.commands.setContent({ type: "doc", content: [1, 2].map(() => ({ type: "image", attrs: { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='100'/>", width: 200, height: 100 } })) });
+    });
+    await page.locator(".note-image-host").nth(1).waitFor();
+    for (const host of await page.locator(".note-image-host").all()) {
+      for (let i = 0; i < 2; i++) for (const type of ["pointerdown", "pointerup"]) {
+        await host.dispatchEvent(type, { pointerId: 1, pointerType: "pen", isPrimary: true, button: 0, clientX: 50, clientY: 50 });
+      }
+    }
+    await page.waitForFunction(() => document.querySelectorAll(".image-preview-dialog").length === 2);
+    await page.evaluate(() => editor.view.dispatch(editor.state.tr.delete(0, editor.state.doc.firstChild.nodeSize)));
+    await page.waitForFunction(() => document.querySelectorAll(".image-preview-dialog").length === 1);
+    assert.equal(await page.evaluate(() => messages.filter(m => m.event === "imagePreview").at(-1)?.payload.open), true);
+    await page.evaluate(() => editor.commands.setContent("<p>No previews left</p>"));
+    await page.waitForFunction(() => !document.querySelector(".image-preview-dialog"));
+    assert.equal(await page.evaluate(() => messages.filter(m => m.event === "imagePreview").at(-1)?.payload.open), false);
+  } finally { await browser?.close(); await server.close(); }
+});

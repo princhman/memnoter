@@ -91,6 +91,43 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       }
       await numbered.close();
     });
+    await t.test('read-only Contents navigation works during an exclusive write while mutations stay blocked', async () => {
+      const readOnly = await context.newPage();
+      await readOnly.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+      await readOnly.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+      await readOnly.evaluate(() => window.memnoterEditor.open('one'));
+      await readOnly.locator('.tiptap').click();
+      await readOnly.evaluate(() => window.memnoterEditor.exec('heading', { level: 1 }));
+      await readOnly.keyboard.type('Read-only heading');
+      const headingText = await readOnly.locator('.tiptap h1').textContent();
+      await readOnly.evaluate(async () => {
+        const { exclusiveWrite } = await import('/src/lib/write-lifecycle.ts');
+        window.write = exclusiveWrite(() => new Promise(resolve => { window.releaseWrite = resolve; }));
+      });
+      await readOnly.waitForFunction(() => !!window.releaseWrite);
+      const result = await readOnly.evaluate(() => {
+        const id = window.messages.filter(m => m.event === 'outline').at(-1).payload.headings[0].id;
+        return {
+          scroll: window.memnoterEditor.exec('scrollToHeading', { id }),
+          focus: window.memnoterEditor.exec('focusSection', { id }),
+          focused: window.messages.filter(m => m.event === 'state').at(-1).payload.focusedSectionId,
+          show: window.memnoterEditor.exec('showDocument'),
+          cleared: window.messages.filter(m => m.event === 'state').at(-1).payload.focusedSectionId,
+          find: window.memnoterEditor.exec('find', { text: 'heading' }),
+          mutate: window.memnoterEditor.exec('heading', { level: 2 }), id,
+        };
+      });
+      await readOnly.evaluate(async () => { releaseWrite(); await window.write; });
+      assert.equal(result.scroll, true);
+      assert.equal(result.focus, true);
+      assert.equal(result.focused, result.id);
+      assert.equal(result.show, true);
+      assert.equal(result.cleared, null);
+      assert.equal(result.find, true);
+      assert.equal(result.mutate, false);
+      assert.equal(await readOnly.locator('.tiptap h1').textContent(), headingText);
+      await readOnly.close();
+    });
     // A native sync receipt must merge into the live Y.Doc while a draft is
     // still being edited, without replacing its DOM selection or local text.
     const synced = await context.newPage();
