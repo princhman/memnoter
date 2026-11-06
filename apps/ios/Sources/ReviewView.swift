@@ -15,7 +15,6 @@ struct ReviewView: View {
     @State private var cards: [StoredCard] = []
     @State private var revealed = false
     @State private var busy = false
-    @State private var cardsChangedWhileBusy = false
     @State private var error: String?
     @State private var last: (card: StoredCard, result: ReviewResult)?
     var body: some View {
@@ -50,14 +49,8 @@ struct ReviewView: View {
             Task { if !busy { last = nil; await load() } }
         }
         .onReceive(NotificationCenter.default.publisher(for: .cardsDidChange)) { _ in
-            if busy { cardsChangedWhileBusy = true }
-            else { Task { await load() } }
-        }
-        .onChange(of: busy) { _, busy in
-            if !busy && cardsChangedWhileBusy {
-                cardsChangedWhileBusy = false
-                Task { await load() }
-            }
+            // Keep the card being answered; each rating reloads the queue anyway.
+            if !busy && cards.isEmpty { Task { await load() } }
         }
         .onChange(of: skipCardsCreatedToday) { _, _ in Task { if !busy { last = nil; await load() } } }
         .onDisappear { session?.dispose() }
