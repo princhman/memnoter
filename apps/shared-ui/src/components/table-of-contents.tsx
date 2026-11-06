@@ -44,9 +44,9 @@ type HoveredSection = {
 };
 
 function getSectionEnd(items: TableOfContentData, start: number) {
-  const level = items[start].level;
+  const level = items[start].originalLevel;
   for (let index = start + 1; index < items.length; index += 1) {
-    if (items[index].level <= level) return index;
+    if (items[index].originalLevel <= level) return index;
   }
   return items.length;
 }
@@ -117,25 +117,31 @@ function DesktopTableOfContents({
     );
   }, [allItems, focusRange, folded]);
   const longOutline = items.length > LONG_OUTLINE_THRESHOLD;
-  const shallowLevels = [...new Set(items.map(item => item.level))].sort((a, b) => a - b).slice(0, 2);
+  const shallowLevels = [...new Set(items.map(item => item.originalLevel))].sort((a, b) => a - b).slice(0, 2);
   const ancestors = new Map<string, string[]>();
   const stack: TableOfContentData = [];
   for (const item of items) {
-    while (stack.length && stack[stack.length - 1].level >= item.level) stack.pop();
-    ancestors.set(item.id, stack.filter(parent => shallowLevels.includes(parent.level)).map(parent => parent.id));
+    while (stack.length && stack[stack.length - 1].originalLevel >= item.originalLevel) stack.pop();
+    ancestors.set(item.id, stack.filter(parent => shallowLevels.includes(parent.originalLevel)).map(parent => parent.id));
     stack.push(item);
   }
   // This list never changes in response to hover or the active heading.
-  const visibleItems = items.filter(item => !longOutline || shallowLevels.includes(item.level) || !ancestors.get(item.id)?.length);
+  const visibleItems = items.filter(item => !longOutline || shallowLevels.includes(item.originalLevel) || !ancestors.get(item.id)?.length);
   const visibleIds = new Set(visibleItems.map(item => item.id));
   const activeId = [...items].reverse().find(item => item.isScrolledOver)?.id ?? items[0]?.id;
   const activeMainId = visibleIds.has(activeId) ? activeId : ancestors.get(activeId)?.slice(-1)[0];
-  const parentsWithChildren = new Set<string>();
+  // A hidden heading belongs only to its nearest visible ancestor, so a root
+  // never repeats the visible second-level rows or their own flyout contents.
+  const hiddenDescendants = new Map<string, TableOfContentData>();
   for (const item of items) {
     if (visibleIds.has(item.id)) continue;
-    for (const parent of ancestors.get(item.id) ?? []) parentsWithChildren.add(parent);
+    const parent = ancestors.get(item.id)?.slice(-1)[0];
+    if (!parent) continue;
+    const children = hiddenDescendants.get(parent) ?? [];
+    children.push(item);
+    hiddenDescendants.set(parent, children);
   }
-  const hasChildren = (item: TableOfContentDataItem) => longOutline && parentsWithChildren.has(item.id);
+  const hasChildren = (item: TableOfContentDataItem) => hiddenDescendants.has(item.id);
   const isFolded = (item: TableOfContentDataItem) => folded.some(range => range.heading === item.pos);
   const [hovered, setHovered] = useState<HoveredSection | null>(null);
   const [hoveredEntry, setHoveredEntry] = useState<{ id: string; flyout: boolean } | null>(null);
@@ -160,9 +166,9 @@ function DesktopTableOfContents({
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const enterFlyoutRef = useRef(false);
   const skipFocusOpenRef = useRef(false);
-  const flyoutStart = items.findIndex(item => item.id === flyoutId);
-  const flyoutParent = items[flyoutStart];
-  const descendants = flyoutParent ? items.slice(flyoutStart + 1, getSectionEnd(items, flyoutStart)) : [];
+  const flyoutParent = items.find(item => item.id === flyoutId);
+  const descendants = hiddenDescendants.get(flyoutId ?? "") ?? [];
+  const flyoutBaseLevel = Math.min(...descendants.map(item => item.originalLevel));
   const relatedId = hoverId && (visibleIds.has(hoverId) ? hoverId : ancestors.get(hoverId)?.slice(-1)[0]);
 
   useEffect(() => {
@@ -420,7 +426,7 @@ function DesktopTableOfContents({
       }}>
       <button type="button" className="toc-item" aria-label={title}
         data-active={item.id === (inFlyout ? activeId : activeMainId)}
-        style={{ paddingLeft: `${0.5 + Math.max(0, item.level - baseLevel) * 0.625}rem` }}
+        style={{ paddingLeft: `${0.5 + Math.max(0, item.originalLevel - baseLevel) * 0.625}rem` }}
         onMouseDown={event => event.preventDefault()}
         onClick={() => { scrollTo(item); if (pinned) closeOutline(); }}>
         <span className="toc-item-title">{numberAt(item.pos)}<HeadingTitle node={item.node} /></span>
@@ -438,7 +444,7 @@ function DesktopTableOfContents({
   }
 
   if (!editor || items.length === 0) return null;
-  const minLevel = Math.min(...items.map(item => item.level));
+  const minLevel = Math.min(...items.map(item => item.originalLevel));
   const section = hovered && hovered.start < items.length
     ? { ...hovered, start: compact || longOutline ? 0 : hovered.start, end: compact || longOutline ? items.length : Math.min(hovered.end, items.length) } : null;
 
@@ -463,9 +469,9 @@ function DesktopTableOfContents({
     {section && <div key={section.start} ref={safeAreaRef} className="toc-safe-area" />}
     {section && <div ref={panelRef} className="toc-panel" aria-label="Outline headings" onKeyDown={navigateList}
       onWheel={event => event.stopPropagation()} onScroll={hideTooltip}>
-      {items.slice(section.start, section.end).filter(item => visibleIds.has(item.id)).map(item => renderRow(item, items[section.start].level))}
+      {items.slice(section.start, section.end).filter(item => visibleIds.has(item.id)).map(item => renderRow(item, items[section.start].originalLevel))}
     </div>}
-    {section && flyoutParent && <>
+    {section && flyoutParent && descendants.length > 0 && <>
       <div key={flyoutId} ref={flyoutSafeRef} className="toc-safe-area toc-flyout-safe-area"
         onPointerEnter={() => {
           if (branchTimer.current) clearTimeout(branchTimer.current);
@@ -486,7 +492,7 @@ function DesktopTableOfContents({
         <button type="button" className="toc-flyout-back" onMouseDown={event => event.preventDefault()} onClick={() => closeFlyout(true)}>
           <ChevronRight aria-hidden="true" />Back to outline
         </button>
-        {descendants.map(item => renderRow(item, flyoutParent.level + 1, true))}
+        {descendants.map(item => renderRow(item, flyoutBaseLevel, true))}
       </div>
     </>}
     {section && tooltip && <div ref={tooltipRef} className="toc-title-tooltip" role="tooltip">{tooltip}</div>}
@@ -522,7 +528,7 @@ function DesktopTableOfContents({
             scrollTo(item);
             if (pinned) closeOutline();
           }}>
-          <span style={{ width: DASH_WIDTHS[Math.min(item.level - minLevel, DASH_WIDTHS.length - 1)] }} />
+          <span style={{ width: DASH_WIDTHS[Math.min(item.originalLevel - minLevel, DASH_WIDTHS.length - 1)] }} />
         </button>;
       })}
     </div>

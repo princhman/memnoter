@@ -52,13 +52,13 @@ for (const width of [700, 900, 1400]) {
     assert.equal(await panel().locator(".toc-item").count(), 190);
     assert.equal(await page.locator(".toc-dash").count(), 190);
     const before = await positions();
-    await parent("Week 1 - Intro to C Programming").hover();
+    await parent("Week 1 course topic 1").hover();
     await flyout().waitFor();
     assert.deepEqual(await positions(), before, "every main row stays in exactly the same position");
     const bounds = await insideViewport(flyout());
     const main = await panel().boundingBox();
     assert.ok(bounds.x + bounds.width <= main.x, "flyout uses the free side of the panel");
-    assert.equal(await flyout().locator(".toc-item").count(), 54);
+    assert.equal(await flyout().locator(".toc-item").count(), 2);
     if (screenshots && width !== 900) {
       await page.evaluate(() => document.documentElement.classList.add("dark"));
       await page.waitForTimeout(150);
@@ -70,26 +70,52 @@ for (const width of [700, 900, 1400]) {
   });
 }
 
-test("one hovered H1 highlights only its own row and rail dash", async () => {
+test("an H1 with visible H2 children has no flyout and highlights only its own row and dash", async () => {
   await load();
-  await parent("Week 1 - Intro to C Programming").hover();
-  await flyout().waitFor();
+  const root = parent("Week 1 - Intro to C Programming");
+  assert.equal(await root.locator("..").locator(".toc-branch-trigger").count(), 0);
+  await root.hover();
+  await page.waitForTimeout(250);
+  assert.equal(await flyout().count(), 0);
+  await root.focus();
+  assert.equal(await flyout().count(), 0);
   assert.equal(await page.locator('.toc-dash[data-related="true"]').count(), 1);
   assert.equal(await page.locator('.toc-dash[data-related="true"]').getAttribute("aria-label"), "Week 1 - Intro to C Programming");
   assert.equal(await panel().locator('[data-hover="true"]').count(), 1);
-  await flyout().getByRole("button", { name: "Week 1 course topic 1", exact: true }).hover();
-  assert.equal(await page.locator('.toc-row[data-hover="true"]').count(), 1, "duplicated descendant titles do not highlight the main list too");
-  assert.equal(await panel().locator('[data-hover="true"]').count(), 0);
   await parent("Week 1 course topic 1").hover();
-  await page.waitForTimeout(250);
+  await flyout().waitFor();
+  const mainNames = await panel().locator(".toc-item").evaluateAll(rows => rows.map(row => row.getAttribute("aria-label")));
+  const hiddenNames = await flyout().locator(".toc-item").evaluateAll(rows => rows.map(row => row.getAttribute("aria-label")));
+  assert.deepEqual(hiddenNames, ["Week 1 topic 1 details", "Week 1 topic 1 example"]);
+  assert.ok(hiddenNames.every(name => !mainNames.includes(name)), "flyouts never repeat visible headings");
   assert.equal(await page.locator('.toc-dash[data-related="true"]').count(), 1);
-  assert.equal(await page.locator('.toc-dash[data-related="true"]').getAttribute("aria-label"), "Week 1 course topic 1");
-  assert.equal(await panel().locator('[data-hover="true"]').count(), 1);
+  await flyout().getByRole("button", { name: "Week 1 topic 1 details", exact: true }).hover();
+  assert.equal(await page.locator('.toc-row[data-hover="true"]').count(), 1);
+  assert.equal(await panel().locator('[data-hover="true"]').count(), 0);
 });
 
+for (const query of ["?direct", "?direct&relative"]) {
+  test(`a root flyout shows only its own hidden descendants ${query}`, async () => {
+    await load(700, query);
+    const root = parent("Week 1 - Intro to C Programming");
+    await root.hover();
+    await flyout().waitFor();
+    assert.deepEqual(await flyout().locator(".toc-item").evaluateAll(rows => rows.map(row => row.getAttribute("aria-label"))), ["Direct details", "Direct example"]);
+    assert.equal(await panel().locator(".toc-item").count(), 190);
+    await page.evaluate(() => {
+      [...document.querySelectorAll(".tiptap :is(h4,h5)")].find(el => el.textContent === "Direct example").scrollIntoView();
+      editor.storage.tableOfContents.scrollHandler();
+    });
+    await page.waitForFunction(() => document.querySelector('.toc-panel [data-active="true"]')?.getAttribute("aria-label") === "Week 1 - Intro to C Programming");
+    assert.equal(await flyout().locator('[data-active="true"]').getAttribute("aria-label"), "Direct example");
+    await parent("Week 1 course topic 1").focus();
+    assert.deepEqual(await flyout().locator(".toc-item").evaluateAll(rows => rows.map(row => row.getAttribute("aria-label"))), ["Week 1 topic 1 details", "Week 1 topic 1 example"]);
+  });
+}
+
 test("a slow diagonal pointer path into the flyout does not switch branches or close it", async () => {
-  await load();
-  const row = parent("Week 1 - Intro to C Programming");
+  await load(700, "?deep");
+  const row = parent("Week 1 course topic 1");
   await row.hover();
   await flyout().waitFor();
   const label = await flyout().getAttribute("aria-label");
@@ -133,8 +159,8 @@ test("keyboard enters the flyout and Left or Escape returns to its disclosure", 
 });
 
 test("wheel and small pixel deltas scroll the flyout independently and reach its last descendant", async () => {
-  await load();
-  await parent("Week 1 - Intro to C Programming").hover();
+  await load(700, "?deep");
+  await parent("Week 1 course topic 1").hover();
   await flyout().waitFor();
   const mainPositions = await positions();
   await scrollToEnd(flyout());
@@ -144,7 +170,7 @@ test("wheel and small pixel deltas scroll the flyout independently and reach its
   await scrollToEnd(flyout());
   assert.deepEqual(await positions(), mainPositions);
   assert.equal(await page.locator("main").evaluate(el => el.scrollTop), 0);
-  await flyout().getByRole("button", { name: "Week 1 topic 18 example", exact: true }).click();
+  await flyout().getByRole("button", { name: "Week 1 topic 1 example 24", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("main").scrollTop > 1000);
 });
 
@@ -227,15 +253,15 @@ for (const query of ["?relative", "?short"]) {
 }
 
 test("a short viewport uses a clean overlay when there is no side space", async () => {
-  await load(360, "", 360);
-  await parent("Week 1 - Intro to C Programming").focus();
+  await load(360, "?deep", 360);
+  await parent("Week 1 course topic 1").focus();
   await page.keyboard.press("ArrowRight");
   await flyout().waitFor();
   assert.equal(await flyout().getAttribute("data-side"), "overlay");
   await insideViewport(flyout());
   await flyout().getByRole("button", { name: "Back to outline" }).click();
   assert.equal(await flyout().count(), 0);
-  assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Show sections in Week 1 - Intro to C Programming");
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Show sections in Week 1 course topic 1");
   await page.keyboard.press("Enter");
   await flyout().waitFor();
   await page.keyboard.press("End");
