@@ -16,8 +16,8 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 Section("Review") {
-                    Toggle("Skip cards created today", isOn: $skipCardsCreatedToday)
-                    Text("New cards become available after local midnight.").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Skip cards added to this device today", isOn: $skipCardsCreatedToday)
+                    Text("Unreviewed cards first indexed on this device today become available after local midnight, including cards from older synced notes.").font(.caption).foregroundStyle(.secondary)
                 }
                 if let sync { SyncSettingsView(sync: sync) }
                 Section {
