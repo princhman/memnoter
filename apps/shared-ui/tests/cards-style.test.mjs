@@ -57,3 +57,8 @@ test("two-way arrow keeps full-size heads and a longer shaft in both appearances
   assert.equal(style(".tiptap .card-sep-both").get("background-size"), "1.5em 1em");
   assert.ok(parseFloat(style(".tiptap .card-sep-both").get("padding-inline")) >= 0.4);
 });
+
+test("the card dot's list offset matches one level of list indent", () => {
+  const indent = Number.parseFloat(style(".tiptap ul,\n.tiptap ol").get("padding-left")) + Number.parseFloat(style(".tiptap li").get("padding-left"));
+  assert.equal(Number.parseFloat(style(".tiptap").get("--card-list-indent")), indent);
+});

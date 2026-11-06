@@ -1206,7 +1206,8 @@ body {
 .tiptap .card-info {
     position: absolute;
     top: 0;
-    right: 100%;
+    /* Stay in the margin column however deep the block's list is indented. */
+    right: calc(100% + var(--card-list-depth, 0) * var(--card-list-indent));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1224,8 +1225,17 @@ body {
 
 /* A heading's fold toggle keeps its place; the info goes before it. */
 .tiptap :is(h1, h2, h3, h4, h5, h6) > .card-info {
-    right: calc(100% + 1.4rem);
+    right: calc(100% + 1.4rem + var(--card-list-depth, 0) * var(--card-list-indent));
 }
+
+/* One level of list indent: the list's padding plus the item's. */
+.tiptap { --card-list-indent: 1.75rem; }
+.tiptap li { --card-list-depth: 1; }
+.tiptap li li { --card-list-depth: 2; }
+.tiptap li li li { --card-list-depth: 3; }
+.tiptap li li li li { --card-list-depth: 4; }
+.tiptap li li li li li { --card-list-depth: 5; }
+.tiptap li li li li li li { --card-list-depth: 6; }
 
 .tiptap .card-info::before {
     content: "";
