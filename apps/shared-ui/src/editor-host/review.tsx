@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { CardFace } from "../components/card-face";
-import { getScheduler, scheduleReview, type StoredCard, type Grade } from "../lib/fsrs";
+import { getScheduler, scheduleReview, previewDue, formatInterval, type StoredCard, type Grade } from "../lib/fsrs";
 import "../lib/backend";
 import "../App.css";
 import "./review.css";
@@ -15,6 +15,11 @@ const api = {
   show(card: StoredCard, revealed: boolean) {
     if (!revealed) shownAt = Date.now();
     root.render(<main key={`${card.id}:${card.reps}`} className="review-scroll-container p-8"><CardFace kind={card.kind} front={card.front} back={card.back} revealed={revealed} /></main>);
+  },
+  async preview(card: StoredCard) {
+    const now = Date.now();
+    const due = previewDue(await getScheduler(), card, now);
+    return [1, 2, 3, 4].map(grade => formatInterval(due[grade as Grade] - now));
   },
   async rate(card: StoredCard, rating: Grade) {
     const result = scheduleReview(await getScheduler(), card, rating, Date.now(), Date.now() - shownAt);
