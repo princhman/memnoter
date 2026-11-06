@@ -2,6 +2,7 @@ use memnoter_core::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 mod backups;
+mod import_folder;
 mod cards;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -207,6 +208,7 @@ pub fn run() {
             confirm_exit,
             confirm_restart,
             create_module,
+            import_folder::pick_import_folder,
             modules,
             get_content,
             add_update,

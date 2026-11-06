@@ -1,3 +1,6 @@
+import { isTauri } from "@/lib/backend";
+import { importFolder } from "@/lib/import-module";
+import type { ImportFolder } from "@/lib/folder-import";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "../lib/backend.ts";
 import { useCallback, useEffect, useState } from "react";
@@ -33,10 +36,18 @@ const NewModuleCommand = ({ run }: { run: () => void }) => {
   return null;
 };
 
+const ImportModuleCommand = ({ run }: { run: () => void }) => {
+  useCommand({ id: "module.import", title: "Import folder…", keywords: ["obsidian", "markdown"], run: () => { run(); window.dispatchEvent(new Event("memnoter-import-folder")); } });
+  return null;
+};
+
 // The sidebar's copy has the + button. In narrow windows the sidebar is a sheet
 // that unmounts when closed, so the copy answering the app menu and the welcome
 // screen lives outside it and has no button.
 const CreateModule = ({ global = false }: { global?: boolean }) => {
+  const [importProgress, setImportProgress] = useState("");
+  const [importSummary, setImportSummary] = useState("");
+  const [importing, setImporting] = useState(false);
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   const [sumbitted, setSubmitted] = useState(false);
@@ -65,6 +76,29 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
     },
   });
 
+  const runImport = useCallback(async () => {
+    if (importing) return;
+    setImporting(true);
+    setImportSummary("");
+    setImportProgress("Choose a folder…");
+    try {
+      const folder = await invoke<ImportFolder | null>("pick_import_folder");
+      if (!folder) { setImportProgress(""); return; }
+      const result = await importFolder(folder, setImportProgress);
+      await queryClient.invalidateQueries({ queryKey: ["modules"] });
+      setImportProgress("");
+      setImportSummary(`Imported ${result.notes.length} notes and ${result.images.length} images into ${result.name}. Skipped ${result.skipped.length} files.\n${result.skipped.join("\n")}\n${result.unresolved.length} unresolved images.\n${result.unresolved.join("\n")}`);
+      void navigate({ to: "/$moduleId", params: { moduleId: result.moduleId } });
+    } catch (error) { setImportProgress(""); setImportSummary(`Import failed: ${String(error)}`); }
+    finally { setImporting(false); }
+  }, [importing, navigate, queryClient]);
+  useEffect(() => {
+    if (!global) return;
+    const run = () => { void runImport(); };
+    window.addEventListener("memnoter-import-folder", run);
+    return () => window.removeEventListener("memnoter-import-folder", run);
+  }, [global, runImport]);
+
   const trimmedName = name.trim();
 
   const nameError =
@@ -84,8 +118,9 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={value => { if (!importing) setOpen(value); }}>
       {global && <NewModuleCommand run={openDialog} />}
+      {global && isTauri() && <ImportModuleCommand run={openDialog} />}
       {!global && (
         <IconTooltip label="New module" hint={`${MOD_KEY}N`} side="right">
           <DialogTrigger
@@ -115,14 +150,19 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
                 placeholder="Mathematics"
                 aria-invalid={!!error}
                 aria-describedby={error ? "module-name-error" : undefined}
-                disabled={mutation.isPending}
+                disabled={mutation.isPending || importing}
               />
               <FieldError id="module-name-error">{error}</FieldError>
             </Field>
           </FieldGroup>
+          {isTauri() && <div className="py-3">
+            <Button type="button" variant="outline" disabled={importing || mutation.isPending} onClick={() => void runImport()}>Import folder…</Button>
+            <p role="status" className="text-sm py-2">{importProgress}</p>
+            {importSummary && <pre className="text-sm whitespace-pre-wrap max-h-64 overflow-auto">{importSummary}</pre>}
+          </div>}
           <DialogFooter>
-            <DialogClose render={<Button variant="outline">Cancel</Button>} />
-            <Button type="submit" disabled={mutation.isPending}>
+            <DialogClose render={<Button variant="outline" disabled={importing}>Cancel</Button>} />
+            <Button type="submit" disabled={mutation.isPending || importing}>
               {mutation.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>

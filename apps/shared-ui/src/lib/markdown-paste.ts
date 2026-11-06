@@ -83,6 +83,11 @@ md.inline.ruler.before("escape", "obsidian", (state, silent) => {
     const [target, alias] = wiki[2].split("|");
     const name = target.split("#")[0] || target.slice(1);
     const image = /\.(?:png|jpe?g|gif|webp|svg|avif|heic|bmp|tiff?)$/i.test(target);
+    if (wiki[1] && image) {
+      if (!silent) { const token = state.push("obsidian_image", "", 0); token.content = target; token.meta = { width: /^\d+$/.test(alias ?? "") ? Number(alias) : undefined }; }
+      state.pos += wiki[0].length;
+      return true;
+    }
     return emit(wiki[1] ? "obsidian_placeholder" : "text", wiki[1] ? `[${image ? "image" : "embed"}: ${image ? target.split(/[\\/]/).pop() : target}]` : alias || name, wiki[0].length);
   }
   const highlight = /^==(?=\S)((?:(`+)[\s\S]*?\2(?!`)|\$[^$\n]+\$|(?!=)[\s\S]|=(?!=))+?)==/.exec(remaining);
@@ -104,7 +109,9 @@ md.inline.ruler.before("escape", "obsidian", (state, silent) => {
   return false;
 });
 
-function inlines(tokens: Token[], inherited: Mark[] = []): JSONContent[] {
+export type ImageResolver = (target: string, alt: string, width?: number) => JSONContent | undefined;
+
+function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageResolver): JSONContent[] {
   const result: JSONContent[] = [];
   const marks = [...inherited];
   for (const token of tokens) {
@@ -117,19 +124,20 @@ function inlines(tokens: Token[], inherited: Mark[] = []): JSONContent[] {
     else if (token.type === "hardbreak") result.push({ type: "hardBreak" });
     else if (token.type === "obsidian_math_display") result.push({ type: "mathBlock", content: token.content ? [text(token.content)] : [] });
     else if (token.type === "obsidian_math_inline") result.push({ type: "inlineMath", content: [text(token.content)] });
-    else if (token.type === "obsidian_highlight") result.push(...inlines(token.children ?? [], [...marks, { type: "highlight", attrs: { color: "yellow" } }]));
+    else if (token.type === "obsidian_highlight") result.push(...inlines(token.children ?? [], [...marks, { type: "highlight", attrs: { color: "yellow" } }], resolveImage));
     else if (token.type === "obsidian_placeholder") result.push({ type: "pastePlaceholder", content: [text(token.content)] });
+    else if (token.type === "obsidian_image") result.push(resolveImage?.(token.content, "", typeof token.meta?.width === "number" ? token.meta.width : undefined) ?? { type: "pastePlaceholder", content: [text(`[image: ${token.content.split(/[\\/]/).pop()}]`)] });
     else if (token.type === "image") {
       const src = String(token.attrGet("src") ?? "");
       if (/^https?:\/\//i.test(src)) result.push(text(token.content || src, [...marks, { type: "link", attrs: { href: src } }]));
-      else result.push({ type: "pastePlaceholder", content: [text(`[image: ${src.split(/[\\/]/).pop()}]`)] });
+      else result.push(resolveImage?.(src, token.content) ?? { type: "pastePlaceholder", content: [text(`[image: ${src.split(/[\\/]/).pop()}]`)] });
     }
   }
   return result;
 }
 
 /** Schema-independent TipTap JSON; never fetches files or generates identities. */
-export function markdownToJSON(source: string): JSONContent {
+export function markdownToJSON(source: string, resolveImage?: ImageResolver): JSONContent {
   const tokens = md.parse(stripMetadata(source), {});
   const root: JSONContent = { type: "doc", content: [] };
   const stack = [root];
@@ -142,12 +150,12 @@ export function markdownToJSON(source: string): JSONContent {
       const callout = stack.some(node => node.type === "blockquote") && /^\[!([\w-]+)\][+-]?(?:[ \t]+([^\n]*))?(?:\n|$)/.exec(value);
       if (callout) {
         const title = callout[2] || callout[1];
-        parent.content!.push(...inlines(md.parseInline(title, {})[0].children ?? [], [{ type: "bold" }]));
+        parent.content!.push(...inlines(md.parseInline(title, {})[0].children ?? [], [{ type: "bold" }], resolveImage));
         value = value.slice(callout[0].length);
         if (value) parent.content!.push(text("\n"));
       }
       if (stack.some(node => node.type === "listItem")) value = value.replace(/^\[([ xX])\](?:[ \t]+|$)/, (_, done) => done === " " ? "☐ " : "☑ ");
-      parent.content!.push(...inlines(value === token.content ? token.children ?? [] : md.parseInline(value, {})[0].children ?? []));
+      parent.content!.push(...inlines(value === token.content ? token.children ?? [] : md.parseInline(value, {})[0].children ?? [], [], resolveImage));
     } else if (token.type === "fence" || token.type === "code_block") {
       add({ type: "codeBlock", attrs: { language: token.info.trim().split(/\s/)[0] || null }, content: token.content ? [text(token.content.replace(/\n$/, ""))] : [] });
     } else if (token.type === "obsidian_math_block") add({ type: "mathBlock", content: token.content ? [text(token.content)] : [] });
@@ -171,15 +179,19 @@ export function markdownToJSON(source: string): JSONContent {
       const result: JSONContent[] = [];
       let run: JSONContent[] = [];
       for (const child of node.content ?? []) {
-        if (child.type === "pastePlaceholder" || child.type === "mathBlock") {
+        if (child.type === "pastePlaceholder" || child.type === "mathBlock" || child.type === "image") {
           if (run.length) result.push({ ...node, content: run });
-          result.push(child.type === "mathBlock" ? child : paragraph(child.content)); run = [];
+          result.push(child.type !== "pastePlaceholder" ? child : paragraph(child.content)); run = [];
         } else run.push(child);
       }
       if (run.length || !result.length) result.push({ ...node, content: run });
       return result;
     }
-    return [{ ...node, ...(node.content ? { content: node.content.flatMap(split) } : {}) }];
+    const content = node.content?.flatMap(split);
+    // ProseMirror list items require a paragraph first, even when an Obsidian
+    // item starts with an image or display formula.
+    if (node.type === "listItem" && content?.[0]?.type !== "paragraph") content?.unshift(paragraph());
+    return [{ ...node, ...(content ? { content } : {}) }];
   }
   if (!root.content!.length) root.content!.push(paragraph());
   return split(root)[0];
