@@ -9,7 +9,7 @@ import { webkit } from "playwright";
 test("outline navigation, numbering, folding and Yjs stay correct across edits and undo", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const cacheDir = await mkdtemp(`${tmpdir()}/memnoter-benchmark-`);
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: "error" });
+  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false, hmr: false, watch: null }, logLevel: "error" });
   let browser;
   try {
     await server.listen(); browser = await webkit.launch();

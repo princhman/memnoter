@@ -25,7 +25,7 @@ test("real imported note WebKit input-to-paint benchmark", { skip: !existsSync(f
   await walk(folder);
   const root = fileURLToPath(new URL("..", import.meta.url));
   const cacheDir = await mkdtemp(`${tmpdir()}/memnoter-benchmark-`);
-  const server = await createServer({ root, cacheDir, logLevel: "error", server: { port: 0, strictPort: false }, plugins: [{ name: "read-only-course-assets", configureServer(server) {
+  const server = await createServer({ root, cacheDir, logLevel: "error", server: { port: 0, strictPort: false, hmr: false, watch: null }, plugins: [{ name: "read-only-course-assets", configureServer(server) {
     server.middlewares.use("/course-asset", async (req, res) => {
       const relative = new URL(req.url, "http://localhost").searchParams.get("path");
       if (!entries.some(entry => entry.path === relative)) { res.statusCode = 404; res.end(); return; }
