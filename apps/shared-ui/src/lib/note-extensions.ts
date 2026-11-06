@@ -1,3 +1,4 @@
+import { MarkdownPaste } from "./markdown-paste-plugin";
 import type { Editor } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
@@ -52,6 +53,7 @@ export function noteExtensions({
     }),
     NoteHighlight,
     ...NoteTables,
+    MarkdownPaste,
     TabSpacing,
     ImageMoveHistory,
     LinkEditor,
