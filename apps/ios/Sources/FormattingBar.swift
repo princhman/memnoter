@@ -111,9 +111,9 @@ struct FormattingBar: View {
                          session.state.folded ? "chevron.right" : "chevron.down",
                          session.state.folded ? "unfoldCurrentSection" : "foldCurrentSection", active: session.state.folded)
                 .disabled(!session.state.folded && !session.state.canFold)
-            divider
             // Offer joining only when the selection spans separate clozes.
             if session.state.canJoinClozes {
+                divider
                 formatButton("Join clozes", "rectangle.stack", "joinClozes")
             }
             divider

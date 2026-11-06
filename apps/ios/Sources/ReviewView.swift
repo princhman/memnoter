@@ -65,8 +65,12 @@ struct ReviewView: View {
             if #available(iOS 26.0, *), horizontalSizeClass == .compact {
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                countsLabel
+            if #available(iOS 26.0, *) {
+                // Plain numbers, without the glass capsule toolbar items get by default.
+                ToolbarItem(placement: .topBarTrailing) { countsLabel }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarTrailing) { countsLabel }
             }
         }
         .task {
