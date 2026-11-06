@@ -26,6 +26,7 @@ test("cloze braces stay hidden while editing their block", () => {
 
 test("the hidden answer is tinted and clearly underlined", () => {
   const answer = style(".tiptap .cloze-text");
+  assert.equal(answer.get("border-radius"), undefined);
   assert.equal(answer.get("text-decoration-line"), "underline");
   assert.ok(Number.parseFloat(answer.get("text-decoration-thickness")) >= 2);
   assert.ok(answer.get("background-color") && answer.get("background-color") !== "transparent");
@@ -36,4 +37,13 @@ test("the `::` arrow is drawn without a box behind it", () => {
   assert.equal(separator.get("color"), "transparent");
   assert.equal(separator.get("background-color"), undefined);
   assert.equal(separator.get("mask"), undefined);
+});
+
+test("rendered cloze math shares the tint and has a square underline", () => {
+  const math = style(".tiptap .cloze-math .inline-math-widget");
+  assert.equal(math.get("background-color"), style(".tiptap .cloze-text").get("background-color"));
+  assert.equal(math.get("border-radius"), "0");
+  assert.ok(math.get("box-shadow"));
+  assert.equal(style(".dark .tiptap .cloze-math .inline-math-widget").get("background-color"),
+    style(".dark .tiptap .cloze-text").get("background-color"));
 });

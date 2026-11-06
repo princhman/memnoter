@@ -169,6 +169,14 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules): Decora
       Decoration.inline(start + inner.from, start + inner.to, { class: "cloze-text" }),
       Decoration.inline(start + close.from, start + close.to, { class: "cloze-brace" }, { syntax: true }),
     );
+    // Inline decorations reach the hidden source of non-leaf math nodes.
+    // Decorate the node too so its rendered widget can share the highlight.
+    node.forEach((child, offset) => {
+      const end = offset + child.nodeSize;
+      if (child.type.name === "inlineMath" && offset >= inner.from && end <= inner.to) {
+        decorations.push(Decoration.node(start + offset, start + end, { class: "cloze-math" }));
+      }
+    });
   }
   return decorations;
 }
