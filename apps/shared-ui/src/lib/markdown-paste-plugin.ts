@@ -35,7 +35,12 @@ export const MarkdownPaste = Extension.create({
             literal = false;
             if (view.editable === false || !data || data.files.length || Array.from(data.items ?? []).some(item => item.kind === "file")) return false;
             // Internal editor HTML carries identities and an exact PM slice.
-            if (!bypass && /data-pm-slice\s*=/i.test(data.getData("text/html"))) return false;
+            const html = data.getData("text/html");
+            if (!bypass && /data-pm-slice\s*=/i.test(html)) return false;
+            // Reading-view plain text can contain Markdown-looking code (e.g.
+            // C pointer declarations). Its structured HTML is authoritative;
+            // reparsing that flattened text loses headings, lists and code.
+            if (!bypass && /<(?:h[1-6]|ul|ol|table)\b/i.test(html)) return false;
             // Menus and find inputs can live under the editor's DOM tree.
             const target = event.target as HTMLElement | null;
             if (target?.closest?.("input, textarea, [contenteditable='false']")) return false;
@@ -46,8 +51,8 @@ export const MarkdownPaste = Extension.create({
                 if (node.type.spec.code || ["inlineMath", "mathBlock"].includes(node.type.name)) return false;
               }
             }
-            // Explicit Markdown source wins over external HTML; prose keeps
-            // the existing HTML paste path (including Obsidian reading view).
+            // Markdown source can arrive with a plain HTML/pre wrapper.
+            // Structured reading-view HTML above stays on native paste.
             const source = data.getData("text/plain");
             if (!source || (!bypass && !looksLikeMarkdown(source))) return false;
             const converted: JSONContent = bypass

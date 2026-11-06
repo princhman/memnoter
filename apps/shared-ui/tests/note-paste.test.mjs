@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { createServer } from "vite";
 import { webkit } from "playwright";
+import MarkdownIt from "markdown-it";
 
 let server, browser, page;
 const errors = [];
@@ -40,6 +41,17 @@ test("reading view uses HTML when plain text has lost Markdown markers", async (
   assert.equal(await page.locator("h1").textContent(), "Memory in C");
   assert.equal(await page.locator("li").count(), 2);
   assert.equal(await page.locator("strong").textContent(), "Lifetime");
+});
+test("whole real note in reading-view clipboard shape retains HTML structure", { skip: !existsSync(realNote) }, async () => {
+  const source = readFileSync(realNote, "utf8");
+  const html = new MarkdownIt().render(source.replace(/!\[\[[^\]]+\]\]/g, "[image]").replace(/\[\[([^\]]+)\]\]/g, "$1"));
+  const plain = await page.evaluate(html => {
+    const div = document.createElement("div"); div.innerHTML = html; return div.textContent;
+  }, html);
+  await page.evaluate(() => editor.commands.setContent("<p></p>"));
+  await paste({ "text/html": html, "text/plain": plain });
+  assert.equal(await page.locator("h1").first().textContent(), "Memory in C");
+  assert.equal(await page.locator("pre").count(), new MarkdownIt().parse(source, {}).filter(t => ["fence", "code_block"].includes(t.type)).length);
 });
 test("whole internal note clipboard preserves blocks, images, formulas and distinct cards at heading and select-all targets", async () => {
   const data = await page.evaluate(() => {
