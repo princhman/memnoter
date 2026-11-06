@@ -109,7 +109,7 @@ md.inline.ruler.before("escape", "obsidian", (state, silent) => {
   return false;
 });
 
-export type ImageResolver = (target: string, alt: string, width?: number) => JSONContent | undefined;
+export type ImageResolver = (target: string, alt: string, width?: number, syntax?: "markdown" | "wiki") => JSONContent | undefined;
 
 function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageResolver): JSONContent[] {
   const result: JSONContent[] = [];
@@ -126,11 +126,11 @@ function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageRe
     else if (token.type === "obsidian_math_inline") result.push({ type: "inlineMath", content: [text(token.content)] });
     else if (token.type === "obsidian_highlight") result.push(...inlines(token.children ?? [], [...marks, { type: "highlight", attrs: { color: "yellow" } }], resolveImage));
     else if (token.type === "obsidian_placeholder") result.push({ type: "pastePlaceholder", content: [text(token.content)] });
-    else if (token.type === "obsidian_image") result.push(resolveImage?.(token.content, "", typeof token.meta?.width === "number" ? token.meta.width : undefined) ?? { type: "pastePlaceholder", content: [text(`[image: ${token.content.split(/[\\/]/).pop()}]`)] });
+    else if (token.type === "obsidian_image") result.push(resolveImage?.(token.content, "", typeof token.meta?.width === "number" ? token.meta.width : undefined, "wiki") ?? { type: "pastePlaceholder", content: [text(`[image: ${token.content.split(/[\\/]/).pop()}]`)] });
     else if (token.type === "image") {
       const src = String(token.attrGet("src") ?? "");
       if (/^https?:\/\//i.test(src)) result.push(text(token.content || src, [...marks, { type: "link", attrs: { href: src } }]));
-      else result.push(resolveImage?.(src, token.content) ?? { type: "pastePlaceholder", content: [text(`[image: ${src.split(/[\\/]/).pop()}]`)] });
+      else result.push(resolveImage?.(src, token.content, undefined, "markdown") ?? { type: "pastePlaceholder", content: [text(`[image: ${src.split(/[\\/]/).pop()}]`)] });
     }
   }
   return result;

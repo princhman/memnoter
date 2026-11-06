@@ -29,19 +29,21 @@ export async function prepareFolderImport(folder: ImportFolder, progress: (messa
   const order: string[] = [];
   const content: JSONContent[] = [];
   const hub = notes.find(e => e.path === `${folder.name}.md`);
-  const resolve = (note: string, target: string) => {
+  const resolve = (note: string, target: string, syntax?: "markdown" | "wiki") => {
     try { target = decodeURIComponent(target); } catch { /* keep literal name */ }
     const exact = normalize(target);
     const local = normalize(`${note.includes("/") ? note.slice(0, note.lastIndexOf("/") + 1) : ""}${target}`);
-    return images.find(e => e.path === exact) ?? images.find(e => e.path === local) ?? images.filter(e => basename(e.path) === basename(target)).sort((a, b) => a.path.length - b.path.length || compare(a.path, b.path))[0];
+    // Standard Markdown URLs are relative to the note; wiki paths are vault-relative.
+    const paths = syntax === "markdown" ? [local, exact] : [exact, local];
+    return paths.map(path => images.find(e => e.path === path)).find(Boolean) ?? images.filter(e => basename(e.path) === basename(target)).sort((a, b) => a.path.length - b.path.length || compare(a.path, b.path))[0];
   };
   async function addNote(entry: ImportEntry, level: number, isHub = false) {
     progress(`Reading note ${order.length + 1} of ${notes.length}: ${basename(entry.path)}`);
     order.push(entry.path);
     if (!isHub) content.push(heading(basename(entry.path).replace(/\.md$/i, ""), level));
     const source = (entry.text ?? "").replace(/^\uFEFF?[^\n:\r]+:[ \t]*\[\[([^\]\r\n]+)\]\][ \t]*\r?\n/, (line, target) => target === folder.name ? "" : line);
-    const doc = markdownToJSON(source, (target, alt, width) => {
-      const image = resolve(entry.path, target);
+    const doc = markdownToJSON(source, (target, alt, width, syntax) => {
+      const image = resolve(entry.path, target, syntax);
       if (!image) { unresolved.push(`${entry.path}: ${target}`); return undefined; }
       usedImages.set(image.path, image);
       return { type: "image", attrs: { fileId: image.path, imageId: crypto.randomUUID(), src: null, alt, width: width || null, masks: [] } };

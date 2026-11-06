@@ -41,3 +41,11 @@ test("real read-only Obsidian folder preserves every note, fence and prose marku
   assert.doesNotMatch(prose(plan.document), /==|!?\[\[/);
   console.log("REAL_IMPORT", JSON.stringify({ notes: plan.notes, images: all(plan.document,"image").length, uniqueImages:plan.images.length, highlights:all(plan.document,"text").filter(n=>n.marks?.some(m=>m.type === "highlight")).length, codeBlocks:fences.length, skipped:plan.skipped }));
 });
+
+test("Markdown relative image paths select the note's image rather than a root namesake", async () => {
+  const plan = await prepareFolderImport({ name: "X", entries: [
+    { path: "notes/n.md", text: "![local](a.png) ![explicit](./a.png) ![[a.png]]" },
+    { path: "a.png", bytes: [1] }, { path: "notes/a.png", bytes: [2] },
+  ] });
+  assert.deepEqual(all(plan.document, "image").map(n => n.attrs.fileId), ["notes/a.png", "notes/a.png", "a.png"]);
+});
