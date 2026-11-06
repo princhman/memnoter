@@ -242,6 +242,21 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await settleScroll();
     const revealed = await caretGeometry();
     assert.ok(Math.abs(revealed.caret - revealed.midpoint) < 20, JSON.stringify(revealed));
+    // Undo can leave the caret above the visible area, and must bring it back.
+    // Typing must not: WebKit reports unsettled positions while it lays out.
+    const revealAbove = reason => page.evaluate(async reason => {
+      const { revealCaret } = await import('/src/editor-host/scroll.ts');
+      const container = document.querySelector('.app-scroll-container');
+      const before = container.scrollTop;
+      const top = container.getBoundingClientRect().top + 60 - 100;
+      revealCaret({
+        isDestroyed: false, hasFocus: () => true, state: { selection: {} },
+        dom: container.querySelector('.tiptap'), coordsAtPos: () => ({ top, bottom: top + 20 }),
+      }, reason);
+      return before - container.scrollTop;
+    }, reason);
+    assert.equal(await revealAbove('input'), 0);
+    assert.equal(await revealAbove('selection'), 100);
     await page.evaluate(() => window.memnoterEditor.setTopInset(0));
     await page.evaluate(() => window.memnoterEditor.setBottomInset(0));
     const focus = await page.evaluate(() => {

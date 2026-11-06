@@ -196,16 +196,19 @@ export function Host() {
         // WebKit may reveal the selection during input even when ProseMirror's
         // scrolling is handled. Apply our visibility rule from the reader's
         // pre-input position, rather than from WebKit's unsolicited scroll.
+        const typing = inputScroll !== undefined;
         if (element && inputScroll !== undefined) element.scrollTop = inputScroll;
         inputScroll = undefined;
-        revealCaret(editor.view);
+        revealCaret(editor.view, typing ? "input" : "selection");
       });
     };
-    const beforeInput = () => {
-      if (element && inputScroll === undefined) inputScroll = element.scrollTop;
+    const beforeInput = (event: Event) => {
+      // Undo and redo jump to wherever the change was, so they may need to scroll.
+      const history = event instanceof InputEvent && event.inputType.startsWith("history");
+      if (element && inputScroll === undefined && !history) inputScroll = element.scrollTop;
       reveal();
     };
-    const keydown = (event: KeyboardEvent) => { if (event.key === "Enter") beforeInput(); };
+    const keydown = (event: KeyboardEvent) => { if (event.key === "Enter") beforeInput(event); };
     element?.addEventListener("beforeinput", beforeInput, true);
     element?.addEventListener("keydown", keydown, true);
     editor.on("transaction", publish);

@@ -31,10 +31,11 @@ export function revealCaret(view: EditorView, reason = "selection") {
   const caret = view.coordsAtPos(view.state.selection.head);
   const top = visibleTop(container);
   const bottom = container.getBoundingClientRect().top + container.clientTop + container.clientHeight - inset;
-  // Typing only follows a caret below the visible editor. In particular, do
-  // not chase an above-viewport selection while WebKit is updating its layout.
-  if (caret.bottom <= bottom || bottom <= top) return;
-  const delta = (caret.top + caret.bottom) / 2 - (top + bottom) / 2;
+  if (bottom <= top) return;
+  // A caret below the visible editor moves to its middle. One above it moves
+  // just into view, except while typing: WebKit's layout is still settling then.
+  const delta = caret.bottom > bottom ? (caret.top + caret.bottom) / 2 - (top + bottom) / 2
+    : caret.top < top && reason !== "input" ? caret.top - top : 0;
   if (Math.abs(delta) < 1) return;
   container.dispatchEvent(new Event("memnoter:reveal"));
   traceScroll("caret", { trigger: reason, from: container.scrollTop, delta });
