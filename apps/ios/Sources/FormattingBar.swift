@@ -94,6 +94,22 @@ struct FormattingBar: View {
         formatButton("Italic", "italic", "italic", active: mark("italic"))
         formatButton("Underline", "underline", "underline", active: mark("underline"))
         formatButton("Strikethrough", "strikethrough", "strike", active: mark("strike"))
+        Menu {
+            ForEach(["yellow", "green", "blue", "pink", "purple"], id: \.self) { color in
+                Button { session.exec("setHighlight", ["color": color]) } label: {
+                    if session.state.highlightColor == color {
+                        Label(color.capitalized, systemImage: "checkmark")
+                    } else { Text(color.capitalized) }
+                }
+            }
+            Button("Remove highlight") { session.exec("removeHighlight") }
+        } label: {
+            Image(systemName: "highlighter")
+                .foregroundStyle(highlightTint)
+        } primaryAction: { session.exec("highlight") }
+        .buttonStyle(FormatButtonStyle(active: mark("highlight")))
+        .accessibilityLabel("Highlight")
+        .accessibilityValue(session.state.highlightColor ?? "Off")
         formatButton("Code", "chevron.left.forwardslash.chevron.right", "code", active: mark("code"))
     }
 
@@ -168,6 +184,17 @@ struct FormattingBar: View {
             .buttonStyle(FormatButtonStyle())
             .accessibilityLabel(link.isEmpty ? "Remove link" : "Apply link")
             .disabled(!link.isEmpty && URL(string: link)?.scheme == nil)
+        }
+    }
+
+    private var highlightTint: Color {
+        switch session.state.highlightColor {
+        case "yellow": .yellow
+        case "green": .green
+        case "blue": .blue
+        case "pink": .pink
+        case "purple": .purple
+        default: .primary
         }
     }
 

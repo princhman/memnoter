@@ -35,7 +35,7 @@ export function editorOutline(editor: Editor) {
 }
 
 export function editorState(editor: Editor) {
-  const marks = ["bold", "italic", "underline", "strike", "code", "link"].filter(mark => editor.isActive(mark));
+  const marks = ["bold", "italic", "underline", "strike", "code", "link", "highlight"].filter(mark => editor.isActive(mark));
   const focusedPos = sectionFocusKey.getState(editor.state);
   const focusedHeading = focusedPos == null ? null : editor.state.doc.nodeAt(focusedPos);
   const caretHeading = editor.state.selection.$from.parent;
@@ -52,6 +52,7 @@ export function editorState(editor: Editor) {
     })),
     focusedSectionId: focusedHeading ? sectionId(focusedHeading, focusedPos!) : null,
     headingId: caretHeading.type.name === "heading" ? sectionId(caretHeading, editor.state.selection.$from.before()) : null,
+    highlightColor: editor.isActive("highlight") ? editor.getAttributes("highlight").color : null,
     marks, blockType: editor.state.selection.$from.parent.type.name,
     headingLevel: editor.isActive("heading") ? Number(editor.getAttributes("heading").level) : null,
     bulletList: editor.isActive("bulletList"), orderedList: editor.isActive("orderedList"),
@@ -76,6 +77,11 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "italic": return commands.toggleItalic();
     case "underline": return commands.toggleUnderline();
     case "strike": return commands.toggleStrike();
+    case "highlight": return commands.toggleHighlight(typeof args.color === "string" ? { color: args.color } : undefined);
+    case "setHighlight":
+      if (typeof args.color !== "string") throw new Error("setHighlight requires color");
+      return commands.setHighlight({ color: args.color });
+    case "removeHighlight": return commands.unsetHighlight();
     case "code": return commands.toggleCode();
     case "paragraph": return commands.setParagraph();
     case "heading":
