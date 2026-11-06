@@ -1438,34 +1438,29 @@ body {
     font-size: 0;
 }
 
+/* A shadow at the foot of the box, not a text underline: KaTeX's inline-blocks
+   cannot inherit text decoration, and text and formula share these font boxes,
+   so one rule keeps the line continuous across both at any display scale. */
 .tiptap .cloze-text {
     background-color: color-mix(in oklch, var(--primary) 10%, transparent);
-    text-decoration-line: underline;
-    text-decoration-thickness: 2px;
-    text-decoration-color: color-mix(in oklch, var(--primary) 70%, transparent);
-    text-underline-offset: 0.2em;
+    box-shadow: inset 0 -2px 0 0 color-mix(in oklch, var(--primary) 70%, transparent);
 }
 
 /* The dark primary is too dim on the dark background. */
 .dark .tiptap .cloze-text {
     background-color: color-mix(in oklch, var(--chart-1) 14%, transparent);
-    text-decoration-color: var(--chart-1);
+    box-shadow: inset 0 -2px 0 0 var(--chart-1);
 }
 
-/* KaTeX's inline-blocks do not inherit a text underline. The widget's font
-   box shares the surrounding text baseline. WebKit paints the adjacent 2px
-   underline 0.5px above that box edge; split the line across the edge to match. */
 .tiptap .cloze-math .inline-math-widget {
     border-radius: 0;
     background-color: color-mix(in oklch, var(--primary) 10%, transparent);
-    box-shadow:
-        inset 0 -0.5px 0 0 color-mix(in oklch, var(--primary) 70%, transparent),
-        0 1.5px 0 0 color-mix(in oklch, var(--primary) 70%, transparent);
+    box-shadow: inset 0 -2px 0 0 color-mix(in oklch, var(--primary) 70%, transparent);
 }
 
 .dark .tiptap .cloze-math .inline-math-widget {
     background-color: color-mix(in oklch, var(--chart-1) 14%, transparent);
-    box-shadow: inset 0 -0.5px 0 0 var(--chart-1), 0 1.5px 0 0 var(--chart-1);
+    box-shadow: inset 0 -2px 0 0 var(--chart-1);
 }
 
 .tiptap .cloze-math .inline-math-widget:hover {
