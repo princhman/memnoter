@@ -44,6 +44,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       });
       return {
         cells: editor.state.selection instanceof CellSelection,
+        inTable: editor.isActive("table"),
         inlineMath,
         highlight: editor.isActive("highlight"),
         highlightColor: highlightColor(editor.getAttributes("highlight").color),
@@ -211,6 +212,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
           <Combine />
         </MarkButton>
       )}
+      {active.inTable && <TableBubbleActions editor={editor} />}
       </>}
     </BubbleMenu>
   );
