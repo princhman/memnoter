@@ -47,7 +47,19 @@ struct FormattingBar: View {
 
     private var buttons: some View {
         HStack(spacing: 0) {
-            // Keep frequent actions within the first 180pt, even in a narrow window.
+            // Keep cloze creation visible without scrolling, including in a narrow window.
+            Button { session.exec(session.state.inCloze ? "removeCard" : "makeCard") } label: {
+                Label("Cloze",
+                      systemImage: session.state.inCloze ? "rectangle.stack.badge.minus" : "rectangle.stack.badge.plus")
+                    .labelStyle(.titleAndIcon)
+                    .fixedSize()
+                    .padding(.horizontal, 4)
+            }
+            .buttonStyle(FormatButtonStyle(active: session.state.inCloze))
+            .disabled(!session.state.inCloze && !session.state.canMakeCard)
+            .accessibilityLabel(session.state.inCloze ? "Remove cloze" : "Make cloze from selection")
+            .accessibilityAddTraits(session.state.inCloze ? .isSelected : [])
+            divider
             formatButton("Bold", "bold", "bold", active: mark("bold"))
             formatButton("Italic", "italic", "italic", active: mark("italic"))
             formatButton("Underline", "underline", "underline", active: mark("underline"))
@@ -69,7 +81,15 @@ struct FormattingBar: View {
             divider
             formatButton("Numbered list", "list.number", "orderedList", active: session.state.orderedList)
             formatButton("Quote", "text.quote", "blockquote", active: session.state.blockquote)
-            formatButton("Code block", "curlybraces", "codeBlock", active: session.state.blockType == "codeBlock")
+            Button { session.exec("codeBlock") } label: {
+                Label("Code block", systemImage: "chevron.left.forwardslash.chevron.right")
+                    .labelStyle(.titleAndIcon)
+                    .fixedSize()
+                    .padding(.horizontal, 4)
+            }
+            .buttonStyle(FormatButtonStyle(active: session.state.blockType == "codeBlock"))
+            .accessibilityLabel("Code block")
+            .accessibilityAddTraits(session.state.blockType == "codeBlock" ? .isSelected : [])
             divider
             formatButton("Math block", "x.squareroot", "mathBlock", active: session.state.blockType == "mathBlock")
             Button { editingLink = true } label: { Image(systemName: "link") }
@@ -92,13 +112,7 @@ struct FormattingBar: View {
                          session.state.folded ? "unfoldCurrentSection" : "foldCurrentSection", active: session.state.folded)
                 .disabled(!session.state.folded && !session.state.canFold)
             divider
-            // Only this trailing group is contextual; earlier action positions stay fixed.
-            if session.state.inCloze {
-                formatButton("Remove card", "rectangle.stack.badge.minus", "removeCard", active: true)
-            } else {
-                formatButton("Make card from selection", "rectangle.stack.badge.plus", "makeCard")
-                    .disabled(!session.state.canMakeCard)
-            }
+            // Offer joining only when the selection spans separate clozes.
             if session.state.canJoinClozes {
                 formatButton("Join clozes", "rectangle.stack", "joinClozes")
             }
