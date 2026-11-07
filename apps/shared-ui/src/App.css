@@ -1020,6 +1020,23 @@ body {
     scrollbar-width: none;
 }
 
+/* Fine-pointer users can scrub every heading without scrolling the rail. */
+@media (pointer: fine) {
+    .toc-rail .toc-dash {
+        flex: 1 1 8px;
+    }
+
+    .toc-dash > span {
+        max-height: 50%;
+        pointer-events: none;
+    }
+
+    .toc-dash[data-active="true"] > span,
+    .toc-dash[data-related="true"] > span {
+        max-height: none;
+    }
+}
+
 /* Each dash gets a taller hit area than the 2px line it draws. */
 .toc-dash {
     display: flex;
@@ -1027,6 +1044,7 @@ body {
     align-items: center;
     justify-content: flex-end;
     height: 8px;
+    min-height: 0;
     padding-left: 0.5rem;
     cursor: pointer;
 }

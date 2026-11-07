@@ -37,19 +37,9 @@ const BRANCH_HOVER_DELAY = 180;
 
 type HoveredSection = {
   start: number;
-  // Exclusive: the next heading at the same or a higher level.
-  end: number;
   // Centre of the hovered dash, relative to the nav.
   anchor: number;
 };
-
-function getSectionEnd(items: TableOfContentData, start: number) {
-  const level = items[start].originalLevel;
-  for (let index = start + 1; index < items.length; index += 1) {
-    if (items[index].originalLevel <= level) return index;
-  }
-  return items.length;
-}
 
 // Headings keep inline math as raw LaTeX, so render it like the editor does.
 function HeadingTitle({ node }: { node: PMNode }) {
@@ -85,7 +75,8 @@ function DesktopTableOfContents({
   numbered?: boolean;
 }) {
   const numbers = useEditorState({ editor, selector: ({ editor }) => editor ? [...headingNumbers(editor.state.doc)] : [] });
-  const numberAt = (pos: number) => numbered ? `${new Map(numbers ?? []).get(pos) ?? ""} ` : "";
+  const numberMap = useMemo(() => new Map(numbers ?? []), [numbers]);
+  const numberAt = (pos: number) => numbered ? `${numberMap.get(pos) ?? ""} ` : "";
   const allItems = useSelector(store, (state) => state);
   // Focus changes don't touch the document, so the TOC extension won't report them.
   const focusRange = useEditorState({
@@ -144,8 +135,15 @@ function DesktopTableOfContents({
   const hasChildren = (item: TableOfContentDataItem) => hiddenDescendants.has(item.id);
   const isFolded = (item: TableOfContentDataItem) => folded.some(range => range.heading === item.pos);
   const [hovered, setHovered] = useState<HoveredSection | null>(null);
-  const [hoveredEntry, setHoveredEntry] = useState<{ id: string; flyout: boolean } | null>(null);
-  const hoverId = hoveredEntry?.id ?? null;
+  const hoverNodes = useRef<HTMLElement[]>([]);
+  const dashRefs = useRef(new Map<string, HTMLButtonElement>());
+  const mainRowRefs = useRef(new Map<string, HTMLDivElement>());
+  const flyoutRowRefs = useRef(new Map<string, HTMLDivElement>());
+  const scrubRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const railMode = useRef<"idle" | "following" | "transit">("idle");
+  const frameRef = useRef<number | null>(null);
+  const settledBranch = useRef<string | null>(null);
+  const flyoutIdRef = useRef<string | null>(null);
   const [pinned, setPinned] = useState(false);
   const [compact, setCompact] = useState(false);
   const [flyoutId, setFlyoutId] = useState<string | null>(null);
@@ -169,7 +167,7 @@ function DesktopTableOfContents({
   const flyoutParent = items.find(item => item.id === flyoutId);
   const descendants = hiddenDescendants.get(flyoutId ?? "") ?? [];
   const flyoutBaseLevel = Math.min(...descendants.map(item => item.originalLevel));
-  const relatedId = hoverId && (visibleIds.has(hoverId) ? hoverId : ancestors.get(hoverId)?.slice(-1)[0]);
+  flyoutIdRef.current = flyoutId;
 
   useEffect(() => {
     closeOutline();
@@ -204,6 +202,7 @@ function DesktopTableOfContents({
   }, [editor, items.length]);
 
   useEffect(() => () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     for (const timer of [hoverTimer, closeTimer, branchTimer, branchCloseTimer, tooltipTimer]) {
       if (timer.current) clearTimeout(timer.current);
     }
@@ -229,8 +228,10 @@ function DesktopTableOfContents({
       const height = panel.offsetHeight;
       const top = Math.max(minTop(), Math.min(navTop + hovered.anchor - height / 2, window.innerHeight - VIEWPORT_MARGIN - height));
       panel.style.top = `${top - navTop}px`;
+      const scrub = scrubRef.current;
       const current = panel.querySelector<HTMLElement>('[data-active="true"]');
-      if (current) panel.scrollTop = current.offsetTop - panel.clientHeight / 2 + current.offsetHeight / 2;
+      if (scrub) applyScrub(scrub);
+      else if (current) panel.scrollTop = current.offsetTop - panel.clientHeight / 2 + current.offsetHeight / 2;
     };
     position();
     window.addEventListener("resize", position);
@@ -246,7 +247,12 @@ function DesktopTableOfContents({
       if (!nav || !panel || !flyout || !row) return;
       const bounds = panel.getBoundingClientRect();
       const anchor = row.getBoundingClientRect();
-      if (anchor.bottom <= bounds.top || anchor.top >= bounds.bottom) { closeFlyout(); return; }
+      if (anchor.bottom <= bounds.top || anchor.top >= bounds.bottom) {
+        if (railMode.current === "idle") closeFlyout();
+        else flyout.style.visibility = "hidden";
+        return;
+      }
+      flyout.style.visibility = "visible";
       const leftRoom = bounds.left - VIEWPORT_MARGIN - 8;
       const rightRoom = window.innerWidth - VIEWPORT_MARGIN - bounds.right - 8;
       const preferred = Math.min(320, window.innerWidth - VIEWPORT_MARGIN * 2);
@@ -267,7 +273,8 @@ function DesktopTableOfContents({
     position();
     const flyout = flyoutRef.current;
     const current = flyout?.querySelector<HTMLElement>('[data-active="true"]');
-    if (current && flyout) flyout.scrollTop = current.offsetTop - flyout.clientHeight / 2 + current.offsetHeight / 2;
+    if (scrubRef.current) applyScrub(scrubRef.current);
+    else if (current && flyout) flyout.scrollTop = current.offsetTop - flyout.clientHeight / 2 + current.offsetHeight / 2;
     if (enterFlyoutRef.current && flyout) {
       enterFlyoutRef.current = false;
       (current ?? flyout.querySelector<HTMLElement>(".toc-item"))?.focus({ preventScroll: true });
@@ -308,6 +315,7 @@ function DesktopTableOfContents({
   }
 
   function closeFlyout(restoreFocus = false) {
+    enterFlyoutRef.current = false;
     if (branchTimer.current) clearTimeout(branchTimer.current);
     if (branchCloseTimer.current) clearTimeout(branchCloseTimer.current);
     setFlyoutId(null);
@@ -326,38 +334,146 @@ function DesktopTableOfContents({
     returnFocusRef.current = row?.querySelector<HTMLElement>(".toc-branch-trigger") ?? null;
     enterFlyoutRef.current = enter;
     if (flyoutId === item.id && enter) {
+      enterFlyoutRef.current = false;
       (flyoutRef.current?.querySelector<HTMLElement>('[data-active="true"]') ?? flyoutRef.current?.querySelector<HTMLElement>(".toc-item"))?.focus({ preventScroll: true });
     }
     setFlyoutId(item.id);
   }
 
   function closeOutline() {
-    for (const timer of [hoverTimer, closeTimer]) if (timer.current) clearTimeout(timer.current);
+    stopRail();
+    scrubRef.current = null;
+    settledBranch.current = null;
+    for (const timer of [hoverTimer, closeTimer]) {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+    }
     closeFlyout();
     setHovered(null);
-    setHoveredEntry(null);
+    paintHover();
     setPinned(false);
   }
 
   function openSection(index: number, dash: HTMLElement) {
-    setHovered({ start: index, end: getSectionEnd(items, index), anchor: dash.getBoundingClientRect().top - navRef.current!.getBoundingClientRect().top + dash.offsetHeight / 2 });
+    setHovered({ start: index, anchor: dash.getBoundingClientRect().top - navRef.current!.getBoundingClientRect().top + dash.offsetHeight / 2 });
+  }
+
+  // Pointer frames only scroll and repaint the affected DOM nodes. React mounts
+  // the panel once and switches a hidden heading's flyout after hover intent.
+  function paintHover(mainId?: string, childId?: string, dashId?: string) {
+    for (const node of hoverNodes.current) {
+      node.dataset.hover = "false";
+      node.dataset.related = "false";
+    }
+    const main = mainId ? mainRowRefs.current.get(mainId) : undefined;
+    const child = childId ? flyoutRowRefs.current.get(childId) : undefined;
+    const dash = dashId ? dashRefs.current.get(dashId) : undefined;
+    if (main) main.dataset.hover = "true";
+    if (child) child.dataset.hover = "true";
+    if (dash) dash.dataset.related = "true";
+    hoverNodes.current = [main, child, dash].filter((node): node is HTMLDivElement | HTMLButtonElement => !!node);
+  }
+
+  function alignRow(list: HTMLElement, row: HTMLElement, y: number) {
+    const bounds = list.getBoundingClientRect();
+    const centre = Math.max(bounds.top + 8 + row.offsetHeight / 2,
+      Math.min(y, bounds.bottom - 8 - row.offsetHeight / 2));
+    const height = row.getBoundingClientRect().height;
+    const top = row.offsetTop - (centre - bounds.top) + row.offsetHeight / 2;
+    // Keep complete rows at the surface edges while following within half a row.
+    list.scrollTop = Math.round(top / height) * height;
+  }
+
+  function applyScrub(scrub: { id: string; x: number; y: number }) {
+    const owner = visibleIds.has(scrub.id) ? scrub.id : ancestors.get(scrub.id)?.slice(-1)[0];
+    const panel = panelRef.current;
+    const row = owner ? mainRowRefs.current.get(owner) : undefined;
+    if (panel && row) alignRow(panel, row, scrub.y);
+    const child = flyoutRowRefs.current.get(scrub.id);
+    if (owner === flyoutIdRef.current && flyoutRef.current && child) alignRow(flyoutRef.current, child, scrub.y);
+    paintHover(owner, visibleIds.has(scrub.id) ? undefined : scrub.id, scrub.id);
+    if (panel) updateSafeArea(scrub, panel, safeAreaRef.current);
+    const branch = visibleIds.has(scrub.id) ? null : owner ?? null;
+    if (settledBranch.current !== branch) {
+      settledBranch.current = branch;
+      if (branchTimer.current) clearTimeout(branchTimer.current);
+      // Keep the current popup while crossing its descendants; switch only
+      // after settling on a branch, without delaying the main list's scroll.
+      branchTimer.current = setTimeout(() => {
+        branchTimer.current = null;
+        if (scrubRef.current && railMode.current !== "idle") {
+          returnFocusRef.current = branch ? mainRowRefs.current.get(branch)?.querySelector<HTMLElement>(".toc-branch-trigger") ?? null : null;
+          setFlyoutId(branch);
+        }
+      }, BRANCH_HOVER_DELAY);
+    }
+  }
+
+  function stopRail() {
+    railMode.current = "idle";
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+    if (branchTimer.current) clearTimeout(branchTimer.current);
+    if (safeAreaRef.current) safeAreaRef.current.style.width = "0px";
+  }
+
+  function freezeRail() {
+    if (frameRef.current !== null && scrubRef.current) applyScrub(scrubRef.current);
+    railMode.current = "transit";
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  }
+
+  function scrubRail(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.pointerType === "touch" || pinned) return;
+    const previous = scrubRef.current;
+    if (railMode.current === "following" && previous && event.clientX < previous.x - 0.5) {
+      freezeRail();
+      return;
+    }
+    // The safe triangle owns leftward travel. Re-entering from its right edge
+    // resumes the scrubber, even when the pointer returns at another height.
+    if (railMode.current === "transit" && previous && event.clientX < previous.x - 0.5) return;
+    const dash = (event.target as Element).closest<HTMLButtonElement>(".toc-dash");
+    const id = dash?.dataset.headingId;
+    if (!id || !dash) return;
+    if (railMode.current !== "following") settledBranch.current = flyoutIdRef.current;
+    railMode.current = "following";
+    scrubRef.current = { id, x: event.clientX, y: event.clientY };
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    if (!panelRef.current && !hoverTimer.current) {
+      const index = Number(dash.dataset.index);
+      if (compact) hoverTimer.current = setTimeout(() => {
+        hoverTimer.current = null;
+        openSection(index, dash);
+      }, BRANCH_HOVER_DELAY);
+      else openSection(index, dash);
+    }
+    if (frameRef.current === null) frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      if (railMode.current === "following" && scrubRef.current) applyScrub(scrubRef.current);
+    });
   }
 
   // A triangle catches diagonal pointer travel before intervening rows can open.
-  function updateSafeArea(event: React.PointerEvent, target: HTMLElement | null, area: HTMLElement | null) {
+  function updateSafeArea(event: { clientX: number; clientY: number } | { x: number; y: number }, target: HTMLElement | null, area: HTMLElement | null) {
     const nav = navRef.current;
     if (!nav || !target || !area) return;
+    const clientX = "clientX" in event ? event.clientX : event.x;
+    const clientY = "clientY" in event ? event.clientY : event.y;
     const bounds = target.getBoundingClientRect();
     const navBounds = nav.getBoundingClientRect();
-    const leftSide = event.clientX >= bounds.right;
+    const leftSide = clientX >= bounds.right;
     const edge = leftSide ? bounds.right : bounds.left;
-    const left = Math.min(edge, event.clientX);
-    const top = Math.min(bounds.top, event.clientY);
+    const apex = clientX + (leftSide ? -2 : 2);
+    const left = Math.min(edge, apex);
+    const top = Math.min(bounds.top, clientY);
     area.style.left = `${left - navBounds.left}px`;
     area.style.top = `${top - navBounds.top}px`;
-    area.style.width = `${Math.abs(edge - event.clientX)}px`;
-    area.style.height = `${Math.max(bounds.bottom, event.clientY) - top}px`;
-    area.style.clipPath = `polygon(${event.clientX - left}px ${event.clientY - top}px, ${edge - left}px ${bounds.top - top}px, ${edge - left}px ${bounds.bottom - top}px)`;
+    area.style.width = `${Math.abs(edge - apex)}px`;
+    area.style.height = `${Math.max(bounds.bottom, clientY) - top}px`;
+    area.style.clipPath = `polygon(${apex - left}px ${clientY - top}px, ${edge - left}px ${bounds.top - top}px, ${edge - left}px ${bounds.bottom - top}px)`;
   }
 
   function navigateList(event: React.KeyboardEvent<HTMLDivElement>) {
@@ -388,9 +504,14 @@ function DesktopTableOfContents({
   function renderRow(item: TableOfContentDataItem, baseLevel: number, inFlyout = false) {
     const children = !inFlyout && hasChildren(item);
     const title = numberAt(item.pos) + item.textContent;
-    return <div key={item.id} className="toc-row" data-entry-id={item.id} data-hover={hoverId === item.id && hoveredEntry?.flyout === inFlyout}
+    return <div key={item.id} ref={node => {
+      const rows = inFlyout ? flyoutRowRefs.current : mainRowRefs.current;
+      if (node) rows.set(item.id, node); else rows.delete(item.id);
+    }} className="toc-row" data-entry-id={item.id} data-hover="false"
       onPointerEnter={(event) => {
-        setHoveredEntry({ id: item.id, flyout: inFlyout });
+        stopRail();
+        scrubRef.current = null;
+        paintHover(inFlyout ? undefined : item.id, inFlyout ? item.id : undefined, item.id);
         showTooltip(event.currentTarget, title);
         if (branchCloseTimer.current) clearTimeout(branchCloseTimer.current);
         if (!inFlyout && event.pointerType !== "touch") {
@@ -407,7 +528,7 @@ function DesktopTableOfContents({
         }
       }}
       onPointerLeave={() => {
-        setHoveredEntry(null);
+        paintHover();
         hideTooltip();
         if (branchTimer.current) clearTimeout(branchTimer.current);
         if (!inFlyout && flyoutId === item.id && !hasOutlineFocus()) {
@@ -415,6 +536,8 @@ function DesktopTableOfContents({
         }
       }}
       onFocus={() => {
+        stopRail();
+        scrubRef.current = null;
         if (skipFocusOpenRef.current) { skipFocusOpenRef.current = false; return; }
         if (!inFlyout) openFlyout(item);
       }}
@@ -445,8 +568,7 @@ function DesktopTableOfContents({
 
   if (!editor || items.length === 0) return null;
   const minLevel = Math.min(...items.map(item => item.originalLevel));
-  const section = hovered && hovered.start < items.length
-    ? { ...hovered, start: compact || longOutline ? 0 : hovered.start, end: compact || longOutline ? items.length : Math.min(hovered.end, items.length) } : null;
+  const section = hovered ? { ...hovered, start: 0, end: items.length } : null;
 
   return <nav ref={navRef} className="toc" data-compact={compact} aria-label="Table of contents"
     onKeyDown={(event) => {
@@ -462,12 +584,15 @@ function DesktopTableOfContents({
     onPointerEnter={() => { if (closeTimer.current) clearTimeout(closeTimer.current); }}
     onPointerLeave={(event) => {
       if (hoverTimer.current) clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
       if (event.pointerType !== "touch" && !pinned && !hasOutlineFocus()) {
+        freezeRail();
         closeTimer.current = setTimeout(closeOutline, compact || flyoutId ? 300 : 120);
       }
     }}>
-    {section && <div key={section.start} ref={safeAreaRef} className="toc-safe-area" />}
+    {section && <div ref={safeAreaRef} className="toc-safe-area" onPointerEnter={freezeRail} />}
     {section && <div ref={panelRef} className="toc-panel" aria-label="Outline headings" onKeyDown={navigateList}
+      onPointerEnter={() => { stopRail(); scrubRef.current = null; }}
       onWheel={event => event.stopPropagation()} onScroll={hideTooltip}>
       {items.slice(section.start, section.end).filter(item => visibleIds.has(item.id)).map(item => renderRow(item, items[section.start].originalLevel))}
     </div>}
@@ -479,6 +604,8 @@ function DesktopTableOfContents({
         }} />
       <div ref={flyoutRef} id={flyoutDomId} className="toc-flyout" role="region" aria-label={`Contents of ${numberAt(flyoutParent.pos) + flyoutParent.textContent}`}
         onPointerEnter={() => {
+          stopRail();
+          scrubRef.current = null;
           if (branchTimer.current) clearTimeout(branchTimer.current);
           if (branchCloseTimer.current) clearTimeout(branchCloseTimer.current);
         }}
@@ -496,31 +623,26 @@ function DesktopTableOfContents({
       </div>
     </>}
     {section && tooltip && <div ref={tooltipRef} className="toc-title-tooltip" role="tooltip">{tooltip}</div>}
-    <div className="toc-rail">
-      {visibleItems.map(item => {
-        const index = items.indexOf(item);
-        return <button key={item.id} type="button" className="toc-dash" aria-label={numberAt(item.pos) + item.textContent}
-          data-active={item.id === activeMainId} data-folded={isFolded(item)} data-related={item.id === relatedId}
+    <div className="toc-rail" onPointerEnter={scrubRail} onPointerMove={scrubRail}>
+      {items.map((item, index) => {
+        return <button key={item.id} ref={node => {
+          if (node) dashRefs.current.set(item.id, node); else dashRefs.current.delete(item.id);
+        }} data-heading-id={item.id} data-index={index} type="button" className="toc-dash" aria-label={numberAt(item.pos) + item.textContent}
+          data-active={item.id === activeId} data-folded={isFolded(item)} data-related="false"
           onMouseDown={event => event.preventDefault()}
           onPointerDown={event => { pressTypeRef.current = event.pointerType; }}
-          onPointerEnter={event => {
-            setHoveredEntry({ id: item.id, flyout: false });
-            if (event.pointerType !== "touch" && !pinned) {
-              if (hoverTimer.current) clearTimeout(hoverTimer.current);
-              const dash = event.currentTarget;
-              if (compact) hoverTimer.current = setTimeout(() => openSection(index, dash), BRANCH_HOVER_DELAY);
-              else openSection(index, dash);
+          onFocus={event => {
+            if (event.currentTarget.matches(":focus-visible")) {
+              stopRail(); scrubRef.current = null;
+              openSection(index, event.currentTarget);
             }
           }}
-          onPointerLeave={() => { setHoveredEntry(null); if (hoverTimer.current) clearTimeout(hoverTimer.current); }}
-          onFocus={event => { if (event.currentTarget.matches(":focus-visible")) openSection(index, event.currentTarget); }}
           onKeyDown={event => {
             if (event.key === "ArrowLeft") {
               event.preventDefault();
               (panelRef.current?.querySelector<HTMLElement>('[data-active="true"]') ?? panelRef.current?.querySelector<HTMLElement>(".toc-item"))?.focus();
             }
           }}
-          onPointerMove={event => { if (event.pointerType !== "touch" && (compact || section?.start === index)) updateSafeArea(event, panelRef.current, safeAreaRef.current); }}
           onClick={event => {
             const tapped = pressTypeRef.current === "touch";
             pressTypeRef.current = "";
