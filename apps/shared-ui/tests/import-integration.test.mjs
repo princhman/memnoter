@@ -95,3 +95,68 @@ test("failed import removes its partial module and uploaded files; names get num
   },synthetic);
   assert.equal(result.name,"Course 2");assert.equal(result.failed,true);assert.ok(!result.names.includes("Course 3"));
 });
+
+for (const discard of [false, true]) {
+  test(`${discard ? 'restore' : 'quit'} drains an admitted import and rejects imports while exclusive`, async () => {
+    const result = await page.evaluate(async ({ folder, discard }) => {
+      const { exclusiveWrite } = await import('/src/lib/write-lifecycle.ts');
+      const original = window.__TAURI_INTERNALS__.invoke;
+      let release, entered;
+      const gate = new Promise(resolve => { release = resolve; });
+      const started = new Promise(resolve => { entered = resolve; });
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        if (command === 'modules') { entered(); await gate; }
+        return original(command, args);
+      };
+      let finishExclusive, enteredExclusive;
+      const exclusiveGate = new Promise(resolve => { finishExclusive = resolve; });
+      const exclusiveStarted = new Promise(resolve => { enteredExclusive = resolve; });
+      let drained = false, blocked = false, overlap = false;
+      const importing = importFolder(folder, () => {});
+      await started;
+      const exclusive = exclusiveWrite(async () => {
+        drained = true;
+        enteredExclusive();
+        await exclusiveGate;
+      }, { discard });
+      try {
+        await new Promise(resolve => setTimeout(resolve, 30));
+        overlap = drained;
+      } finally { release(); }
+      try {
+        await importing;
+        await exclusiveStarted;
+        try { await importFolder(folder, () => {}); } catch (error) { blocked = /suspended/.test(String(error)); }
+        finishExclusive();
+        await exclusive;
+      }
+      finally { finishExclusive(); window.__TAURI_INTERNALS__.invoke = original; }
+      return { overlap, drained, blocked };
+    }, { folder: { ...synthetic, name: `Lifecycle ${discard}` }, discard });
+    assert.deepEqual(result, { overlap: false, drained: true, blocked: true });
+  });
+}
+
+for (const stage of ['modules', 'import_module', 'Indexing notes and cards…', 'get_content']) {
+  test(`import failure at ${stage} leaves neither a module nor image files`, async () => {
+    const dir = join(tmpdir(), `memnoter-harness-${child.pid}`, 'files');
+    const { readdirSync } = await import('node:fs');
+    const files = readdirSync(dir).sort();
+    const result = await page.evaluate(async ({ folder, stage }) => {
+      const original = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = (command, args) => {
+        if (command === stage) throw new Error('injected failure');
+        return original(command, args);
+      };
+      let failed = false;
+      try {
+        await importFolder(folder, message => { if (message === stage) throw new Error('injected failure'); });
+      } catch { failed = true; }
+      finally { window.__TAURI_INTERNALS__.invoke = original; }
+      return { failed, modules: await call('modules') };
+    }, { folder: { ...synthetic, name: `Failure ${stage}` }, stage });
+    assert.equal(result.failed, true);
+    assert.ok(!result.modules.some(m => m.name === `Failure ${stage}`));
+    assert.deepEqual(readdirSync(dir).sort(), files);
+  });
+}
