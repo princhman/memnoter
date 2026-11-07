@@ -2,8 +2,8 @@ use memnoter_core::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 mod backups;
-mod import_folder;
 mod cards;
+mod import_folder;
 #[cfg(target_os = "macos")]
 mod menu;
 mod sync;
@@ -38,6 +38,18 @@ fn create_module(
     name: String,
 ) -> CommandResult<String> {
     let result = memnoter_core::create_module(&core.db, name)?;
+    let _ = app.emit("sync-outbox", ());
+    Ok(result)
+}
+#[tauri::command(async)]
+fn import_module(
+    app: tauri::AppHandle,
+    core: tauri::State<'_, std::sync::Arc<Core>>,
+    name: String,
+    bytes: Vec<u8>,
+    images: Vec<ImportImage>,
+) -> CommandResult<String> {
+    let result = memnoter_core::import_module(core.data_dir(), &core.db, name, bytes, images)?;
     let _ = app.emit("sync-outbox", ());
     Ok(result)
 }
@@ -208,6 +220,7 @@ pub fn run() {
             confirm_exit,
             confirm_restart,
             create_module,
+            import_module,
             import_folder::pick_import_folder,
             modules,
             get_content,

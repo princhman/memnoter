@@ -198,3 +198,26 @@ pub fn cleanup_files(
         expected_update_id,
     )
 }
+
+// Only at startup, before uploads can run. Leases reference file rows, so a
+// managed UUID with no row cannot belong to any saved note or undo history.
+pub(crate) fn cleanup_orphan_files(conn: &Connection, files_dir: &Path) -> CommandResult<()> {
+    for entry in std::fs::read_dir(files_dir).map_err(db_err)? {
+        let entry = entry.map_err(db_err)?;
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if !entry.file_type().map_err(db_err)?.is_file() || Uuid::parse_str(&id).is_err() {
+            continue;
+        }
+        let exists: bool = conn
+            .query_row(
+                "select exists(select 1 from files where id = ?1)",
+                [&id],
+                |r| r.get(0),
+            )
+            .map_err(db_err)?;
+        if !exists {
+            std::fs::remove_file(entry.path()).map_err(db_err)?;
+        }
+    }
+    Ok(())
+}

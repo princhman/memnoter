@@ -28,6 +28,8 @@ impl Core {
         &self.data_dir
     }
 }
+pub mod import;
+pub use import::*;
 pub mod content;
 pub use content::*;
 #[derive(Debug, serde::Serialize)]
