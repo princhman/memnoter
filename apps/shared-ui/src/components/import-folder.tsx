@@ -44,7 +44,7 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
   const addImages = async () => {
     setBusy(true);
     try {
-      const extra = await call<ImportFolder | null>("pick_import_folder");
+      const extra = await call<ImportFolder | null>("pick_import_image_folder");
       if (extra) setOptions(previous => ({ ...previous, extraImages: extra.entries, extraImageFolder: extra.name }));
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }

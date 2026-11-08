@@ -6,9 +6,9 @@ mod cards;
 mod import_folder;
 #[cfg(target_os = "macos")]
 mod menu;
-mod sync;
 #[cfg(target_os = "macos")]
 mod selection_limit;
+mod sync;
 #[derive(Default)]
 struct ExitGate(AtomicBool);
 #[tauri::command]
@@ -213,7 +213,9 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("main") {
-                window.with_webview(|webview| selection_limit::limit_attributed_substrings(webview.inner()))?;
+                window.with_webview(|webview| {
+                    selection_limit::limit_attributed_substrings(webview.inner())
+                })?;
             }
             app.manage(core.clone());
             app.manage(ExitGate::default());
@@ -228,6 +230,7 @@ pub fn run() {
             create_module,
             import_module,
             import_folder::pick_import_folder,
+            import_folder::pick_import_image_folder,
             import_folder::read_import_images,
             modules,
             get_content,

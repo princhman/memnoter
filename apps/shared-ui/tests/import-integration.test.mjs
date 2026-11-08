@@ -181,14 +181,14 @@ for (const stage of ['get_content', 'index_note']) {
 test("sidebar dropdown leads to a configurable import dialog and commits only on Import", async () => {
   const ui = await browser.newPage();
   const calls = [];
-  let picks = 0;
   const imageRequests = [];
   await ui.exposeFunction('rustCall', async (command, args = {}) => {
     calls.push(command);
     if (command === 'read_import_images') { imageRequests.push(...args.images); return args.images.map(() => [137,80,78,71]); }
-    if (command === 'pick_import_folder') return ++picks === 1 ? {
+    if (command === 'pick_import_folder') return {
       name: 'Dialog vault', entries: [{path:'a.md',text:'## Module Info\n\n## Aims\n\n![[pic.png]]'}, {path:'b.md',text:'B'}, {path:'c.md',text:'C'}, {path:'slides.pdf'}],
-    } : { name: 'Images', entries: [{path:'pic.png',sourceId:'extra'}, {path:'unused.png',sourceId:'extra'}] };
+    };
+    if (command === 'pick_import_image_folder') return { name: 'Images', entries: [{path:'pic.png',sourceId:'extra'}, {path:'unused.png',sourceId:'extra'}] };
     const response = await new Promise(resolve => { pending.push(resolve); child.stdin.write(JSON.stringify({command,args})+'\n'); });
     if (response.error) throw new Error(response.error);
     return response.value;
