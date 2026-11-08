@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { InlineMath } from "@/lib/inline-math";
+import { InlineMathView as InlineMath } from "@/components/inline-math-view";
 import Toc from "@tiptap/extension-table-of-contents";
 import { TableOfContents, createTocStore } from "@/components/table-of-contents";
 import { TooltipProvider } from "@/components/ui/tooltip";

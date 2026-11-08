@@ -1,16 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Schema } from "@tiptap/pm/model";
+import { schema } from "./support/editor.mjs";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { HeadingFold, getFoldedIds } from "../src/lib/heading-fold.ts";
 import { SectionFocus, getFocusedSectionRange } from "../src/lib/section-focus.ts";
 
-const schema = new Schema({ nodes: {
-  doc: { content: "block+" },
-  heading: { group: "block", content: "text*", attrs: { level: { default: 1 }, "data-toc-id": { default: null } } },
-  paragraph: { group: "block", content: "text*" },
-  text: {},
-} });
+
 const heading = (level, id, text) => schema.nodes.heading.create({ level, "data-toc-id": id }, schema.text(text));
 const doc = schema.nodes.doc.create(null, [
   heading(1, "parent", "Parent"), // 0–8

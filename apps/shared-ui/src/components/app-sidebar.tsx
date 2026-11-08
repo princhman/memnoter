@@ -1,6 +1,6 @@
 import { action, formatKeys } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
-import { openReview } from "@/lib/card-sync";
+import { openReview } from "@/components/card-navigation-guard";
 import {
   Sidebar,
   SidebarContent,

@@ -1,11 +1,10 @@
+import { ToolButton } from "./ui/tool-button";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { SavedImage as ImageSchema, InlineImage as InlineImageSchema } from "@/lib/editor-schema/images";
 import { occlusionCardId } from "@/lib/card-id";
 import { ImagePreview } from "@/components/image-preview";
-import { IconTooltip } from "@/components/icon-tooltip";
-import { imageOperation } from "@/lib/write-lifecycle";
+import { imageOperation, isWriteAdmitted, type WritePermit } from "@/lib/write-lifecycle";
 import { OcclusionEditor } from "@/components/occlusion-editor";
-import { saveQueue } from "@/lib/saves";
 import { maskCards, validMasks } from "@/lib/occlusion";
 import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
 import { CropDialog, type Crop as ImageCrop } from "./image-crop-dialog";
@@ -28,7 +27,7 @@ import { requestSyncedFile, syncedFilesStore } from "@/lib/sync/file-requests";
 
 type FilesContextValue = {
   files: ReadonlyMap<string, FileType>;
-  saveImage: (file: File) => Promise<FileType>;
+  saveImage: (file: File, permit?: WritePermit) => Promise<FileType>;
   readImage: (fileId: string) => Promise<Blob>;
 };
 
@@ -345,12 +344,12 @@ export function SavedImageView(props: NodeViewProps) {
     editor.view.dispatch(tr);
   };
 
-  const applyCrop = (crop: ImageCrop) => imageOperation(async () => {
-    if (saveQueue.isSuspended() || editor.isDestroyed) throw new Error("Image writes are suspended");
+  const applyCrop = (crop: ImageCrop) => imageOperation(async permit => {
+    if (!isWriteAdmitted(permit) || editor.isDestroyed) throw new Error("Image writes are suspended");
     const fileId = node.attrs.fileId as string | null;
     if (!fileId) throw new Error("This image cannot be read for cropping");
     const original = await readImage(fileId);
-    if (saveQueue.isSuspended() || editor.isDestroyed) throw new Error("Image writes are suspended");
+    if (!isWriteAdmitted(permit) || editor.isDestroyed) throw new Error("Image writes are suspended");
     const sourceUrl = URL.createObjectURL(original);
     try {
       const source = document.createElement("img");
@@ -367,8 +366,8 @@ export function SavedImageView(props: NodeViewProps) {
       if (!context) throw new Error("Could not prepare the cropped image");
       context.drawImage(source, Math.round(crop.x * source.naturalWidth), Math.round(crop.y * source.naturalHeight), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not create the cropped image")), "image/png"));
-      const saved = await saveImage(new File([blob], `${node.attrs.alt || "image"}-cropped.png`, { type: "image/png" }));
-      if (saveQueue.isSuspended() || editor.isDestroyed) throw new Error("Image writes are suspended");
+      const saved = await saveImage(new File([blob], `${node.attrs.alt || "image"}-cropped.png`, { type: "image/png" }), permit);
+      if (!isWriteAdmitted(permit) || editor.isDestroyed) throw new Error("Image writes are suspended");
       const position = latest.current.getPos();
       if (!mounted.current || position === undefined || editor.state.doc.nodeAt(position) !== node) {
         throw new Error("The crop target changed. Reopen the image and reapply the crop, then discard this failed operation.");
@@ -431,7 +430,7 @@ export function SavedImageView(props: NodeViewProps) {
           )}
         </div>
       )}
-      {occlusionOpen && src && <OcclusionEditor src={src} masks={validMasks(node.attrs.masks)} onCancel={() => setOcclusionOpen(false)} onSave={masks => { if (saveQueue.isSuspended() || editor.isDestroyed || !editor.isEditable) return; updateAttributes({ masks, imageId: node.attrs.imageId || crypto.randomUUID() }); setOcclusionOpen(false); }} />}
+      {occlusionOpen && src && <OcclusionEditor src={src} masks={validMasks(node.attrs.masks)} onCancel={() => setOcclusionOpen(false)} onSave={masks => { if (!isWriteAdmitted() || editor.isDestroyed || !editor.isEditable) return; updateAttributes({ masks, imageId: node.attrs.imageId || crypto.randomUUID() }); setOcclusionOpen(false); }} />}
       {cropOpen && image.current && <CropDialog image={image.current} onCancel={() => setCropOpen(false)} onSave={applyCrop} />}
       {src && (
         <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
@@ -524,13 +523,7 @@ function ToolbarButton({ label, hint, pressed, disabled, onClick, children }: {
   onClick: () => void;
   children: ReactNode;
 }) {
-  return (
-    <IconTooltip label={label} hint={hint}>
-<Button size="icon-sm" variant="ghost" aria-label={label} aria-pressed={pressed} disabled={disabled} onClick={onClick} >
-{children}
-</Button>
-</IconTooltip>
-  );
+  return (<ToolButton label={label} hint={hint} pressed={pressed} disabled={disabled} onClick={onClick}>{children}</ToolButton>);
 }
 
 // Images move with pointer events (see image-pointer-move.ts), never native

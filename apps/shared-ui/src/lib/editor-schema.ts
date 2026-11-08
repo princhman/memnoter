@@ -1,3 +1,4 @@
+import { headingId } from "./outline";
 import { MarkdownPaste } from "./markdown-paste-plugin";
 import type { Editor, AnyExtension } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
@@ -38,7 +39,7 @@ const DeferredTableOfContents = TableOfContents.extend({
     this.storage.content = this.storage.content.flatMap(item => {
       const pos = transaction.mapping.map(item.pos);
       const node = this.editor.state.doc.nodeAt(pos);
-      if (!node || node.attrs["data-toc-id"] !== item.id) return [];
+      if (!node || headingId(node) !== item.id) return [];
       return [{ ...item, pos, node }];
     });
     this.options.onUpdate?.(this.storage.content, false);

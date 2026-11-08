@@ -1,3 +1,4 @@
+import { visibleNoteExtensions } from "../support/editor-ui";
 import { Profiler } from "react";
 import { TableOfContents, createTocStore } from "@/components/table-of-contents";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,7 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Editor, type JSONContent } from "@tiptap/core";
 import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap";
 import * as Y from "yjs";
-import { noteExtensions } from "@/lib/note-extensions";
+import { noteExtensions } from "@/lib/editor-schema";
 import { prepareFolderImport, type ImportFolder } from "@/lib/folder-import";
 import { extractCards } from "@/lib/cards";
 import { extractFromDoc } from "@/lib/search-text";
@@ -57,7 +58,7 @@ Object.assign(window, {
     const start = performance.now();
     const store = createTocStore();
     const tocCommits: number[] = [];
-    const extensions = noteExtensions({ document: doc, onTocUpdate: items => store.setState(() => items) }).map(extension => {
+    const extensions = visibleNoteExtensions({ document: doc, onTocUpdate: items => store.setState(() => items) }).map(extension => {
       if (!extension.config.onTransaction) return extension;
       return extension.extend({
         onTransaction(event) {

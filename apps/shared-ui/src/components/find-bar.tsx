@@ -1,3 +1,5 @@
+import { ToolButton } from "./ui/tool-button";
+import { surfaceClass } from "./ui/surface";
 import { action, formatKeys, bindsInJS, matchesShortcut } from "@/lib/shortcuts";
 import {
   useEffect,
@@ -30,7 +32,6 @@ import { stopScrollRestore } from "@/lib/view-persistence";
 import { FIND_EVENT, usesNativeMenuShortcuts } from "@/lib/app-events";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { cn } from "@/lib/utils";
 
 
 const inputClassName =
@@ -286,7 +287,7 @@ export function FindBar() {
   };
 
   return (
-    <div className="absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md">
+    <div className={`${surfaceClass} absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 p-1`}>
       <div className="flex items-center gap-1">
         <IconTooltip
           label="Toggle replace"
@@ -436,18 +437,5 @@ function ToggleButton({
   onToggle: () => void;
   children: ReactNode;
 }) {
-  return (
-    <IconTooltip label={label} side="bottom">
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        aria-label={label}
-        aria-pressed={pressed}
-        className={cn(pressed && "bg-primary/15 text-link hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground")}
-        onClick={onToggle}
-      >
-        {children}
-      </Button>
-    </IconTooltip>
-  );
+  return (<ToolButton label={label} side="bottom" size="icon-xs" pressed={pressed} onClick={onToggle}>{children}</ToolButton>);
 }

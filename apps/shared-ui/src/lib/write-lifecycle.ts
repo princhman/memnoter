@@ -65,7 +65,7 @@ export async function writeOperation<T>(operation: (permit: WritePermit) => Prom
 // Upload receipts and completed insertions survive transport failures separately.
 export function imageFilesOperation<File, Saved>(files: readonly File[], handlers: {
   checkTarget: (permit: WritePermit) => void;
-  upload: (file: File) => Promise<Saved>;
+  upload: (file: File, permit: WritePermit) => Promise<Saved>;
   insert: (saved: Saved, file: File) => void;
   dispose: () => void;
 }) {
@@ -74,7 +74,7 @@ export function imageFilesOperation<File, Saved>(files: readonly File[], handler
   return imageOperation(async permit => {
     while (next < files.length) {
       handlers.checkTarget(permit);
-      receipt ??= { value: await handlers.upload(files[next]) };
+      receipt ??= { value: await handlers.upload(files[next], permit) };
       handlers.checkTarget(permit);
       handlers.insert(receipt.value, files[next]);
       next++;
@@ -155,6 +155,7 @@ async function settleWork(discard = false, retry = false) {
 export const MUTATIONS = {
   restoreBackup: "restore-backup", cardWrite: "card-write", searchIndex: "search-index",
   deleteModule: "delete-module", compactContent: "compact-content",
+  uploadFile: "upload-file", backupNow: "backup-now",
 } as const;
 
 // Only registered flushers receive permission to finish admitted work after

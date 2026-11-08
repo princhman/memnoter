@@ -1,4 +1,4 @@
-import { openReview } from "@/lib/card-sync";
+import { openReview } from "@/components/card-navigation-guard";
 import { useCommand } from "@/lib/commands";
 import Tiptap from "@/components/Tiptap";
 import { createFileRoute } from "@tanstack/react-router";

@@ -6,9 +6,20 @@ import { onlineManager } from '@tanstack/react-query';
 import * as Y from 'yjs';
 const windowEvents = new EventTarget();
 globalThis.window = { setTimeout, clearTimeout, addEventListener: windowEvents.addEventListener.bind(windowEvents) };
-const { exclusiveWrite, imageOperation, imageFilesOperation, imageStatusStore, discardFailedImages, watchWriteAdmission } = await import('../src/lib/write-lifecycle.ts');
+const { exclusiveWrite: runExclusiveWrite, imageOperation, imageFilesOperation, imageStatusStore, discardFailedImages, watchWriteAdmission, isWriteAdmitted, MUTATIONS } = await import('../src/lib/write-lifecycle.ts');
 const { saveQueue } = await import('../src/lib/saves.ts');
 const { queryClient } = await import('../src/lib/query-client.ts');
+// A real exit never returns to this process. Simulate a host that cancels
+// termination after the exit callback, so subsequent scenarios can write again.
+const cancelledExit = new Error('test host cancelled termination');
+async function exclusiveWrite(action, work) {
+  if (work?.kind !== 'exit') return runExclusiveWrite(action, work);
+  try {
+    return await runExclusiveWrite(async () => { await action(); throw cancelledExit; }, work);
+  } catch (error) {
+    if (error !== cancelledExit) throw error;
+  }
+}
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
@@ -19,7 +30,7 @@ for (const discard of [false, true]) {
     let exited = false;
     onlineManager.setOnline(false);
     const mutation = queryClient.getMutationCache().build(queryClient, {
-      gcTime: 0, mutationKey: ['upload-file'], mutationFn: () => invoke('upload_file'),
+      gcTime: 0, mutationKey: [MUTATIONS.uploadFile], mutationFn: () => invoke('upload_file'),
     });
     mockIPC(async (command, args) => {
       if (command === "core") { command = args.command; args = args.args; }
@@ -30,7 +41,7 @@ for (const discard of [false, true]) {
     });
     const insertion = imageOperation(() => mutation.execute());
     await tick();
-    const quit = exclusiveWrite(async () => { exited = true; }, { discard });
+    const quit = exclusiveWrite(async () => { exited = true; }, discard ? { kind: "exit", unsaved: "discard" } : { kind: "exit" });
     try {
       await tick();
       assert.equal(started, true, 'local IPC must start while QueryClient is offline');
@@ -98,9 +109,9 @@ test('source deletion retries foreign Yjs references before scanning and preserv
   });
   const removeSource = () => queryClient.getMutationCache().build(queryClient, {
     gcTime: 0,
-    mutationKey: ['delete-module'],
+    mutationKey: [MUTATIONS.deleteModule],
     mutationFn: () => exclusiveWrite(() => invoke('delete_module', { moduleId: 'A' }), {
-      excludedMutation: 'delete-module',
+      kind: 'delete',
     }),
   }).execute();
   try {
@@ -138,7 +149,7 @@ test('quit waits beyond QueryClient upload completion for insertion and its ensu
     doc.on('update', bytes => saveQueue.enqueue('B', Array.from(bytes)));
     const insertion = imageOperation(async () => {
       const mutation = queryClient.getMutationCache().build(queryClient, {
-        gcTime: 0, mutationKey: ['upload-file'], mutationFn: () => uploaded.promise,
+        gcTime: 0, mutationKey: [MUTATIONS.uploadFile], mutationFn: () => uploaded.promise,
       });
       await mutation.execute();
       await continuation.promise;
@@ -170,33 +181,6 @@ test('quit waits beyond QueryClient upload completion for insertion and its ensu
   }
 });
 
-test('failed image continuation blocks normal exit; explicit discard still waits for native operations', async () => {
-  const upload = deferred();
-  const native = deferred();
-  let exited = false;
-  const insertion = imageOperation(async () => { await upload.promise; throw new Error('upload failed'); });
-  const rejection = assert.rejects(insertion, /upload failed/);
-  const normal = exclusiveWrite(async () => { exited = true; });
-  upload.resolve();
-  await rejection;
-  await assert.rejects(normal, /image could not be saved/);
-  assert.equal(exited, false);
-  const mutation = queryClient.getMutationCache().build(queryClient, {
-    gcTime: 0, mutationKey: ['card-write'], mutationFn: () => native.promise,
-  }).execute();
-  const discard = exclusiveWrite(async () => { exited = true; }, { discard: true });
-  await tick();
-  assert.equal(exited, false);
-  await assert.rejects(exclusiveWrite(async () => {}), /in progress/);
-  native.resolve();
-  await mutation;
-  await discard;
-  assert.equal(exited, true);
-  assert.equal(saveQueue.isSuspended(), false);
-  queryClient.clear();
-});
-
-
 test('completed failure remains visible across quit, failed retry and unrelated success; resumable files save before exit', async () => {
   const doc = new Y.Doc();
   const disk = new Y.Doc();
@@ -221,13 +205,13 @@ test('completed failure remains visible across quit, failed retry and unrelated 
   const quit = () => exclusiveWrite(async () => {
     assert.deepEqual(disk.getArray('images').toArray(), ['first', 'second']);
     exited = true;
-  }, { retryImages: true });
+  }, { kind: "exit", unsaved: "retry" });
   try {
     doc.on('update', bytes => saveQueue.enqueue('retry-note', Array.from(bytes)));
     await assert.rejects(imageFilesOperation(['first', 'second'], {
-      checkTarget: () => assert.equal(saveQueue.isSuspended(), false),
+      checkTarget: permit => assert.equal(isWriteAdmitted(permit), true),
       upload: file => queryClient.getMutationCache().build(queryClient, {
-        gcTime: 0, mutationKey: ['upload-file'], mutationFn: () => invoke('upload', { file }),
+        gcTime: 0, mutationKey: [MUTATIONS.uploadFile], mutationFn: () => invoke('upload', { file }),
       }).execute(),
       insert: saved => doc.getArray('images').push([saved]),
       dispose: () => {},
@@ -265,11 +249,39 @@ test('unsafe or destroyed targets remain blocked until explicit discard without 
     insert: () => { inserts++; }, dispose: () => {},
   }), /closed/);
   await assert.rejects(imageOperation(async () => { throw new Error('crop target changed'); }), /crop/);
-  await assert.rejects(exclusiveWrite(async () => {}, { retryImages: true }), /closed/);
+  await assert.rejects(exclusiveWrite(async () => {}, { kind: "exit", unsaved: "retry" }), /closed/);
   assert.equal(attempts, 1);
   assert.equal(inserts, 0);
   assert.equal(imageStatusStore.state.errors.length, 2);
   discardFailedImages();
   await exclusiveWrite(async () => {});
   assert.equal(imageStatusStore.state.errors.length, 0);
+});
+
+test('failed image continuation blocks normal exit; explicit discard still waits for native operations', async () => {
+  const upload = deferred();
+  const native = deferred();
+  let exited = false;
+  const insertion = imageOperation(async () => { await upload.promise; throw new Error('upload failed'); });
+  const rejection = assert.rejects(insertion, /upload failed/);
+  const normal = exclusiveWrite(async () => { exited = true; });
+  upload.resolve();
+  await rejection;
+  await assert.rejects(normal, /image could not be saved/);
+  assert.equal(exited, false);
+  const mutation = queryClient.getMutationCache().build(queryClient, {
+    gcTime: 0, mutationKey: [MUTATIONS.cardWrite], mutationFn: () => native.promise,
+  }).execute();
+  const discard = runExclusiveWrite(async () => { exited = true; }, { kind: "exit", unsaved: "discard" });
+  await tick();
+  assert.equal(exited, false);
+  await assert.rejects(exclusiveWrite(async () => {}), /in progress/);
+  native.resolve();
+  await mutation;
+  await discard;
+  assert.equal(exited, true);
+  assert.equal(saveQueue.isSuspended(), true);
+  assert.equal(isWriteAdmitted(), false);
+  assert.deepEqual(imageStatusStore.state.errors, []);
+  queryClient.clear();
 });

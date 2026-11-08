@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { getSchema } from "@tiptap/core";
+import { schema, editorExtensions } from "./support/editor.mjs";
 import StarterKit from "@tiptap/starter-kit";
+import { getSchema } from "@tiptap/core";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { history, undo } from "@tiptap/pm/history";
 import { MarkdownPaste } from "../src/lib/markdown-paste-plugin.ts";
 import { HeadingHieararchy } from "../src/lib/heading-hierarchy.ts";
 
-const schema = getSchema([StarterKit]);
+
 const p = value => schema.node("paragraph", null, value ? schema.text(value) : null);
-function setup(nodes = [p("")], position = 1, extra = []) {
+function setup(nodes = [p("")], position = 1, extra = [], documentSchema = schema) {
   const plugin = MarkdownPaste.config.addProseMirrorPlugins()[0];
-  let state = EditorState.create({ doc: schema.node("doc", null, nodes), plugins: [history(), plugin, ...extra] });
+  let state = EditorState.create({ doc: documentSchema.node("doc", null, nodes), plugins: [history(), plugin, ...extra] });
   state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, position)));
   const view = { get state() { return state; }, dispatch(tr) { state = state.applyTransaction(tr).state; } };
   const paste = (source, options = {}) => {
@@ -50,7 +51,8 @@ test("Markdown insertion fits mid-paragraph, empty paragraph, list item and head
 });
 
 test("schema without tables or highlight retains readable text", () => {
-  const { view, paste } = setup();
+  const fallbackSchema = getSchema([StarterKit]);
+  const { view, paste } = setup([fallbackSchema.node("paragraph")], 1, [], fallbackSchema);
   paste("| Name | Value |\n|---|---|\n| ==yellow== | $x_y$ |");
   view.state.doc.check();
   assert.equal(view.state.doc.textContent, "NameValueyellowx_y");

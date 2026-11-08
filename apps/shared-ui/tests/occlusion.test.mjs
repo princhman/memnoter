@@ -1,24 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Editor, Node } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
+import { editorExtensions } from "./support/editor.mjs";
+import { Editor } from "@tiptap/core";
 import * as Y from "yjs";
 import { prosemirrorToYDoc, yDocToProsemirrorJSON } from "@tiptap/y-tiptap";
 import { Slice, Fragment } from "@tiptap/pm/model";
-import { Flashcards } from "../src/lib/flashcards.ts";
 import { extractCards, blockIdOf } from "../src/lib/cards.ts";
 import { normalizedPoint, drawMask, validMasks, maskBounds, withBounds, renewImageIdentity } from "../src/lib/occlusion.ts";
 import { moveBox, resizeBox } from "../src/lib/box.ts";
 
 // Real editor transactions exercise persisted node attributes and identity repair.
-const ImageNode = Node.create({ name: "image", group: "block", atom: true, addAttributes: () => ({ imageId: { default: null }, fileId: { default: null }, masks: { default: [] }, width: { default: null } }) });
-const InlineImage = ImageNode.extend({ name: "inlineImage", group: "inline", inline: true });
 const rectangle = { id: "r", shape: "rectangle", x: .1, y: .2, width: .3, height: .4 };
 const ellipse = { id: "e", shape: "ellipse", cx: .5, cy: .5, rx: .2, ry: .3 };
 const freehand = { id: "f", shape: "freehand", points: [{x:0,y:0},{x:1,y:0},{x:.5,y:1}] };
 const image = { type: "image", attrs: { imageId: "source", fileId: "asset", masks: [rectangle, ellipse, freehand] } };
 function editorFor(content) {
-  const editor = new Editor({ element: null, extensions: [StarterKit, ImageNode, InlineImage, Flashcards], content: { type: "doc", content } });
+  const editor = new Editor({ element: null, extensions: editorExtensions({ collaborative: false }), content: { type: "doc", content } });
   editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
   return editor;
 }

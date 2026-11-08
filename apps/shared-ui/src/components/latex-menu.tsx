@@ -1,3 +1,4 @@
+import { surfaceClass } from "./ui/surface";
 import {
   forwardRef,
   useEffect,
@@ -392,7 +393,7 @@ const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
           aria-label="LaTeX commands"
           onMouseMove={handlePointerMove}
           onMouseLeave={cancelPending}
-          className="max-h-72 w-64 overflow-y-auto rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md [scrollbar-width:none]"
+          className={`${surfaceClass} max-h-72 w-64 overflow-y-auto p-1 [scrollbar-width:none]`}
         >
           {items.map((item, index) => (
             <button
@@ -424,7 +425,7 @@ const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
           <div
             ref={panelRef}
             className={cn(
-              "absolute top-0 rounded-lg floating-surface bg-popover text-popover-foreground shadow-md",
+              `${surfaceClass} absolute top-0`,
               detailsLeft ? "right-full mr-1" : "left-full ml-1",
             )}
             style={{ width: DETAILS_WIDTH }}

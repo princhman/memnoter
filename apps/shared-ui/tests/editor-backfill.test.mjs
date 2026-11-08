@@ -36,6 +36,7 @@ test('editor-only host backfills closed two-way notes and publishes synced card 
       const { id, command, args } = message;
       let result = [];
       if (command === 'unindexed_card_modules') { lists++; result = [{ id: 'closed' }]; }
+      else if (command === 'unindexed_modules') result = [];
       else if (command === 'get_content') {
         reads.push(args.moduleId);
         result = { state: states[args.moduleId] ?? [], updates: [], files: [] };

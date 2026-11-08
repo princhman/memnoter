@@ -1,19 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Schema } from "@tiptap/pm/model";
+import { schema } from "./support/editor.mjs";
 import { Transform } from "@tiptap/pm/transform";
 import { createMathIndex } from "../src/lib/math-index.ts";
 
 test("formula positions and source stay correct after insertion, deletion, source edits, and block moves", () => {
-  const schema = new Schema({
-    nodes: {
-      doc: { content: "block+" },
-      paragraph: { group: "block", content: "inline*" },
-      blockquote: { group: "block", content: "block+" },
-      inlineMath: { group: "inline", inline: true, content: "text*" },
-      text: { group: "inline" },
-    },
-  });
+
   const { doc, paragraph, blockquote, inlineMath } = schema.nodes;
   const base = doc.create(null, [
     paragraph.create(null, [schema.text("abc"), inlineMath.create(null, schema.text("x")), schema.text("z")]),

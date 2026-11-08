@@ -1,3 +1,5 @@
+import { ToolButton } from "./ui/tool-button";
+import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { isImageNode } from "../lib/cards.ts";
 import { useRef, type ReactNode } from "react";
@@ -25,7 +27,6 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
-import { cn } from "@/lib/utils";
 
 // Marks make no sense inside these; the menu stays hidden there. Inline
 // math has its own actions on its preview.
@@ -99,7 +100,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         }
         return true;
       }}
-      className="z-40 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-0.5 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md"
+      className={`${surfaceClass} z-40 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-0.5 p-1`}
       // Keep the editor selection while clicking menu buttons.
       onMouseDown={(event) => event.preventDefault()}
     >
@@ -235,21 +236,5 @@ function MarkButton({
   onToggle: () => void;
   children: ReactNode;
 }) {
-  return (
-    <IconTooltip label={label} hint={hint}>
-<Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={label}
-            aria-pressed={pressed}
-            disabled={disabled}
-            className={cn(
-              pressed && "bg-primary/15 text-link hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground",
-            )}
-            onClick={onToggle}
-          >
-{children}
-</Button>
-</IconTooltip>
-  );
+  return (<ToolButton label={label} hint={hint} pressed={pressed} disabled={disabled} onClick={onToggle}>{children}</ToolButton>);
 }

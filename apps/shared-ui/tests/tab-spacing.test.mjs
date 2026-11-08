@@ -1,12 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Schema } from "@tiptap/pm/model";
+import { schema } from "./support/editor.mjs";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { tabSpacing } from "../src/lib/tab-spacing.ts";
-const schema = new Schema({ nodes: {
-  doc: { content: "block+" }, paragraph: { group: "block", content: "text*" },
-  codeBlock: { group: "block", content: "text*", code: true }, text: {},
-} });
+
 function run(type, text, from, to, outdent = false) {
   const doc = schema.node("doc", null, [schema.node(type, null, schema.text(text))]);
   let state = EditorState.create({ doc, selection: TextSelection.create(doc, from, to) });

@@ -1,3 +1,4 @@
+import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
 import {
   forwardRef,
@@ -274,7 +275,7 @@ const SlashMenu = forwardRef<SlashMenuHandle, SlashMenuProps>(
 
     return (
       <div
-        className="w-56 rounded-lg floating-surface bg-popover py-1 pl-1 text-popover-foreground shadow-md"
+        className={`${surfaceClass} w-56 py-1 pl-1`}
         // Keep the editor focused while clicking items.
         onMouseDown={(event) => event.preventDefault()}
       >
