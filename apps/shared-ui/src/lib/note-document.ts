@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { Editor } from "@tiptap/core";
 import * as Y from "yjs";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
@@ -8,6 +8,9 @@ import { applyPendingSaves, saveQueue } from "./saves";
 import { restoreView } from "./view-persistence";
 import { imageFilesOperation, assertWritable, isWriteAdmitted, MUTATIONS, type WritePermit } from "./write-lifecycle";
 import { applySavedContent, contentQueryOptions, acknowledgeCompaction, contentKey, LOAD_ORIGIN, patchContent, type ContentUpdate, loadContent, type FileType, type GetContentResponse } from "./content";
+
+import { parsePdfSource, quoteTarget, type PdfSource } from "./pdf-quote";
+import { pendingPdfQuote } from "./pending-pdf-quote";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -174,6 +177,60 @@ export function useNoteDocument(moduleId: string) {
       .catch(error => console.error("Failed to insert image:", error));
   }
 
+  const insertQuote = useCallback((currentEditor: Editor, file: File, source: PdfSource,
+    target: { position: number } | { headingId: string | null }, onInserted: () => void, onDisposed: () => void) => {
+    const ownsEditor = () => persistenceTarget.current === yDoc &&
+      editorRef.current === currentEditor && !currentEditor.isDestroyed &&
+      ySyncPluginKey.getState(currentEditor.state)?.doc === yDoc;
+    if (!isWriteAdmitted() || !isSuccess || !ownsEditor() || !currentEditor.isEditable) {
+      return Promise.reject(new Error("The destination note is not ready for editing. Try again when saving is available."));
+    }
+    const parsedSource = parsePdfSource(source);
+    if (!parsedSource) return Promise.reject(new Error("The quote source is invalid. Select the region again."));
+    if ("position" in target && (!Number.isSafeInteger(target.position) || target.position < 0 || target.position > currentEditor.state.doc.content.size)) {
+      return Promise.reject(new Error("The quote insertion point is invalid. Choose another position."));
+    }
+    const destination = quoteTarget(currentEditor, target);
+    let inserted = false;
+    const setStatus = (status: "saving" | "error", error?: unknown) => {
+      pendingPdfQuote.setState(draft => draft?.file === file && draft.moduleId === moduleId
+        ? { ...draft, status, error: error === undefined ? undefined : error instanceof Error ? error.message : String(error) }
+        : draft);
+    };
+    const attempt = <T,>(action: () => T): T => {
+      try { return action(); }
+      catch (error) { setStatus("error", error); throw error; }
+    };
+    return imageFilesOperation([file], {
+      checkTarget: permit => attempt(() => {
+        setStatus("saving");
+        assertWritable(permit);
+        // Admission may make the editor read-only while draining admitted work.
+        if (!ownsEditor() || (isWriteAdmitted() && !currentEditor.isEditable)) {
+          throw new Error("The original note is closed or read-only. Discard this failed operation, then choose the quote destination again.");
+        }
+      }),
+      upload: async (image, permit) => {
+        try { return await uploadFileMutation.mutateAsync({ file: image, permit }); }
+        catch (error) { setStatus("error", error); throw error; }
+      },
+      insert: saved => attempt(() => {
+        if (inserted) return;
+        const accepted = currentEditor.commands.insertContentAt(destination.resolve(), {
+          type: "image", attrs: { fileId: saved.id, imageId: crypto.randomUUID(), alt: file.name, pdfSource: parsedSource },
+        });
+        if (!accepted) throw new Error("Could not insert the quote.");
+        inserted = true;
+      }),
+      dispose: () => {
+        destination.dispose();
+        // Completion is recorded before UI notification; discard keeps the draft.
+        try { if (inserted) onInserted(); }
+        finally { onDisposed(); }
+      },
+    });
+  }, [yDoc, moduleId, isSuccess, uploadFileMutation.mutateAsync]);
+
   // compaction listener
   useEffect(() => {
     if (!data || data.updates.length < COMPACTION_THRESHOLD) {
@@ -252,5 +309,5 @@ export function useNoteDocument(moduleId: string) {
     [filesById, moduleId, uploadFileMutation.mutateAsync],
   );
 
-  return { yDoc, editorRef, isSuccess, filesContext, insertImages };
+  return { yDoc, editorRef, isSuccess, filesContext, insertImages, insertQuote };
 }

@@ -24,13 +24,20 @@ export function watchWriteAdmission(listener: (blocked: boolean) => void) {
   return () => { listeners.delete(listener); };
 }
 
+function disposeWork(work: TrackedWriteWork) {
+  try { work.dispose?.(); }
+  catch (error) { console.error("Failed to notify image operation disposal:", error); }
+}
+
 async function runWork(work: TrackedWriteWork) {
+  work.error = undefined;
   const pending = Promise.resolve().then(work.run);
   work.pending = pending;
+  publishWork();
   try {
     const result = await pending;
     trackedWork.delete(work);
-    work.dispose?.();
+    disposeWork(work);
     return result;
   } catch (error) {
     if (work.rollbackOnFailure) trackedWork.delete(work);
@@ -83,11 +90,16 @@ export function imageFilesOperation<File, Saved>(files: readonly File[], handler
   }, { retry: true, dispose: handlers.dispose });
 }
 
+export async function retryFailedImages() {
+  assertWritable();
+  await Promise.allSettled([...trackedWork].filter(work => work.error && work.retry && !work.pending).map(runWork));
+}
+
 export function discardFailedImages() {
   if (exclusive) throw new Error("Another database operation is in progress.");
   for (const work of trackedWork) if (work.error && !work.pending) {
     trackedWork.delete(work);
-    work.dispose?.();
+    disposeWork(work);
   }
   publishWork();
 }
@@ -130,7 +142,7 @@ export async function exclusiveWrite<T>(action: () => Promise<T>, work?: Exclusi
     await drainMutations(work?.kind === "restore" ? MUTATIONS.restoreBackup : work?.kind === "delete" ? MUTATIONS.deleteModule : undefined);
     const result = await action();
     if (discard) {
-      for (const item of trackedWork) item.dispose?.();
+      for (const item of trackedWork) disposeWork(item);
       trackedWork.clear();
       publishWork();
     }

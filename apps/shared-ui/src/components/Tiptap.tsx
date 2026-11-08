@@ -41,7 +41,7 @@ type TipTapProps = {
 const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
   const { data: modules } = useModules();
   const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
-  const { yDoc, editorRef, isSuccess, filesContext, insertImages } = useNoteDocument(moduleId);
+  const { yDoc, editorRef, isSuccess, filesContext, insertImages, insertQuote } = useNoteDocument(moduleId);
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
   const { setActiveEditor } = useActiveEditor();
@@ -183,14 +183,14 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
   useEffect(() => {
     if (!editor) return;
 
-    setActiveEditor({ moduleId, editor, isReady: isSuccess });
+    setActiveEditor({ moduleId, editor, isReady: isSuccess, insertQuote });
 
     return () => {
       setActiveEditor((current) =>
         current?.editor === editor ? null : current,
       );
     };
-  }, [editor, moduleId, isSuccess, setActiveEditor]);
+  }, [editor, moduleId, isSuccess, setActiveEditor, insertQuote]);
 
   return (
     <FilesContext.Provider value={filesContext}>

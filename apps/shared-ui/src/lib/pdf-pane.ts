@@ -15,5 +15,7 @@ export function updatePdfPane(moduleId: string, patch: Partial<PdfPaneState>) {
   store.setState(state => ({ ...state, ...patch }));
   try { localStorage.setItem(`pdf-pane:${moduleId}`, JSON.stringify(store.state)); } catch { /* Storage may be unavailable. */ }
 }
+export const pdfPageRequest = createStore<{ id: string; page: number; serial: number } | null>(null);
+export function requestPdfPage(id: string, page: number) { pdfPageRequest.setState(old => ({ id, page, serial: (old?.serial ?? 0) + 1 })); }
 export function openPdfPane(moduleId: string, active: string) { updatePdfPane(moduleId, { open: true, active }); }
 export function usePdfPane(moduleId: string) { return useSelector(paneStore(moduleId), state => state); }

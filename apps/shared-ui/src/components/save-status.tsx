@@ -1,6 +1,6 @@
 import { Toast } from "./ui/toast";
 import { isTauri } from "@/lib/backend";
-import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
+import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, retryFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { call as invoke } from "../lib/backend.ts";
@@ -99,6 +99,7 @@ const SaveStatus = () => {
       {imageErrors.length > 0 && (
         <Toast role="alert" className="max-w-md rounded-lg p-3 text-sm shadow-sm">
           {imageErrors.map((error, index) => <p key={index}>{error}</p>)}
+          <Button variant="outline" disabled={blocked} onClick={() => void retryFailedImages()}>Retry images</Button>
           <Button variant="outline" disabled={blocked} onClick={() => discardFailedImages()}>Discard failed image operations</Button>
         </Toast>
       )}

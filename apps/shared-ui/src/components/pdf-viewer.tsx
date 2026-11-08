@@ -1,9 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight } from "lucide-react";
+import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, Scan } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
@@ -11,8 +11,13 @@ import { fileUrl } from "@/lib/backend";
 import { parsePage, readPdfView, visiblePages } from "@/lib/pdf-state";
 import { documentsKey } from "@/lib/use-documents";
 import { requestSyncedFile } from "@/lib/sync/file-requests";
-import { openPdfPane } from "@/lib/pdf-pane";
+import { openPdfPane, pdfPageRequest } from "@/lib/pdf-pane";
 import { ToolButton } from "./ui/tool-button";
+import { PdfRegionSelection } from "./pdf-region-selection";
+import { cropPdfCanvas, type PdfRegion } from "@/lib/pdf-quote";
+import { pendingPdfQuote } from "@/lib/pending-pdf-quote";
+import { useSelector } from "@tanstack/react-store";
+import { Button } from "./ui/button";
 GlobalWorkerOptions.workerSrc = workerUrl;
 
 const PAGE_GAP = 16;
@@ -20,27 +25,30 @@ type Size = { width: number; height: number };
 
 // Memoized: scrolling re-renders the viewer, but a page only redraws when it
 // arrives, the zoom changes, or it enters or leaves the render window.
-const PdfPage = memo(function PdfPage({ page, size, zoom, active }: { page?: PDFPageProxy; size: Size; zoom: number; active: boolean }) {
+const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, onSelect, onCancel }: { page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number) => void; onCancel: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
+  const [ready, setReady] = useState<{ page: PDFPageProxy; zoom: number } | null>(null);
   const live = active && !!page;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const target = canvas.current;
     const layer = text.current;
     if (!live || !page || !target || !layer) return;
     let disposed = false;
+    setReady(null); setError("");
     const ratio = window.devicePixelRatio || 1;
     const viewport = page.getViewport({ scale: zoom });
     target.width = Math.ceil(viewport.width * ratio);
     target.height = Math.ceil(viewport.height * ratio);
     const render = page.render({ canvas: target, viewport, transform: [ratio, 0, 0, ratio, 0, 0] });
     const textLayer = new TextLayer({ textContentSource: page.streamTextContent(), container: layer, viewport });
-    void Promise.all([render.promise, textLayer.render()]).catch(error => { if (!disposed) setError(String(error)); });
+    void Promise.all([render.promise, textLayer.render()]).then(() => { if (!disposed) setReady({ page, zoom }); }).catch(error => { if (!disposed) setError(String(error)); });
     return () => { disposed = true; render.cancel(); textLayer.cancel(); layer.replaceChildren(); target.width = 0; target.height = 0; };
   }, [page, zoom, live]);
-  return <div className="pdf-page relative shrink-0 bg-white shadow-sm" style={{ width: size.width, height: size.height, "--scale-factor": zoom, "--total-scale-factor": zoom * (page?.userUnit ?? 1) } as React.CSSProperties}>
+  return <div className="pdf-page relative shrink-0 bg-white shadow-sm" style={{ width, height, "--scale-factor": zoom, "--total-scale-factor": zoom * (page?.userUnit ?? 1) } as React.CSSProperties}>
     {live && <><canvas ref={canvas} className="absolute inset-0 size-full" /><div ref={text} className="textLayer" /></>}
+    {live && ready && ready.page === page && ready.zoom === zoom && selecting && <PdfRegionSelection key={zoom} onCancel={onCancel} onSelect={region => { if (canvas.current) onSelect(canvas.current, region, pageNumber); }} />}
     {error && <p role="alert" className="relative bg-background p-2 text-sm text-destructive">{error}</p>}
   </div>;
 });
@@ -58,10 +66,33 @@ function ReaderTools({ children, fullscreen, leading, trailing }: { children: Re
 
 const sameList = (a: number[], b: number[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 
-export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode }) {
+export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number }) {
   const client = useQueryClient();
+  const [selecting, setSelecting] = useState(false);
+  const [cropping, setCropping] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const pending = useSelector(pendingPdfQuote, state => state);
+  const cropBusy = useRef(false);
+  const cancelSelection = useCallback(() => setSelecting(false), []);
+  useEffect(() => {
+    if (!selecting) return;
+    const cancel = (event: KeyboardEvent) => { if (event.key === "Escape") cancelSelection(); };
+    window.addEventListener("keydown", cancel);
+    return () => window.removeEventListener("keydown", cancel);
+  }, [selecting, cancelSelection]);
+  const selectRegion = useCallback(async (canvas: HTMLCanvasElement, region: PdfRegion, page: number) => {
+    if (cropBusy.current || pendingPdfQuote.state) return;
+    cropBusy.current = true; setCropping(true); setQuoteError(""); setSelecting(false);
+    try {
+      const blob = await cropPdfCanvas(canvas, region);
+      if (pendingPdfQuote.state) throw new Error("Another quote is waiting. Finish it, then select this region again.");
+      pendingPdfQuote.setState(previous => previous ?? ({ moduleId: doc.moduleId, file: new File([blob], `${doc.name}, page ${page}.png`, { type: "image/png" }),
+        source: { documentId: doc.id, name: doc.name, page, region }, section: fullscreen, status: "draft" }));
+    } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); setSelecting(!pendingPdfQuote.state); }
+    finally { cropBusy.current = false; setCropping(false); }
+  }, [doc.id, doc.moduleId, doc.name, fullscreen]);
   const navigate = useNavigate();
-  const [saved] = useState(() => readPdfView(doc.id));
+  const [saved] = useState(() => ({ ...readPdfView(doc.id), ...(initialPage ? { page: initialPage } : {}) }));
   const [zoom, setZoom] = useState(saved.zoom);
   const [current, setCurrent] = useState(saved.page);
   const [input, setInput] = useState(String(saved.page));
@@ -173,6 +204,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc:
     zoomPage.current = current;
     setZoom(value);
   }
+  const pageRequest = useSelector(pdfPageRequest, state => state);
+  useEffect(() => {
+    if (pageRequest?.id === doc.id && pages.length) { jump(Math.max(1, Math.min(pages.length, pageRequest.page))); pdfPageRequest.setState(() => null); }
+  }, [pageRequest, doc.id, pages.length]);
   const activeSet = useMemo(() => new Set(active), [active]);
 
   // The backdrop matches the app header, so the page sits on one surface.
@@ -184,14 +219,20 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc:
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom(zoom - 0.1)}><ZoomOut /></ToolButton>
       <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom(zoom + 0.1)}><ZoomIn /></ToolButton>
+      <ToolButton label="Select region" pressed={selecting} disabled={!!pending || cropping || !pdf} onClick={() => { setQuoteError(""); setSelecting(value => !value); }}><Scan /></ToolButton>
       {fullscreen && <ToolButton label="Open beside note" onClick={() => { openPdfPane(doc.moduleId, doc.id); void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }); }}>
         {/* The small arrow says this moves the PDF into the note's side panel. */}
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
       </ToolButton>}
     </ReaderTools>
+    {(selecting || cropping || quoteError || (fullscreen && pending?.moduleId === doc.moduleId)) && <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs" role="status">
+      {selecting && !pending && <>Drag on a loaded page. Escape to cancel.<Button size="xs" variant="ghost" onClick={() => setSelecting(false)}>Cancel</Button></>}
+      {cropping && "Preparing quote…"}{quoteError && <span role="alert">{quoteError}</span>}
+      {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote…" : "Quote needs attention"}<Button size="xs" onClick={() => { void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error))); }}>Add to note…</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current === pending && current.status === "draft" ? null : current)}>Discard</Button>}</>}
+    </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF…</p>}
-      <div className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} size={size} zoom={zoom} active={activeSet.has(index)} />)}</div>
+      <div className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} selecting={selecting && !pending && !cropping} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
     </div>}
   </div>;
 }
