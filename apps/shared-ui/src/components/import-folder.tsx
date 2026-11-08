@@ -71,6 +71,8 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); setProgress(""); }
   };
+  // Scanning a picked image folder changes the plan; wait for it before moving on.
+  const locked = busy || scanning;
   const titles = ["Module name", "Choose and order notes", "Find images", "Formatting"];
   const found = plan?.resolvedReferences ?? 0;
   const missing = plan?.imageIssues.length ?? 0;
@@ -79,8 +81,8 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
     : !missing ? `${total === 1 ? "1 image" : `All ${total} images`} found.`
     : `${found} of ${total} ${total === 1 ? "image" : "images"} found. ${missing === 1 ? "1 is" : `${missing} are`} missing.`;
   return <>
-    <Dialog open={!!folder} onOpenChange={open => { if (!open && !busy) setFolder(undefined); }}>
-      <DialogContent className="sm:max-w-xl h-[min(36rem,85dvh)] grid-rows-[auto_minmax(0,1fr)_auto]" showCloseButton={!busy}>
+    <Dialog open={!!folder} onOpenChange={open => { if (!open && !locked) setFolder(undefined); }}>
+      <DialogContent className="sm:max-w-xl h-[min(36rem,85dvh)] grid-rows-[auto_minmax(0,1fr)_auto]" showCloseButton={!locked}>
         <DialogHeader><DialogTitle>Import folder</DialogTitle><p className="text-muted-foreground">Step {step + 1} of 4, {titles[step]}</p></DialogHeader>
         <div className={`min-h-0 ${step === 1 ? "flex flex-col gap-3 overflow-hidden" : "overflow-auto space-y-3"}`}>
           {step === 0 && <label className="grid gap-2">Module name<Input autoFocus value={name} onChange={e => setName(e.target.value)} disabled={busy} /><span className="text-muted-foreground">{folder?.name}. Nothing is saved until you press Import.</span></label>}
@@ -105,7 +107,7 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
         <div>
         {error && <p role="alert" className="text-destructive">{error}</p>}
         {busy && <p role="status">{progress || "Importing…"}</p>}
-        <DialogFooter><Button variant="outline" disabled={busy} onClick={() => step ? setStep(step - 1) : setFolder(undefined)}>{step ? "Back" : "Cancel"}</Button>{step < 3 ? <Button disabled={busy || !name.trim() || (step > 0 && !plan)} onClick={() => setStep(step + 1)}>Next</Button> : <Button disabled={busy || !plan || !name.trim()} onClick={() => void save()}>Import</Button>}</DialogFooter>
+        <DialogFooter><Button variant="outline" disabled={locked} onClick={() => step ? setStep(step - 1) : setFolder(undefined)}>{step ? "Back" : "Cancel"}</Button>{step < 3 ? <Button disabled={locked || !name.trim() || (step > 0 && !plan)} onClick={() => setStep(step + 1)}>Next</Button> : <Button disabled={locked || !plan || !name.trim()} onClick={() => void save()}>Import</Button>}</DialogFooter>
         </div>
       </DialogContent>
     </Dialog>

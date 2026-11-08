@@ -229,7 +229,7 @@ export function markdownToJSON(source: string, resolveImage?: ImageResolver, opt
   function cardLines(node: JSONContent): JSONContent[] {
     const lines: JSONContent[][] = [[]];
     for (const child of node.content ?? []) {
-      if (child.type === "text" && child.text === "\n") lines.push([]);
+      if ((child.type === "text" && child.text === "\n") || child.type === "hardBreak") lines.push([]);
       else lines[lines.length - 1].push(child);
     }
     const prose = (line: JSONContent[]) => line.map(child => child.type === "text" && !child.marks?.some(mark => mark.type === "code") ? child.text : " ").join("");
