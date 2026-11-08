@@ -81,14 +81,23 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     assert.ok(trashBounds.x < saveBounds.x, 'trash stays left of Save');
     await editor.getByRole('textbox').click();
     assert.equal(await editor.isVisible(), true, 'inside clicks keep the editor open');
+    const save = editor.getByRole('button', { name: 'Save', exact: true });
+    assert.equal(await save.isDisabled(), true, 'unchanged text has nothing to save');
+    const idleSaveBackground = await save.evaluate(element => getComputedStyle(element).backgroundColor);
+    await editor.getByRole('textbox').fill('Remember this <plain>');
+    assert.equal(await save.isEnabled(), true);
+    assert.notEqual(await save.evaluate(element => getComputedStyle(element).backgroundColor), idleSaveBackground, 'Save gains emphasis only for changes');
+    await editor.getByRole('textbox').fill('');
+    assert.equal(await save.isDisabled(), true, 'reverting an edit restores the idle state');
+    assert.equal(await save.evaluate(element => getComputedStyle(element).backgroundColor), idleSaveBackground);
     await editor.getByRole('textbox').fill('Remember this <plain>');
     await editor.getByRole('button', { name: 'Save', exact: true }).click();
-    await waitSaved(items => items[0]?.body === 'Remember this <plain>');
-    await page.getByRole('button', { name: 'Outside action', exact: true }).click();
     await editor.waitFor({ state: 'detached' });
+    await waitSaved(items => items[0]?.body === 'Remember this <plain>');
     await page.reload(); await first.waitFor();
     await viewer.getByRole('button', { name: 'Edit PDF comment: Remember this <plain>' }).first().click();
     assert.equal(await editor.getByRole('textbox').inputValue(), 'Remember this <plain>');
+    assert.equal(await editor.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true, 'saved text reopens without changes');
     assert.equal(readPdfAnnotations(persisted)[0].color, 'blue', 'colour survives reload');
     assert.equal(await fill.evaluate(element => getComputedStyle(element).backgroundColor), blueFill);
     await editor.getByRole('textbox').fill('Unsaved changes');
@@ -102,8 +111,11 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     fail = true;
     await editor.getByRole('textbox').fill('Keep input after failure');
     await editor.getByRole('button', { name: 'Save', exact: true }).click();
+    await editor.waitFor({ state: 'detached' });
+    await viewer.getByRole('alert').waitFor();
+    await viewer.getByRole('button', { name: 'Edit PDF comment: Keep input after failure' }).first().click();
     await editor.getByRole('alert').waitFor();
-    assert.equal(await editor.getByRole('textbox').inputValue(), 'Keep input after failure');
+    assert.equal(await editor.getByRole('textbox').inputValue(), 'Keep input after failure', 'background save errors retain the accepted edit for retry');
     fail = false; await editor.getByRole('button', { name: 'Retry saving', exact: true }).click();
     await waitSaved(items => items[0]?.body === 'Keep input after failure');
     await editor.getByRole('button', { name: 'Delete annotation', exact: true }).click();
@@ -141,9 +153,8 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     await select(); await viewer.getByRole('button', { name: 'Comment', exact: true }).click();
     await editor.getByRole('textbox').fill('Text comment');
     await editor.getByRole('button', { name: 'Save', exact: true }).click();
-    await waitSaved(items => items[0]?.kind === 'comment' && items[0]?.body === 'Text comment');
-    await page.getByRole('button', { name: 'Outside action', exact: true }).click();
     await editor.waitFor({ state: 'detached' });
+    await waitSaved(items => items[0]?.kind === 'comment' && items[0]?.body === 'Text comment');
     // Drag through existing highlights still selects text for the independent quote action.
     await select(); await viewer.getByRole('button', { name: 'Quote text', exact: true }).click();
     assert.equal(JSON.parse(await page.locator('#text-draft').textContent()).kind, 'text');
@@ -154,10 +165,9 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     await page.mouse.move(box.x + 200, box.y + 180); await page.mouse.down(); await page.mouse.move(box.x + 280, box.y + 220); await page.mouse.up();
     await viewer.getByRole('button', { name: 'Comment on area', exact: true }).click();
     await editor.getByRole('textbox').fill('Area comment'); await editor.getByRole('button', { name: 'Save', exact: true }).click();
+    await editor.waitFor({ state: 'detached' });
     await waitSaved(items => items.length === 2);
     assert.equal(await page.locator('#text-draft').textContent(), 'null');
-    await page.getByRole('button', { name: 'Outside action', exact: true }).click();
-    await editor.waitFor({ state: 'detached' });
     // Clicking the fill (rather than its keyboard control) opens the annotation.
     await page.mouse.click(box.x + 220, box.y + 200);
     await editor.waitFor(); assert.equal(await editor.getByRole('textbox').inputValue(), 'Area comment');

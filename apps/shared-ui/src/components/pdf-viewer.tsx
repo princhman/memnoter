@@ -542,9 +542,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         if (annotationEditor.kind === "existing") {
           if (!annotations.updateComment({ id: annotationEditor.id, body })) throw new Error("This annotation has been deleted.");
         } else {
-          const id = annotations.create({ kind: "comment", anchors: annotationEditor.anchors, excerpt: annotationEditor.excerpt, body, color: highlightColor });
-          setAnnotationEditor({ kind: "existing", id, anchorPage: annotationEditor.anchorPage, left: annotationEditor.left, top: annotationEditor.top });
+          annotations.create({ kind: "comment", anchors: annotationEditor.anchors, excerpt: annotationEditor.excerpt, body, color: highlightColor });
         }
+        setAnnotationEditor(null);
       }} onDelete={existing ? () => { annotations.remove(existing.id); setAnnotationEditor(null); } : undefined} />;
     })()}
     {(!annotations.ready || annotations.saving || annotations.error) && <div className="absolute bottom-3 right-3 z-30 max-w-64 rounded floating-surface p-2 text-xs shadow" role={annotations.error ? "alert" : "status"}>

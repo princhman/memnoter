@@ -20,6 +20,7 @@ export function PdfAnnotationPopover({ position, body, required, disabled, savin
   onClose: () => void;
 }) {
   const [value, setValue] = useState(body);
+  const canSave = value !== body && (!required || !!value.trim());
   const [commenting, setCommenting] = useState(required || !!body);
   const [error, setError] = useState("");
   const host = useRef<HTMLDivElement>(null);
@@ -56,7 +57,7 @@ export function PdfAnnotationPopover({ position, body, required, disabled, savin
     <div className="mt-2 flex items-center gap-1">
       {onDelete && <ToolButton size="icon-xs" label="Delete annotation" className="text-muted-foreground hover:text-destructive" disabled={disabled} onClick={() => attempt(onDelete)}><Trash2 /></ToolButton>}
       {!commenting && <Button size="xs" variant="ghost" className="ml-auto" onClick={() => setCommenting(true)}><MessageSquare aria-hidden="true" />Add comment</Button>}
-      {commenting && <Button size="xs" className="ml-auto" disabled={disabled || (required && !value.trim())} onClick={() => attempt(() => onSave(value))}>Save</Button>}
+      {commenting && <Button size="xs" className="ml-auto" variant={canSave ? "default" : "secondary"} disabled={disabled || !canSave} onClick={() => attempt(() => onSave(value))}>Save</Button>}
     </div>
     {saving && <p role="status">Saving annotations…</p>}
     {(error || persistenceError) && <p role="alert" className="mt-2 text-destructive">{error || persistenceError}</p>}
