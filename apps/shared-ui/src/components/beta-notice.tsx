@@ -32,7 +32,7 @@ export function BetaNotice() {
           openLink(event.currentTarget.href);
         }}
       >
-        Open GitHub issue
+        open a GitHub issue
       </a>.
     </>
   );
