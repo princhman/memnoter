@@ -80,6 +80,7 @@ export function deleteObject(server: string, token: string, id: string, signal?:
   return api(server, SYNC_CONTRACT.paths.files + id, { method: "DELETE", token, signal });
 }
 
+// 404 is temporary; 410 is surfaced to file sync as a permanent deletion.
 // null when the server has no such object (yet).
 export async function getObject(server: string, token: string, kind: "files" | "blobs", id: string, signal?: AbortSignal) {
   return syncRequest(`${server.replace(/\/+$/, "")}${SYNC_CONTRACT.paths[kind]}${id}`, {

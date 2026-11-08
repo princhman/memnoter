@@ -3,3 +3,4 @@
 export const userPrefix = (userId: string) => `${userId}/`;
 export const fileKey = (userId: string, fileId: string) => `${userId}/files/${fileId}`;
 export const blobKey = (userId: string, blobId: string) => `${userId}/blobs/${blobId}`;
+export const goneKey = (userId: string, fileId: string) => `${userId}/gone/${fileId}`;

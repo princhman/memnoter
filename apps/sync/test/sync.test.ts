@@ -165,6 +165,9 @@ describe("sync between devices", () => {
     await waitFor(() => a.store.outboxEntries.length === 0);
     await put("files", "11111111-2222-3333-4444-555555555555", token, new Uint8Array([1, 2, 3]));
 
+    const deleted = "aaaaaaaa-2222-3333-4444-555555555555";
+    await SELF.fetch(`${BASE}/v1/files/${deleted}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    expect((await env.FILES.list()).objects.some((object) => object.key.endsWith(`/gone/${deleted}`))).toBe(true);
     const wipe = await SELF.fetch(`${BASE}/v1/vault`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     expect(wipe.status).toBe(200);
     await waitFor(() => a.signedOut.value);
@@ -177,7 +180,7 @@ describe("sync between devices", () => {
     });
     expect(socket.status).toBe(401);
     const objects = await env.FILES.list();
-    expect(objects.objects.filter((object) => object.key.includes("11111111"))).toEqual([]);
+    expect(objects.objects.filter((object) => object.key.includes("11111111") || object.key.endsWith(`/gone/${deleted}`))).toEqual([]);
   });
 
   it("syncs a change too large for a log row through R2", async () => {
@@ -244,7 +247,9 @@ describe("images", () => {
     const get = () => SELF.fetch(`${BASE}/v1/files/${id}`, { headers: { Authorization: `Bearer ${alice.token}` } });
     expect((await get()).status).toBe(200);
     expect((await remove(id, alice.token)).status).toBe(200);
-    expect((await get()).status).toBe(404);
+    expect((await get()).status).toBe(410);
+    expect((await put("files", id, alice.token, new Uint8Array([2]))).status).toBe(410);
+    expect((await get()).status).toBe(410);
     expect((await remove(id, alice.token)).status).toBe(200);
   });
 

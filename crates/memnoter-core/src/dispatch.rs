@@ -62,6 +62,7 @@ commands! { core;
     sync_snapshot(doc: String, generation: String) => crate::sync::sync_snapshot(&core.db, doc, generation);
     sync_missing_files(generation: String) => crate::sync::sync_missing_files(&core.db, generation);
     sync_pending_deletes(generation: String) => crate::sync::sync_pending_deletes(&core.db, generation);
+    sync_file_gone(file_id: String, generation: String) => crate::sync::sync_file_gone(&core.db, file_id, generation);
     sync_delete_done(file_id: String, generation: String) => crate::sync::sync_delete_done(&core.db, file_id, generation);
     sync_pending_uploads(generation: String) => crate::sync::sync_pending_uploads(&core.db, generation);
     sync_upload_done(file_id: String, generation: String) => crate::sync::sync_upload_done(&core.db, file_id, generation);

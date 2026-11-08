@@ -67,6 +67,9 @@ pub fn migrate(conn: &Connection) -> CommandResult<()> {
             doc TEXT PRIMARY KEY,
             state BLOB NOT NULL
         );
+        create table if not exists sync_files_gone (
+            file_id TEXT PRIMARY KEY
+        );
         create table if not exists sync_file_deletes (
             file_id TEXT PRIMARY KEY
         );
@@ -183,7 +186,7 @@ pub fn record_file(
     module_id: &str,
     file_type: &str,
 ) -> CommandResult<bool> {
-    if !is_enabled(conn)? {
+    if !is_enabled(conn)? || file_gone(conn, file_id)? {
         return Ok(false);
     }
     let doc = load_vault(conn)?;
@@ -236,6 +239,67 @@ pub fn record_file_deleted(conn: &Connection, file_id: &str) -> CommandResult<()
     Ok(())
 }
 
+fn file_gone(conn: &Connection, file_id: &str) -> CommandResult<bool> {
+    conn.query_row(
+        "select exists(select 1 from sync_files_gone where file_id = ?1)",
+        [file_id],
+        |row| row.get(0),
+    )
+    .map_err(db_err)
+}
+
+pub(crate) fn deleted_file_ids(conn: &Connection) -> CommandResult<Vec<String>> {
+    let mut stmt = conn
+        .prepare("select file_id from sync_files_gone")
+        .map_err(db_err)?;
+    let mut ids = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(db_err)?
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .map_err(db_err)?;
+    ids.extend(
+        string_entries(&load_vault(conn)?, FILES_MAP)
+            .into_iter()
+            .filter_map(|(id, record)| file_deleted(&record).then_some(id)),
+    );
+    Ok(ids)
+}
+
+fn remember_file_gone(conn: &Connection, file_id: &str) -> CommandResult<()> {
+    conn.execute(
+        "insert or ignore into sync_files_gone (file_id) values (?1)",
+        [file_id],
+    )
+    .map_err(db_err)?;
+    record_file_deleted(conn, file_id)?;
+    // The server already knows; only the vault needs the tombstone again.
+    conn.execute(
+        "delete from sync_file_deletes where file_id = ?1",
+        [file_id],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+pub fn sync_file_gone(db: &Db, file_id: String, generation: String) -> CommandResult<()> {
+    let mut conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    let tx = conn.transaction().map_err(db_err)?;
+    remember_file_gone(&tx, &file_id)?;
+    tx.commit().map_err(db_err)
+}
+
+pub(crate) fn retain_deleted_files(conn: &Connection, ids: &[String]) -> CommandResult<()> {
+    for id in ids {
+        conn.execute(
+            "insert or ignore into sync_files_gone (file_id) values (?1)",
+            [id],
+        )
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
 fn file_deleted(record: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(record).is_ok_and(|record| record["deleted"] == true)
 }
@@ -251,7 +315,7 @@ pub fn publish_file_owners(conn: &Connection) -> CommandResult<bool> {
     let known: BTreeMap<String, String> = string_entries(&doc, FILES_MAP).into_iter().collect();
     let local: Vec<(String, String, String)> = {
         let mut stmt = conn
-            .prepare("select id, module_id, file_type from files")
+            .prepare("select id, module_id, file_type from files where id not in (select file_id from sync_files_gone)")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
@@ -592,7 +656,7 @@ fn seed(conn: &Connection) -> CommandResult<()> {
     }
     let files: Vec<(String, String, String)> = {
         let mut stmt = conn
-            .prepare("select id, module_id, file_type from files")
+            .prepare("select id, module_id, file_type from files where id not in (select file_id from sync_files_gone)")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
@@ -610,7 +674,7 @@ fn seed(conn: &Connection) -> CommandResult<()> {
             files_map.insert(&mut txn, id.as_str(), file_record(module_id, file_type));
         }
     }
-    conn.execute_batch("delete from sync_file_uploads; insert into sync_file_uploads (file_id) select id from files;")
+    conn.execute_batch("delete from sync_file_uploads; insert into sync_file_uploads (file_id) select id from files where id not in (select file_id from sync_files_gone);")
         .map_err(db_err)?;
     save_vault(conn, &doc)?;
     let state = doc
@@ -753,10 +817,17 @@ pub(crate) fn status(conn: &Connection) -> CommandResult<SyncStatus> {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct AccountIdentity { server: String, #[serde(rename = "userId")] user_id: String }
+struct AccountIdentity {
+    server: String,
+    #[serde(rename = "userId")]
+    user_id: String,
+}
 fn account_identity(raw: &str) -> String {
     match serde_json::from_str::<AccountIdentity>(raw) {
-        Ok(mut identity) => { identity.server = identity.server.trim_end_matches('/').to_owned(); serde_json::to_string(&identity).unwrap() }
+        Ok(mut identity) => {
+            identity.server = identity.server.trim_end_matches('/').to_owned();
+            serde_json::to_string(&identity).unwrap()
+        }
         Err(_) => raw.to_owned(), // pre-identity native rows migrate at host startup
     }
 }
@@ -993,6 +1064,9 @@ fn missing_files(conn: &Connection) -> CommandResult<Vec<MissingFile>> {
     let doc = load_vault(conn)?;
     let mut missing = Vec::new();
     for (file_id, record) in string_entries(&doc, FILES_MAP) {
+        if file_gone(conn, &file_id)? {
+            continue;
+        }
         let Ok(record) = serde_json::from_str::<serde_json::Value>(&record) else {
             continue;
         };
@@ -1023,7 +1097,7 @@ fn missing_files(conn: &Connection) -> CommandResult<Vec<MissingFile>> {
 fn pending_uploads(conn: &Connection) -> CommandResult<Vec<String>> {
     // A file deleted locally before it was uploaded no longer needs to be.
     conn.execute(
-        "delete from sync_file_uploads where file_id not in (select id from files)",
+        "delete from sync_file_uploads where file_id not in (select id from files) or file_id in (select file_id from sync_files_gone)",
         [],
     )
     .map_err(db_err)?;
@@ -1656,6 +1730,96 @@ mod tests {
         assert_eq!(missing_files(&b).unwrap().len(), 1);
         // Downloaded images are not uploaded again.
         assert!(pending_uploads(&b).unwrap().is_empty());
+    }
+
+    #[test]
+    fn server_gone_survives_reopen_and_stops_uploads_and_downloads() {
+        let (dir, mut conn) = db();
+        conn.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X''); insert into files values ('image', 'm', '/x', 'image/png');").unwrap();
+        enable(&mut conn, "{}").unwrap();
+        assert_eq!(pending_uploads(&conn).unwrap(), vec!["image"]);
+        drop(conn);
+        let db = crate::open_db(&dir).unwrap();
+        let epoch = generation(&db.lock().unwrap()).unwrap();
+        assert_eq!(
+            sync_file_gone(&db, "image".into(), "stale".into()).unwrap_err(),
+            STALE_GENERATION
+        );
+        sync_file_gone(&db, "image".into(), epoch).unwrap();
+        drop(db);
+        let mut conn = crate::open_db(&dir).unwrap().conn.into_inner().unwrap();
+        assert!(file_gone(&conn, "image").unwrap());
+        assert!(pending_uploads(&conn).unwrap().is_empty());
+        // Retained backup rows remain readable, even when their server bytes are gone.
+        assert_eq!(
+            conn.query_row("select count(*) from files", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert!(string_entries(&load_vault(&conn).unwrap(), FILES_MAP)
+            .iter()
+            .any(|(id, record)| id == "image" && file_deleted(record)));
+        assert_eq!(
+            conn.query_row("select count(*) from sync_file_deletes", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        disable(&conn).unwrap();
+        enable(&mut conn, "{}").unwrap();
+        assert!(!record_file(&conn, "image", "m", "image/png").unwrap());
+        assert!(!publish_file_owners(&conn).unwrap());
+        assert!(pending_uploads(&conn).unwrap().is_empty());
+        conn.execute("delete from files", []).unwrap();
+        // Even a stale live announcement cannot put this id back in the download queue.
+        let doc = load_vault(&conn).unwrap();
+        doc.get_or_insert_map(FILES_MAP).insert(
+            &mut doc.transact_mut(),
+            "image",
+            file_record("m", "image/png"),
+        );
+        save_vault(&conn, &doc).unwrap();
+        assert!(missing_files(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn old_client_resurrection_is_retombstoned_on_server_gone() {
+        let (_a_dir, mut a) = db();
+        let (b_dir, mut b) = db();
+        a.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X''); insert into files values ('image', 'm', '/x', 'image/png');").unwrap();
+        enable(&mut a, "{}").unwrap();
+        enable(&mut b, "{}").unwrap();
+        let mut seq = 0;
+        transfer(&a, &mut b, &mut seq);
+        record_file_deleted(&a, "image").unwrap();
+        transfer(&a, &mut b, &mut seq);
+        assert!(missing_files(&b).unwrap().is_empty());
+        // Released clients publish a live record over the tombstone.
+        let doc = load_vault(&a).unwrap();
+        let update = {
+            let files = doc.get_or_insert_map(FILES_MAP);
+            let mut txn = doc.transact_mut();
+            files.insert(&mut txn, "image", file_record("m", "image/png"));
+            txn.encode_update_v1()
+        };
+        save_vault(&a, &doc).unwrap();
+        push_outbox(&a, VAULT_DOC, &update).unwrap();
+        transfer(&a, &mut b, &mut seq);
+        assert_eq!(missing_files(&b).unwrap().len(), 1);
+        drop(b);
+        let b = crate::open_db(&b_dir).unwrap();
+        let epoch = generation(&b.lock().unwrap()).unwrap();
+        sync_file_gone(&b, "image".into(), epoch).unwrap();
+        let b = b.lock().unwrap();
+        assert!(missing_files(&b).unwrap().is_empty());
+        assert!(string_entries(&load_vault(&b).unwrap(), FILES_MAP)
+            .iter()
+            .any(|(id, record)| id == "image" && file_deleted(record)));
+        transfer(&b, &mut a, &mut seq);
+        assert!(string_entries(&load_vault(&a).unwrap(), FILES_MAP)
+            .iter()
+            .any(|(id, record)| id == "image" && file_deleted(record)));
+        assert!(pending_deletes(&b).unwrap().is_empty());
     }
 
     #[test]
