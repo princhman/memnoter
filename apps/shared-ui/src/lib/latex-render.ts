@@ -40,16 +40,27 @@ export function groupMathScripts(source: string): string {
     if (char !== "^" && char !== "_") continue;
     if (source[index] === "{") continue;
 
+    // A script runs over letters, digits, commands (with their arguments) and
+    // brace groups. Anything else — whitespace, operators, relations,
+    // punctuation, `\\` — ends it, so `x^2+y^2` keeps its usual meaning.
     const start = index;
-    while (index < source.length && !/[\s}$&^_]/.test(source[index])) {
-      if (source.startsWith("\\\\", index)) break;
-      if (source[index] === "\\") index = commandEnd(index);
-      else if (source[index] === "{") {
+    while (index < source.length) {
+      const c = source[index];
+      if (/[A-Za-z0-9]/.test(c)) index++;
+      else if (c === "\\" && /[A-Za-z{}$&_^#%]/.test(source[index + 1] ?? "")) {
+        index = commandEnd(index);
+        // Optional argument straight after a command, e.g. \sqrt[3]{x}.
+        if (source[index] === "[") {
+          const close = source.indexOf("]", index);
+          if (close < 0) return result + source.slice(start);
+          index = close + 1;
+        }
+      } else if (c === "{") {
         const end = groupEnd(index);
         // Leave incomplete input to KaTeX rather than invent closing braces.
         if (end < 0) return result + source.slice(start);
         index = end;
-      } else index++;
+      } else break;
     }
     if (index > start) {
       const script = groupMathScripts(source.slice(start, index));
