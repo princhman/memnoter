@@ -1,5 +1,6 @@
 import { highlightColor } from "@/lib/highlight";
 import katex from "katex";
+import { groupMathScripts } from "@/lib/latex-render";
 import { validatedOcclusionPair } from "@/lib/occlusion-face-validation";
 import { useEffect, useState, type ReactNode } from "react";
 import { call as invoke, fileUrl as convertFileSrc } from "../lib/backend.ts";
@@ -20,7 +21,7 @@ const MARK_TAGS: Record<string, keyof HTMLElementTagNameMap> = {
 };
 
 function TexMath({ tex }: { tex: string }) {
-  const html = katex.renderToString(tex, { throwOnError: false });
+  const html = katex.renderToString(groupMathScripts(tex), { throwOnError: false });
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 

@@ -1,0 +1,117 @@
+import assert from "node:assert/strict";
+import { before, after, test } from "node:test";
+import { browserHarness } from "./support/browser.mjs";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
+let server, browser, page;
+before(async () => {
+  server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  await server.listen();
+  browser = await webkit.launch();
+  page = await browser.newPage();
+  page.on("pageerror", console.error);
+  await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/latex.html`);
+  await page.waitForFunction(() => "editor" in window);
+});
+after(async () => { await browser?.close(); await server?.close(); });
+
+test("Tab completes an opened dollar formula without leaving extra dollars", async () => {
+  await page.locator(".tiptap").click();
+  await page.keyboard.type("$\\alp");
+  await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor();
+  await page.keyboard.press("Tab");
+  const result = await page.evaluate(() => ({
+    content: editor.getJSON().content[0].content,
+    parent: editor.state.selection.$from.parent.type.name,
+    offset: editor.state.selection.$from.parentOffset,
+  }));
+  assert.deepEqual(result.content, [{ type: "inlineMath", content: [{ type: "text", text: "\\alpha" }] }]);
+  assert.equal(result.parent, "inlineMath");
+  assert.equal(result.offset, 6);
+});
+
+for (const [source, tex, trailing] of [
+  ["$\\alp$", "\\alpha", ""],
+  ["$a+\\alp", "a+\\alpha", ""],
+  ["$a+\\alp+b$ tail", "a+\\alpha+b", " tail"],
+  ["\\alp", "\\alpha", ""],
+]) {
+  test(`Tab completion in ${JSON.stringify(source)} preserves source and caret`, async () => {
+    await page.evaluate((source) => {
+      editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: source }] }] });
+      editor.commands.focus();
+      editor.commands.setTextSelection(source.indexOf("\\alp") + 5);
+    }, source);
+    await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor();
+    await page.keyboard.press("Tab");
+    const result = await page.evaluate(() => ({
+      content: editor.getJSON().content[0].content,
+      parent: editor.state.selection.$from.parent.type.name,
+      offset: editor.state.selection.$from.parentOffset,
+    }));
+    const expected = [{ type: "inlineMath", content: [{ type: "text", text: tex }] }];
+    if (trailing) expected.push({ type: "text", text: trailing });
+    assert.deepEqual(result.content, expected);
+    assert.equal(result.parent, "inlineMath");
+    assert.equal(result.offset, tex.indexOf("\\alpha") + 6);
+  });
+}
+
+test("Tab keeps command-template caret slots inside math", async () => {
+  await page.evaluate(() => {
+    editor.commands.setContent({ type: "doc", content: [{ type: "paragraph" }] });
+    editor.commands.focus();
+  });
+  await page.keyboard.type("$\\fra");
+  await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor();
+  await page.keyboard.press("Tab");
+  const result = await page.evaluate(() => ({ text: editor.state.selection.$from.parent.textContent, offset: editor.state.selection.$from.parentOffset }));
+  assert.deepEqual(result, { text: "\\frac{}{}", offset: 6 });
+});
+
+test("editor inline and block renders group scripts without rewriting stored source", async () => {
+  for (const type of ["inlineMath", "mathBlock"]) {
+    await page.evaluate(type => {
+      const math = { type, content: [{ type: "text", text: "a^qbc" }] };
+      editor.commands.setContent({ type: "doc", content: type === "inlineMath"
+        ? [{ type: "paragraph", content: [math] }, { type: "paragraph" }]
+        : [math, { type: "paragraph" }] });
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    }, type);
+    await page.waitForFunction(() => document.querySelector(".katex annotation")?.textContent === "a^{qbc}");
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent), "a^qbc");
+  }
+});
+
+test("review cards render the same script shorthand", async () => {
+  const annotations = await page.locator("#card-math annotation").allTextContents();
+  assert.deepEqual(annotations, ["a^{qbc}", "a_{qbc}"]);
+});
+
+test("completion within existing math preserves its node and caret", async () => {
+  await page.evaluate(() => {
+    editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [
+      { type: "inlineMath", content: [{ type: "text", text: "a+\\alp" }] },
+    ] }] });
+    editor.commands.focus();
+    editor.commands.setTextSelection(8);
+  });
+  await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor();
+  await page.keyboard.press("Tab");
+  assert.deepEqual(await page.evaluate(() => ({
+    text: editor.state.selection.$from.parent.textContent,
+    offset: editor.state.selection.$from.parentOffset,
+    count: editor.state.doc.firstChild.childCount,
+  })), { text: "a+\\alpha", offset: 8, count: 1 });
+});
+
+test("typing a closing dollar still converts plain source to math", async () => {
+  await page.evaluate(() => {
+    editor.commands.setContent({ type: "doc", content: [{ type: "paragraph" }] });
+    editor.commands.focus();
+  });
+  await page.keyboard.type("$a^qbc$");
+  assert.deepEqual(await page.evaluate(() => editor.getJSON().content[0].content), [
+    { type: "inlineMath", content: [{ type: "text", text: "a^qbc" }] },
+  ]);
+});
