@@ -1,4 +1,4 @@
-import { Toast } from "./ui/toast";
+import { toast } from "sonner";
 import { capabilities } from "@/lib/backend";
 import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
@@ -6,7 +6,6 @@ import { useSelector } from "@tanstack/react-store";
 import { call as invoke } from "../lib/backend.ts";
 import { listen } from "../lib/backend.ts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,6 +21,9 @@ import { saveQueue, saveStatusStore } from "@/lib/saves";
 import { RESTART_REQUEST_EVENT } from "@/lib/updater";
 
 const restorePending = isRestoring;
+
+const IMAGE_ERRORS_TOAST = "image-errors";
+const SAVE_FAILING_TOAST = "save-failing";
 
 // Restore owns the database until its mutation (including success/rollback)
 // settles. Neither ordinary Quit nor the discard-edits action may interrupt it.
@@ -55,6 +57,27 @@ const SaveStatus = () => {
   const failing = useSelector(saveStatusStore, (state) => state.failing);
   const lastError = useSelector(saveStatusStore, (state) => state.lastError);
   const [confirmClose, setConfirmClose] = useState(false);
+
+  // Both messages stay for as long as the problem does. Their actions keep
+  // the toast open (preventDefault): it goes away only when the cause does.
+  useEffect(() => {
+    if (!imageErrors.length) { toast.dismiss(IMAGE_ERRORS_TOAST); return; }
+    toast.error("Image changes could not be saved", {
+      id: IMAGE_ERRORS_TOAST,
+      description: <>{imageErrors.map((error, index) => <p key={index}>{error}</p>)}</>,
+      duration: Infinity,
+      action: { label: "Discard failed image operations", onClick: event => { event.preventDefault(); if (!blocked) discardFailedImages(); } },
+    });
+  }, [imageErrors, blocked]);
+  useEffect(() => {
+    if (!failing) { toast.dismiss(SAVE_FAILING_TOAST); return; }
+    toast.error("Not saved", {
+      id: SAVE_FAILING_TOAST,
+      description: lastError ?? undefined,
+      duration: Infinity,
+      action: { label: "Retry", onClick: event => { event.preventDefault(); void saveQueue.flush(); } },
+    });
+  }, [failing, lastError]);
 
   useEffect(() => {
     if (!capabilities.appExit) return;
@@ -96,30 +119,6 @@ const SaveStatus = () => {
 
   return (
     <>
-      {imageErrors.length > 0 && (
-        <Toast role="alert" className="max-w-md rounded-lg p-3 text-sm shadow-sm">
-          {imageErrors.map((error, index) => <p key={index}>{error}</p>)}
-          <Button variant="outline" disabled={blocked} onClick={() => discardFailedImages()}>Discard failed image operations</Button>
-        </Toast>
-      )}
-      {failing && (
-        <Toast
-          role="status"
-          title={lastError ?? undefined}
-          className="flex items-center gap-2 rounded-lg py-1 pr-1 pl-2.5 text-sm shadow-sm"
-        >
-          <AlertCircle className="size-4 text-destructive" />
-          <span>Not saved</span>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => void saveQueue.flush()}
-          >
-            Retry
-          </Button>
-        </Toast>
-      )}
-
       <Dialog open={confirmClose} onOpenChange={setConfirmClose}>
         <DialogContent>
           <DialogHeader>

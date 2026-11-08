@@ -6,7 +6,7 @@ import { importAnki, type AnkiSession } from "@/lib/import-anki";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Toast } from "./ui/toast";
+import { importToast } from "@/lib/import-toast";
 
 export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => Promise<void> }) {
   const [session, setSession] = useState<AnkiSession>();
@@ -18,7 +18,6 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
-  const [summary, setSummary] = useState<{ text: string; warnings: string[] }>();
   const close = () => { setSession(undefined); };
   useEffect(() => {
     let picking = false;
@@ -33,7 +32,7 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
         active.current = selected;
         setSelection(defaultSelection(selected.package.decks));
         setStep(0); setError(""); setAttempted(false); setSession(selected);
-      } catch (e) { if (mounted) setSummary({ text: "Could not open Anki package", warnings: [String(e)] }); }
+      } catch (e) { if (mounted) importToast("error", "Could not open Anki package", [String(e)], "error details"); }
       finally { picking = false; }
     };
     window.addEventListener(IMPORT_ANKI_EVENT, pick);
@@ -80,7 +79,7 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
     try {
       const result = await importAnki(session, plan, setProgress);
       close();
-      setSummary({ text: `Imported ${result.modules.length} modules and ${result.cards} cards.`, warnings: result.warnings });
+      importToast("success", `Imported ${result.modules.length} modules and ${result.cards} cards.`, result.warnings, result.warnings.length === 1 ? "warning" : "warnings");
       if (result.modules[0]) await onImported(result.modules[0].id);
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); busyRef.current = false; }
@@ -108,6 +107,5 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
           {step < 2 ? <Button disabled={invalid} onClick={() => setStep(step + 1)}>Next</Button> : <Button disabled={busy || invalid || attempted} onClick={() => void save()}>Import</Button>}</DialogFooter>
       </DialogContent>
     </Dialog>
-    {summary && <Toast role="status" className="max-w-sm rounded-xl p-4 text-sm"><p>{summary.text}</p>{!!summary.warnings.length && <details><summary>Warnings</summary><ul>{summary.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}<Button variant="ghost" onClick={() => setSummary(undefined)}>Dismiss</Button></Toast>}
   </>;
 }

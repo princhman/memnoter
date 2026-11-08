@@ -73,6 +73,8 @@ test("real commit creates modules, reuses sidebar folder, imports review history
     await page.getByRole("button", { name: "Next", exact: true }).click();
     await page.getByRole("button", { name: "Import", exact: true }).click();
     await page.getByText("Imported 2 modules and 2 cards.", { exact: true }).waitFor();
+    // The result is a real Sonner toast, not a hand-made popup.
+    assert.equal(await page.locator("[data-sonner-toast]", { hasText: "Imported 2 modules and 2 cards." }).count(), 1);
     const stored = await page.evaluate(async () => {
       const modules = await call("modules");
       const cards = await call("due_cards", { moduleId: null, now: 2000000000000, createdBefore: null });
