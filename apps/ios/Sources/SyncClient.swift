@@ -134,6 +134,8 @@ struct SyncKeychain {
             try await command($0, $1)
         }, object: { [unowned self] id, account, data in
             try await object("files", id, account: account, put: data)
+        }, deleteObject: { [unowned self] id, account in
+            _ = try await request(server: account.server, path: SyncConfiguration.path("files") + id, token: account.token, method: "DELETE")
         }, isCurrent: { [unowned self] in $0 == generation }, onFile: { [unowned self] in
             try await onFile?($0, $1)
         }, onError: { [weak self] in self?.error = $0.localizedDescription })
@@ -286,7 +288,9 @@ struct SyncKeychain {
             case "apply":
                 let result = try await command("sync_apply", ["entries": action["entries"] ?? [], "cursor": action["cursor"] ?? 0, "generation": databaseGeneration])
                 try await deliver(result)
-            case "ack": _ = try await command("sync_ack", ["maxId": action["max_id"] ?? 0, "generation": databaseGeneration])
+            case "ack":
+                _ = try await command("sync_ack", ["maxId": action["max_id"] ?? 0, "generation": databaseGeneration])
+                transfers.nudge()
             case "cursor": _ = try await command("sync_set_cursor", ["cursor": action["cursor"] ?? 0, "generation": databaseGeneration])
             case "upload":
                 guard let account, let id = action["id"] as? String, let bytes = action["bytes"] as? [UInt8] else { throw SyncFailure(message: "Invalid upload") }
@@ -364,16 +368,18 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
 @MainActor final class SyncFileTransfers {
     private let command: @MainActor (String, [String: Any]) async throws -> Any
     private let object: @MainActor (String, SyncAccount, Data?) async throws -> Data
+    private let deleteObject: @MainActor (String, SyncAccount) async throws -> Void
     private let isCurrent: @MainActor (UUID) -> Bool
     private let onFile: @MainActor (String, String) async throws -> Void
     private let onError: @MainActor (Error) -> Void
     private var retryAfter: [String: Date] = [:]
     init(command: @escaping @MainActor (String, [String: Any]) async throws -> Any,
          object: @escaping @MainActor (String, SyncAccount, Data?) async throws -> Data,
+         deleteObject: @escaping @MainActor (String, SyncAccount) async throws -> Void,
          isCurrent: @escaping @MainActor (UUID) -> Bool,
          onFile: @escaping @MainActor (String, String) async throws -> Void,
          onError: @escaping @MainActor (Error) -> Void) {
-        self.command = command; self.object = object; self.isCurrent = isCurrent
+        self.command = command; self.object = object; self.deleteObject = deleteObject; self.isCurrent = isCurrent
         self.onFile = onFile; self.onError = onError
     }
     func reset() { retryAfter.removeAll() }
@@ -394,9 +400,10 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         let state = try await command("sync_status", [:]) as? [String: Any] ?? [:]
         let databaseGeneration = state["generation"] as? String ?? ""
         let uploads = try await command("sync_pending_uploads", ["generation": databaseGeneration]) as? [String] ?? []
+        let deletes = try await command("sync_pending_deletes", ["generation": databaseGeneration]) as? [String] ?? []
         let downloads = try await command("sync_missing_files", ["generation": databaseGeneration]) as? [[String: String]] ?? []
         guard isCurrent(owner) && !Task.isCancelled else { return }
-        let pending = Set(uploads.map { "upload:" + $0 } + downloads.compactMap { file in
+        let pending = Set(uploads.map { "upload:" + $0 } + deletes.map { "delete:" + $0 } + downloads.compactMap { file in
             file["fileId"].map { "download:" + $0 }
         })
         retryAfter = retryAfter.filter { pending.contains($0.key) }
@@ -408,6 +415,14 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
                 _ = try await object(id, account, Data(nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: bytes, decrypt: false)))
                 guard isCurrent(owner) && !Task.isCancelled else { return }
                 _ = try await command("sync_upload_done", ["fileId": id, "generation": databaseGeneration])
+            }
+        }
+        for id in deletes {
+            guard isCurrent(owner) && !Task.isCancelled else { return }
+            try await attempt("delete:" + id) {
+                try await deleteObject(id, account)
+                guard isCurrent(owner) && !Task.isCancelled else { return }
+                _ = try await command("sync_delete_done", ["fileId": id, "generation": databaseGeneration])
             }
         }
         for file in downloads {

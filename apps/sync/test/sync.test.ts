@@ -229,6 +229,25 @@ function put(kind: string, id: string, token: string, bytes: Uint8Array) {
 }
 
 describe("images", () => {
+  it("deletes only the authenticated user's image and is idempotent", async () => {
+    const alice = await signIn("delete-a@example.com");
+    const bob = await signIn("delete-b@example.com");
+    const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    await put("files", id, alice.token, new Uint8Array([1]));
+    const remove = (fileId: string, token?: string) => SELF.fetch(`${BASE}/v1/files/${fileId}`, {
+      method: "DELETE",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    expect((await remove(id)).status).toBe(401);
+    expect((await remove("invalid", alice.token)).status).toBe(400);
+    expect((await remove(id, bob.token)).status).toBe(200);
+    const get = () => SELF.fetch(`${BASE}/v1/files/${id}`, { headers: { Authorization: `Bearer ${alice.token}` } });
+    expect((await get()).status).toBe(200);
+    expect((await remove(id, alice.token)).status).toBe(200);
+    expect((await get()).status).toBe(404);
+    expect((await remove(id, alice.token)).status).toBe(200);
+  });
+
   it("stores and serves encrypted images per user", async () => {
     const alice = await signIn("files-a@example.com");
     const bob = await signIn("files-b@example.com");

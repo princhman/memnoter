@@ -15,6 +15,8 @@
 //! - Images: the vault's "files" map records each file's module and type, and
 //!   `sync_file_uploads` queues files to upload. Other devices download what
 //!   they are missing; the bytes go to R2, encrypted, not through the log.
+//!   Removed files retain tombstones; sync_file_deletes queues R2 deletion
+//!   until the vault outbox is acknowledged.
 //! - An outbox entry with empty bytes asks the server to forget the document.
 //!
 //! Nothing is recorded while sync is off; turning it on seeds the outbox with
@@ -64,6 +66,9 @@ pub fn migrate(conn: &Connection) -> CommandResult<()> {
         create table if not exists sync_docs (
             doc TEXT PRIMARY KEY,
             state BLOB NOT NULL
+        );
+        create table if not exists sync_file_deletes (
+            file_id TEXT PRIMARY KEY
         );
         create table if not exists sync_file_uploads (
             file_id TEXT PRIMARY KEY
@@ -181,12 +186,18 @@ pub fn record_file(
     if !is_enabled(conn)? {
         return Ok(false);
     }
+    let doc = load_vault(conn)?;
+    if string_entries(&doc, FILES_MAP)
+        .iter()
+        .any(|(id, record)| id == file_id && file_deleted(record))
+    {
+        return Ok(false);
+    }
     conn.execute(
         "insert or ignore into sync_file_uploads (file_id) values (?1)",
         [file_id],
     )
     .map_err(db_err)?;
-    let doc = load_vault(conn)?;
     let files = doc.get_or_insert_map(FILES_MAP);
     let update = {
         let mut txn = doc.transact_mut();
@@ -196,6 +207,37 @@ pub fn record_file(
     save_vault(conn, &doc)?;
     push_outbox(conn, VAULT_DOC, &update)?;
     Ok(true)
+}
+
+// Keep the key so merging an older vault cannot reannounce a removed image.
+pub fn record_file_deleted(conn: &Connection, file_id: &str) -> CommandResult<()> {
+    if !is_enabled(conn)? {
+        return Ok(());
+    }
+    let doc = load_vault(conn)?;
+    let files = doc.get_or_insert_map(FILES_MAP);
+    let update = {
+        let mut txn = doc.transact_mut();
+        files.insert(&mut txn, file_id, r#"{"deleted":true}"#);
+        txn.encode_update_v1()
+    };
+    save_vault(conn, &doc)?;
+    push_outbox(conn, VAULT_DOC, &update)?;
+    conn.execute(
+        "insert or ignore into sync_file_deletes (file_id) values (?1)",
+        [file_id],
+    )
+    .map_err(db_err)?;
+    conn.execute(
+        "delete from sync_file_uploads where file_id = ?1",
+        [file_id],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn file_deleted(record: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(record).is_ok_and(|record| record["deleted"] == true)
 }
 
 // Publishes images whose owning note changed since the vault last named it,
@@ -222,7 +264,7 @@ pub fn publish_file_owners(conn: &Connection) -> CommandResult<bool> {
             let record = file_record(&module_id, &file_type);
             known
                 .get(&id)
-                .is_some_and(|current| *current != record)
+                .is_some_and(|current| !file_deleted(current) && *current != record)
                 .then_some((id, record))
         })
         .collect();
@@ -559,8 +601,12 @@ fn seed(conn: &Connection) -> CommandResult<()> {
     };
     {
         let files_map = doc.get_or_insert_map(FILES_MAP);
+        let known: BTreeMap<_, _> = string_entries(&doc, FILES_MAP).into_iter().collect();
         let mut txn = doc.transact_mut();
         for (id, module_id, file_type) in &files {
+            if known.get(id).is_some_and(|record| file_deleted(record)) {
+                continue;
+            }
             files_map.insert(&mut txn, id.as_str(), file_record(module_id, file_type));
         }
     }
@@ -734,7 +780,8 @@ pub(crate) fn reconcile_restored_account(
     current: Option<&str>,
 ) -> CommandResult<()> {
     let restored = get_value::<String>(conn, "account")?;
-    let same = restored.as_deref().map(account_identity) == current.map(account_identity) && current.is_some();
+    let same = restored.as_deref().map(account_identity) == current.map(account_identity)
+        && current.is_some();
     let tx = conn.transaction().map_err(db_err)?;
     if !same {
         disable(&tx)?;
@@ -752,7 +799,7 @@ pub(crate) fn reconcile_restored_account(
 
 fn disable(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(
-        "delete from sync_outbox; delete from sync_state; delete from sync_docs; delete from sync_file_uploads;",
+        "delete from sync_outbox; delete from sync_state; delete from sync_docs; delete from sync_file_uploads; delete from sync_file_deletes;",
     )
     .map_err(db_err)?;
     rotate_generation(conn)
@@ -809,6 +856,8 @@ fn apply_remote(
                 txn.apply_update(update).map_err(db_err)?;
             }
         }
+        // Remote file tombstones leave local bytes intact: note/card references
+        // and undo leases remain authoritative. Normal cleanup reclaims them.
         save_vault(&tx, &doc)?;
     }
     let (changed, deleted) = reconcile(&tx, &doc)?;
@@ -947,6 +996,9 @@ fn missing_files(conn: &Connection) -> CommandResult<Vec<MissingFile>> {
         let Ok(record) = serde_json::from_str::<serde_json::Value>(&record) else {
             continue;
         };
+        if record["deleted"] == true {
+            continue;
+        }
         let (Some(module_id), Some(file_type)) =
             (record["module"].as_str(), record["type"].as_str())
         else {
@@ -975,6 +1027,14 @@ fn pending_uploads(conn: &Connection) -> CommandResult<Vec<String>> {
         [],
     )
     .map_err(db_err)?;
+    // Retained bytes must not reupload a remotely tombstoned image.
+    let doc = load_vault(conn)?;
+    for (id, record) in string_entries(&doc, FILES_MAP) {
+        if file_deleted(&record) {
+            conn.execute("delete from sync_file_uploads where file_id = ?1", [id])
+                .map_err(db_err)?;
+        }
+    }
     let mut stmt = conn
         .prepare("select file_id from sync_file_uploads")
         .map_err(db_err)?;
@@ -1086,6 +1146,38 @@ pub fn sync_pending_uploads(db: &Db, generation: String) -> CommandResult<Vec<St
     let conn = db.lock()?;
     check_generation(&conn, &generation)?;
     pending_uploads(&conn)
+}
+
+// A drained vault outbox proves every queued tombstone is durable on the
+// server. This also holds after seed replaces the outbox with a snapshot.
+fn pending_deletes(conn: &Connection) -> CommandResult<Vec<String>> {
+    let mut stmt = conn
+        .prepare(
+            "select file_id from sync_file_deletes where not exists
+         (select 1 from sync_outbox where doc = ?1)",
+        )
+        .map_err(db_err)?;
+    let rows = stmt
+        .query_map([VAULT_DOC], |row| row.get(0))
+        .map_err(db_err)?;
+    rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+}
+
+pub fn sync_pending_deletes(db: &Db, generation: String) -> CommandResult<Vec<String>> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    pending_deletes(&conn)
+}
+
+pub fn sync_delete_done(db: &Db, file_id: String, generation: String) -> CommandResult<()> {
+    let conn = db.lock()?;
+    check_generation(&conn, &generation)?;
+    conn.execute(
+        "delete from sync_file_deletes where file_id = ?1",
+        [file_id],
+    )
+    .map(|_| ())
+    .map_err(db_err)
 }
 
 pub fn sync_upload_done(db: &Db, file_id: String, generation: String) -> CommandResult<()> {
@@ -1567,6 +1659,110 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_announces_a_tombstone_instead_of_downloading_again() {
+        let (a_dir, mut a) = db();
+        let (_b_dir, mut b) = db();
+        let file = uuid::Uuid::new_v4().to_string();
+        a.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'0000');").unwrap();
+        a.execute(
+            "insert into files values (?1, 'm', '/x', 'image/png')",
+            [&file],
+        )
+        .unwrap();
+        crate::files::assets::write(&a_dir, &file, b"image").unwrap();
+        enable(&mut a, "{}").unwrap();
+        enable(&mut b, "{}").unwrap();
+        let mut seq = 0;
+        transfer(&a, &mut b, &mut seq);
+        drop(a);
+        let a_db = crate::open_db(&a_dir).unwrap();
+        assert_eq!(
+            crate::files::cleanup_files(
+                &a_dir,
+                &a_db,
+                "m".into(),
+                vec![file.clone()],
+                vec![0, 0],
+                0
+            )
+            .unwrap(),
+            vec![file.clone()]
+        );
+        let a = a_db.lock().unwrap();
+        assert!(pending_deletes(&a).unwrap().is_empty());
+        transfer(&a, &mut b, &mut seq);
+        assert!(missing_files(&a).unwrap().is_empty());
+        assert!(missing_files(&b).unwrap().is_empty());
+        assert_eq!(pending_deletes(&a).unwrap(), vec![file]);
+    }
+
+    #[test]
+    fn deleting_an_image_tombstones_it_before_server_deletion() {
+        let (a_dir, mut a) = db();
+        let (_b_dir, mut b) = db();
+        let file = uuid::Uuid::new_v4().to_string();
+        a.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');").unwrap();
+        a.execute(
+            "insert into files values (?1, 'm', '/x', 'image/png')",
+            [&file],
+        )
+        .unwrap();
+        enable(&mut a, "{}").unwrap();
+        enable(&mut b, "{}").unwrap();
+        let mut seq = 0;
+        transfer(&a, &mut b, &mut seq);
+        assert_eq!(missing_files(&b).unwrap().len(), 1);
+
+        delete_module_data(&mut a, &a_dir.join("files"), "m").unwrap();
+        assert!(pending_deletes(&a).unwrap().is_empty());
+        assert!(pending_uploads(&a).unwrap().is_empty());
+        seed(&a).unwrap();
+        assert!(pending_deletes(&a).unwrap().is_empty());
+        transfer(&a, &mut b, &mut seq);
+        assert!(missing_files(&b).unwrap().is_empty());
+        assert_eq!(pending_deletes(&a).unwrap(), vec![file.clone()]);
+        drop(a);
+        let a = crate::open_db(&a_dir).unwrap().conn.into_inner().unwrap();
+        assert_eq!(pending_deletes(&a).unwrap(), vec![file.clone()]);
+        assert!(!publish_file_owners(&a).unwrap());
+        assert!(string_entries(&load_vault(&a).unwrap(), FILES_MAP)
+            .iter()
+            .any(|(id, record)| id == &file && file_deleted(record)));
+    }
+
+    #[test]
+    fn remote_tombstones_keep_local_bytes_and_cannot_be_republished() {
+        let (_a_dir, mut a) = db();
+        let (b_dir, mut b) = db();
+        let file = uuid::Uuid::new_v4().to_string();
+        a.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');").unwrap();
+        a.execute(
+            "insert into files values (?1, 'm', '/x', 'image/png')",
+            [&file],
+        )
+        .unwrap();
+        enable(&mut a, "{}").unwrap();
+        enable(&mut b, "{}").unwrap();
+        let mut seq = 0;
+        transfer(&a, &mut b, &mut seq);
+        let stored =
+            store_file(&b, &b_dir.join("files"), &file, "m", "image/png", b"image").unwrap();
+        record_file_deleted(&a, &file).unwrap();
+        transfer(&a, &mut b, &mut seq);
+        assert_eq!(std::fs::read(stored.path).unwrap(), b"image");
+        assert!(!publish_file_owners(&b).unwrap());
+        assert!(!record_file(&b, &file, "m", "image/png").unwrap());
+        seed(&b).unwrap();
+        assert!(pending_uploads(&b).unwrap().is_empty());
+        assert!(string_entries(&load_vault(&b).unwrap(), FILES_MAP)
+            .iter()
+            .any(|(id, record)| id == &file && file_deleted(record)));
+        b.execute("delete from files where id = ?1", [&file])
+            .unwrap();
+        assert!(missing_files(&b).unwrap().is_empty());
+    }
+
+    #[test]
     fn a_shared_image_stays_downloadable_after_its_owner_is_deleted() {
         let (a_dir, mut a) = db();
         let (_b_dir, mut b) = db();
@@ -1596,6 +1792,12 @@ mod tests {
             .query_row("select module_id from files", [], |r| r.get(0))
             .unwrap();
         assert_eq!(owner, "other");
+        assert_eq!(
+            a.query_row("select count(*) from sync_file_deletes", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
 
         let mut seq = 0;
         transfer(&a, &mut b, &mut seq);

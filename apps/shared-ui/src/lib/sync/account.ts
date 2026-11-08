@@ -76,6 +76,10 @@ export async function putObject(server: string, token: string, kind: "files" | "
   }, signal, transferTimeout(bytes.length));
 }
 
+export function deleteObject(server: string, token: string, id: string, signal?: AbortSignal) {
+  return api(server, SYNC_CONTRACT.paths.files + id, { method: "DELETE", token, signal });
+}
+
 // null when the server has no such object (yet).
 export async function getObject(server: string, token: string, kind: "files" | "blobs", id: string, signal?: AbortSignal) {
   return syncRequest(`${server.replace(/\/+$/, "")}${SYNC_CONTRACT.paths[kind]}${id}`, {

@@ -118,6 +118,9 @@ pub fn delete_module_data(
             .map_err(db_err)?;
         rows.collect::<Result<Vec<_>>>().map_err(db_err)?
     };
+    for id in &files {
+        sync::record_file_deleted(&tx, id)?;
+    }
     let files = files
         .iter()
         .map(|id| files::assets::path(files_dir.parent().ok_or("Invalid files directory")?, id))

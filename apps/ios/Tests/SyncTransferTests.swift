@@ -60,6 +60,7 @@ final class SyncFileTransferTests: XCTestCase {
         let files = SyncFileTransfers(command: { name, args in
             switch name {
             case "sync_status": return ["generation": epoch]
+            case "sync_pending_deletes": return [String]()
             case "sync_pending_uploads": return ["image"]
             case "sync_missing_files": return [[String: String]]()
             case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]
@@ -69,7 +70,7 @@ final class SyncFileTransferTests: XCTestCase {
         }, object: { _, _, _ in
             epoch = "after-restore"
             return Data()
-        }, isCurrent: { _ in true }, onFile: { _, _ in }, onError: { XCTFail("Unexpected error: \($0)") })
+        }, deleteObject: { _, _ in XCTFail("Unexpected deletion") }, isCurrent: { _ in true }, onFile: { _, _ in }, onError: { XCTFail("Unexpected error: \($0)") })
         try await files.run(account: account, owner: UUID())
         XCTAssertEqual(completionEpoch, "before-restore", "Core must see the original generation and reject a stale completion")
     }
@@ -82,6 +83,7 @@ final class SyncFileTransferTests: XCTestCase {
         let files = SyncFileTransfers(command: { name, _ in
             switch name {
             case "sync_status": return ["generation": "test-epoch"]
+            case "sync_pending_deletes": return [String]()
             case "sync_pending_uploads": return pending
             case "sync_missing_files": return pending.map { ["fileId": $0, "moduleId": "note"] }
             case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]
@@ -90,7 +92,7 @@ final class SyncFileTransferTests: XCTestCase {
         }, object: { _, _, _ in
             attempts += 1
             throw SyncHTTPFailure(status: 404, message: "Missing image")
-        }, isCurrent: { _ in true }, onFile: { _, _ in XCTFail("Failed download was stored") }, onError: { XCTFail("Unexpected error: \($0)") })
+        }, deleteObject: { _, _ in XCTFail("Unexpected deletion") }, isCurrent: { _ in true }, onFile: { _, _ in XCTFail("Failed download was stored") }, onError: { XCTFail("Unexpected error: \($0)") })
         let owner = UUID()
         try await files.run(account: account, owner: owner)
         XCTAssertEqual(attempts, 200)
@@ -127,7 +129,7 @@ final class SyncFileTransferTests: XCTestCase {
             requests.append(id)
             if id == missing { throw SyncHTTPFailure(status: 404, message: "Not uploaded yet") }
             return try syncCrypt(key: Data(account.key), doc: "file:" + id, bytes: payload, decrypt: false)
-        }, isCurrent: { _ in true }, onFile: { _, json in
+        }, deleteObject: { _, _ in XCTFail("Unexpected deletion") }, isCurrent: { _ in true }, onFile: { _, json in
             let file = try JSONDecoder().decode(SavedFile.self, from: Data(json.utf8))
             stored.append(file.id)
         }, onError: { XCTFail("404 should remain pending: \($0)") })

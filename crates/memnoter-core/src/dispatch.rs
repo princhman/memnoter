@@ -61,6 +61,8 @@ commands! { core;
     sync_apply(entries: Vec<RemoteEntry>, cursor: i64, generation: String) => crate::sync::sync_apply(core.data_dir(), &core.db, entries, cursor, generation);
     sync_snapshot(doc: String, generation: String) => crate::sync::sync_snapshot(&core.db, doc, generation);
     sync_missing_files(generation: String) => crate::sync::sync_missing_files(&core.db, generation);
+    sync_pending_deletes(generation: String) => crate::sync::sync_pending_deletes(&core.db, generation);
+    sync_delete_done(file_id: String, generation: String) => crate::sync::sync_delete_done(&core.db, file_id, generation);
     sync_pending_uploads(generation: String) => crate::sync::sync_pending_uploads(&core.db, generation);
     sync_upload_done(file_id: String, generation: String) => crate::sync::sync_upload_done(&core.db, file_id, generation);
     sync_store_file(file_id: String, module_id: String, file_type: String, bytes: Vec<u8>, generation: String) => crate::sync::sync_store_file(core.data_dir(), &core.db, file_id, module_id, file_type, bytes, generation);

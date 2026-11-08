@@ -214,7 +214,8 @@ pub fn cleanup_files(
     expected_state: Vec<u8>,
     expected_update_id: i64,
 ) -> CommandResult<Vec<String>> {
-    let conn = db.lock()?;
+    let mut guard = db.lock()?;
+    let conn = guard.transaction().map_err(db_err)?;
     let module_id = module_id.as_str();
     let file_ids = &file_ids;
     let expected_state = expected_state.as_slice();
@@ -263,7 +264,9 @@ pub fn cleanup_files(
             params![id, module_id],
         )
         .map_err(db_err)?;
+        crate::sync::record_file_deleted(&conn, id)?;
         deleted.push(id.clone());
     }
+    conn.commit().map_err(db_err)?;
     Ok(deleted)
 }

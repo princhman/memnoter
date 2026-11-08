@@ -1,11 +1,12 @@
 // Moves images between this device and R2, encrypted, outside the log. Images
 // never change once saved, so each is uploaded once and downloaded once.
 // Uploads come from `sync_file_uploads`; downloads are the images other
-// devices announced in the vault that this one lacks.
+// devices announced in the vault that this one lacks. Server deletions wait
+// for the core to confirm that their tombstones were acknowledged.
 
 import { call as invoke } from "@/lib/backend";
 import type { FileType } from "@/lib/content";
-import { getObject, putObject, SyncApiError } from "./account";
+import { deleteObject, getObject, putObject, SyncApiError } from "./account";
 import { SYNC_CONTRACT } from "./protocol";
 import { decryptBlob, encryptBlob } from "./crypto";
 
@@ -92,6 +93,14 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
       if (!running) return;
       await attempt(() => upload(fileId));
+    }
+    for (const fileId of await invoke<string[]>("sync_pending_deletes", { generation })) {
+      if (!running) return;
+      await attempt(async () => {
+        await deleteObject(server, token, fileId, controller.signal);
+        if (!running) return;
+        await invoke("sync_delete_done", { fileId, generation });
+      });
     }
     notYet.clear();
     const missing = await invoke<MissingFile[]>("sync_missing_files", { generation });

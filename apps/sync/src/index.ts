@@ -78,6 +78,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (!valid) return json({ error: "Invalid id" }, 400);
     const key = kind === "files" ? fileKey(claims.sub, id) : blobKey(claims.sub, id);
     if (method === "PUT") return putObject(request, env, key, kind === "files" ? MAX_FILE_BYTES : MAX_LARGE_BLOB_BYTES);
+    if (kind === "files" && method === "DELETE") {
+      await env.FILES.delete(key);
+      return json({ ok: true });
+    }
     if (method === "GET") {
       const stored = await env.FILES.get(key);
       if (!stored) return json({ error: "Not found" }, 404);
