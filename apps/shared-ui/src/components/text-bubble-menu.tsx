@@ -1,3 +1,4 @@
+import { action, formatKeys } from "@/lib/shortcuts";
 import { useRef, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -23,7 +24,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
-import { cn, MOD_KEY } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // Marks make no sense inside these; the menu stays hidden there. Inline
 // math has its own actions on its preview.
@@ -104,7 +105,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       {active.cells ? <TableBubbleActions editor={editor} /> : <>
       <MarkButton
         label="Bold"
-        hint={`${MOD_KEY}B`}
+        hint={formatKeys(action("text.bold").keys)}
         pressed={active.bold}
         onToggle={() => editor.chain().focus().toggleBold().run()}
       >
@@ -112,7 +113,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Italic"
-        hint={`${MOD_KEY}I`}
+        hint={formatKeys(action("text.italic").keys)}
         pressed={active.italic}
         onToggle={() => editor.chain().focus().toggleItalic().run()}
       >
@@ -120,7 +121,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Underline"
-        hint={`${MOD_KEY}U`}
+        hint={formatKeys(action("text.underline").keys)}
         pressed={active.underline}
         onToggle={() => editor.chain().focus().toggleUnderline().run()}
       >
@@ -128,7 +129,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Strikethrough"
-        hint={`${MOD_KEY}Shift+S`}
+        hint={formatKeys(action("text.strike").keys)}
         pressed={active.strike}
         onToggle={() => editor.chain().focus().toggleStrike().run()}
       >
@@ -136,14 +137,14 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Inline code"
-        hint={`${MOD_KEY}E`}
+        hint={formatKeys(action("text.code").keys)}
         pressed={active.code}
         onToggle={() => editor.chain().focus().toggleCode().run()}
       >
         <Code />
       </MarkButton>
       <div className="flex items-center">
-        <IconTooltip label="Highlight" hint={`${MOD_KEY}Shift+H`}>
+        <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}>
           <Button size="icon-sm" variant="ghost" aria-label="Highlight" aria-pressed={active.highlight}
             className={active.highlight ? "note-highlight" : undefined}
             data-color={active.highlight ? active.highlightColor : undefined}
@@ -166,7 +167,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </div>
       <MarkButton
         label="Link"
-        hint={`${MOD_KEY}L`}
+        hint={formatKeys(action("link.edit").keys)}
         pressed={active.link}
         onToggle={() => editor.commands.openLinkEditor()}
       >
@@ -174,7 +175,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Inline math"
-        hint={`${MOD_KEY}Shift+M`}
+        hint={formatKeys(action("math.inline").keys)}
         pressed={active.inlineMath}
         onToggle={() => editor.chain().focus().toggleInlineMath().run()}
       >
@@ -182,7 +183,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Math block"
-        hint={`${MOD_KEY}Alt+M`}
+        hint={formatKeys(action("math.block").keys)}
         pressed={false}
         disabled={!active.canMathBlock}
         onToggle={() => editor.chain().focus().toggleMathBlock().run()}
@@ -191,7 +192,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label={active.inCloze ? "Remove cloze" : "Cloze"}
-        hint={`${MOD_KEY}${MOD_KEY === "⌘" ? "⇧" : "Shift+"}C`}
+        hint={formatKeys(action("card.cloze").keys)}
         pressed={active.inCloze}
         disabled={!active.canMakeCard && !active.inCloze}
         onToggle={() =>

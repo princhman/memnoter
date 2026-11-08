@@ -1,3 +1,4 @@
+import { action } from "./shortcuts.ts";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { renewImageIdentity } from "./occlusion.ts";
 import { Extension } from "@tiptap/core";
@@ -488,7 +489,7 @@ export const Flashcards = Extension.create({
 
   addKeyboardShortcuts() {
     return {
-      "Mod-Shift-c": () => clozeAt(this.editor.state)
+      [action("card.cloze").keys]: () => clozeAt(this.editor.state)
         ? this.editor.commands.removeCloze()
         : this.editor.commands.makeCloze(),
     };

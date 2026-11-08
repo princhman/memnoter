@@ -12,14 +12,18 @@ const NEW_MODULE: (&str, &str, &str) = ("new-module", "New Module…", "CmdOrCtr
 const FIND: (&str, &str, &str) = ("find", "Find…", "CmdOrCtrl+F");
 const TOGGLE_SIDEBAR: (&str, &str, &str) = ("toggle-sidebar", "Toggle Sidebar", "CmdOrCtrl+D");
 
+const IMPORT_FOLDER: &str = "import-folder";
+const EDITOR_UNDO: (&str, &str, &str) = ("editor-undo", "Undo", "CmdOrCtrl+Z");
+const EDITOR_REDO: (&str, &str, &str) = ("editor-redo", "Redo", "CmdOrCtrl+Shift+Z");
+
 const CUSTOM_ITEMS: [&str; 7] = [
     SETTINGS.0,
     NEW_MODULE.0,
-    "import-folder",
+    IMPORT_FOLDER,
     FIND.0,
     TOGGLE_SIDEBAR.0,
-    "editor-undo",
-    "editor-redo",
+    EDITOR_UNDO.0,
+    EDITOR_REDO.0,
 ];
 
 fn item<R: Runtime>(
@@ -48,7 +52,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&item(app, NEW_MODULE)?)
-        .item(&MenuItemBuilder::with_id("import-folder", "Import Folder…").build(app)?)
+        .item(&MenuItemBuilder::with_id(IMPORT_FOLDER, "Import Folder…").build(app)?)
         .separator()
         .close_window()
         .build()?;
@@ -108,15 +112,15 @@ pub fn set_editor_history(app: AppHandle, editor_focused: bool) -> Result<(), St
         let items = edit.items()?;
         if items
             .first()
-            .is_some_and(|item| (item.id().as_ref() == "editor-undo") == editor_focused)
+            .is_some_and(|item| (item.id().as_ref() == EDITOR_UNDO.0) == editor_focused)
         {
             return Ok(());
         }
         // Construct before removing the current pair, so construction errors
         // leave the existing menu intact.
         if editor_focused {
-            let undo = item(&app, ("editor-undo", "Undo", "CmdOrCtrl+Z"))?;
-            let redo = item(&app, ("editor-redo", "Redo", "CmdOrCtrl+Shift+Z"))?;
+            let undo = item(&app, EDITOR_UNDO)?;
+            let redo = item(&app, EDITOR_REDO)?;
             edit.remove_at(0)?;
             edit.remove_at(0)?;
             edit.insert_items(&[&undo, &redo], 0)?;

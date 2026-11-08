@@ -1,10 +1,10 @@
+import { action, formatKeys } from "@/lib/shortcuts";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { Button } from "./ui/button";
 import { LocateFixed, Pencil, Redo2, Undo2 } from "lucide-react";
 import { useEditorState } from "@tiptap/react";
 import { useSelector } from "@tanstack/react-store";
 import { IconTooltip } from "./icon-tooltip";
-import { MOD_KEY } from "@/lib/utils";
 import { reviewActionsStore } from "@/lib/review-actions";
 
 // Undo and redo for the open note, or for grades while reviewing, where an
@@ -91,7 +91,7 @@ function HistoryButtons({
 }) {
   return (
     <div>
-      <IconTooltip label="Undo" hint={`${MOD_KEY}Z`} side="bottom">
+      <IconTooltip label="Undo" hint={formatKeys(action("history.undo").keys)} side="bottom">
         <Button
           size={"icon-sm"}
           variant={"ghost"}
@@ -104,7 +104,7 @@ function HistoryButtons({
       </IconTooltip>
       <IconTooltip
         label="Redo"
-        hint={`${MOD_KEY}${MOD_KEY === "⌘" ? "⇧" : "Shift+"}Z`}
+        hint={formatKeys(action("history.redo").keys)}
         side="bottom"
       >
         <Button

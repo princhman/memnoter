@@ -1,3 +1,4 @@
+import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/lib/card-sync";
@@ -20,7 +21,6 @@ import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
 import { CommandPalette } from "@/components/command-palette";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { MOD_KEY } from "@/lib/utils";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
 import SaveStatus from "@/components/save-status";
@@ -40,9 +40,7 @@ const RootLayout = () => {
     run: () => openReview(() => navigate({ to: "/review", search: {} })),
   });
   useCommand({
-    id: "settings.open",
-    title: "Settings",
-    shortcut: `${MOD_KEY},`,
+    ...action("settings.open"),
     run: () => requestApp(OPEN_SETTINGS_EVENT),
   });
 
@@ -126,7 +124,7 @@ const RootLayout = () => {
           <div ref={toolbar} data-tauri-drag-region="deep" className="absolute left-0 top-0 z-50 flex h-8 items-center">
             {!isFullScrean && <div className="h-full w-18" />}
             <div className="flex items-center pl-2 gap-1.5">
-              <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
+              <IconTooltip label="Toggle sidebar" hint={formatKeys(action("sidebar.toggle").keys)} side="bottom">
                 <SidebarTrigger aria-label="Toggle sidebar" />
               </IconTooltip>
               <UndoRedo />

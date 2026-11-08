@@ -1,3 +1,4 @@
+import { action, matchesShortcut } from "@/lib/shortcuts";
 import {
   useEffect,
   useId,
@@ -86,9 +87,7 @@ function useBuiltinCommands() {
   const hasEditor = !!activeEditor;
 
   useCommand({
-    id: "sidebar.toggle",
-    title: "Toggle sidebar",
-    shortcut: "⌘D",
+    ...action("sidebar.toggle"),
     run: toggleSidebar,
   });
 
@@ -96,9 +95,7 @@ function useBuiltinCommands() {
   useEffect(() => {
     if (!hasEditor) return;
     return registerCommand({
-      id: "find.open",
-      title: "Find in note",
-      shortcut: "⌘F",
+      ...action("find.open"),
       keywords: ["search"],
       run: () => requestApp(FIND_EVENT),
     });
@@ -127,14 +124,7 @@ export function CommandPalette() {
   // Captured on window, so the editor's own key handling never sees it.
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (
-        !(event.metaKey || event.ctrlKey) ||
-        event.altKey ||
-        event.shiftKey ||
-        event.code !== "KeyK"
-      ) {
-        return;
-      }
+      if (!matchesShortcut(event, action("palette.open").keys)) return;
       event.preventDefault();
       event.stopPropagation();
       // Keep the restore modal in control throughout its flush and DB swap.

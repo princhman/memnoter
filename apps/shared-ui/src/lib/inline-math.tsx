@@ -1,3 +1,4 @@
+import { action, formatKeys } from "@/lib/shortcuts";
 // ai - generated module
 import { Node, PasteRule, type Editor } from "@tiptap/core";
 import { Node as PMNode } from "@tiptap/pm/model";
@@ -13,7 +14,6 @@ import { createRoot } from "react-dom/client";
 import { RemoveFormatting, Sigma } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { MOD_KEY } from "@/lib/utils";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -75,14 +75,14 @@ function PreviewActions({ editor }: { editor: Editor }) {
     <>
       <PreviewAction
         label="Convert to text"
-        hint={`${MOD_KEY}Shift+M`}
+        hint={formatKeys(action("math.inline").keys)}
         onClick={() => editor.chain().focus().toggleInlineMath().run()}
       >
         <RemoveFormatting />
       </PreviewAction>
       <PreviewAction
         label="Math block"
-        hint={`${MOD_KEY}Alt+M`}
+        hint={formatKeys(action("math.block").keys)}
         onClick={() => editor.chain().focus().toggleMathBlock().run()}
       >
         <Sigma />
@@ -420,7 +420,7 @@ export const InlineMath = Node.create({
     };
 
     return {
-      "Mod-Shift-m": () => this.editor.commands.toggleInlineMath(),
+      [action("math.inline").keys]: () => this.editor.commands.toggleInlineMath(),
 
       ArrowRight: () => horizontal(1),
       ArrowLeft: () => horizontal(-1),

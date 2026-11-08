@@ -1,4 +1,4 @@
-import { MOD_KEY } from "@/lib/utils";
+import { action, formatKeys } from "@/lib/shortcuts";
 import { openReview } from "@/lib/card-sync";
 import {
   Sidebar,
@@ -203,7 +203,7 @@ const AppSidebar = () => {
 
       <SidebarFooter>
         <UpdateStatus>
-          <IconTooltip label="Settings" hint={`${MOD_KEY},`} side="top">
+          <IconTooltip label="Settings" hint={formatKeys(action("settings.open").keys)} side="top">
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
           </IconTooltip>
         </UpdateStatus>

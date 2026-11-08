@@ -1,3 +1,4 @@
+import { action } from "./shortcuts.ts";
 import { Extension } from "@tiptap/core";
 import {
   type EditorState,
@@ -283,8 +284,8 @@ export const HeadingFold = Extension.create({
   // Like VS Code's fold and unfold.
   addKeyboardShortcuts() {
     return {
-      "Mod-Alt-[": () => this.editor.commands.foldCurrentSection(),
-      "Mod-Alt-]": () => this.editor.commands.unfoldCurrentSection(),
+      [action("section.fold").keys]: () => this.editor.commands.foldCurrentSection(),
+      [action("section.unfold").keys]: () => this.editor.commands.unfoldCurrentSection(),
     };
   },
 

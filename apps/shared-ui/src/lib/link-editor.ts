@@ -1,3 +1,4 @@
+import { action } from "./shortcuts.ts";
 import { isTauri } from "./backend.ts";
 import { Extension } from "@tiptap/core";
 import { type EditorState, Plugin, PluginKey } from "@tiptap/pm/state";
@@ -70,7 +71,7 @@ export const LinkEditor = Extension.create({
 
   addKeyboardShortcuts() {
     return {
-      "Mod-l": () => this.editor.commands.openLinkEditor(),
+      [action("link.edit").keys]: () => this.editor.commands.openLinkEditor(),
     };
   },
 

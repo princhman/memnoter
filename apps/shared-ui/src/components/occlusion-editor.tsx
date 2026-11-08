@@ -1,10 +1,11 @@
+import { action, formatKeys } from "@/lib/shortcuts";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Circle, Combine, MousePointer2, PenLine, Split, Square, Trash2, Undo2 } from "lucide-react";
 import { drawMask, maskBounds, maskCards, normalizedPoint, validMasks, withBounds, type Mask, type Point } from "@/lib/occlusion";
 import { HANDLES, moveBox, resizeBox, type Handle } from "@/lib/box";
 import { Button } from "@/components/ui/button";
-import { MOD_KEY, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export function MaskShape({ mask, ...props }: { mask: Mask } & Omit<React.SVGProps<SVGElement>, "mask">) {
   if (mask.shape === "rectangle") return <rect x={mask.x} y={mask.y} width={mask.width} height={mask.height} {...props as React.SVGProps<SVGRectElement>} />;
@@ -206,7 +207,7 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
         <span className="mr-2 text-xs text-muted-foreground tabular-nums">{cards.length} {cards.length === 1 ? "card" : "cards"}</span>
           <Button size="sm" variant="ghost" title="Ask the selected masks as one card" disabled={!canJoin} onClick={join}><Combine />Join</Button>
           <Button size="sm" variant="ghost" title="Make each selected mask its own card" disabled={!canSeparate} onClick={separate}><Split />Separate</Button>
-          <IconTooltip label="Undo" hint={`${MOD_KEY}Z`} container={dialog}><Button size="icon-sm" variant="ghost" aria-label="Undo" disabled={!history.length} onClick={undo}><Undo2 /></Button></IconTooltip>
+          <IconTooltip label="Undo" hint={formatKeys(action("history.undo").keys)} container={dialog}><Button size="icon-sm" variant="ghost" aria-label="Undo" disabled={!history.length} onClick={undo}><Undo2 /></Button></IconTooltip>
 
           <IconTooltip label="Delete mask" hint="Backspace / Delete" container={dialog}><Button size="icon-sm" variant="ghost" aria-label="Delete mask" disabled={!selected.length} onClick={remove}><Trash2 /></Button></IconTooltip>
 

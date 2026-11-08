@@ -1,3 +1,4 @@
+import { action, formatKeys } from "@/lib/shortcuts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -11,7 +12,6 @@ import {
   normalizeHref,
   openLink,
 } from "@/lib/link-editor";
-import { MOD_KEY } from "@/lib/utils";
 
 // The URL field opened with ⌘L or the bubble menu, and, with the caret in a
 // link, a strip to open, edit or remove it.
@@ -117,14 +117,14 @@ export function LinkMenu({ editor }: { editor: Editor | null }) {
             </span>
             <IconButton
               label="Open link"
-              hint={`${MOD_KEY}-click`}
+              hint={formatKeys(action("link.open").keys)}
               onClick={() => openLink(state.href!)}
             >
               <ExternalLink />
             </IconButton>
             <IconButton
               label="Edit link"
-              hint={`${MOD_KEY}L`}
+              hint={formatKeys(action("link.edit").keys)}
               onClick={() => editor.commands.openLinkEditor()}
             >
               <Pencil />
