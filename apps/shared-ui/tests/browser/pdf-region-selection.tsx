@@ -11,6 +11,7 @@ import { PdfViewer } from "@/components/pdf-viewer";
 import type { PdfRegion } from "@/lib/pdf-quote";
 
 function Fixture() {
+  const [readerMounted, setReaderMounted] = useState(true);
   const [mounted, setMounted] = useState(true);
   const [width, setWidth] = useState(200);
   const [generation, setGeneration] = useState(0);
@@ -29,6 +30,7 @@ function Fixture() {
     }).catch(() => {});
   }, [pending]);
   return <>
+    <button onClick={() => setReaderMounted(value => !value)}>Toggle reader mount</button>
     <button onClick={() => setMounted(value => !value)}>Toggle selection mount</button>
     <button onClick={() => setWidth(value => value === 200 ? 300 : 200)}>Resize page</button>
     <button onClick={() => setGeneration(value => value + 1)}>Replace page</button>
@@ -39,7 +41,7 @@ function Fixture() {
     <div id="selection-sandbox" style={{ position: "relative", width, height: 100, margin: 20 }}>
       {mounted && <PdfRegionSelection key={generation} onSelect={region => setRegions(previous => [...previous, region])} onCancel={() => setCancelled(value => value + 1)} />}
     </div>
-    <div id="viewer" style={{ height: 500 }}><PdfViewer doc={{ id: "selection-pdf", moduleId: "module", moduleName: "Module", name: "Selection.pdf", size: 1000, pageCount: 6, createdAt: 0, available: true }} /></div>
+    <div id="viewer" style={{ height: 500 }}>{readerMounted && <PdfViewer doc={{ id: "selection-pdf", moduleId: "module", moduleName: "Module", name: "Selection.pdf", size: 1000, pageCount: 6, createdAt: 0, available: true }} />}</div>
   </>;
 }
 const route = createRootRoute({ component: Fixture });

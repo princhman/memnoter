@@ -9,6 +9,7 @@ import { useSelector } from "@tanstack/react-store";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { NoteWithPdfs } from "@/components/note-with-pdfs";
 import { queryClient } from "@/lib/query-client";
+import { updatePdfPane } from "@/lib/pdf-pane";
 import { pendingPdfQuote } from "@/lib/pending-pdf-quote";
 function Fixture() {
   const [mounted, setMounted] = useState(true);
@@ -16,6 +17,7 @@ function Fixture() {
   const editor = useEditor({ extensions: [StarterKit], content: "<p>Remember this selected note text while resizing the files panel.</p>" });
   return <ActiveEditorProvider>
     <button onClick={() => setMounted(value => !value)}>Toggle pane mount</button>
+    <button onClick={() => updatePdfPane("resize-module", { open: true })}>Open pane</button>
     <output id="pending">{pending ? "quote" : "none"}</output>
     <div style={{ height: 700 }}>{mounted && <NoteWithPdfs moduleId="resize-module"><EditorContent editor={editor} /></NoteWithPdfs>}</div>
     <p id="outside">Text remains selectable after resize cleanup.</p>

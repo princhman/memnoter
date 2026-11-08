@@ -43,8 +43,8 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
   const { data: docs = [] } = useDocuments(moduleId);
   const pane = usePdfPane(moduleId);
   const navigate = useNavigate();
-  const files = useRef<HTMLElement>(null);
-  const resize = useRef<{ pointer: number; element: HTMLDivElement; width: number; cleanup: () => void } | null>(null);
+  const guide = useRef<HTMLDivElement>(null);
+  const resize = useRef<{ pointer: number; element: HTMLDivElement; width: number; right: number; left: number; dividerWidth: number; maxWidth: number; cleanup: () => void } | null>(null);
   const finishResize = useCallback((commit = true) => {
     const drag = resize.current;
     if (!drag) return;
@@ -66,12 +66,19 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
   return <div className="relative flex h-full min-h-0 flex-col"><PdfQuoteControls moduleId={moduleId} /><div className="note-with-pdfs flex min-h-0 min-w-0 flex-1">
     <div className="app-scroll-container min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">{children}</div>
     {open && <>
-      <div role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuenow={pane.width} aria-valuemin={320} aria-valuemax={1000} tabIndex={0} className="w-1 shrink-0 touch-none cursor-col-resize bg-border hover:bg-primary focus-visible:bg-primary focus-visible:outline-none" onKeyDown={event => {
-        if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); updatePdfPane(moduleId, { width: clampWidth(pane.width + (event.key === "ArrowLeft" ? 20 : -20)) }); }
+      <div role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuenow={pane.width} aria-valuemin={320} aria-valuemax={1000} tabIndex={0} className="relative w-1 shrink-0 touch-none cursor-col-resize bg-border hover:bg-primary focus-visible:bg-primary focus-visible:outline-none" onKeyDown={event => {
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); finishResize(false); updatePdfPane(moduleId, { width: clampWidth(pane.width + (event.key === "ArrowLeft" ? 20 : -20)) }); }
       }} onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary || resize.current) return;
         event.preventDefault(); event.stopPropagation();
         const element = event.currentTarget;
+        const parent = element.parentElement;
+        const preview = guide.current;
+        if (!parent || !preview) return;
+        const bounds = element.getBoundingClientRect();
+        const right = parent.getBoundingClientRect().right;
+        preview.style.transform = "translate3d(0, 0, 0)";
+        preview.hidden = false;
         element.setPointerCapture(event.pointerId);
         // Override explicit textLayer selection rules too, including WebKit's.
         // Removing this sheet restores existing styles without rewriting them.
@@ -81,7 +88,10 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
         const preventSelection = (event: Event) => event.preventDefault();
         document.addEventListener("selectstart", preventSelection, true);
         document.addEventListener("dragstart", preventSelection, true);
-        resize.current = { pointer: event.pointerId, element, width: pane.width, cleanup: () => {
+        resize.current = { pointer: event.pointerId, element, width: pane.width, right, left: bounds.left, dividerWidth: bounds.width,
+          maxWidth: Math.max(320, window.innerWidth * 0.65), cleanup: () => {
+          preview.hidden = true;
+          preview.style.removeProperty("transform");
           sheet.remove();
           document.removeEventListener("selectstart", preventSelection, true);
           document.removeEventListener("dragstart", preventSelection, true);
@@ -90,20 +100,19 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
         const drag = resize.current;
         if (!drag || drag.pointer !== event.pointerId) return;
         event.preventDefault(); event.stopPropagation();
-        const parent = event.currentTarget.parentElement;
-        if (!parent) return;
-        drag.width = clampWidth(parent.getBoundingClientRect().right - event.clientX);
-        const width = paneWidth(drag.width);
-        if (files.current) files.current.style.width = width;
-        document.documentElement.style.setProperty("--pdf-pane-width", width);
-        event.currentTarget.setAttribute("aria-valuenow", String(drag.width));
+        drag.width = clampWidth(drag.right - event.clientX);
+        // Preview the final boundary without resizing either viewport or canvas.
+        const offset = drag.right - Math.min(drag.width, drag.maxWidth) - drag.dividerWidth - drag.left;
+        if (guide.current) guide.current.style.transform = `translate3d(${offset}px, 0, 0)`;
       }} onPointerUp={event => {
         if (resize.current?.pointer !== event.pointerId) return;
         event.preventDefault(); event.stopPropagation(); finishResize();
-      }} onPointerCancel={event => { if (resize.current?.pointer === event.pointerId) finishResize(); }}
-      onLostPointerCapture={event => { if (resize.current?.pointer === event.pointerId) finishResize(); }}
-      onClick={event => { event.preventDefault(); event.stopPropagation(); }} />
-      <aside ref={files} aria-label="Files" className="flex min-h-0 shrink-0 flex-col bg-background" style={{ width: paneWidth(pane.width) }}>
+      }} onPointerCancel={event => { if (resize.current?.pointer === event.pointerId) finishResize(false); }}
+      onLostPointerCapture={event => { if (resize.current?.pointer === event.pointerId) finishResize(false); }}
+      onClick={event => { event.preventDefault(); event.stopPropagation(); }}>
+        <div ref={guide} hidden aria-hidden="true" className="pointer-events-none absolute inset-0 z-50 bg-primary shadow-sm" style={{ transition: "none", willChange: "transform" }} />
+      </div>
+      <aside aria-label="Files" className="flex min-h-0 shrink-0 flex-col bg-background" style={{ width: paneWidth(pane.width) }}>
         {active ? <div className="min-h-0 flex-1"><PdfViewer key={active.id} doc={active}
           leading={<>
             <ToolButton label="All files" onClick={() => updatePdfPane(moduleId, { active: null })}><ChevronLeft /></ToolButton>

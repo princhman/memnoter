@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, Scan } from "lucide-react";
+import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
@@ -21,6 +21,8 @@ import { Button } from "./ui/button";
 GlobalWorkerOptions.workerSrc = workerUrl;
 
 const PAGE_GAP = 16;
+type ZoomAnchor = { page: number; x: number; y: number; clientX: number; clientY: number };
+const clampZoom = (value: number) => Math.max(0.25, Math.min(3, Math.round(value * 1e6) / 1e6));
 type Size = { width: number; height: number };
 
 // Memoized: scrolling re-renders the viewer, but a page only redraws when it
@@ -94,6 +96,12 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const navigate = useNavigate();
   const [saved] = useState(() => ({ ...readPdfView(doc.id), ...(initialPage ? { page: initialPage } : {}) }));
   const [zoom, setZoom] = useState(saved.zoom);
+  const [pinching, setPinching] = useState(false);
+  const zoomValue = useRef(zoom);
+  zoomValue.current = zoom;
+  const content = useRef<HTMLDivElement>(null);
+  const zoomAnchor = useRef<ZoomAnchor | null>(null);
+  const finishPinch = useRef<(() => number) | null>(null);
   const [current, setCurrent] = useState(saved.page);
   const [input, setInput] = useState(String(saved.page));
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -197,13 +205,112 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   useEffect(() => {
     try { localStorage.setItem(`pdf-view:${doc.id}`, JSON.stringify({ page: current, zoom })); } catch { /* Storage may be unavailable. */ }
   }, [doc.id, current, zoom]);
-  const zoomPage = useRef<number | null>(null);
-  useLayoutEffect(() => { if (zoomPage.current !== null) { jump(zoomPage.current); zoomPage.current = null; } }, [zoom]);
+  function anchorAt(clientX?: number, clientY?: number): ZoomAnchor | null {
+    const element = container.current;
+    if (!element || !content.current) return null;
+    const viewport = element.getBoundingClientRect();
+    const x = clientX ?? viewport.left + element.clientWidth / 2;
+    const y = clientY ?? viewport.top + element.clientHeight / 2;
+    const pageElements = Array.from(content.current.children);
+    const page = pageElements.findIndex(element => element.getBoundingClientRect().bottom >= y);
+    const index = page < 0 ? pageElements.length - 1 : page;
+    const bounds = pageElements[index]?.getBoundingClientRect();
+    return bounds ? { page: index, x: (x - bounds.left) / bounds.width, y: (y - bounds.top) / bounds.height, clientX: x, clientY: y } : null;
+  }
+  function clearPreview() {
+    if (content.current) { content.current.style.transform = ""; content.current.style.transformOrigin = ""; content.current.style.pointerEvents = ""; }
+  }
+  useLayoutEffect(() => {
+    clearPreview();
+    const anchor = zoomAnchor.current;
+    const element = container.current;
+    const page = anchor && content.current?.children[anchor.page];
+    if (element && anchor && page) {
+      const bounds = page.getBoundingClientRect();
+      element.scrollLeft += bounds.left + bounds.width * anchor.x - anchor.clientX;
+      element.scrollTop += bounds.top + bounds.height * anchor.y - anchor.clientY;
+      measure();
+    }
+    zoomAnchor.current = null;
+  }, [zoom]);
   function changeZoom(next: number) {
-    const value = Math.max(0.25, Math.min(3, next));
-    zoomPage.current = current;
+    const value = clampZoom(next);
+    if (value === zoomValue.current) return;
+    clearPreview();
+    zoomAnchor.current = anchorAt();
     setZoom(value);
   }
+  // Wheel pinch is Chromium's desktop trackpad protocol; WebKit also emits
+  // gesture events. Only this viewport cancels browser zoom, never ordinary scroll.
+  const captureAnchor = useRef(anchorAt);
+  captureAnchor.current = anchorAt;
+  useEffect(() => {
+    const element = container.current;
+    const grid = content.current;
+    if (!element || !grid) return;
+    const viewportHeight = () => element.clientHeight;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let preview = zoomValue.current;
+    let anchor: ZoomAnchor | null = null;
+    let native = false;
+    let nativeBase = preview;
+    let ignoreWheelUntil = 0;
+    function finish() {
+      if (!anchor) return zoomValue.current;
+      clearTimeout(timer);
+      if (native) { native = false; ignoreWheelUntil = performance.now() + 250; }
+      if (preview !== zoomValue.current) {
+        zoomAnchor.current = anchor;
+        setZoom(preview);
+      } else clearPreview();
+      anchor = null;
+      setPinching(false);
+      return preview;
+    }
+    finishPinch.current = finish;
+    const show = (value: number, event: Event) => {
+      if (!anchor) {
+        const x = "clientX" in event && typeof event.clientX === "number" ? event.clientX : undefined;
+        const y = "clientY" in event && typeof event.clientY === "number" ? event.clientY : undefined;
+        anchor = captureAnchor.current(x, y);
+        if (!anchor) return;
+        setPinching(true);
+        const bounds = grid.getBoundingClientRect();
+        if (anchor) grid.style.transformOrigin = `${anchor.clientX - bounds.left}px ${anchor.clientY - bounds.top}px`;
+        grid.style.pointerEvents = "none";
+      }
+      preview = clampZoom(value);
+      grid.style.transform = `scale(${preview / zoomValue.current})`;
+      clearTimeout(timer);
+      // WebKit sends gestureend; the timer also recovers an interrupted stream.
+      timer = setTimeout(finish, native ? 350 : 160);
+    };
+    function wheel(event: WheelEvent) {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      if (native || performance.now() < ignoreWheelUntil) return;
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportHeight() : 1);
+      show((anchor ? preview : zoomValue.current) * Math.exp(-delta * 0.01), event);
+    }
+    function gesture(event: Event) {
+      event.preventDefault();
+      if (event.type === "gesturestart") {
+        native = true;
+        // Discard a leading wheel preview if WebKit sends both protocols.
+        clearTimeout(timer); clearPreview(); anchor = null;
+        nativeBase = zoomValue.current;
+      }
+      if ("scale" in event && typeof event.scale === "number" && Number.isFinite(event.scale) && event.scale > 0) show(nativeBase * event.scale, event);
+      if (event.type === "gestureend") { native = false; ignoreWheelUntil = performance.now() + 250; finish(); }
+    }
+    element.addEventListener("wheel", wheel, { passive: false });
+    for (const type of ["gesturestart", "gesturechange", "gestureend"]) element.addEventListener(type, gesture, { passive: false });
+    return () => {
+      clearTimeout(timer); finishPinch.current = null; clearPreview();
+      element.removeEventListener("wheel", wheel);
+      for (const type of ["gesturestart", "gesturechange", "gestureend"]) element.removeEventListener(type, gesture);
+    };
+  }, [doc.available, error]);
   const pageRequest = useSelector(pdfPageRequest, state => state);
   useEffect(() => {
     if (pageRequest?.id === doc.id && pages.length) { jump(Math.max(1, Math.min(pages.length, pageRequest.page))); pdfPageRequest.setState(() => null); }
@@ -217,9 +324,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         if (event.key !== "Enter") return;
         const page = parsePage(input, pages.length); if (page !== null) jump(page); else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
-      <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom(zoom - 0.1)}><ZoomOut /></ToolButton>
-      <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom(zoom + 0.1)}><ZoomIn /></ToolButton>
-      <ToolButton label="Select region" pressed={selecting} disabled={!!pending || cropping || !pdf} onClick={() => { setQuoteError(""); setSelecting(value => !value); }}><Scan /></ToolButton>
+      <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
+      <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
+      <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn /></ToolButton>
+      <ToolButton label="Select region" pressed={selecting} disabled={!!pending || cropping || !pdf} onClick={() => { setQuoteError(""); setSelecting(value => !value); }}><SquareDashedMousePointer /></ToolButton>
       {fullscreen && <ToolButton label="Open beside note" onClick={() => { openPdfPane(doc.moduleId, doc.id); void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }); }}>
         {/* The small arrow says this moves the PDF into the note's side panel. */}
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
@@ -232,9 +340,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" onClick={() => { void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error))); }}>Add to note</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current === pending && current.status === "draft" ? null : current)}>Discard</Button>}</>}
       </div>
     </div>}
-    {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" onScroll={scheduleMeasure}>
+    {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF</p>}
-      <div className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} selecting={selecting && !pending && !cropping} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
+      <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
     </div>}
   </div>;
 }
