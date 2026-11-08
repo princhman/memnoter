@@ -2,9 +2,9 @@ import type { CardCounts as Counts } from "@/lib/card-sync";
 import { cn } from "@/lib/utils";
 
 const PARTS = [
-  { key: "new", label: "new", className: "text-sky-600 dark:text-sky-400" },
-  { key: "learning", label: "learning", className: "text-red-600 dark:text-red-400" },
-  { key: "review", label: "to review", className: "text-emerald-600 dark:text-emerald-400" },
+  { key: "new", label: "new", className: "text-sky-700 dark:text-sky-400" },
+  { key: "learning", label: "learning", className: "text-red-800 dark:text-red-400" },
+  { key: "review", label: "to review", className: "text-emerald-800 dark:text-emerald-400" },
 ] as const;
 
 export type CardCountKind = (typeof PARTS)[number]["key"];
@@ -15,7 +15,7 @@ export function cardCountKind(state: number): CardCountKind {
 }
 
 // Cards due now as Anki shows them: new, learning and to review, each in its
-// own colour, faded when zero. Each count carries a superscript +n, in its
+// own colour. Each count carries a superscript +n, in its
 // colour, for its cards due later today.
 // `current`, during a review, marks the count the card on screen belongs to.
 export function CardCounts({ counts, current, className }: { counts: Counts; current?: CardCountKind | null; className?: string }) {
@@ -31,8 +31,8 @@ export function CardCounts({ counts, current, className }: { counts: Counts; cur
           aria-hidden
           className={className}
         >
-          <span className={cn(counts[key] === 0 && "opacity-40", key === current && "font-bold underline underline-offset-2")}>{counts[key]}</span>
-          {later(key) > 0 && <sup className="ml-px text-[0.65em] opacity-70">+{later(key)}</sup>}
+          <span className={cn(key === current && "font-bold underline underline-offset-2")}>{counts[key]}</span>
+          {later(key) > 0 && <sup className="ml-px text-[0.65em]">+{later(key)}</sup>}
         </span>
       ))}
     </span>

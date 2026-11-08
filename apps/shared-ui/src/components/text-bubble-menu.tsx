@@ -242,7 +242,7 @@ function MarkButton({
             aria-pressed={pressed}
             disabled={disabled}
             className={cn(
-              pressed && "bg-primary/15 text-primary hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground",
+              pressed && "bg-primary/15 text-link hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground",
             )}
             onClick={onToggle}
           >

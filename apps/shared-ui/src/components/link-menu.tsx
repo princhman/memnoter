@@ -186,7 +186,7 @@ function LinkField({
       <input
         ref={input}
         aria-label="Link URL"
-        className="h-7 w-60 min-w-0 rounded-md bg-input/50 px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-input/30"
+        className="h-7 w-60 min-w-0 rounded-md bg-muted px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-muted"
         placeholder="Paste or type a link"
         value={value}
         spellCheck={false}
