@@ -857,10 +857,10 @@ fn images_survive_moving_the_data_directory() {
     let moved = dir.with_extension("moved");
     let core = Core::open(&dir).unwrap();
     let db = &core.db;
-    let module = create_module(&db, "Images".into()).unwrap();
+    let module = create_module(db, "Images".into()).unwrap();
     let image = save_file(
         &dir,
-        &db,
+        db,
         module.clone(),
         b"image bytes".to_vec(),
         "image/png".into(),
