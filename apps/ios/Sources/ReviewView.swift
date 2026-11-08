@@ -72,7 +72,7 @@ struct ReviewView: View {
             }
         }
         .task {
-            let web = WebSession(client: client, directory: directory, entry: "review-native.html")
+            let web = WebSession(client: client, directory: directory, entry: BridgeProtocol.reviewEntry)
             web.onReady = { show() }
             session = web
             await load()
@@ -194,7 +194,7 @@ struct ReviewView: View {
         revealed = true; show()
         Task {
             do {
-                let value = try await session.run("return await window.memnoterReview.preview(card)", ["card": try object(card)])
+                let value = try await session.callReview(.preview, ["card": try object(card)], parameters: ["card"])
                 if cards.first?.id == card.id, cards.first?.reps == card.reps { intervals = value as? [String] ?? [] }
             } catch { self.error = String(describing: error) }
         }
@@ -227,7 +227,7 @@ struct ReviewView: View {
     }
     func show() {
         guard let card = cards.first, let session, session.ready else { return }
-        Task { do { _ = try await session.run("window.memnoterReview.show(card, revealed)", ["card": try object(card), "revealed": revealed]) } catch { self.error = String(describing: error) } }
+        Task { do { _ = try await session.callReview(.show, ["card": try object(card), "revealed": revealed], parameters: ["card", "revealed"]) } catch { self.error = String(describing: error) } }
     }
     func rate(_ rating: Int) {
         guard !busy, revealed, let card = cards.first, let session else { return }
@@ -235,7 +235,7 @@ struct ReviewView: View {
         Task {
             defer { busy = false; if syncPending { Task { await applyPendingSync() } } }
             do {
-                let value = try await session.run("return await window.memnoterReview.rate(card, rating)", ["card": try object(card), "rating": rating])
+                let value = try await session.callReview(.rate, ["card": try object(card), "rating": rating], parameters: ["card", "rating"])
                 let result = try JSONDecoder().decode(ReviewResult.self, from: JSONSerialization.data(withJSONObject: value ?? [:]))
                 try await client.write("review_card", ReviewArgs(cardId: card.id, expectedReps: card.reps, card: result.card, log: result.log))
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()

@@ -10,25 +10,8 @@ import { fitToVisibleViewport } from "./lib/platform";
 import "./App.css";
 import "katex/dist/katex.min.css";
 
-function syncThemeWithSystem() {
-  const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+import "./editor-host/theme";
 
-  const applyTheme = () => {
-    const isDark = mediaQuery.matches;
-
-    document.documentElement.classList.toggle("dark", isDark);
-    document.documentElement.style.colorScheme = isDark ? "dark" : "light";
-  };
-
-  applyTheme();
-  mediaQuery.addEventListener("change", applyTheme);
-
-  return () => {
-    mediaQuery.removeEventListener("change", applyTheme);
-  };
-}
-
-syncThemeWithSystem();
 fitToVisibleViewport();
 void checkForUpdates();
 listenToMenu();

@@ -1,5 +1,5 @@
-import { contentKey, patchContent } from "../content";
-import { modulesCache } from "../modules";
+import { onRemote as applyRemote, onFileStored, cancelRemoteReindex, drainRemoteReindex, type ApplyResult } from "./apply-remote.ts";
+export { onFileStored, MODULE_DELETED_REMOTELY_EVENT, type ApplyResult } from "./apply-remote.ts";
 // Runs cloud sync for the app: owns the engine, adapts it to the Tauri
 // commands in apps/desktop/src/sync.rs and folds remote changes into the caches
 // the editor reads, exactly like a local save would.
@@ -8,17 +8,12 @@ import { call as invoke } from "@/lib/backend";
 import { listen } from "@/lib/backend";
 import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
-import { appendSavedUpdate, type ContentUpdate, type FileType } from "@/lib/content";
-import { dueCountsKey, isModuleOpen } from "@/lib/card-sync";
-import { refreshDerived } from "@/lib/note-index";
-import { queryClient } from "@/lib/query-client";
 import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { saveQueue } from "@/lib/saves";
-import { forgetModule } from "@/lib/store";
 import { getObject, isTokenValid, putObject, wipeCloudData, type SyncAccount } from "./account";
 import { importKey } from "./crypto";
 import { createFileSync, type FileSync } from "./files";
-import { setSyncedFileHandler, syncedFileArrived } from "./file-requests";
+import { setSyncedFileHandler } from "./file-requests";
 import { AUTH_PROTOCOL_PREFIX, SYNC_PROTOCOL } from "./protocol";
 import {
   createSyncEngine,
@@ -28,11 +23,6 @@ import {
   type SyncState,
   type SyncStore,
 } from "./engine";
-
-// Dispatched on window with the module id when another device deleted it.
-export const MODULE_DELETED_REMOTELY_EVENT = "memnoter:module-deleted-remotely";
-
-const REINDEX_DELAY_MS = 2_000;
 
 export type SyncUiStatus = {
   // null until the stored account was read.
@@ -52,14 +42,6 @@ export const syncStatusStore = createStore<SyncUiStatus>({
 });
 
 type SyncStatusResponse = { generation: string; account: string | null; cursor: number; pending: number };
-export type ApplyResult = {
-  updates: { moduleId: string; update: ContentUpdate }[];
-  modulesChanged: boolean;
-  deleted: string[];
-  reviewsChanged: boolean;
-  filesChanged: boolean;
-};
-
 let requestController: AbortController | null = null;
 let engine: SyncEngine | null = null;
 let fileSync: FileSync | null = null;
@@ -81,62 +63,11 @@ function writesAllowed() {
   if (saveQueue.isSuspended()) throw new Error("Writes are paused");
 }
 
-const reindexTimers = new Map<string, number>();
-const reindexing = new Set<Promise<void>>();
-function scheduleReindex(moduleId: string) {
-  window.clearTimeout(reindexTimers.get(moduleId));
-  reindexTimers.set(
-    moduleId,
-    window.setTimeout(() => {
-      const task = (async () => {
-        reindexTimers.delete(moduleId);
-        // An open note indexes itself as the editor shows the change.
-        if (isModuleOpen(moduleId)) return;
-        try {
-          await refreshDerived(moduleId);
-          void queryClient.invalidateQueries({ queryKey: dueCountsKey });
-        } catch (error) {
-          console.error(`Failed to index synced note ${moduleId}:`, error);
-        }
-      })();
-      reindexing.add(task);
-      void task.finally(() => reindexing.delete(task));
-    }, REINDEX_DELAY_MS),
-  );
-}
-
+// Keep transport wakeups in the desktop manager; native only applies caches.
 export function onRemote(result: ApplyResult) {
-  for (const { moduleId, update } of result.updates) {
-    // The same path as a local save: an open editor applies the update from
-    // the cache, and compaction then includes it.
-    appendSavedUpdate(moduleId, update);
-    scheduleReindex(moduleId);
-  }
-  for (const moduleId of result.deleted) {
-    saveQueue.drop(moduleId);
-    forgetModule(moduleId);
-    window.dispatchEvent(new CustomEvent(MODULE_DELETED_REMOTELY_EVENT, { detail: moduleId }));
-    queryClient.removeQueries({ queryKey: contentKey(moduleId) });
-  }
-  if (result.modulesChanged || result.deleted.length > 0) {
-    void modulesCache.invalidate();
-  }
-  if (result.modulesChanged || result.deleted.length > 0 || result.reviewsChanged) {
-    // Card schedules are under the due counts' key too.
-    void queryClient.invalidateQueries({ queryKey: dueCountsKey });
-  }
+  applyRemote(result);
   if (result.filesChanged) fileSync?.kick();
 }
-
-export function onFileStored(moduleId: string, file: FileType) {
-  patchContent(moduleId, content => !content.files.some(known => known.id === file.id)
-    ? { ...content, files: [...content.files, file] } : content);
-  syncedFileArrived();
-  // Image occlusion cards need their image to be indexed.
-  scheduleReindex(moduleId);
-}
-
-
 
 function tauriStore(generation: string): SyncStore {
   return {
@@ -310,8 +241,7 @@ function stopEngine() {
   fileSync = null;
   setSyncedFileHandler(null);
   activeAccount = null;
-  for (const timer of reindexTimers.values()) window.clearTimeout(timer);
-  reindexTimers.clear();
+  cancelRemoteReindex();
   // Database generation checks reject any late completion after this bound.
   // Never retain a rejected/unbounded drain as the next transition's barrier.
   draining = new Promise<void>((resolve) => {
@@ -319,9 +249,7 @@ function stopEngine() {
     const timer = setTimeout(() => { ended = true; resolve(); }, 5_000);
     void Promise.allSettled(workers).then(async () => {
       if (ended) return;
-      for (const timer of reindexTimers.values()) window.clearTimeout(timer);
-      reindexTimers.clear();
-      await Promise.allSettled([...reindexing]);
+      await drainRemoteReindex();
     }).finally(() => { ended = true; clearTimeout(timer); resolve(); });
   });
   return draining;

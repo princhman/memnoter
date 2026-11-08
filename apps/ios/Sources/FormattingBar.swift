@@ -72,7 +72,7 @@ struct FormattingBar: View {
 
     @ViewBuilder private var cardGroup: some View {
         // Keep cloze creation visible without scrolling, including in a narrow window.
-        Button { session.exec(session.state.inCloze ? "removeCard" : "makeCard") } label: {
+        Button { session.exec(session.state.inCloze ? .removeCard : .makeCard) } label: {
             // Braces mean cloze on desktop too; the pressed state shows it can be removed.
             Label("Cloze", systemImage: "curlybraces")
                 .labelStyle(.titleAndIcon)
@@ -85,51 +85,51 @@ struct FormattingBar: View {
         .accessibilityAddTraits(session.state.inCloze ? .isSelected : [])
         // Offer joining only when the selection spans separate clozes.
         if session.state.canJoinClozes {
-            formatButton("Join clozes", "rectangle.stack", "joinClozes")
+            formatButton("Join clozes", "rectangle.stack", .joinClozes)
         }
     }
 
     @ViewBuilder private var styleGroup: some View {
-        formatButton("Bold", "bold", "bold", active: mark("bold"))
-        formatButton("Italic", "italic", "italic", active: mark("italic"))
-        formatButton("Underline", "underline", "underline", active: mark("underline"))
-        formatButton("Strikethrough", "strikethrough", "strike", active: mark("strike"))
+        formatButton("Bold", "bold", .bold, active: mark("bold"))
+        formatButton("Italic", "italic", .italic, active: mark("italic"))
+        formatButton("Underline", "underline", .underline, active: mark("underline"))
+        formatButton("Strikethrough", "strikethrough", .strike, active: mark("strike"))
         Menu {
-            ForEach(["yellow", "green", "blue", "pink", "purple"], id: \.self) { color in
-                Button { session.exec("setHighlight", ["color": color]) } label: {
+            ForEach(BridgeProtocol.highlightColors, id: \.self) { color in
+                Button { session.exec(.setHighlight, ["color": color]) } label: {
                     if session.state.highlightColor == color {
                         Label(color.capitalized, systemImage: "checkmark")
                     } else { Text(color.capitalized) }
                 }
             }
-            Button("Remove highlight") { session.exec("removeHighlight") }
+            Button("Remove highlight") { session.exec(.removeHighlight) }
         } label: {
             Image(systemName: "highlighter")
                 .foregroundStyle(highlightTint)
-        } primaryAction: { session.exec("highlight") }
+        } primaryAction: { session.exec(.highlight) }
         .buttonStyle(FormatButtonStyle(active: mark("highlight")))
         .accessibilityLabel("Highlight")
         .accessibilityValue(session.state.highlightColor ?? "Off")
-        formatButton("Code", "chevron.left.forwardslash.chevron.right", "code", active: mark("code"))
+        formatButton("Code", "chevron.left.forwardslash.chevron.right", .code, active: mark("code"))
     }
 
     @ViewBuilder private var blockGroup: some View {
         paragraph("Text", level: nil)
         ForEach(1...6, id: \.self) { level in paragraph("H\(level)", level: level) }
-        formatButton("Quote", "text.quote", "blockquote", active: session.state.blockquote)
+        formatButton("Quote", "text.quote", .blockquote, active: session.state.blockquote)
     }
 
     @ViewBuilder private var listGroup: some View {
-        formatButton("Bullet list", "list.bullet", "bulletList", active: session.state.bulletList)
-        formatButton("Numbered list", "list.number", "orderedList", active: session.state.orderedList)
-        formatButton("Outdent list item", "decrease.indent", "outdent").disabled(!session.state.canOutdent)
-        formatButton("Indent list item", "increase.indent", "indent").disabled(!session.state.canIndent)
+        formatButton("Bullet list", "list.bullet", .bulletList, active: session.state.bulletList)
+        formatButton("Numbered list", "list.number", .orderedList, active: session.state.orderedList)
+        formatButton("Outdent list item", "decrease.indent", .outdent).disabled(!session.state.canOutdent)
+        formatButton("Indent list item", "increase.indent", .indent).disabled(!session.state.canIndent)
     }
 
     @ViewBuilder private var insertGroup: some View {
-        formatButton("Inline math", "function", "inlineMath", active: session.state.blockType == "inlineMath")
-        formatButton("Math block", "x.squareroot", "mathBlock", active: session.state.blockType == "mathBlock")
-        Button { session.exec("codeBlock") } label: {
+        formatButton("Inline math", "function", .inlineMath, active: session.state.blockType == "inlineMath")
+        formatButton("Math block", "x.squareroot", .mathBlock, active: session.state.blockType == "mathBlock")
+        Button { session.exec(.codeBlock) } label: {
             Label("Code block", systemImage: "chevron.left.forwardslash.chevron.right")
                 .labelStyle(.titleAndIcon)
                 .fixedSize()
@@ -146,18 +146,18 @@ struct FormattingBar: View {
             }
         Menu {
             if session.state.inTable {
-                Button("Add row above") { session.exec("addRowBefore") }
-                Button("Add row below") { session.exec("addRowAfter") }
-                Button("Add column left") { session.exec("addColumnBefore") }
-                Button("Add column right") { session.exec("addColumnAfter") }
-                Button("Toggle header row") { session.exec("toggleHeaderRow") }
-                Button("Merge cells") { session.exec("mergeCells") }.disabled(!session.state.canMergeCells)
-                Button("Split cell") { session.exec("splitCell") }.disabled(!session.state.canSplitCell)
-                Button("Delete row", role: .destructive) { session.exec("deleteRow") }
-                Button("Delete column", role: .destructive) { session.exec("deleteColumn") }
-                Button("Delete table", role: .destructive) { session.exec("deleteTable") }
+                Button("Add row above") { session.exec(.addRowBefore) }
+                Button("Add row below") { session.exec(.addRowAfter) }
+                Button("Add column left") { session.exec(.addColumnBefore) }
+                Button("Add column right") { session.exec(.addColumnAfter) }
+                Button("Toggle header row") { session.exec(.toggleHeaderRow) }
+                Button("Merge cells") { session.exec(.mergeCells) }.disabled(!session.state.canMergeCells)
+                Button("Split cell") { session.exec(.splitCell) }.disabled(!session.state.canSplitCell)
+                Button("Delete row", role: .destructive) { session.exec(.deleteRow) }
+                Button("Delete column", role: .destructive) { session.exec(.deleteColumn) }
+                Button("Delete table", role: .destructive) { session.exec(.deleteTable) }
             } else {
-                Button("Insert table") { session.exec("insertTable") }
+                Button("Insert table") { session.exec(.insertTable) }
             }
         } label: { Image(systemName: "tablecells") }
             .buttonStyle(FormatButtonStyle(active: session.state.inTable))
@@ -167,13 +167,13 @@ struct FormattingBar: View {
     }
 
     @ViewBuilder private var sectionGroup: some View {
-        Button { session.exec("insertSection", ["kind": "sibling"]) } label: { Image(systemName: "text.badge.plus") }
+        Button { session.exec(.insertSection, ["kind": "sibling"]) } label: { Image(systemName: "text.badge.plus") }
             .buttonStyle(FormatButtonStyle()).accessibilityLabel("New section")
-        Button { session.exec("insertSection", ["kind": "subsection"]) } label: { Image(systemName: "text.insert") }
+        Button { session.exec(.insertSection, ["kind": "subsection"]) } label: { Image(systemName: "text.insert") }
             .buttonStyle(FormatButtonStyle()).accessibilityLabel("Subsection")
         formatButton(session.state.folded ? "Unfold current section" : "Fold current section",
                      session.state.folded ? "chevron.right" : "chevron.down",
-                     session.state.folded ? "unfoldCurrentSection" : "foldCurrentSection", active: session.state.folded)
+                     session.state.folded ? .unfoldCurrentSection : .foldCurrentSection, active: session.state.folded)
             .disabled(!session.state.folded && !session.state.canFold)
     }
 
@@ -194,10 +194,8 @@ struct FormattingBar: View {
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
                 .frame(width: 200, height: 44).accessibilityLabel("Link URL")
             Button("Apply") {
-                Task {
-                    _ = try? await session.run("window.memnoterEditor.exec('link', {href}); return window.memnoterEditor.focus()", ["href": link])
-                    editingLink = false
-                }
+                session.exec(.link, ["href": link], focusAfter: true)
+                editingLink = false
             }
             .buttonStyle(FormatButtonStyle())
             .accessibilityLabel(link.isEmpty ? "Remove link" : "Apply link")
@@ -221,14 +219,14 @@ struct FormattingBar: View {
 
     private func paragraph(_ title: String, level: Int?) -> some View {
         let active = level == nil ? session.state.blockType == "paragraph" : session.state.headingLevel == level
-        return Button { session.exec(level == nil ? "paragraph" : "heading", level.map { ["level": $0] } ?? [:]) } label: {
+        return Button { session.exec(level == nil ? .paragraph : .heading, level.map { ["level": $0] } ?? [:]) } label: {
             Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1).padding(.horizontal, 4)
         }
         .buttonStyle(FormatButtonStyle(active: active))
         .accessibilityLabel(level.map { "Heading \($0)" } ?? "Text").accessibilityAddTraits(active ? .isSelected : [])
     }
 
-    private func formatButton(_ title: String, _ symbol: String, _ command: String, active: Bool = false) -> some View {
+    private func formatButton(_ title: String, _ symbol: String, _ command: ExecCommand, active: Bool = false) -> some View {
         Button { session.exec(command) } label: { Image(systemName: symbol) }
             .buttonStyle(FormatButtonStyle(active: active))
             .accessibilityLabel(title).accessibilityAddTraits(active ? .isSelected : [])

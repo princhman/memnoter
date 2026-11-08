@@ -1,8 +1,13 @@
 import { browserHarness } from "./support/browser.mjs";
+import { execFileSync } from "node:child_process";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 const { createServer, webkit } = browserHarness(import.meta.url);
+
+test('checked-in Swift bridge matches the web protocol', () => {
+  execFileSync(process.execPath, [new URL('../../../scripts/generate-bridge-protocol.mjs', import.meta.url).pathname, '--check']);
+});
 
 test('WK host opens shared editors, publishes state and outline, and persists edits without desktop APIs', async t => {
   const root = new URL('../', import.meta.url).pathname;
@@ -152,8 +157,17 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.ok((await synced.locator('.tiptap').textContent()).includes('Local draft!'));
     await synced.evaluate(() => window.memnoterEditor.flush());
     await synced.close();
+    await page.addInitScript(() => { window.__memnoterViewState = { skipCardsCreatedToday: true }; });
     await page.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
     await page.waitForFunction(() => window.messages.some(message => message.event === 'ready'));
+    assert.deepEqual(await page.evaluate(async () => {
+      const { appStore } = await import('/src/lib/store.ts');
+      const initial = appStore.state.skipCardsCreatedToday;
+      window.__memnoterBridge.emit('skip-cards-created-today', true);
+      const enabled = appStore.state.skipCardsCreatedToday;
+      window.__memnoterBridge.emit('skip-cards-created-today', false);
+      return [initial, enabled, appStore.state.skipCardsCreatedToday];
+    }), [false, true, false], 'only the native event controls the review preference');
     await page.evaluate(() => window.memnoterEditor.open('one'));
     await page.locator('.tiptap[contenteditable=true]').waitFor();
     assert.equal(await page.locator('header, aside, nav').count(), 0);
@@ -324,6 +338,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       await window.memnoterEditor.flush();
       return window.messages.filter(m => m.event === 'viewState').at(-1)?.payload;
     });
+    assert.equal(Object.hasOwn(persisted, "skipCardsCreatedToday"), false);
     assert.ok(persisted?.viewByModule.one.focusedSection > 0);
     assert.ok(persisted.viewByModule.one.anchor > 0);
     // Native restores focus from preferences before opening content. Old saved
@@ -376,8 +391,8 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       };
       for (const focused of [true, false]) {
         if (!focused) {
-          await menu.evaluate(() => window.memnoterEditor.blur());
-          // Tiptap's blur command releases selection on the next animation frame.
+          await menu.evaluate(() => { document.activeElement?.blur(); window.getSelection()?.removeAllRanges(); });
+          // Allow WebKit to release focus before exercising the native action.
           await menu.waitForFunction(() => document.activeElement !== document.querySelector('.tiptap') && window.getSelection().rangeCount === 0);
         }
         const before = await snapshot();

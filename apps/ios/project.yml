@@ -1,6 +1,6 @@
 name: Memnoter
 options:
-  preGenCommand: node ../../scripts/sync-version.mjs --ios-only
+  preGenCommand: node ../../scripts/sync-version.mjs --ios-only && node ../../scripts/generate-bridge-protocol.mjs --check
   bundleIdPrefix: com.vladyslavnalyvaiko.memnoter
   deploymentTarget:
     iOS: '17.0'
