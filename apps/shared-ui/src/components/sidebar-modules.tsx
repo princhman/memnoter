@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react';
-import { DndContext, PointerSensor, KeyboardSensor, useSensor, useSensors, useDroppable, closestCenter, pointerWithin } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { useState, type PointerEventHandler, type ReactNode } from 'react';
+import { DndContext, PointerSensor, useSensor, useSensors, useDroppable, closestCenter, pointerWithin } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ChevronRight, Ellipsis, Folder, GripVertical } from 'lucide-react';
+import { ChevronRight, Ellipsis, Folder } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { call } from '@/lib/backend';
 import { queryClient } from '@/lib/query-client';
@@ -11,7 +11,7 @@ import { moveSidebarItem, sidebarLayout, type SidebarItem } from '@/lib/sidebar-
 import type { Module } from '@/lib/types';
 import CreateModule from './create-module';
 import { Button } from './ui/button';
-import { SidebarMenu } from './ui/sidebar';
+import { SidebarMenu, SidebarMenuAction, SidebarMenuButton, SidebarMenuItem } from './ui/sidebar';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from './ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from './ui/dialog';
 import { Input } from './ui/input';
@@ -19,17 +19,28 @@ import { Label } from './ui/label';
 
 export const sidebarKey = ['sidebar-items'] as const;
 
-function DropZone({ id, children }: { id: string; children: ReactNode }) {
+function DropZone({ id, children, highlight = true }: { id: string; children: ReactNode; highlight?: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id });
-  return <div ref={setNodeRef} className={isOver ? 'rounded-md bg-accent' : ''}>{children}</div>;
+  return <div ref={setNodeRef} className={highlight && isOver ? 'rounded-md bg-sidebar-accent' : ''}>{children}</div>;
 }
 
-function SortableRow({ item, label, children, disabled }: { item: SidebarItem; label: string; children: ReactNode; disabled: boolean }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled });
-  return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }} className="flex items-start gap-0.5">
-    <button type="button" disabled={disabled} {...attributes} {...listeners} aria-label={`Move ${label}`} className="text-muted-foreground hover:text-foreground mt-2 shrink-0 touch-none cursor-grab"><GripVertical className="size-3" /></button>
-    <div className="min-w-0 flex-1">{children}</div>
+// The whole row is the drag source. Only the pointer listener is attached, so
+// links and buttons inside keep their own keyboard behaviour; a drag starts
+// after the pointer moves a few pixels, so a plain click still navigates.
+function SortableRow({ item, children, disabled }: { item: SidebarItem; children: ReactNode; disabled: boolean }) {
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled });
+  return <div ref={setNodeRef} data-sidebar-item={item.id} onPointerDown={listeners?.onPointerDown as PointerEventHandler | undefined}
+    style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }} className="touch-none">
+    {children}
   </div>;
+}
+
+// A drag ends with a pointerup over some row; swallow the click that follows so
+// dropping a module does not also open it.
+function suppressNextClick() {
+  const swallow = (event: MouseEvent) => { event.preventDefault(); event.stopPropagation(); };
+  window.addEventListener('click', swallow, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
 }
 
 export function SidebarModules({ modules, renderModule }: { modules: Module[]; renderModule: (module: Module) => ReactNode }) {
@@ -41,22 +52,22 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
     onSuccess: () => queryClient.invalidateQueries({ queryKey: sidebarKey }),
   });
   const items = sidebarLayout(modules, query.data ?? []);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const save = (next: SidebarItem[]) => mutation.mutate(next.filter(item => JSON.stringify(item) !== JSON.stringify(query.data?.find(saved => saved.id === item.id))));
   const edit = (item: SidebarItem | 'new') => { setEditing(item); setName(item === 'new' ? '' : item.name ?? ''); };
   const row = (item: SidebarItem): ReactNode => {
     const module = modules.find(module => module.id === item.id);
-    return <SortableRow key={item.id} item={item} label={item.name ?? module?.name ?? ''} disabled={mutation.isPending || query.isPending || query.isError}>
+    return <SortableRow key={item.id} item={item} disabled={mutation.isPending || query.isPending || query.isError}>
       {item.name === null ? <SidebarMenu>{renderModule(module!)}</SidebarMenu> : <>
-        <div className="flex items-center">
-          <DropZone id={`folder:${item.id}`}><Button disabled={mutation.isPending} variant="ghost" className="justify-start max-w-full" aria-expanded={!item.collapsed} onClick={() => save(items.map(entry => entry.id === item.id ? { ...entry, collapsed: !entry.collapsed } : entry))}>
-            <ChevronRight className={`size-3 ${item.collapsed ? '' : 'rotate-90'}`} /><Folder className="size-4" /><span className="truncate">{item.name}</span>
-          </Button></DropZone>
-          <DropdownMenu><DropdownMenuTrigger render={<Button disabled={mutation.isPending} variant="ghost" size="icon-sm" aria-label={`Actions for ${item.name}`} />}><Ellipsis /></DropdownMenuTrigger>
+        <DropZone id={`folder:${item.id}`}><SidebarMenu><SidebarMenuItem>
+          <SidebarMenuButton disabled={mutation.isPending} aria-expanded={!item.collapsed} onClick={() => save(items.map(entry => entry.id === item.id ? { ...entry, collapsed: !entry.collapsed } : entry))}>
+            <ChevronRight className={`transition-transform ${item.collapsed ? '' : 'rotate-90'}`} /><Folder /><span>{item.name}</span>
+          </SidebarMenuButton>
+          <DropdownMenu><DropdownMenuTrigger render={<SidebarMenuAction showOnHover disabled={mutation.isPending} aria-label={`Actions for ${item.name}`} />}><Ellipsis /></DropdownMenuTrigger>
             <DropdownMenuContent><DropdownMenuItem onClick={() => edit(item)}>Rename</DropdownMenuItem><DropdownMenuItem variant="destructive" onClick={() => save([{ ...item, deleted: true }])}>Delete folder (keep modules)</DropdownMenuItem></DropdownMenuContent>
           </DropdownMenu>
-        </div>
-        {!item.collapsed && <DropZone id={`folder:${item.id}:contents`}><div className="pl-3 min-h-7" role="group" aria-label={item.name}>
+        </SidebarMenuItem></SidebarMenu></DropZone>
+        {!item.collapsed && <DropZone id={`folder:${item.id}:contents`}><div className="pl-4 min-h-2" role="group" aria-label={item.name}>
           <SortableContext items={items.filter(entry => entry.folder_id === item.id).map(entry => entry.id)} strategy={verticalListSortingStrategy}>
             {items.filter(entry => entry.folder_id === item.id).map(row)}
           </SortableContext>
@@ -72,7 +83,8 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
       if (active?.name === null && args.pointerCoordinates) {
         const hits = pointerWithin(args).filter(hit => hit.id !== args.active.id);
         const note = hits.find(hit => items.some(item => item.id === hit.id && item.name === null));
-        const zone = hits.find(hit => String(hit.id).startsWith('folder:') || hit.id === 'root');
+        // A folder is nested inside the root list, so prefer it over root.
+        const zone = hits.find(hit => String(hit.id).startsWith('folder:')) ?? hits.find(hit => hit.id === 'root');
         if (note || zone) return [note ?? zone!];
       }
       return closestCenter({ ...args, droppableContainers: args.droppableContainers.filter(container => {
@@ -80,14 +92,15 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
         return item && item.id !== args.active.id && (active?.name === null || item.folder_id === null);
       }) });
     }} onDragEnd={({ active, over }) => {
+      suppressNextClick();
       if (!over || mutation.isPending) return;
       const target = String(over.id).replace(/:contents$/, '');
       save(moveSidebarItem(items, String(active.id), target));
     }}>
-      <SortableContext items={items.filter(item => item.folder_id === null).map(item => item.id)} strategy={verticalListSortingStrategy}>
-        <div className="space-y-0.5">{items.filter(item => item.folder_id === null).map(row)}</div>
-      </SortableContext>
-      <DropZone id="root"><div className="text-muted-foreground p-2 text-xs">Move to top level</div></DropZone>
+      {/* The whole list is the top-level drop target, for moving a module out of a folder. */}
+      <DropZone id="root" highlight={false}><SortableContext items={items.filter(item => item.folder_id === null).map(item => item.id)} strategy={verticalListSortingStrategy}>
+        <div className="space-y-0.5 pb-2">{items.filter(item => item.folder_id === null).map(row)}</div>
+      </SortableContext></DropZone>
     </DndContext>
     <Dialog open={editing !== null} onOpenChange={open => { if (!open) setEditing(null); }}><DialogContent>
       <form onSubmit={event => {

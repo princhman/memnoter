@@ -26,52 +26,61 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
     return [];
   } } }));
   const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('sidebar') ?? '[]'));
+  const row = id => page.locator(`[data-sidebar-item="${id}"]`).first();
+  // Wait for the re-rendered list, not just the saved state, before measuring rows again.
+  const inFolder = (id, inside) => page.waitForFunction(([id, inside]) =>
+    !!document.querySelector(`[role=group] [data-sidebar-item="${id}"]`) === inside, [id, inside]);
+  // Rows have no drag handle: the whole row is dragged once the pointer moves.
+  const drag = async (from, to) => {
+    const a = await from.boundingBox();
+    const b = await to.boundingBox();
+    await page.mouse.move(a.x + 40, a.y + 12); await page.mouse.down();
+    await page.mouse.move(b.x + 40, b.y + 12, { steps: 15 }); await page.mouse.up();
+  };
+  const moduleOrder = () => page.locator('[data-sidebar-item]').evaluateAll(rows => rows.map(row => row.dataset.sidebarItem).filter(id => !id.startsWith('folder-')));
   try {
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/sidebar.html`);
-    await page.getByRole('button', { name: 'Move Algebra', exact: true }).waitFor();
-    const handle = page.getByRole('button', { name: 'Move Biology', exact: true });
-    await handle.focus(); await page.keyboard.press('Space'); await page.keyboard.press('ArrowUp'); await page.keyboard.press('Space');
+    await row('0').waitFor();
+    assert.equal(await page.getByText('Move to top level').count(), 0);
+    assert.equal(await page.getByRole('button', { name: /^Move / }).count(), 0, 'no drag handles');
+    await drag(row('1'), row('0'));
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar') ?? '[]').some(item => item.id === '1' && item.sort_order === 0));
     await page.reload();
-    assert.deepEqual(await page.getByRole('button', { name: /^Move (Algebra|Biology|Chemistry)$/ }).evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label'))), ['Move Biology', 'Move Algebra', 'Move Chemistry']);
+    await row('0').waitFor();
+    assert.deepEqual(await moduleOrder(), ['1', '0', '2']);
     await page.locator('.group').first().hover();
     await page.getByRole('button', { name: 'Add module', exact: true }).click();
     await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
     await page.getByLabel('Name', { exact: true }).fill('Study');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
-    await page.getByRole('button', { name: 'Study', exact: true }).waitFor();
-    // Pointer dragging exercises folder drop targets, beyond pure order tests.
-    const from = await page.getByRole('button', { name: 'Move Algebra', exact: true }).boundingBox();
-    const to = await page.getByRole('button', { name: 'Study', exact: true }).boundingBox();
-    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2); await page.mouse.down();
-    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 15 }); await page.mouse.up();
+    const folder = page.getByRole('button', { name: 'Study', exact: true });
+    await folder.waitFor();
+    // Folder rows use the sidebar row: full width, with the actions button at the right edge.
+    const [folderBox, rowBox, actionsBox] = await Promise.all([folder.boundingBox(), row('0').boundingBox(), page.getByRole('button', { name: 'Actions for Study', exact: true }).boundingBox()]);
+    assert.ok(folderBox.width > rowBox.width * 0.9, 'folder button spans the row');
+    assert.ok(actionsBox.x + actionsBox.width > rowBox.x + rowBox.width - 12, 'actions button sits at the right edge');
+    await drag(row('0'), folder);
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar')).some(item => item.id === '0' && item.folder_id));
-    await page.waitForFunction(() => !document.querySelector('[aria-label="Move Algebra"]').disabled);
-    await page.getByRole('button', { name: 'Move Algebra', exact: true }).click({ trial: true });
-    const inside = await page.getByRole('button', { name: 'Move Algebra', exact: true }).boundingBox();
-    const rootTarget = await page.getByText('Move to top level', { exact: true }).boundingBox();
-    await page.mouse.move(inside.x + inside.width / 2, inside.y + inside.height / 2); await page.mouse.down();
-    await page.mouse.move(rootTarget.x + rootTarget.width / 2, rootTarget.y + rootTarget.height / 2, { steps: 15 }); await page.mouse.up();
+    await inFolder('0', true);
+    // Out of the folder: drop onto a top-level module.
+    await drag(row('0'), row('2'));
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar')).some(item => item.id === '0' && item.folder_id === null));
-    await page.waitForFunction(() => !document.querySelector('[aria-label="Move Algebra"]').disabled);
-    await page.getByRole('button', { name: 'Move Algebra', exact: true }).click({ trial: true });
-    const outside = await page.getByRole('button', { name: 'Move Algebra', exact: true }).boundingBox();
-    const folderTarget = await page.getByRole('button', { name: 'Study', exact: true }).boundingBox();
-    await page.mouse.move(outside.x + outside.width / 2, outside.y + outside.height / 2); await page.mouse.down();
-    await page.mouse.move(folderTarget.x + folderTarget.width / 2, folderTarget.y + folderTarget.height / 2, { steps: 15 }); await page.mouse.up();
+    await inFolder('0', false);
+    await drag(row('0'), folder);
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar')).some(item => item.id === '0' && item.folder_id));
-    await page.getByRole('button', { name: 'Study', exact: true }).click({ trial: true });
-    await page.getByRole('button', { name: 'Study', exact: true }).click();
+    await inFolder('0', true);
+    await folder.click();
     await page.getByRole('button', { name: 'Study', exact: true, expanded: false }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Move Algebra', exact: true }).count(), 0);
-    await page.getByRole('button', { name: 'Actions for Study', exact: true }).click();
+    assert.equal(await row('0').count(), 0);
+    await page.getByRole('button', { name: 'Actions for Study', exact: true }).click({ force: true });
     await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
     await page.getByLabel('Name', { exact: true }).fill('Science');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await page.getByRole('button', { name: 'Actions for Science', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: 'Actions for Science', exact: true }).click({ force: true });
     await page.getByRole('menuitem', { name: 'Delete folder (keep modules)', exact: true }).click();
-    await page.getByRole('button', { name: 'Move Algebra', exact: true }).waitFor();
+    await row('0').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Science', exact: true }).count(), 0);
     assert.equal((await stored()).filter(item => item.name && item.deleted).length, 1);
   } finally { await page.close(); }

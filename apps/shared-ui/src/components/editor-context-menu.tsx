@@ -3,6 +3,7 @@ import { ReactRenderer } from "@tiptap/react";
 import { Plugin, Selection, type PluginKey } from "@tiptap/pm/state";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { useLayoutEffect, useRef, useState } from "react";
+import { Copy, Scissors } from "lucide-react";
 import { surfaceClass } from "./ui/surface";
 import { InsertMenu, filterItems, type InsertMenuHandle, type InsertCommandOptions } from "./insert-menu";
 
@@ -54,16 +55,17 @@ function EditorContextMenu({ editor, options, x, y, close }: ContextMenuProps) {
         }
         event.stopPropagation();
       }}>
-      {!query && <div className="px-1 pb-1">
-        {(["cut", "copy"] as const).map(command => <button key={command} type="button"
-          className="w-full rounded-md px-2 py-1 text-left text-sm hover:bg-accent disabled:opacity-50"
-          disabled={editor.state.selection.empty}
-          onMouseDown={event => event.preventDefault()}
-          onClick={() => clipboard(command)}>{command === "cut" ? "Cut" : "Copy"}</button>)}
-      </div>}
-      <input ref={input} role="combobox" aria-autocomplete="list" aria-expanded={items.length > 0} aria-label="Filter insert commands" placeholder="Insert…"
-        className="mx-2 mb-1 w-[calc(100%_-_1rem)] px-1 py-1 text-sm"
-        value={query} onChange={event => setQuery(event.target.value)} />
+      <div className="mx-2 mb-1 flex items-center gap-0.5">
+        <input ref={input} role="combobox" aria-autocomplete="list" aria-expanded={items.length > 0} aria-label="Filter insert commands" placeholder="Search…"
+          className="min-w-0 flex-1 px-1 py-1 text-sm"
+          value={query} onChange={event => setQuery(event.target.value)} />
+        {([["cut", "Cut", Scissors], ["copy", "Copy", Copy]] as const).map(([command, label, Icon]) =>
+          <button key={command} type="button" aria-label={label} title={label}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            disabled={editor.state.selection.empty}
+            onMouseDown={event => event.preventDefault()}
+            onClick={() => clipboard(command)}><Icon className="size-3.5" /></button>)}
+      </div>
       <InsertMenu embedded focusTarget={input} ref={menu} editor={editor} items={items} command={item => {
         if (!editor.isEditable) { dismiss(); return; }
         // The selection may be a retained text range. Insert at its caret without
