@@ -11,9 +11,12 @@ test('Tauri takes precedence and retains command arguments and asset URLs', asyn
   mockConvertFileSrc('macos');
   try {
     assert.deepEqual(await call('save_file', { bytes: [0, 255], mimeType: 'image/png' }), {
-      command: 'save_file', args: { bytes: [0, 255], mimeType: 'image/png' },
+      command: 'core', args: { command: 'save_file', args: { bytes: [0, 255], mimeType: 'image/png' } },
     });
     assert.match(fileUrl('/data/files/a'), /asset/);
+    assert.deepEqual(await call('confirm_exit'), { command: 'confirm_exit', args: {} });
+    mockIPC(() => { throw { code: 'conflict', message: 'Reload the review' }; });
+    await assert.rejects(call('review_card'), { message: 'Reload the review' });
   } finally { clearMocks(); delete window.__TAURI_INTERNALS__; }
 });
 

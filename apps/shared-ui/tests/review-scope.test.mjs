@@ -58,6 +58,7 @@ test("a grade finishing after a scope change leaves the new review alone", async
       unregisterCallback() {},
       metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
       invoke: async (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command.startsWith("plugin:")) return callbacks;
         if (command === "modules") return [{ id: "a", name: "Alpha" }, { id: "b", name: "Beta" }];
         if (command === "due_cards") return cards.filter((c) => !args.moduleId || c.moduleId === args.moduleId);
@@ -106,6 +107,7 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
       transformCallback: () => ++callbacks, unregisterCallback() {},
       metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
       invoke: async (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command.startsWith("plugin:")) return callbacks;
         if (command === "modules") return [{ id: "a", name: "Alpha" }];
         if (command === "due_cards") {
@@ -206,6 +208,7 @@ test("counts keep previous data during cutoff fetches and unkeyed schedules upda
       window.__TAURI_INTERNALS__ = {
         transformCallback: () => ++callbacks, unregisterCallback() {},
         invoke: async (command, args) => {
+          if (command === "core") { command = args.command; args = args.args; }
           if (command.startsWith("plugin:")) return callbacks;
           if (command === "due_counts") {
             if (args.createdAtCutoff !== null) return new Promise((resolve) => { window.__resolveCounts = resolve; });

@@ -53,6 +53,7 @@ async function launch(route, updates) {
       unregisterCallback() {},
       metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
       invoke: async (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command.startsWith("plugin:")) return callbacks;
         if (command === "modules") return [{ id: "m1", name: "Demo" }];
         if (command === "get_content") return { state: [], updates, files: [] };

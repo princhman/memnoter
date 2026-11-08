@@ -20,19 +20,24 @@ struct CountArgs: Encodable, Sendable { let now: Int64; let dayEnd: Int64; var c
 struct FileArgs: Encodable, Sendable { let moduleId: String; let bytes: [UInt8]; let mimeType: String }
 struct BackupArgs: Encodable, Sendable { let id: String }
 
+private final class SyncOutboxObserver: OutboxObserver, @unchecked Sendable {
+    func outboxChanged() {
+        Task { @MainActor in NotificationCenter.default.post(name: .coreDidWrite, object: nil) }
+    }
+}
+
 /// Actor isolation keeps synchronous Rust work on the cooperative background executor.
 actor CoreClient {
     private let core: MemnoterCore
-    init(dataDirectory: URL) throws { core = try MemnoterCore.open(dataDir: dataDirectory.path) }
+    init(dataDirectory: URL) throws {
+        core = try MemnoterCore.open(dataDir: dataDirectory.path)
+        core.setOutboxObserver(observer: SyncOutboxObserver())
+    }
     static func open(_ directory: URL) async throws -> CoreClient {
         try await Task.detached { try CoreClient(dataDirectory: directory) }.value
     }
     func raw(_ command: String, json: String = "{}") throws -> String {
-        let result = try core.dispatch(command: command, argsJson: json)
-        if !command.hasPrefix("sync_") && ["add_update", "create_module", "rename_module", "delete_module", "set_module_numbering", "save_file", "review_card", "undo_review"].contains(command) {
-            Task { @MainActor in NotificationCenter.default.post(name: .coreDidWrite, object: nil) }
-        }
-        return result
+        try core.dispatch(command: command, argsJson: json)
     }
     func call<A: Encodable & Sendable, R: Decodable & Sendable>(_ command: String, _ args: A, as: R.Type = R.self) throws -> R {
         let json = String(decoding: try JSONEncoder().encode(args), as: UTF8.self)

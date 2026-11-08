@@ -35,6 +35,7 @@ test("the entire top bar drags while controls and overlays remain interactive", 
           transformCallback: () => ++callback, unregisterCallback() {},
           metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
           invoke: async (command, args) => {
+            if (command === "core") { command = args.command; args = args.args; }
             window.__windowCalls.push(command);
             if (command === "plugin:window|is_fullscreen") return fullscreen;
             if (command.startsWith("plugin:")) return callback;

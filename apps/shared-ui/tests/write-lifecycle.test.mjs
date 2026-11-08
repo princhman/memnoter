@@ -29,7 +29,8 @@ for (const discard of [false, true]) {
     const mutation = queryClient.getMutationCache().build(queryClient, {
       gcTime: 0, mutationKey: ['upload-file'], mutationFn: () => invoke('upload_file'),
     });
-    mockIPC(async command => {
+    mockIPC(async (command, args) => {
+      if (command === "core") { command = args.command; args = args.args; }
       assert.equal(command, 'upload_file');
       started = true;
       await uploaded.promise;
@@ -61,7 +62,8 @@ for (const discard of [false, true]) {
 test('local queries read through IPC while QueryClient is offline', async () => {
   let reads = 0;
   onlineManager.setOnline(false);
-  mockIPC(command => {
+  mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     assert.equal(command, 'get_content');
     reads++;
     return { state: [0, 0], updates: [] };
@@ -90,6 +92,7 @@ test('source deletion retries foreign Yjs references before scanning and preserv
   let blocked = false;
   const stop = watchWriteAdmission(value => { blocked = value; });
   mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     if (command === 'delete_module') {
       scans++;
       assert.equal(blocked, true);
@@ -132,6 +135,7 @@ test('quit waits beyond QueryClient upload completion for insertion and its ensu
   let saving = false;
   let exited = false;
   mockIPC(async (command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     assert.equal(command, 'add_update');
     saving = true;
     await persisted.promise;
@@ -211,6 +215,7 @@ test('completed failure remains visible across quit, failed retry and unrelated 
   let blocked = false;
   const stop = watchWriteAdmission(value => { blocked = value; });
   mockIPC(async (command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     if (command === 'upload') {
       uploads.push(args.file);
       if (args.file === 'second' && fail) throw new Error('offline');

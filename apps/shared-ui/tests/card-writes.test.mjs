@@ -19,7 +19,8 @@ const { queryClient } = await import('../src/lib/query-client.ts');
 test('card sync and review join restore drain and reject admission while suspended', async () => {
   const finishes = [];
   const calls = [];
-  mockIPC((command) => {
+  mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     calls.push(command);
     return new Promise(resolve => finishes.push(resolve));
   });
