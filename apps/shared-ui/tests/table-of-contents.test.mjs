@@ -240,11 +240,34 @@ test("descendants preserve relative indentation and render inline math", async (
   await waitNames(".toc-popup .toc-item", ["1 Root", "1.1 Formula x^2", "1.1.1 Detail"]);
   assert.equal(await popup().locator(".katex").count(), 1);
   assert.equal(await popup().locator(".katex annotation").textContent(), "x^2");
-  const indentation = await popup().getByRole("button").evaluateAll(rows => rows.map(row => {
+  const indentation = await popup().locator(".toc-item").evaluateAll(rows => rows.map(row => {
     const range = document.createRange(); range.selectNodeContents(row); return range.getBoundingClientRect().left;
   }));
   assert.ok(indentation[0] < indentation[1] && indentation[1] < indentation[2]);
   await popup().getByRole("button", { name: "1.1.1 Detail", exact: true }).click();
   assert.equal(await popup().count(), 0);
   await waitNames('.toc-dash[data-related="true"]', []);
+});
+
+test("hover reveals the chosen Contents focus action and keyboard unfocus restores the note", async () => {
+  await load();
+  await selectHeading(root(1));
+  await dash(root(2)).hover();
+  await popup().getByRole("button", { name: root(2), exact: true }).hover();
+  await popup().getByRole("button", { name: `Focus on ${root(2)}`, exact: true }).click();
+  await page.waitForFunction(() => !!document.querySelector('.section-focus-start'));
+  assert.equal(await page.locator('.section-focus-start').textContent(), root(2));
+  assert.equal(await page.locator('.tiptap h1').filter({ hasText: root(1) }).isVisible(), false);
+  assert.equal(await popup().count(), 0);
+  const top = await page.locator('.section-focus-start').evaluate(node => node.getBoundingClientRect().top);
+  await dash(root(2)).hover();
+  const unfocus = popup().getByRole("button", { name: `Unfocus ${root(2)}`, exact: true });
+  await unfocus.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => !document.querySelector('.section-focused'));
+  assert.equal(await page.locator('.tiptap h1').filter({ hasText: root(1) }).isVisible(), true);
+  assert.equal(await popup().count(), 0);
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), root(2));
+  const restored = await page.locator('.tiptap h1').filter({ hasText: root(2) }).evaluate(node => node.getBoundingClientRect().top);
+  assert.ok(Math.abs(restored - top) <= 1, 'Unfocus retains the section on screen');
 });

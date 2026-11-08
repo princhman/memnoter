@@ -75,8 +75,14 @@ export function sectionToTop(editor: Editor, pos: number, offset = 0) {
     const delta = heading.getBoundingClientRect().top - visibleTop(container) - offset;
     const target = Math.max(0, container.scrollTop + delta);
     // Supply enough trailing room before clamping, even for a short last section.
+    // scrollHeight is at least clientHeight, even when the entire note is
+    // shorter. Measure the actual content bottom so unfocus adds the missing
+    // room in one layout, rather than inching toward it on resize frames.
     const extra = Number(container.dataset.anchorSpace ?? 0);
-    const space = Math.max(0, Math.ceil(target - (container.scrollHeight - extra - container.clientHeight)));
+    const padding = parseFloat(getComputedStyle(container).paddingBottom) - extra;
+    const contentBottom = editor.view.dom.getBoundingClientRect().bottom
+      - container.getBoundingClientRect().top - container.clientTop + container.scrollTop;
+    const space = Math.max(0, Math.ceil(target + container.clientHeight - contentBottom - padding));
     container.dataset.anchorSpace = String(space);
     container.style.setProperty("--anchor-space", `${space}px`);
     traceScroll("anchor", { from: container.scrollTop, target, offset });

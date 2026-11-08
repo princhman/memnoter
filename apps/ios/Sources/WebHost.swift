@@ -50,6 +50,12 @@ import ImageIO
 // Report navigation/safe-area occlusion after UIKit has laid out the web view.
 @MainActor final class EditorWebView: WKWebView {
     var viewportChanged: (() -> Void)?
+    // WebKit forwards its content responder's accessory lookup here. The
+    // phone form-navigation row duplicates our formatting/dismiss controls;
+    // inputAssistantItem only controls the separate iPad shortcut groups.
+    override var inputAccessoryView: UIView? {
+        UIDevice.current.userInterfaceIdiom == .phone ? nil : super.inputAccessoryView
+    }
     override func layoutSubviews() {
         super.layoutSubviews()
         viewportChanged?()
@@ -84,6 +90,7 @@ import ImageIO
     var imagePreviewOpen = false
     var ready = false
     var headings: [Heading] = []
+    var allHeadings: [Heading] = []
     var currentHeadingId: String?
     private var outlineTracking = false
     func trackOutline(_ enabled: Bool) {
@@ -238,7 +245,7 @@ import ImageIO
     func open(_ id: String) async throws {
         if moduleId != id {
             moduleId = id
-            state = EditorState(); headings = []; currentHeadingId = nil
+            state = EditorState(); headings = []; allHeadings = []; currentHeadingId = nil
         }
         try await serialized(.open, ["id": id], parameters: ["id"])
     }
@@ -312,6 +319,8 @@ import ImageIO
                     guard let value = payload["headings"] else { throw CocoaError(.coderValueNotFound) }
                     let data = try JSONSerialization.data(withJSONObject: value)
                     headings = try JSONDecoder().decode([Heading].self, from: data)
+                    let complete = try JSONSerialization.data(withJSONObject: payload["allHeadings"] ?? value)
+                    allHeadings = try JSONDecoder().decode([Heading].self, from: complete)
                 case .state:
                     #if DEBUG
                     print("[editor state] \(payload)")

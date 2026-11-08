@@ -3,6 +3,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { InlineMathView as InlineMath } from "@/components/inline-math-view";
 import Toc from "@tiptap/extension-table-of-contents";
+import { SectionFocus } from "@/lib/section-focus";
 import { TableOfContents, createTocStore } from "@/components/table-of-contents";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/App.css";
@@ -26,7 +27,7 @@ const content = Array.from({ length: weeks }, (_, week) => {
 }).join("");
 function Outline() {
   const editor = useEditor({
-    extensions: [StarterKit, InlineMath, Toc.configure({
+    extensions: [StarterKit, InlineMath, SectionFocus, Toc.configure({
       scrollParent: () => document.querySelector<HTMLElement>("main")!,
       onUpdate: (items) => store.setState(() => items),
     })],

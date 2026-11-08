@@ -24,6 +24,7 @@ struct FormattingBar: View {
     let busy: Bool
     @State private var editingLink = false
     @State private var link = ""
+    private let isPhone = UIDevice.current.userInterfaceIdiom == .phone
 
     private var rowWidth: CGFloat { max(36, maximumWidth - 8) }
 
@@ -53,6 +54,10 @@ struct FormattingBar: View {
     // sections, clipboard. Hide keyboard stays pinned outside the scrolling row.
     private var buttons: some View {
         HStack(spacing: 0) {
+            if isPhone {
+                paragraphMenu
+                divider
+            }
             cardGroup
             divider
             styleGroup
@@ -110,9 +115,36 @@ struct FormattingBar: View {
     }
 
     @ViewBuilder private var blockGroup: some View {
-        paragraph("Text", level: nil)
-        ForEach(1...6, id: \.self) { level in paragraph("H\(level)", level: level) }
+        if !isPhone {
+            paragraph("Text", level: nil)
+            ForEach(1...6, id: \.self) { level in paragraph("H\(level)", level: level) }
+        }
         formatButton("Quote", "text.quote", .blockquote, active: session.state.blockquote)
+    }
+
+    private var paragraphMenu: some View {
+        Menu {
+            paragraphChoice("Text", level: nil)
+            ForEach(1...6, id: \.self) { level in paragraphChoice("Heading \(level)", level: level) }
+        } label: {
+            HStack(spacing: 4) {
+                Text(session.state.headingLevel.map { "H\($0)" } ?? "Text")
+                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+            }
+            .padding(.horizontal, 4)
+        }
+        .buttonStyle(FormatButtonStyle(active: session.state.headingLevel != nil))
+        .accessibilityLabel("Paragraph style")
+        .accessibilityValue(session.state.headingLevel.map { "Heading \($0)" } ?? "Text")
+    }
+
+    private func paragraphChoice(_ title: String, level: Int?) -> some View {
+        let active = level == nil ? session.state.blockType == "paragraph" : session.state.headingLevel == level
+        return Button { session.exec(level == nil ? .paragraph : .heading, level.map { ["level": $0] } ?? [:]) } label: {
+            if active { Label(title, systemImage: "checkmark") }
+            else { Text(title) }
+        }
     }
 
     @ViewBuilder private var listGroup: some View {

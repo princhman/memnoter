@@ -1,6 +1,7 @@
-# Memnoter for iPad
+# Memnoter for iPhone and iPad
 
-Native SwiftUI iPadOS 17+ host, bundle ID `com.vladyslavnalyvaiko.memnoter.ipad`.
+Universal SwiftUI iOS/iPadOS 17+ host, bundle ID `com.vladyslavnalyvaiko.memnoter.ipad`.
+The existing bundle identity is retained for installed iPad apps and their data.
 The desktop/Tauri project is independent; iOS uses the native project in this directory.
 Data lives in Application Support/Memnoter: main.db, files/, backups/.
 
@@ -116,6 +117,64 @@ restore a backup. Also check software/hardware keyboard layout and background
 save behavior on a physical iPad.
 
 ## Architecture and current limits
+
+iPhone uses the same core, sync coordinator, embedded editor, formatting row,
+review and settings as iPad. Phone navigation explicitly controls the collapsed
+split-view column after the shared save/open barrier succeeds. Phone rows use
+buttons so SwiftUI cannot navigate before that asynchronous operation finishes;
+iPad retains selection-driven links and its existing split-view configuration.
+Undo/redo are visible in the phone navigation bar. The note title opens Contents
+on iPhone; iPad keeps its Contents toolbar button. Both use the same hierarchical
+browser: each page contains immediate child sections, and parents drill into the
+next level. The native navigation title and Back button provide context without
+a duplicate note-name or breadcrumb strip. Rows have no separators or disclosure
+chevrons. Search
+finds headings across the entire document, including folded and focused-out
+sections. Tap a leaf or the jump icon beside a parent to scroll there; this reveals the target
+when necessary without changing unrelated folds.
+
+Every section has a viewfinder icon for Focus, replaced by an expand icon for
+Unfocus on the focused section; parents add a go-to icon. A row's icons share
+one compact 32-point system-fill capsule while keeping 44-point tap targets and
+descriptive accessibility labels. The reading branch is an inset rounded card
+tinted with the brand accent, not a full-width band. Liquid Glass stays on the
+navigation layer: toolbar, search and a brand-tinted glass Whole Note capsule
+above search (bordered before iOS 26). Search results show their ancestor trail.
+The accent asset uses brand purple `#432fc8` in light mode and a lighter purple
+in dark mode. Focus targets the chosen heading directly, without caret placement, and
+reveals folded ancestors/content. Browsing does not focus a section. The current
+reading section/branch is highlighted, with no checkmark. Whole Note appears
+while focused and exits focus from any level. The old cursor-dependent focus toolbar
+control and ellipsis action have been removed on both platforms. A focused note
+shows its section name in navigation; iPhone also retains a direct × exit.
+
+Contents is a medium/large sheet on iPhone and a bounded popover on iPad. The
+phone WebView suppresses its form-navigation accessory through the public
+inputAccessoryView override; predictions and iPad accessory behavior are
+preserved. Phone Text/H1–H6 choices use one Paragraph style menu at the start of
+the formatting row; iPad keeps inline choices. Other phone-only adaptations use
+phone idiom rather than compact size class. No shared web styles change.
+
+Run the phone navigation/persistence scenario on an idle retained phone:
+
+```sh
+cd apps/ios
+xcodebuild -project Memnoter.xcodeproj -scheme Memnoter \
+  -destination id=A1073BD7-C9C6-4908-A9A5-36C5C5F1FEA5 \
+  -derivedDataPath build CODE_SIGNING_ALLOWED=NO \
+  -parallel-testing-enabled NO \
+  -only-testing:MemnoterUITests/PhoneNavigationUITests test
+```
+
+Use `651B2A54-415D-4E68-A787-E6BAE0BCAF5A` for the retained large phone.
+The scenario isolates its database/preferences, exercises real editing, native
+Back, reopening the current note, relaunch persistence and flashcard reveal/rating. It
+skips on iPad. `MemnoterUITests/SectionFocusUITests` is the shared phone/iPad
+Contents scenario: it exercises drill-down, reading-branch highlighting, direct
+focus, deeper focus, search, Unfocus, whole-note exit and relaunch persistence.
+Run it with the same command and its selector, using the retained tablet UDID
+when that device is idle. `ContentsHierarchyTests` covers skipped heading levels,
+repeated titles and a 9,000-heading tree.
 
 CoreClient is an actor; opening and all Rust work run off the main actor.
 WebSession uses decoded JSON replies and safe JS

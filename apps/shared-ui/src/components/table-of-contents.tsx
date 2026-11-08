@@ -1,5 +1,5 @@
 import { useEditorHost } from "@/lib/editor-host-context";
-import { editorHost } from "@/lib/editor-host";
+import { beginHostNavigation, editorHost } from "@/lib/editor-host";
 import { TOC_ID_ATTRIBUTE } from "../lib/outline.ts";
 import { pointInTriangle, type Point } from "@/lib/menu-aim";
 import { headingNumbers } from "@/lib/heading-numbering";
@@ -22,7 +22,7 @@ import { useEditorState } from "@tiptap/react";
 import { createStore, useSelector } from "@tanstack/react-store";
 import katex from "katex";
 import { groupMathScripts } from "@/lib/latex-render";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Maximize2, Scan } from "lucide-react";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { getFoldedRanges } from "@/lib/heading-fold";
 
@@ -258,15 +258,44 @@ function DesktopTableOfContents({
     const heading = editor?.view.dom.querySelector<HTMLElement>(`[${TOC_ID_ATTRIBUTE}="${CSS.escape(item.id)}"]`) ?? item.dom;
     heading.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  function toggleFocus(item: TableOfContentDataItem) {
+    if (!editor) return;
+    const heading = editor.view.nodeDOM(item.pos);
+    if (!(heading instanceof HTMLElement)) return;
+    const container = editorHost.scrollContainer(editor.view.dom);
+    const returnFocus = popupRef.current?.contains(document.activeElement);
+    if (container) beginHostNavigation(container);
+    if (getFocusedSectionRange(editor.state)?.from === item.pos) {
+      const top = heading.getBoundingClientRect().top;
+      editor.commands.showDocument();
+      if (container) container.scrollTop += heading.getBoundingClientRect().top - top;
+    } else {
+      editor.chain().setTextSelection(item.pos + 1).showSection(item.pos).run();
+      heading.scrollIntoView({ behavior: "instant", block: "start" });
+    }
+    if (returnFocus) returnToDash();
+    closePopup();
+  }
   function renderRow(item: TableOfContentDataItem) {
-    return <button key={item.id} type="button" className="toc-item"
-      aria-label={numberAt(item.pos) + item.textContent} data-active={item.id === activeId}
-      style={{ paddingLeft: `${0.5 + Math.max(0, item.originalLevel - hovered!.originalLevel) * 0.625}rem` }}
-      onMouseDown={event => event.preventDefault()}
-      onClick={() => { scrollTo(item); closePopup(); }}>
-      <span className="toc-item-title">{numberAt(item.pos)}<HeadingTitle node={item.node} /></span>
-      {isFolded(item) && <ChevronRight aria-label="Folded" />}
-    </button>;
+    const focused = focusRange?.split(":")[0] === String(item.pos);
+    const focusLabel = `${focused ? "Unfocus" : "Focus on"} ${item.textContent}`;
+    return <div key={item.id} className="toc-row" data-active={item.id === activeId}>
+      <button type="button" className="toc-item"
+        aria-label={numberAt(item.pos) + item.textContent} aria-current={item.id === activeId ? "location" : undefined}
+        style={{ paddingLeft: `${0.625 + Math.max(0, item.originalLevel - hovered!.originalLevel) * 0.625}rem` }}
+        onMouseDown={event => event.preventDefault()}
+        onClick={() => { scrollTo(item); closePopup(); }}>
+        <span className="toc-item-title">{numberAt(item.pos)}<HeadingTitle node={item.node} /></span>
+        {isFolded(item) && <ChevronRight aria-label="Folded" />}
+      </button>
+      <div className="toc-row-actions">
+        <button type="button" className="toc-focus-action" aria-label={focusLabel}
+          title={focused ? "Show whole note" : "Focus on this section"} aria-pressed={focused}
+          onMouseDown={event => event.preventDefault()} onClick={() => toggleFocus(item)}>
+          {focused ? <Maximize2 /> : <Scan />}
+        </button>
+      </div>
+    </div>;
   }
 
   if (!editor || !items.length) return null;
@@ -290,7 +319,8 @@ function DesktopTableOfContents({
       onWheel={event => event.stopPropagation()}
       onKeyDown={event => {
         const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".toc-item")];
-        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const current = document.activeElement?.closest(".toc-row")?.querySelector<HTMLButtonElement>(".toc-item");
+        const index = buttons.indexOf(current ?? document.activeElement as HTMLButtonElement);
         const target = event.key === "ArrowDown" ? Math.min(index + 1, buttons.length - 1)
           : event.key === "ArrowUp" ? Math.max(index - 1, 0)
           : event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : null;
