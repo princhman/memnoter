@@ -86,6 +86,14 @@ test("vault root note keeps its outline while peer headings normalize together",
   const folder = { name: "Vault", entries: [{ path: "Vault.md", text: "## Module Info\n\n## Aims" }] };
   const plan = await prepareFolderImport(folder);
   assert.deepEqual(all(plan.document, "heading").map(n => [n.content[0].text, n.attrs.level]), [["Module Info", 1], ["Aims", 1]]);
-  const kept = await prepareFolderImport(folder, () => {}, { normalizeHeadings: false });
-  assert.deepEqual(all(kept.document, "heading").map(n => n.attrs.level), [2, 2]);
+});
+
+test("a picked image folder resolves references qualified with that folder's name", async () => {
+  const folder = { name: "Vault", entries: [
+    { path: "notes/n.md", text: "![[attachments/pic.png]]\n\n![pic](../attachments/pic.png)\n\n![[other/pic.png]]" },
+  ] };
+  // The user picks `attachments`; its entries are relative to that folder.
+  const plan = await prepareFolderImport(folder, () => {}, { extraImages: [{ path: "pic.png", sourceId: "extra" }], extraImageFolder: "attachments" });
+  assert.equal(plan.resolvedReferences, 2);
+  assert.deepEqual(plan.imageIssues, [{ note: "notes/n.md", target: "other/pic.png", ambiguous: false }]);
 });

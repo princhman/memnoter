@@ -45,7 +45,7 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
     setBusy(true);
     try {
       const extra = await call<ImportFolder | null>("pick_import_folder");
-      if (extra) setOptions(previous => ({ ...previous, extraImages: extra.entries }));
+      if (extra) setOptions(previous => ({ ...previous, extraImages: extra.entries, extraImageFolder: extra.name }));
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
   };
@@ -82,7 +82,7 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
             {[...new Set(plan?.imageIssues.map(i => i.note))].map(note => <section key={note}><h3 className="font-medium">{note.replace(/\.md$/i, "")}</h3><ul className="list-disc pl-5">{plan?.imageIssues.filter(i => i.note === note).map((issue, i) => <li key={i}>{issue.ambiguous ? `Several files are named ${issue.target}: couldn't tell which one to use.` : `${issue.target}: not found.`}</li>)}</ul></section>)}
             {plan && total > 0 && <><Button variant={missing ? "default" : "ghost"} size="sm" disabled={busy} onClick={() => void addImages()}>Look in another folder…</Button>{missing > 0 && <p className="text-muted-foreground">Pick the folder where these images are stored, for example your vault's attachments folder.</p>}</>}
           </>}
-          {step === 3 && <>{([ ["removeNoteLinks", "Remove links to other notes"], ["removeUnsupportedEmbeds", "Remove embedded files that can't be shown (PDFs, etc.)"], ["keepFrontMatter", "Keep note properties (front matter) as a code block"], ["normalizeHeadings", "Fix heading levels so each note’s headings sit under its title"] ] as const).map(([key, label]) => <label key={key} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 leading-5"><input className={importCheckboxClass} type="checkbox" disabled={busy} checked={options[key]} onChange={e => setOptions({ ...options, [key]: e.target.checked })} /><span>{label}</span></label>)}<p className="text-muted-foreground">{plan?.notes.length ?? 0} {plan?.notes.length === 1 ? "note will" : "notes will"} be imported. Missing images will show as placeholders.</p></>}
+          {step === 3 && <>{([ ["removeNoteLinks", "Remove links to other notes"], ["removeUnsupportedEmbeds", "Remove embedded files that can't be shown (PDFs, etc.)"], ["keepFrontMatter", "Keep note properties (front matter) as a code block"] ] as const).map(([key, label]) => <label key={key} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 leading-5"><input className={importCheckboxClass} type="checkbox" disabled={busy} checked={options[key]} onChange={e => setOptions({ ...options, [key]: e.target.checked })} /><span>{label}</span></label>)}<p className="text-muted-foreground">{plan?.notes.length ?? 0} {plan?.notes.length === 1 ? "note will" : "notes will"} be imported. Missing images will show as placeholders.</p></>}
         </div>
         <div>
         {error && <p role="alert" className="text-destructive">{error}</p>}

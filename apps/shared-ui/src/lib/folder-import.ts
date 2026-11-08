@@ -19,11 +19,11 @@ function normalize(path: string) {
 }
 
 export type ImportOptions = {
-  order?: string[]; excluded?: string[]; extraImages?: ImportEntry[];
+  order?: string[]; excluded?: string[]; extraImages?: ImportEntry[]; extraImageFolder?: string;
   removeNoteLinks: boolean; removeUnsupportedEmbeds: boolean;
-  keepFrontMatter: boolean; normalizeHeadings: boolean;
+  keepFrontMatter: boolean;
 };
-export const defaultImportOptions: ImportOptions = { removeNoteLinks: true, removeUnsupportedEmbeds: true, keepFrontMatter: false, normalizeHeadings: true };
+export const defaultImportOptions: ImportOptions = { removeNoteLinks: true, removeUnsupportedEmbeds: true, keepFrontMatter: false };
 export function importNoteOrder(folder: ImportFolder): string[] {
   const notes = folder.entries.filter(e => /\.md$/i.test(e.path) && !e.path.split("/").some(p => p.startsWith("."))).map(e => e.path);
   const hub = `${folder.name}.md`;
@@ -59,6 +59,11 @@ export async function prepareFolderImport(folder: ImportFolder, progress: (messa
       if (matches.length === 1) return { image: matches[0], ambiguous: false };
       if (matches.length > 1) return { ambiguous: true };
     }
+    // References may name the picked image folder, e.g. `attachments/pic.png`
+    // after picking `attachments`.
+    const folderName = options.extraImageFolder;
+    const picked = folderName ? images.filter(e => e.sourceId && paths.some(path => path === `${folderName}/${e.path}` || path.endsWith(`/${folderName}/${e.path}`))) : [];
+    if (picked.length) return { image: picked.length === 1 ? picked[0] : undefined, ambiguous: picked.length > 1 };
     // A path-qualified reference must never silently select an unrelated namesake.
     const matches = target.replace(/^\.\//, "").includes("/") ? [] : images.filter(e => basename(e.path) === basename(target));
     return { image: matches.length === 1 ? matches[0] : undefined, ambiguous: matches.length > 1 };
@@ -83,9 +88,10 @@ export async function prepareFolderImport(folder: ImportFolder, progress: (messa
       usedImages.set(key, { ...image, path: key });
       return { type: "image", attrs: { fileId: key, imageId: crypto.randomUUID(), src: null, alt, width: width || null, masks: [] } };
     }, options);
-    // Map original levels consistently; peer headings stay peers even when levels skip.
+    // The editor keeps headings in a strict hierarchy anyway, so always nest each
+    // note's headings under its title; peer headings stay peers even when levels skip.
     const levels = [...new Set((doc.content ?? []).filter(n => n.type === "heading").map(n => Number(n.attrs?.level ?? 1)))].sort((a,b) => a-b);
-    if (options.normalizeHeadings) for (const node of doc.content ?? []) if (node.type === "heading") node.attrs = { ...node.attrs, level: Math.min(6, (isHub ? 0 : level) + 1 + levels.indexOf(Number(node.attrs?.level ?? 1))) };
+    for (const node of doc.content ?? []) if (node.type === "heading") node.attrs = { ...node.attrs, level: Math.min(6, (isHub ? 0 : level) + 1 + levels.indexOf(Number(node.attrs?.level ?? 1))) };
     content.push(...doc.content ?? []);
     await new Promise(resolve => setTimeout(resolve, 0));
   }

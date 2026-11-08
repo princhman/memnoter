@@ -134,7 +134,11 @@ function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageRe
     else if (token.type === "softbreak") result.push(text("\n", marks));
     else if (token.type === "hardbreak") result.push({ type: "hardBreak" });
     else if (token.type === "obsidian_math_display") result.push({ type: "mathBlock", content: token.content ? [text(token.content)] : [] });
-    else if (token.type === "obsidian_math_inline") result.push({ type: "inlineMath", content: [text(token.content)] });
+    else if (token.type === "obsidian_math_inline") {
+      // Keep `==a $x$ b==` highlighted across the formula, as the editor does.
+      const highlight = marks.filter(mark => mark.type === "highlight");
+      result.push({ type: "inlineMath", content: [text(token.content)], ...(highlight.length ? { marks: highlight } : {}) });
+    }
     else if (token.type === "obsidian_highlight") result.push(...inlines(token.children ?? [], [...marks, { type: "highlight", attrs: { color: "yellow" } }], resolveImage));
     else if (token.type === "obsidian_placeholder") result.push({ type: "pastePlaceholder", content: [text(token.content)] });
     else if (token.type === "obsidian_image") result.push(resolveImage?.(token.content, "", typeof token.meta?.width === "number" ? token.meta.width : undefined, "wiki") ?? { type: "pastePlaceholder", content: [text(`[image: ${token.content.split(/[\\/]/).pop()}]`)] });

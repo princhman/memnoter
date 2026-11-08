@@ -95,3 +95,9 @@ test("realistic 200-line note preserves headings, cards, math and literal source
   assert.ok(words.includes("==literal== %%keep%%"));
   assert.ok(!words.includes("PRIVATE"));
 });
+
+test("inline math inside an Obsidian highlight keeps the highlight", () => {
+  const [math] = all(markdownToJSON("==before $x$ after=="), "inlineMath");
+  assert.deepEqual(math.marks, [{ type: "highlight", attrs: { color: "yellow" } }]);
+  assert.equal(all(markdownToJSON("plain $x$"), "inlineMath")[0].marks, undefined);
+});
