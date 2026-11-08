@@ -179,19 +179,24 @@ struct RootView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { notification in
+            guard let result = notification.object as? SyncApplyResult else { return }
+            Task {
+                do {
+                    if let session, session.ready {
+                        _ = try await session.callEditor(.applyRemote, ["result": try JSONSerialization.jsonObject(with: Data(result.json.utf8))], parameters: ["result"])
+                    }
+                    await store.refresh()
+                    if let selected, selected != "home", selected != "review", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
+                } catch { store.error = error.localizedDescription }
+            }
+        }
         .task(id: store.sync != nil) {
             if let client = store.client, session == nil {
                 await store.refresh()
                 columnVisibility = sidebarVisible ? .all : .detailOnly
                 let restored = WebSession(client: client, directory: store.directory, preferences: store.preferences)
                 session = restored
-                store.sync?.onRemote = { json in
-                    if let session, session.ready {
-                        _ = try await session.callEditor(.applyRemote, ["result": try JSONSerialization.jsonObject(with: Data(json.utf8))], parameters: ["result"])
-                    }
-                    await store.refresh()
-                    if let selected, selected != "home", selected != "review", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
-                }
                 store.sync?.onFile = { module, json in
                     if let session, session.ready {
                         _ = try await session.callEditor(.fileStored, ["module": module, "file": try JSONSerialization.jsonObject(with: Data(json.utf8))], parameters: ["module", "file"])

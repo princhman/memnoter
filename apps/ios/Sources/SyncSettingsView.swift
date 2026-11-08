@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SyncSettingsView: View {
     @Bindable var sync: SyncClient
-    @State private var server = "https://sync.memnoter.com"
+    @State private var server = SyncConfiguration.defaultServer
     @State private var email = ""
     @State private var code = ""
     @State private var passphrase = ""
@@ -33,7 +33,7 @@ struct SyncSettingsView: View {
                     #endif
                     TextField("Email", text: $email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("Send sign-in code") { run {
-                        server = server.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        server = SyncConfiguration.server(server)
                         let result = try await sync.api(server, "/v1/auth/start", method: "POST", body: ["email": email])
                         devCode = result["devCode"] as? String; step = 1
                     } }.disabled(email.isEmpty)
@@ -53,7 +53,7 @@ struct SyncSettingsView: View {
                     Button("Turn on sync") { run {
                         try await sync.unlock(server: server, email: email, token: token, user: user, passphrase: passphrase)
                         passphrase = ""; confirm = ""; token = ""; step = 0
-                    } }.disabled(passphrase.isEmpty || (isNew && (passphrase.count < 10 || passphrase != confirm)))
+                    } }.disabled(passphrase.isEmpty || (isNew && (passphrase.utf16.count < SyncConfiguration.integer("PASSPHRASE_MIN_LENGTH") || passphrase != confirm)))
                 }
                 if step > 0 { Button("Back") { step = 0; token = ""; passphrase = ""; confirm = "" } }
             }

@@ -105,7 +105,6 @@ struct SyncKeychain {
     var error: String?
     var pending = 0
     var lastSynced: Date?
-    var onRemote: ((String) async throws -> Void)?
     var onFile: ((String, String) async throws -> Void)?
     private var connection: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
@@ -330,8 +329,7 @@ struct SyncKeychain {
     }
     private func deliver(_ result: Any) async throws {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: result), as: UTF8.self)
-        try await onRemote?(json)
-        NotificationCenter.default.post(name: .syncDidApply, object: nil)
+        NotificationCenter.default.post(name: .syncDidApply, object: SyncApplyResult(json: json))
     }
     private func object(_ kind: String, _ id: String, account: SyncAccount, put: Data? = nil) async throws -> Data {
         return try await request(server: account.server, path: "/v1/\(kind)/\(id)", token: account.token, method: put == nil ? "GET" : "PUT", body: put, binary: true)
@@ -347,6 +345,8 @@ struct SyncKeychain {
     }
 
 }
+
+struct SyncApplyResult: Sendable { let json: String }
 
 extension Notification.Name { static let syncDidApply = Notification.Name("memnoter.syncDidApply") }
 
@@ -403,7 +403,7 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
             try await attempt("upload:" + id) {
                 let file = try await command("read_file", ["moduleId": "", "fileId": id]) as? [String: Any] ?? [:]
                 guard let bytes = file["bytes"] as? [UInt8] else { return }
-                _ = try await object(id, account, Data(nativeCrypt(key: account.key, doc: "file:" + id, bytes: bytes, decrypt: false)))
+                _ = try await object(id, account, Data(nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: bytes, decrypt: false)))
                 guard isCurrent(owner) && !Task.isCancelled else { return }
                 _ = try await command("sync_upload_done", ["fileId": id, "generation": databaseGeneration])
             }
@@ -412,7 +412,7 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
             guard isCurrent(owner) && !Task.isCancelled, let id = file["fileId"], let module = file["moduleId"] else { return }
             try await attempt("download:" + id) {
                 let blob = try await object(id, account, nil)
-                let bytes = try nativeCrypt(key: account.key, doc: "file:" + id, bytes: Array(blob), decrypt: true)
+                let bytes = try nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: Array(blob), decrypt: true)
                 guard isCurrent(owner) && !Task.isCancelled else { return }
                 let stored = try await command("sync_store_file", ["generation": databaseGeneration, "fileId": id, "moduleId": module, "fileType": file["fileType"] ?? "", "bytes": bytes])
                 let json = String(decoding: try JSONSerialization.data(withJSONObject: stored), as: UTF8.self)
