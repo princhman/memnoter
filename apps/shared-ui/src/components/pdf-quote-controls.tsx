@@ -38,30 +38,32 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
       } : current);
     });
   };
-  return <div className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2 text-xs" role="status">
-    <span>{pending.status === "saving" ? "Saving quote…" : pending.status === "error" ? "Quote could not be saved" : "Image quote ready"}</span>
-    {pending.error && <span role="alert">{pending.error}</span>}
-    {pending.status === "error" && <>
-      <Button size="xs" disabled={retrying} onClick={() => {
-        setRetrying(true);
-        void retryFailedImages().catch(() => {}).finally(() => setRetrying(false));
-      }}>{retrying ? "Retrying…" : "Retry images"}</Button>
-      <span>To choose another destination, discard failed images in the save alert. Your quote will stay ready.</span>
-    </>}
-    {pending.status === "draft" && <>
-      {!pending.section && <Button size="xs" disabled={!active} onClick={() => { if (active) insert({ position: active.editor.state.selection.from }); }}>Quote at cursor</Button>}
-      <Button size="xs" disabled={!active} onClick={() => setChoosing(true)}>Choose section…</Button>
-      <Button size="xs" variant="ghost" onClick={() => { setChoosing(false); pendingPdfQuote.setState(() => null); }}>Discard</Button>
-      {!active && <span>Waiting for this module’s editable note…</span>}
-    </>}
-    <Dialog open={choosing && pending.status === "draft"} onOpenChange={setChoosing}>
-      <DialogContent><DialogTitle>Add quote to section</DialogTitle>
-        <div className="grid max-h-80 gap-1 overflow-auto">
-          {headings.map(heading => <Button key={heading.id ?? heading.pos} variant="ghost" className="h-auto justify-start whitespace-normal text-left" style={{ paddingLeft: `${12 + heading.ancestors.length * 12}px` }} disabled={!active || !heading.id} onClick={() => { if (heading.id) insert({ headingId: heading.id }); }}>{heading.title}</Button>)}
-          <Button variant="ghost" className="justify-start" disabled={!active} onClick={() => insert({ headingId: null })}>End of note</Button>
-        </div>
-        <Button variant="outline" onClick={() => setChoosing(false)}>Cancel</Button>
-      </DialogContent>
-    </Dialog>
+  return <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-end">
+    <div className="pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
+      <span>{pending.status === "saving" ? "Saving quote" : pending.status === "error" ? "Quote could not be saved" : "Image quote ready"}</span>
+      {pending.error && <span role="alert">{pending.error}</span>}
+      {pending.status === "error" && <>
+        <Button size="xs" disabled={retrying} onClick={() => {
+          setRetrying(true);
+          void retryFailedImages().catch(() => {}).finally(() => setRetrying(false));
+        }}>{retrying ? "Retrying" : "Retry images"}</Button>
+        <span>To choose another destination, discard failed images in the save alert. Your quote will stay ready.</span>
+      </>}
+      {pending.status === "draft" && <>
+        {!pending.section && <Button size="xs" disabled={!active} onClick={() => { if (active) insert({ position: active.editor.state.selection.from }); }}>Quote at cursor</Button>}
+        <Button size="xs" disabled={!active} onClick={() => setChoosing(true)}>Choose section</Button>
+        <Button size="xs" variant="ghost" onClick={() => { setChoosing(false); pendingPdfQuote.setState(() => null); }}>Discard</Button>
+        {!active && <span>Waiting for this module’s editable note</span>}
+      </>}
+      <Dialog open={choosing && pending.status === "draft"} onOpenChange={setChoosing}>
+        <DialogContent><DialogTitle>Add quote to section</DialogTitle>
+          <div className="grid max-h-80 gap-1 overflow-auto">
+            {headings.map(heading => <Button key={heading.id ?? heading.pos} variant="ghost" className="h-auto justify-start whitespace-normal text-left" style={{ paddingLeft: `${12 + heading.ancestors.length * 12}px` }} disabled={!active || !heading.id} onClick={() => { if (heading.id) insert({ headingId: heading.id }); }}>{heading.title}</Button>)}
+            <Button variant="ghost" className="justify-start" disabled={!active} onClick={() => insert({ headingId: null })}>End of note</Button>
+          </div>
+          <Button variant="outline" onClick={() => setChoosing(false)}>Cancel</Button>
+        </DialogContent>
+      </Dialog>
+    </div>
   </div>;
 }

@@ -67,6 +67,14 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     const viewer = page.locator('#viewer');
     await viewer.locator('canvas').first().waitFor();
     assert.equal(await viewer.getByLabel('Drag a region on this PDF page').count(), 0);
+    const contentBounds = await viewer.locator('.pdf-page').first().boundingBox();
+    const assertStablePage = async () => assert.deepEqual(await viewer.locator('.pdf-page').first().boundingBox(), contentBounds);
+    await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    await assertStablePage();
+    assert.equal(await viewer.getByRole('button', { name: 'Select region', exact: true }).getAttribute('aria-pressed'), 'true');
+    await viewer.getByRole('button', { name: 'Cancel', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await assertStablePage();
     await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
     const pageSelection = viewer.getByLabel('Drag a region on this PDF page').first();
     await pageSelection.waitFor();
@@ -97,8 +105,18 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
       await page.mouse.move(bounds.x + bounds.width * .25, bounds.y + bounds.height * .25); await page.mouse.down();
       await page.mouse.move(bounds.x + bounds.width * .75, bounds.y + bounds.height * .75); await page.mouse.up();
     }
+    await assertStablePage();
+    // Hold canvas encoding so the preparing state is observable.
+    await page.evaluate(() => {
+      window.originalToBlob = HTMLCanvasElement.prototype.toBlob;
+      HTMLCanvasElement.prototype.toBlob = function(callback, ...args) { window.finishCrop = () => window.originalToBlob.call(this, callback, ...args); };
+    });
     await dragCrop();
+    await viewer.getByRole('status').filter({ hasText: 'Preparing quote' }).waitFor();
+    await assertStablePage();
+    await page.evaluate(() => { window.finishCrop(); HTMLCanvasElement.prototype.toBlob = window.originalToBlob; });
     await page.waitForFunction(() => document.querySelector('#crop').textContent !== 'null');
+    await assertStablePage();
     const crop = JSON.parse(await page.locator('#crop').textContent());
     assert.deepEqual({ width: crop.width, height: crop.height, pixel: crop.pixel }, { width: 400, height: 400, pixel: [0, 255, 0, 255] });
     assert.deepEqual(crop.source, { documentId: 'selection-pdf', name: 'Selection.pdf', page: 1, region: { x: .25, y: .25, width: .5, height: .5 } });
@@ -108,6 +126,7 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     await page.evaluate(() => { window.originalToBlob = HTMLCanvasElement.prototype.toBlob; HTMLCanvasElement.prototype.toBlob = function(callback) { callback(null); }; });
     await dragCrop(); await viewer.getByRole('alert').filter({ hasText: 'Could not create quote PNG' }).waitFor();
     assert.equal(await page.locator('#pending').textContent(), 'none');
+    await assertStablePage();
     await pageSelection.waitFor();
     // A second pending quote arriving while encoding must not be overwritten.
     await page.evaluate(() => { HTMLCanvasElement.prototype.toBlob = function(callback, ...args) { window.finishCrop = () => window.originalToBlob.call(this, callback, ...args); }; });

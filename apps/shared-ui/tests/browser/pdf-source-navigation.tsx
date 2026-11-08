@@ -43,7 +43,7 @@ function Picker() {
     Object.assign(window, { pickerTest: { editor, calls, control, unrelatedFailure: () => imageOperation(async () => { throw new Error("Unrelated image failed"); }).catch(() => {}), setModuleId, pendingPdfQuote, draft: () => pendingPdfQuote.setState(() => ({ moduleId: "module-one", file: new File(["png"], "quote.png"), source, section: true, status: "draft" })) } });
     return () => setActiveEditor(null);
   }, [editor, moduleId, setActiveEditor]);
-  return <><EditorContent editor={editor} /><PdfQuoteControls moduleId="module-one" /></>;
+  return <><header className="h-12 border-b">Note</header><main className="relative h-[600px] min-w-0"><PdfQuoteControls moduleId="module-one" /><EditorContent editor={editor} /></main></>;
 }
 const root = createRootRoute({ component: Outlet });
 const module = createRoute({ getParentRoute: () => root, path: "/$moduleId/", component: Module });

@@ -34,8 +34,8 @@ function Fixture() {
     <button onClick={() => setGeneration(value => value + 1)}>Replace page</button>
     <button onClick={() => pendingPdfQuote.setState(() => null)}>Clear quote</button>
     <button onClick={() => pendingPdfQuote.setState(() => ({ moduleId: "other", file: new File(["existing"], "existing.png"), source: { documentId: "other", name: "Existing.pdf", page: 1, region: { x: 0, y: 0, width: 1, height: 1 } }, section: true, status: "draft" }))}>Stage other quote</button>
-    <output id="regions">{JSON.stringify(regions)}</output><output id="cancelled">{cancelled}</output>
-    <output id="crop">{JSON.stringify(crop)}</output><output id="pending">{pending?.source.name ?? "none"}</output>
+    <div hidden><output id="regions">{JSON.stringify(regions)}</output><output id="cancelled">{cancelled}</output>
+    <output id="crop">{JSON.stringify(crop)}</output><output id="pending">{pending?.source.name ?? "none"}</output></div>
     <div id="selection-sandbox" style={{ position: "relative", width, height: 100, margin: 20 }}>
       {mounted && <PdfRegionSelection key={generation} onSelect={region => setRegions(previous => [...previous, region])} onCancel={() => setCancelled(value => value + 1)} />}
     </div>

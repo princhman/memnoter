@@ -211,7 +211,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const activeSet = useMemo(() => new Set(active), [active]);
 
   // The backdrop matches the app header, so the page sits on one surface.
-  return <div className="flex h-full min-h-0 min-w-0 flex-col bg-background">
+  return <div className="relative flex h-full min-h-0 min-w-0 flex-col bg-background">
     <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
       <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onChange={event => setInput(event.target.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
@@ -225,13 +225,15 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
       </ToolButton>}
     </ReaderTools>
-    {(selecting || cropping || quoteError || (fullscreen && pending?.moduleId === doc.moduleId)) && <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs" role="status">
-      {selecting && !pending && <>Drag on a loaded page. Escape to cancel.<Button size="xs" variant="ghost" onClick={() => setSelecting(false)}>Cancel</Button></>}
-      {cropping && "Preparing quote…"}{quoteError && <span role="alert">{quoteError}</span>}
-      {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote…" : "Quote needs attention"}<Button size="xs" onClick={() => { void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error))); }}>Add to note…</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current === pending && current.status === "draft" ? null : current)}>Discard</Button>}</>}
+    {(selecting || cropping || quoteError || (fullscreen && pending?.moduleId === doc.moduleId)) && <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-center">
+      <div className="pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
+        {selecting && !pending && <>Drag to select a quote. Escape to cancel.<Button size="xs" variant="ghost" onClick={() => setSelecting(false)}>Cancel</Button></>}
+        {cropping && "Preparing quote"}{quoteError && <span role="alert">{quoteError}</span>}
+        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" onClick={() => { void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error))); }}>Add to note</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current === pending && current.status === "draft" ? null : current)}>Discard</Button>}</>}
+      </div>
     </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" onScroll={scheduleMeasure}>
-      {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF…</p>}
+      {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF</p>}
       <div className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} selecting={selecting && !pending && !cropping} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
     </div>}
   </div>;
