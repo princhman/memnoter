@@ -1,16 +1,12 @@
+import { editorExtensions } from "./support/editor.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Editor } from '@tiptap/core';
-import { TableKit } from '@tiptap/extension-table';
-import StarterKit from '@tiptap/starter-kit';
-import { HeadingFold } from '../src/lib/heading-fold.ts';
-import { SectionFocus, sectionFocusKey } from '../src/lib/section-focus.ts';
-import { HeadingHieararchy } from '../src/lib/heading-hierarchy.ts';
-import { Flashcards } from '../src/lib/flashcards.ts';
+import { sectionFocusKey } from '../src/lib/section-focus.ts';
 import { execEditor, editorState } from '../src/editor-host/commands.ts';
 
 function createEditor() {
-  const editor = new Editor({ element: null, extensions: [StarterKit, TableKit, Flashcards, HeadingFold],
+  const editor = new Editor({ element: null, extensions: editorExtensions({ collaborative: false }),
     content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Selected text' }] }] } });
   editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
   editor.commands.setTextSelection({ from: 1, to: 9 });
@@ -28,7 +24,7 @@ test('native toolbar formats the selected text and reports the resulting documen
     }
     for (const level of [1, 2, 3]) {
       assert.equal(execEditor(editor, 'heading', { level }), true);
-      assert.equal(editorState(editor).headingLevel, level);
+      assert.equal(editorState(editor).headingLevel, 1, "the first heading is normalized to the document root level");
     }
     execEditor(editor, 'paragraph');
     assert.equal(editorState(editor).blockType, 'paragraph');
@@ -63,7 +59,7 @@ test('invalid native commands cannot invoke arbitrary editor methods or mutate c
 test('native focus follows the innermost section through body text and section boundaries', () => {
   const paragraph = text => ({ type: 'paragraph', content: [{ type: 'text', text }] });
   const heading = (level, text) => ({ type: 'heading', attrs: { level }, content: [{ type: 'text', text }] });
-  const editor = new Editor({ element: null, extensions: [StarterKit, TableKit, Flashcards, HeadingFold, SectionFocus, HeadingHieararchy],
+  const editor = new Editor({ element: null, extensions: editorExtensions({ collaborative: false }),
     content: { type: 'doc', content: [paragraph('Preface'), heading(1, 'Root'), heading(2, 'Child'), paragraph('Body'),
       heading(3, 'Nested'), { type: 'bulletList', content: [{ type: 'listItem', content: [paragraph('List body')] }] },
       heading(2, 'Sibling'), paragraph('Last body')] } });
@@ -98,12 +94,8 @@ test('native focus follows the innermost section through body text and section b
 
 test('native outline hides folded descendants and headings outside focus, and navigation retains focus', async () => {
   const { editorOutline } = await import('../src/editor-host/commands.ts');
-  const HeadingIds = (await import('@tiptap/core')).Extension.create({
-    name: 'outlineIds',
-    addGlobalAttributes() { return [{ types: ['heading'], attributes: { 'data-toc-id': { default: null } } }]; },
-  });
   const h = (level, text) => ({ type: 'heading', attrs: { level, 'data-toc-id': text }, content: [{ type: 'text', text }] });
-  const editor = new Editor({ element: null, extensions: [StarterKit, TableKit, HeadingIds, HeadingFold, SectionFocus],
+  const editor = new Editor({ element: null, extensions: editorExtensions({ collaborative: false }),
     content: { type: 'doc', content: [h(1, 'Parent'), h(2, 'Child'), h(3, 'Grandchild'), h(1, 'Other')] } });
   editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
   try {
@@ -127,18 +119,13 @@ function pressBackspace(editor) {
 }
 
 test('Backspace at a heading start removes its format in place before joining rows', async t => {
-  const { Extension } = await import('@tiptap/core');
-  const { HeadingNumbering, headingNumberingKey } = await import('../src/lib/heading-numbering.ts');
+  const { headingNumberingKey } = await import('../src/lib/heading-numbering.ts');
   const { getFoldedIds, headingFoldKey } = await import('../src/lib/heading-fold.ts');
-  const HeadingIds = Extension.create({
-    name: 'backspaceHeadingIds',
-    addGlobalAttributes() { return [{ types: ['heading'], attributes: { 'data-toc-id': { default: null } } }]; },
-  });
   const p = text => ({ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] });
   const h = (text, level = 1) => ({ ...p(text), type: 'heading', attrs: { level, 'data-toc-id': text || null } });
   const makeEditor = (content, numbered) => {
     const editor = new Editor({ element: null,
-      extensions: [StarterKit, TableKit, HeadingIds, HeadingHieararchy, HeadingFold, HeadingNumbering],
+      extensions: editorExtensions({ collaborative: false }),
       content: { type: 'doc', content } });
     editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
     editor.view.dispatch(editor.state.tr.setMeta(headingNumberingKey, numbered));

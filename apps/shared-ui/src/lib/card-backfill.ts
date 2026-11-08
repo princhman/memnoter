@@ -1,7 +1,7 @@
 import { LOAD_ORIGIN } from "./content";
 import { Editor } from "@tiptap/core";
 import { dueCountsKey, isModuleOpen, startCardSync } from "@/lib/card-sync";
-import { noteExtensions } from "@/lib/note-extensions";
+import { noteExtensions } from "@/lib/editor-schema";
 import { queryClient } from "@/lib/query-client";
 import { saveQueue } from "@/lib/saves";
 

@@ -170,7 +170,7 @@ for (const stage of ['get_content', 'index_note']) {
         return { warning: result.indexingWarning, retained: (await call('modules')).some(m => m.id === result.moduleId) };
       } finally { window.__TAURI_INTERNALS__.invoke = original; }
     }, { folder: { ...synthetic, name: `Index retry ${stage}` }, stage });
-    assert.deepEqual(result, { warning: 'Imported; search indexing will retry', retained: true });
+    assert.deepEqual(result, { warning: 'Imported; search and card indexing failed. Reopen the note to retry.', retained: true });
   });
 }
 

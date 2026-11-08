@@ -2,7 +2,7 @@ import { Editor, type JSONContent } from "@tiptap/core";
 import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap";
 import * as Y from "yjs";
 import { call } from "./backend.ts";
-import { noteExtensions } from "./note-extensions";
+import { noteExtensions } from "./editor-schema";
 import { imageMime, prepareFolderImport, type ImportOptions, type ImportFolder } from "./folder-import.ts";
 import { writeOperation, type WritePermit } from "./write-lifecycle";
 import { refreshDerived } from "./note-index";

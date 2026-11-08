@@ -1,3 +1,4 @@
+import { MUTATIONS } from "@/lib/write-lifecycle";
 import { flushAll, isWriteAdmitted, isRestoring } from "./write-lifecycle";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "./backend.ts";
@@ -8,10 +9,10 @@ export type Backup = { id: string; created_at: number };
 export function useBackupNow() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationKey: ["backup-now"],
+    mutationKey: [MUTATIONS.backupNow],
     mutationFn: async () => {
       const blocked = () => !isWriteAdmitted() || isRestoring();
-      if (blocked() || queryClient.isMutating({ mutationKey: ["backup-now"] }) > 1) {
+      if (blocked() || queryClient.isMutating({ mutationKey: [MUTATIONS.backupNow] }) > 1) {
         throw new Error("A backup or restore is already in progress.");
       }
       await flushAll({ timeoutMs: 3_000 });

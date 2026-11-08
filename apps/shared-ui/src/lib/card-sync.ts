@@ -190,5 +190,3 @@ export function useDueCounts() {
     forModule: (moduleId: string) => byModule.get(moduleId) ?? none(),
   };
 }
-
-export { CardNavigationGuard, openReview } from "@/components/card-navigation-guard";

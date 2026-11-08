@@ -5,7 +5,6 @@ import { Node as PMNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import katex from "katex";
-import "katex/dist/katex.min.css";
 import { createMathIndex } from "./math-index";
 
 declare module "@tiptap/core" {

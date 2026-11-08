@@ -1,3 +1,4 @@
+import { visibleNoteExtensions } from "../support/editor-ui";
 import { importFolder } from "@/lib/import-module";
 import { markdownToJSON } from "@/lib/markdown-paste";
 import { call } from "@/lib/backend";
@@ -7,7 +8,7 @@ import { Editor } from "@tiptap/core";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
 import { createRoot } from "react-dom/client";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { noteExtensions } from "@/lib/note-extensions";
+import { noteExtensions } from "@/lib/editor-schema";
 import { extractCards } from "@/lib/cards";
 import { extractFromDoc, extractFromYDoc } from "@/lib/search-text";
 import { execEditor, editorState } from "@/editor-host/commands";
@@ -17,7 +18,7 @@ import "@/App.css";
 
 const document = new Y.Doc();
 function TablesEditor() {
-  const editor = useEditor({ extensions: noteExtensions({ document }), onCreate: ({ editor }) => {
+  const editor = useEditor({ extensions: visibleNoteExtensions({ document }), onCreate: ({ editor }) => {
     Object.assign(window, {
       loadImported: async (saved: Parameters<typeof applySavedContent>[1]) => {
         const doc = new Y.Doc(); applySavedContent(doc, saved);

@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "./backend";
 import { applyPendingSaves, saveQueue } from "./saves";
 import { restoreView } from "./view-persistence";
-import { imageFilesOperation } from "./write-lifecycle";
+import { imageFilesOperation, assertWritable, isWriteAdmitted, MUTATIONS, type WritePermit } from "./write-lifecycle";
 import { applySavedContent, contentQueryOptions, acknowledgeCompaction, contentKey, LOAD_ORIGIN, patchContent, type ContentUpdate, loadContent, type FileType, type GetContentResponse } from "./content";
 
 const COMPACTION_THRESHOLD = 300;
@@ -54,7 +54,7 @@ export function useNoteDocument(moduleId: string) {
   }, [data?.files]);
 
   const compactionMutation = useMutation({
-    mutationKey: ["compact-content", moduleId],
+    mutationKey: [MUTATIONS.compactContent, moduleId],
     mutationFn: async ({
       newState,
       updateId,
@@ -63,7 +63,7 @@ export function useNoteDocument(moduleId: string) {
       updateId: number;
       representedUpdates: ContentUpdate[];
     }) => {
-      if (saveQueue.isSuspended()) throw new Error("Compaction writes are suspended.");
+      assertWritable();
       await invoke("save_compaction", { moduleId, newState, updateId });
     },
     onSuccess: (_, { newState, updateId, representedUpdates }) => {
@@ -77,13 +77,13 @@ export function useNoteDocument(moduleId: string) {
   });
 
   const uploadFileMutation = useMutation({
-    mutationKey: ["upload-file"],
-    mutationFn: async (file: File) => {
-      if (saveQueue.isSuspended()) throw new Error("Image writes are suspended.");
+    mutationKey: [MUTATIONS.uploadFile],
+    mutationFn: async ({ file, permit }: { file: File; permit?: WritePermit }) => {
+      assertWritable(permit);
       const buffer = await file.arrayBuffer();
       const bytes = Array.from(new Uint8Array(buffer));
 
-      if (saveQueue.isSuspended()) throw new Error("Image writes are suspended.");
+      assertWritable(permit);
       return invoke<FileType>("save_file", {
         moduleId,
         bytes,
@@ -155,12 +155,13 @@ export function useNoteDocument(moduleId: string) {
     };
     currentEditor.on("transaction", mapPosition);
     return imageFilesOperation(files, {
-      checkTarget: () => {
-        if (persistenceTarget.current !== yDoc || currentEditor.isDestroyed || saveQueue.isSuspended()) {
+      checkTarget: permit => {
+        assertWritable(permit);
+        if (persistenceTarget.current !== yDoc || currentEditor.isDestroyed) {
           throw new Error("The original note is closed. Reopen it and add the remaining images, then discard this failed operation.");
         }
       },
-      upload: file => uploadFileMutation.mutateAsync(file),
+      upload: (file, permit) => uploadFileMutation.mutateAsync({ file, permit }),
       insert: (saved, file) => {
         // Owned retries use programmatic commands while user admission is closed.
         const inserted = currentEditor.chain().insertContentAt(insertAt, {
@@ -196,13 +197,13 @@ export function useNoteDocument(moduleId: string) {
 
       // do not compact while an update is still queued or being persisted;
       // compaction drops saved updates by id, which a queued one lacks yet.
-      if (saveQueue.isSuspended() || !saveQueue.isIdle(moduleId)) {
+      if (!isWriteAdmitted() || !saveQueue.isIdle(moduleId)) {
         return;
       }
 
       // isPending is per editor; a compaction started by an earlier editor of
       // this note may still be running, and the later one must not overtake it.
-      if (queryClient.isMutating({ mutationKey: ["compact-content", moduleId] }) > 0) {
+      if (queryClient.isMutating({ mutationKey: [MUTATIONS.compactContent, moduleId] }) > 0) {
         return;
       }
 
@@ -237,7 +238,7 @@ export function useNoteDocument(moduleId: string) {
   const filesContext = useMemo(
     () => ({
       files: filesById,
-      saveImage: (file: File) => uploadFileMutation.mutateAsync(file),
+      saveImage: (file: File, permit?: WritePermit) => uploadFileMutation.mutateAsync({ file, permit }),
       readImage: async (fileId: string) => {
         const contents = await invoke<{ bytes: number[]; file_type: string }>(
           "read_file",

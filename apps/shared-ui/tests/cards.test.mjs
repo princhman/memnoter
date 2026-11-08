@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Schema } from "@tiptap/pm/model";
+import { schema } from "./support/editor.mjs";
 import { Transform } from "@tiptap/pm/transform";
 import {
   blockIdOf,
@@ -11,19 +11,7 @@ import {
   planCardIds,
 } from "../src/lib/cards.ts";
 
-const schema = new Schema({
-  nodes: {
-    doc: { content: "block+" },
-    paragraph: { group: "block", content: "inline*", attrs: { cardId: { default: null }, clozeIds: { default: null } } },
-    heading: { group: "block", content: "inline*", attrs: { level: { default: 1 }, cardId: { default: null }, clozeIds: { default: null } } },
-    codeBlock: { group: "block", content: "text*", code: true, marks: "" },
-    blockquote: { group: "block", content: "block+" },
-    inlineMath: { group: "inline", inline: true, content: "text*" },
-    hardBreak: { group: "inline", inline: true },
-    text: { group: "inline" },
-  },
-  marks: { highlight: { attrs: { color: { default: "yellow" } } }, bold: {}, code: { code: true }, link: {} },
-});
+
 const { doc, paragraph, heading, codeBlock, blockquote, inlineMath, hardBreak } = schema.nodes;
 
 // Writes inline content: strings are text, `$..$` is inline math, `\n` is a

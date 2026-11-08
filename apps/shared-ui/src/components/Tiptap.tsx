@@ -1,3 +1,4 @@
+import { CardNavigationGuard } from "./card-navigation-guard";
 import { MathBlockView } from "@/lib/editor-schema/math-block-view";
 import { useNoteDocument } from "@/lib/note-document";
 import { SavedImage as ImageWithView, InlineImage as InlineImageWithView } from "./saved-image";
@@ -22,9 +23,9 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { usePersistedView } from "@/lib/view-persistence";
 import { useSearchIndexing } from "@/lib/search-index";
 import { FilesContext } from "@/components/saved-image";
-import { noteExtensions } from "@/lib/note-extensions";
+import { noteExtensions } from "@/lib/editor-schema";
 
-import { CardNavigationGuard, useCardSchedules, useCardSync } from "@/lib/card-sync";
+import { useCardSchedules, useCardSync } from "@/lib/card-sync";
 import { useCardReveal } from "@/lib/card-reveal";
 import {
   TableOfContents,

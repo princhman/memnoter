@@ -1,3 +1,4 @@
+import { MUTATIONS } from "@/lib/write-lifecycle";
 import { restoreBackup } from "@/lib/sync/manager";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -32,7 +33,7 @@ const RestoreBackup = ({
 }) => {
   const pending = useSelector(saveStatusStore, (state) => state.pending);
   const mutation = useMutation({
-    mutationKey: ["restore-backup"],
+    mutationKey: [MUTATIONS.restoreBackup],
     mutationFn: restoreBackup,
     // Every cache and open document belongs to the replaced data.
     onSuccess: () => window.location.reload(),

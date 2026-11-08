@@ -1,11 +1,11 @@
+import { ToolButton } from "./ui/tool-button";
+import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { TextSelection } from "@tiptap/pm/state";
 import { Check, ExternalLink, Pencil, Unlink } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { IconTooltip } from "@/components/icon-tooltip";
 import {
   isLinkEditorOpen,
   LINK_MENU_KEY,
@@ -93,7 +93,7 @@ export function LinkMenu({ editor }: { editor: Editor | null }) {
         if (isLinkEditorOpen(state)) return true;
         return view.hasFocus() && state.selection.empty && editor.isActive("link");
       }}
-      className="z-40 flex items-center gap-0.5 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md"
+      className={`${surfaceClass} z-40 flex items-center gap-0.5 p-1`}
     >
       {state.editing ? (
         <LinkField
@@ -225,17 +225,5 @@ function IconButton({
   onClick?: () => void;
   children: ReactNode;
 }) {
-  return (
-    <IconTooltip label={label} hint={hint}>
-<Button
-            size="icon-sm"
-            variant="ghost"
-            type={type}
-            aria-label={label}
-            onClick={onClick}
-          >
-{children}
-</Button>
-</IconTooltip>
-  );
+  return (<ToolButton label={label} hint={hint} type={type} onClick={onClick}>{children}</ToolButton>);
 }

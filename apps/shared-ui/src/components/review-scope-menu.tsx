@@ -1,7 +1,7 @@
 import { useModules } from "@/lib/modules";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
-import { openReview } from "@/lib/card-sync";
+import { openReview } from "@/components/card-navigation-guard";
 import { Button } from "./ui/button";
 import {
   DropdownMenu,

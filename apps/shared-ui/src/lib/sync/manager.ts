@@ -1,5 +1,4 @@
 import { onRemote as applyRemote, onFileStored, cancelRemoteReindex, drainRemoteReindex, type ApplyResult } from "./apply-remote.ts";
-export { onFileStored, MODULE_DELETED_REMOTELY_EVENT, type ApplyResult } from "./apply-remote.ts";
 // Runs cloud sync for the app: owns the engine, adapts it to the Tauri
 // commands in apps/desktop/src/sync.rs and folds remote changes into the caches
 // the editor reads, exactly like a local save would.
@@ -8,7 +7,7 @@ import { call as invoke } from "@/lib/backend";
 import { listen } from "@/lib/backend";
 import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
-import { exclusiveWrite } from "@/lib/write-lifecycle";
+import { exclusiveWrite, assertWritable } from "@/lib/write-lifecycle";
 import { saveQueue } from "@/lib/saves";
 import { getObject, isTokenValid, putObject, wipeCloudData, type SyncAccount } from "./account";
 import { importKey } from "./crypto";
@@ -60,7 +59,7 @@ function serially<T>(task: () => Promise<T>): Promise<T> {
 
 function writesAllowed() {
   // A backup restore replaces the database; nothing may write meanwhile.
-  if (saveQueue.isSuspended()) throw new Error("Writes are paused");
+  assertWritable();
 }
 
 // Keep transport wakeups in the desktop manager; native only applies caches.

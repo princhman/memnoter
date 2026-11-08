@@ -71,7 +71,11 @@ test("the entire top bar drags while controls and overlays remain interactive", 
       assert.equal(await page.evaluate(() => __windowCalls.includes("plugin:window|internal_toggle_maximize")), true);
       // There is no positioned drag overlay to intercept the editor's find UI.
       await page.locator(".tiptap").click();
-      await page.keyboard.press("Meta+f");
+      // AppKit routes Find through the menu event on this Tauri host.
+      await page.evaluate(async () => {
+        const { requestApp, FIND_EVENT } = await import("/src/lib/app-events.ts");
+        requestApp(FIND_EVENT);
+      });
       const find = page.getByRole("textbox", { name: "Find", exact: true });
       await find.fill("Hello");
       assert.equal(await find.inputValue(), "Hello");

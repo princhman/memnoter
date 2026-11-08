@@ -1,10 +1,11 @@
 import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
-import { openReview } from "@/lib/card-sync";
+import { openReview } from "@/components/card-navigation-guard";
 import { bootstrapNotes } from "@/lib/bootstrap";
 import { createRootRoute, Outlet, useNavigate, useRouter } from "@tanstack/react-router";
-import { MODULE_DELETED_REMOTELY_EVENT, startSync } from "@/lib/sync/manager";
+import { startSync } from "@/lib/sync/manager";
+import { MODULE_DELETED_REMOTELY_EVENT } from "@/lib/sync/apply-remote";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
 import CreateModule from "@/components/create-module";
@@ -26,7 +27,7 @@ import { appStore, setSidebarOpen } from "@/lib/store";
 import SaveStatus from "@/components/save-status";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useCommand } from "@/lib/commands";
-import { OPEN_SETTINGS_EVENT, requestApp } from "@/lib/app-events";
+import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/app-events";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
@@ -89,7 +90,7 @@ const RootLayout = () => {
   return (
     <>
       <ActiveEditorProvider>
-        <SidebarProvider
+        <SidebarProvider usesNativeMenuShortcuts={usesNativeMenuShortcuts}
           open={sidebarOpen}
           onOpenChange={setSidebarOpen}
           // Fills the body, which keeps clear of the iPad's status bar.

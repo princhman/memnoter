@@ -4,11 +4,12 @@ export function resolve(specifier, context, next) {
   if (specifier.endsWith('/sync/manager.ts')) return next(specifier, context);
   if (context.parentURL?.endsWith('/sync/manager.ts')) {
     const modules = {
+      './apply-remote.ts': 'export const onRemote = () => {}; export const onFileStored = () => {}; export const cancelRemoteReindex = () => {}; export const drainRemoteReindex = async () => {};',
       './engine': `import { createSyncEngine as real } from '${root}lib/sync/engine.ts'; export const createSyncEngine = (...args) => globalThis.syncFixture.engine ? globalThis.syncFixture.engine(...args) : real(...args);`,
       './files': `import { createFileSync as real } from '${root}lib/sync/files.ts'; export const createFileSync = (...args) => globalThis.syncFixture.files ? globalThis.syncFixture.files(...args) : real(...args);`,
       './crypto': `import { importKey as real } from '${root}lib/sync/crypto.ts'; export const importKey = (...args) => globalThis.syncFixture.engine ? Promise.resolve({}) : real(...args);`,
       '@/lib/backend': 'export const call = (...a) => globalThis.syncFixture.call(...a); export const listen = async () => () => {};',
-      '@/lib/write-lifecycle': 'export const exclusiveWrite = async fn => fn();',
+      '@/lib/write-lifecycle': 'export const exclusiveWrite = async fn => fn(); export const assertWritable = () => {};',
       '@/lib/saves': 'export const saveQueue = { clear() {}, isSuspended: () => false };',
       '@/lib/content': 'export const acknowledgeContent = () => {};',
       '@/lib/card-sync': 'export const dueCountsKey = []; export const isModuleOpen = () => false;',

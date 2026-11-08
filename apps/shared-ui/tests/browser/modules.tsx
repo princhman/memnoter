@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/query-client";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import AppSidebar from "@/components/app-sidebar";
 import NumberingSection from "@/components/settings/numbering-section";
@@ -22,4 +23,4 @@ mockIPC((command, args) => {
 const rootRoute = createRootRoute({ component: () => <SidebarProvider><AppSidebar /><Outlet /></SidebarProvider> });
 const routeTree = rootRoute.addChildren(["/", "/$moduleId", "/review", "/settings"].map(path => createRoute({ getParentRoute: () => rootRoute, path, component: path === "/settings" ? NumberingSection : () => null })));
 const router = createRouter({ routeTree });
-createRoot(document.getElementById("root")!).render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RouterProvider router={router} /></TooltipProvider></QueryClientProvider>);
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><TooltipProvider><RouterProvider router={router} /></TooltipProvider></QueryClientProvider>);
