@@ -1586,3 +1586,40 @@ body {
         background-color: Highlight;
     }
 }
+
+/* Portaled editor chrome stays out of table layout and serialization. */
+.table-edge {
+  position: fixed;
+  z-index: 39;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.table-edge-column { width: 18px; }
+.table-edge-row { height: 18px; }
+.table-caret-toolbar {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  max-width: calc(100vw - 16px);
+  gap: 2px;
+  padding: 4px;
+  border-radius: 8px;
+}
+.table-delete-icon { position: relative; display: inline-flex; }
+.table-delete-icon svg:last-child {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 10px;
+  height: 10px;
+  background: var(--popover);
+}
+.table-add-icon[data-new="first"] rect:first-of-type,
+.table-add-icon[data-new="last"] rect:last-of-type {
+  fill: var(--control-accent);
+  stroke: var(--control-accent);
+}
