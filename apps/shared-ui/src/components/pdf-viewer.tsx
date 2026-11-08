@@ -1,4 +1,5 @@
-import { usePdfQuoteRegions } from "@/lib/use-pdf-quote-regions";
+import { usePdfQuoteNavigation } from "@/lib/pdf-quote-navigation";
+import { usePdfQuoteRegions, type PdfQuoteRegion } from "@/lib/use-pdf-quote-regions";
 import { PdfQuoteRegions } from "./pdf-quote-regions";
 import { acceptsPdfShortcut, action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -31,7 +32,7 @@ type Size = { width: number; height: number };
 
 // Memoized: scrolling re-renders the viewer, but a page only redraws when it
 // arrives, the zoom changes, or it enters or leaves the render window.
-const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, quoteRegions, onSelect, onCancel }: { page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; quoteRegions?: readonly PdfRegion[]; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number) => void; onCancel: () => void }) {
+const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, quoteRegions, quoteNavigationDisabled, onQuoteNavigate, onSelect, onCancel }: { page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; quoteRegions?: readonly PdfQuoteRegion[]; quoteNavigationDisabled: boolean; onQuoteNavigate: (imageId: string) => void; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number) => void; onCancel: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
@@ -54,7 +55,7 @@ const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, a
   }, [page, zoom, live]);
   return <div className="pdf-page relative shrink-0 bg-white shadow-sm" style={{ width, height, "--scale-factor": zoom, "--total-scale-factor": zoom * (page?.userUnit ?? 1) } as React.CSSProperties}>
     {live && <><canvas ref={canvas} className="absolute inset-0 size-full" /><div ref={text} className="textLayer" /></>}
-    {live && <PdfQuoteRegions regions={quoteRegions} />}
+    {live && <PdfQuoteRegions regions={quoteRegions} disabled={quoteNavigationDisabled} onNavigate={onQuoteNavigate} />}
     {live && ready && ready.page === page && ready.zoom === zoom && selecting && <PdfRegionSelection key={zoom} onCancel={onCancel} onSelect={region => { if (canvas.current) onSelect(canvas.current, region, pageNumber); }} />}
     {error && <p role="alert" className="relative bg-background p-2 text-sm text-destructive">{error}</p>}
   </div>;
@@ -76,6 +77,7 @@ const sameList = (a: number[], b: number[]) => a.length === b.length && a.every(
 export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number }) {
   const client = useQueryClient();
   const quoteRegions = usePdfQuoteRegions(doc.moduleId, doc.id);
+  const navigateToQuote = usePdfQuoteNavigation(doc.moduleId);
   const root = useRef<HTMLDivElement>(null);
   const [selecting, setSelecting] = useState(false);
   const [cropping, setCropping] = useState(false);
@@ -389,7 +391,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF</p>}
-      <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} quoteRegions={quoteRegions.get(index + 1)} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
+      <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} quoteRegions={quoteRegions.get(index + 1)} onQuoteNavigate={navigateToQuote} quoteNavigationDisabled={selecting || cropping || pinching} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
     </div>}
   </div>;
 }

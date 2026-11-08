@@ -110,7 +110,7 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     const crop = JSON.parse(await page.locator('#crop').textContent());
     assert.deepEqual({ width: crop.width, height: crop.height, pixel: crop.pixel }, { width: 400, height: 400, pixel: [0, 255, 0, 255] });
     assert.deepEqual(crop.source, { documentId: 'selection-pdf', name: 'Selection.pdf', page: 1, region: { x: .25, y: .25, width: .5, height: .5 } });
-    const marker = viewer.locator('.pdf-page > [aria-hidden="true"] > div');
+    const marker = viewer.locator('.pdf-page > .pointer-events-none > div');
     await marker.first().waitFor();
     const pageBox = await viewer.locator('.pdf-page').first().boundingBox();
     const markerBox = await marker.first().boundingBox();

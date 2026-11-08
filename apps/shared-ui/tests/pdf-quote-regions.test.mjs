@@ -32,29 +32,31 @@ test('quote markers follow editor undo, persisted reload, pending saves and norm
     await page.goto(url);
     await page.waitForFunction(() => window.regionsEditor && !window.regionsTest.queryClient.isFetching());
     const source = { documentId: 'pdf-one', page: 1, name: 'Lecture.pdf', region: { x: .25, y: .2, width: .5, height: .4 } };
-    const expected = [[1, [source.region]]];
+    let expected = [[1, [{ ...source.region, uses: [{ imageId: "image-one", label: "Lecture notes, quote 1" }] }]]];
     const waitRegions = value => page.waitForFunction(value => document.querySelector('output')?.textContent === JSON.stringify(value), value);
-    await page.evaluate(source => window.regionsEditor.commands.insertContent({ type: 'image', attrs: { fileId: 'quote-one', pdfSource: source } }), source);
+    await page.evaluate(source => window.regionsEditor.commands.insertContent([{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Lecture notes' }] }, { type: 'image', attrs: { fileId: 'quote-one', imageId: 'image-one', pdfSource: source } }]), source);
     await waitRegions(expected);
     await page.evaluate(source => {
-      window.regionsEditor.commands.insertContent([
-        { type: 'paragraph', content: [{ type: 'inlineImage', attrs: { fileId: 'duplicate', pdfSource: source } }] },
+      window.regionsEditor.commands.insertContentAt(window.regionsEditor.state.doc.content.size, [
+        { type: 'paragraph', content: [{ type: 'inlineImage', attrs: { fileId: 'duplicate', imageId: 'image-two', pdfSource: source } }] },
+        { type: 'image', attrs: { fileId: 'quote-one', pdfSource: source } },
         { type: 'image', attrs: { pdfSource: { ...source, documentId: 'other' } } },
         { type: 'image', attrs: { pdfSource: { ...source, region: { ...source.region, x: 2 } } } },
       ]);
       window.regionsTest.pendingPdfQuote.setState(() => ({ moduleId: 'regions-module', file: new File([], 'quote.png'), source, section: false, status: 'draft' }));
     }, source);
+    expected = [[1, [{ ...source.region, uses: [{ imageId: "image-one", label: "Lecture notes, quote 1" }, { imageId: "image-two", label: "Lecture notes, quote 2" }] }]]];
     await waitRegions(expected);
     await page.evaluate(() => { window.firstPageRegions = window.regionsSnapshot.get(1); });
     // A draft on another page is retained through error/retry state and removed on discard.
     await page.evaluate(source => window.regionsTest.pendingPdfQuote.setState(current => ({ ...current, source: { ...source, page: 2 }, status: 'error' })), source);
-    await waitRegions([...expected, [2, [source.region]]]);
+    await waitRegions([...expected, [2, [{ ...source.region, uses: [] }]]]);
     assert.equal(await page.evaluate(() => window.firstPageRegions === window.regionsSnapshot.get(1)), true);
     await page.evaluate(() => window.regionsTest.pendingPdfQuote.setState(current => ({ ...current, moduleId: 'other-module' })));
     await waitRegions(expected);
     await page.evaluate(source => window.regionsTest.pendingPdfQuote.setState(current => ({ ...current, moduleId: 'regions-module', source })), source);
     await waitRegions(expected);
-    const marker = page.locator('#page-1 > [aria-hidden] > div');
+    const marker = page.locator('#page-1 > .pointer-events-none > div');
     const geometry = () => marker.evaluate(element => {
       const box = element.getBoundingClientRect(), page = element.closest('#page-1').getBoundingClientRect();
       return { x: (box.x - page.x) / page.width, y: (box.y - page.y) / page.height, width: box.width / page.width, height: box.height / page.height };

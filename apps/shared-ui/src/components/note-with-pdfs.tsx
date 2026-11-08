@@ -10,6 +10,7 @@ import { isTauri } from "@/lib/backend";
 import type { DocumentRecord } from "@/lib/documents";
 import { pickPdfs } from "./add-pdf";
 import { PdfViewer } from "./pdf-viewer";
+import { PdfQuoteNavigation } from "@/lib/pdf-quote-navigation";
 import { PdfQuoteControls } from "./pdf-quote-controls";
 import { ToolButton } from "./ui/tool-button";
 
@@ -74,7 +75,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
     window.addEventListener("keydown", toggle, true);
     return () => window.removeEventListener("keydown", toggle, true);
   }, [moduleId, pane.open]);
-  return <div ref={root} data-pdf-note={moduleId} className="relative flex h-full min-h-0 flex-col"><PdfQuoteControls moduleId={moduleId} /><div className="note-with-pdfs flex min-h-0 min-w-0 flex-1">
+  return <div ref={root} data-pdf-note={moduleId} className="relative flex h-full min-h-0 flex-col"><PdfQuoteNavigation moduleId={moduleId} /><PdfQuoteControls moduleId={moduleId} /><div className="note-with-pdfs flex min-h-0 min-w-0 flex-1">
     <div className="app-scroll-container min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">{children}</div>
     {open && <>
       <div role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuenow={pane.width} aria-valuemin={320} aria-valuemax={1000} tabIndex={0} className="relative w-1 shrink-0 touch-none cursor-col-resize bg-border hover:bg-primary focus-visible:bg-primary focus-visible:outline-none" onKeyDown={event => {
