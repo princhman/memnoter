@@ -6,6 +6,7 @@ import { queryClient } from "@/lib/query-client";
 import { forgetModule } from "@/lib/store";
 import { saveQueue } from "@/lib/saves";
 import { syncedFileArrived } from "./file-requests";
+import { documentsKey } from "@/lib/use-documents";
 // Dispatched on window with the module id when another device deleted it.
 export const MODULE_DELETED_REMOTELY_EVENT = "memnoter:module-deleted-remotely";
 
@@ -63,7 +64,8 @@ export function onRemote(result: ApplyResult) {
     // Card schedules are under the due counts' key too.
     void queryClient.invalidateQueries({ queryKey: dueCountsKey });
   }
-
+  // PDF names and deletions arrive in the vault; the list is a cheap local query.
+  void queryClient.invalidateQueries({ queryKey: documentsKey });
 }
 
 export function onFileStored(moduleId: string, file: FileType) {
