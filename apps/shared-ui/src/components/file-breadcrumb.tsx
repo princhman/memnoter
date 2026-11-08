@@ -8,7 +8,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 import { useSidebar } from "./ui/sidebar";
 import { useQuery } from "@tanstack/react-query";
 import { call as invoke } from "../lib/backend.ts";
@@ -153,6 +153,7 @@ export function FileBreadcrumb() {
                           .slice(0, sectionPath.length - 2)
                           .map((crumb) => (
                             <DropdownMenuItem
+                              key={crumb.pos}
                               onClick={() =>
                                 editor?.commands.showSection(crumb.pos)
                               }
@@ -167,7 +168,7 @@ export function FileBreadcrumb() {
               </>
             )}
             {sectionPath
-              .slice(sectionPath.length - 2, sectionPath.length)
+              .slice(-2)
               .map((crumb, index) => (
                 <Fragment key={crumb.pos}>
                   {index === 0 && !(sectionPath.length > 2) ? (
@@ -177,7 +178,7 @@ export function FileBreadcrumb() {
                   )}
 
                   <BreadcrumbItem>
-                    {index === sectionPath.length - 1 ? (
+                    {index === Math.min(2, sectionPath.length) - 1 ? (
                       <BreadcrumbPage data-tauri-drag-region="deep">{crumb.title}</BreadcrumbPage>
                     ) : (
                       <BreadcrumbLink

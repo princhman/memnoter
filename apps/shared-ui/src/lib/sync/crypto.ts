@@ -11,7 +11,7 @@ import { fromBase64, toBase64 } from "./protocol";
 const FORMAT = 1;
 const IV_BYTES = 12;
 // OWASP's 2023+ recommendation for PBKDF2-HMAC-SHA256.
-export const PBKDF2_ITERATIONS = 600_000;
+const PBKDF2_ITERATIONS = 600_000;
 const CHECK_DOC = "key-check";
 const CHECK_TEXT = "memnoter-key-check";
 

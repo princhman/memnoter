@@ -1,3 +1,4 @@
+import { Toast } from "./ui/toast";
 import { useEffect, useState } from "react";
 import { call } from "@/lib/backend";
 import { defaultImportOptions, importNoteOrder, prepareFolderImport, type ImportFolder, type ImportOptions } from "@/lib/folder-import";
@@ -91,6 +92,6 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
         </div>
       </DialogContent>
     </Dialog>
-    {summary && <aside role="status" className="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl floating-surface bg-popover text-popover-foreground p-4 shadow-lg text-sm"><p>{summary.text}</p>{summary.details.length > 0 && <details className="mt-2 max-h-52 overflow-auto"><summary>{summary.details.length} warnings and skipped files</summary><ul className="mt-2 space-y-1">{summary.details.map((line,i) => <li key={i}>{line}</li>)}</ul></details>}<Button className="mt-2" size="sm" variant="ghost" onClick={() => setSummary(undefined)}>Dismiss</Button></aside>}
+    {summary && <Toast role="status" className="max-w-sm rounded-xl p-4 shadow-lg text-sm"><p>{summary.text}</p>{summary.details.length > 0 && <details className="mt-2 max-h-52 overflow-auto"><summary>{summary.details.length} warnings and skipped files</summary><ul className="mt-2 space-y-1">{summary.details.map((line,i) => <li key={i}>{line}</li>)}</ul></details>}<Button className="mt-2" size="sm" variant="ghost" onClick={() => setSummary(undefined)}>Dismiss</Button></Toast>}
   </>;
 }

@@ -60,7 +60,6 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
   const hasLoaded = useRef(false);
   const isSaving = useRef(false);
   const loadChanges = useRef<number[][]>([]);
-  const hasInsertedInitialContent = useRef(false);
 
   const { isSuccess, data } = useQuery({
     ...contentQueryOptions(moduleId),
@@ -352,17 +351,6 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
     };
   }, [editor]);
 
-  // if editor is empty
-  useEffect(() => {
-    if (!editor || !isSuccess || !editor.isEditable || hasInsertedInitialContent.current) return;
-
-    hasInsertedInitialContent.current = true;
-    if (editor.isEmpty) {
-      editor.commands.setContent("<p>Hello World!</p>");
-    }
-  }, [editor, isSuccess]);
-
-  // restore where the reader left off; runs after the empty-note content above
   usePersistedView(editor, moduleId, isSuccess);
   useSearchIndexing(editor, moduleId, isSuccess);
 

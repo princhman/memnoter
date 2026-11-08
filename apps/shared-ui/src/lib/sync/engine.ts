@@ -87,7 +87,7 @@ export type SyncEngineOptions = {
 const PUSH_BATCH_BYTES = 1024 * 1024;
 
 // An error that retrying cannot fix, such as a wrong passphrase.
-export class FatalSyncError extends Error {}
+class FatalSyncError extends Error {}
 const CLOSE_POLICY = 1008;
 
 export function createSyncEngine({

@@ -1,9 +1,8 @@
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { Button } from "./ui/button";
+import { ToolButton } from "./ui/tool-button";
 import { LocateFixed, Pencil, Redo2, Undo2 } from "lucide-react";
 import { useEditorState } from "@tiptap/react";
 import { useSelector } from "@tanstack/react-store";
-import { IconTooltip } from "./icon-tooltip";
 import { MOD_KEY } from "@/lib/utils";
 import { reviewActionsStore } from "@/lib/review-actions";
 
@@ -50,28 +49,18 @@ export function UndoRedo() {
       onUndo={review.undo}
       onRedo={review.redo}
     >
-      <IconTooltip label="Edit card" side="bottom">
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Edit card"
+      <ToolButton label="Edit card" side="bottom"
           disabled={!review.edit}
           onClick={() => review.edit?.()}
         >
           <Pencil />
-        </Button>
-      </IconTooltip>
-      <IconTooltip label="Go to card in note" side="bottom">
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Go to card in note"
+        </ToolButton>
+      <ToolButton label="Go to card in note" side="bottom"
           disabled={!review.edit}
           onClick={() => review.edit?.()}
         >
           <LocateFixed />
-        </Button>
-      </IconTooltip>
+        </ToolButton>
     </HistoryButtons>
   );
 }
@@ -91,32 +80,21 @@ function HistoryButtons({
 }) {
   return (
     <div>
-      <IconTooltip label="Undo" hint={`${MOD_KEY}Z`} side="bottom">
-        <Button
-          size={"icon-sm"}
-          variant={"ghost"}
-          aria-label="Undo"
+      <ToolButton label="Undo" hint={`${MOD_KEY}Z`} side="bottom"
           disabled={!canUndo}
           onClick={onUndo}
         >
           <Undo2 />
-        </Button>
-      </IconTooltip>
-      <IconTooltip
-        label="Redo"
+        </ToolButton>
+      <ToolButton label="Redo"
         hint={`${MOD_KEY}${MOD_KEY === "⌘" ? "⇧" : "Shift+"}Z`}
         side="bottom"
-      >
-        <Button
-          size={"icon-sm"}
-          variant={"ghost"}
-          aria-label="Redo"
+
           disabled={!canRedo}
           onClick={onRedo}
         >
           <Redo2 />
-        </Button>
-      </IconTooltip>
+        </ToolButton>
       {children}
     </div>
   );

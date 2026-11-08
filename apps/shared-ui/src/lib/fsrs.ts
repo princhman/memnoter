@@ -9,7 +9,7 @@ import type { CardKind, CardPayload } from "./cards";
 
 // Scheduling runs here with ts-fsrs; Rust only stores the results. The
 // library's default parameters for FSRS-7, with no settings yet.
-export const FSRS_VERSION = "FSRS-7";
+const FSRS_VERSION = "FSRS-7";
 
 export type Scheduler = DefaultScheduler<"FSRS-7">;
 
