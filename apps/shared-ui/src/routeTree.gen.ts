@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ReviewRouteImport } from './routes/review'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as FilesIndexRouteImport } from './routes/files/index'
 import { Route as ModuleIdIndexRouteImport } from './routes/$moduleId/index'
+import { Route as FilesDocumentIdRouteImport } from './routes/files/$documentId'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -29,9 +31,19 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FilesIndexRoute = FilesIndexRouteImport.update({
+  id: '/files/',
+  path: '/files/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ModuleIdIndexRoute = ModuleIdIndexRouteImport.update({
   id: '/$moduleId/',
   path: '/$moduleId/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FilesDocumentIdRoute = FilesDocumentIdRouteImport.update({
+  id: '/files/$documentId',
+  path: '/files/$documentId',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -39,34 +51,61 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/review': typeof ReviewRoute
   '/settings': typeof SettingsRoute
+  '/files/$documentId': typeof FilesDocumentIdRoute
   '/$moduleId/': typeof ModuleIdIndexRoute
+  '/files/': typeof FilesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/review': typeof ReviewRoute
   '/settings': typeof SettingsRoute
+  '/files/$documentId': typeof FilesDocumentIdRoute
   '/$moduleId': typeof ModuleIdIndexRoute
+  '/files': typeof FilesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/review': typeof ReviewRoute
   '/settings': typeof SettingsRoute
+  '/files/$documentId': typeof FilesDocumentIdRoute
   '/$moduleId/': typeof ModuleIdIndexRoute
+  '/files/': typeof FilesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/review' | '/settings' | '/$moduleId/'
+  fullPaths:
+    | '/'
+    | '/review'
+    | '/settings'
+    | '/files/$documentId'
+    | '/$moduleId/'
+    | '/files/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/review' | '/settings' | '/$moduleId'
-  id: '__root__' | '/' | '/review' | '/settings' | '/$moduleId/'
+  to:
+    | '/'
+    | '/review'
+    | '/settings'
+    | '/files/$documentId'
+    | '/$moduleId'
+    | '/files'
+  id:
+    | '__root__'
+    | '/'
+    | '/review'
+    | '/settings'
+    | '/files/$documentId'
+    | '/$moduleId/'
+    | '/files/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ReviewRoute: typeof ReviewRoute
   SettingsRoute: typeof SettingsRoute
+  FilesDocumentIdRoute: typeof FilesDocumentIdRoute
   ModuleIdIndexRoute: typeof ModuleIdIndexRoute
+  FilesIndexRoute: typeof FilesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -92,11 +131,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/files/': {
+      id: '/files/'
+      path: '/files'
+      fullPath: '/files/'
+      preLoaderRoute: typeof FilesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/$moduleId/': {
       id: '/$moduleId/'
       path: '/$moduleId'
       fullPath: '/$moduleId/'
       preLoaderRoute: typeof ModuleIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/files/$documentId': {
+      id: '/files/$documentId'
+      path: '/files/$documentId'
+      fullPath: '/files/$documentId'
+      preLoaderRoute: typeof FilesDocumentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -106,7 +159,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ReviewRoute: ReviewRoute,
   SettingsRoute: SettingsRoute,
+  FilesDocumentIdRoute: FilesDocumentIdRoute,
   ModuleIdIndexRoute: ModuleIdIndexRoute,
+  FilesIndexRoute: FilesIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

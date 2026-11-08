@@ -1001,7 +1001,7 @@ body {
     position: fixed;
     z-index: var(--z-sticky);
     top: 50%;
-    right: 1.25rem;
+    right: calc(1.25rem + var(--pdf-pane-width, 0px));
     transform: translateY(-50%);
 }
 
@@ -1578,3 +1578,6 @@ body {
         background-color: Highlight;
     }
 }
+
+.pdf-page { color-scheme: light; }
+.pdf-page .textLayer { user-select: text; }

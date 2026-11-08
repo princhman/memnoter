@@ -8,7 +8,7 @@ export function ModuleReviewButton() {
   const matchRoute = useMatchRoute();
   const { forModule } = useDueCounts();
   // These pages also match the module id pattern.
-  const isPage = !!matchRoute({ to: "/settings" }) || !!matchRoute({ to: "/review" });
+  const isPage = !!matchRoute({ to: "/settings" }) || !!matchRoute({ to: "/review" }) || !!matchRoute({ to: "/files", fuzzy: true });
   const match = matchRoute({ to: "/$moduleId" });
   if (!match || isPage) return null;
 

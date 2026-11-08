@@ -18,7 +18,7 @@ import {
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import CreateModule from "./create-module";
-import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
+import { Ellipsis, FileText, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,6 +57,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
       <Item onClick={() => void openReview(() => navigate({ to: "/review", search: { module: moduleId } }))}>
         <Layers className="size-3" />Review
       </Item>
+      <Item onClick={() => void navigate({ to: "/files", search: { module: moduleId } })}><FileText className="size-3" />Files</Item>
       <Item onClick={() => setRenameOpen(true)}>
         <Pencil className="size-3" />
         Rename
@@ -156,6 +157,11 @@ const AppSidebar = () => {
               <SidebarMenuBadge>
                 <CardCounts counts={total} />
               </SidebarMenuBadge>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton isActive={!!matchRoute({ to: "/files", fuzzy: true })} render={<Link to="/files" search={{}} />}>
+                <FileText /><span>Files</span>
+              </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>

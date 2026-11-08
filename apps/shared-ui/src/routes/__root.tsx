@@ -1,9 +1,10 @@
+import { AddPdf } from "@/components/add-pdf";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/components/card-navigation-guard";
 import { bootstrapNotes } from "@/lib/bootstrap";
-import { createRootRoute, Outlet, useNavigate, useRouter } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { startSync } from "@/lib/sync/manager";
 import { MODULE_DELETED_REMOTELY_EVENT } from "@/lib/sync/apply-remote";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
@@ -32,6 +33,8 @@ import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/
 
 const RootLayout = () => {
   const isFullscreen = useIsFullscreen();
+  const path = useRouterState({ select: state => state.location.pathname });
+  const ownScroll = /^\/files\/[^/]+/.test(path) || !["/", "/files", "/files/", "/review", "/settings"].includes(path);
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   const navigate = useNavigate();
   const router = useRouter();
@@ -104,6 +107,7 @@ const RootLayout = () => {
         >
           <AppSidebar />
           <CreateModule global />
+          <AddPdf />
 
           <SidebarInset className="min-h-0 overflow-hidden">
             {/* Tauri's deep region includes noninteractive breadcrumb wrappers,
@@ -119,7 +123,7 @@ const RootLayout = () => {
 
             <FindBar />
 
-            <main className="app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">
+            <main className={ownScroll ? "min-h-0 flex-1 overflow-hidden" : "app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8"}>
               <Outlet />
             </main>
           </SidebarInset>
@@ -129,7 +133,7 @@ const RootLayout = () => {
               <IconTooltip label="Toggle sidebar" hint={formatKeys(action("sidebar.toggle").keys)} side="bottom">
                 <SidebarTrigger aria-label="Toggle sidebar" />
               </IconTooltip>
-              <UndoRedo />
+              <UndoRedo /><div id="pdf-toolbar" className="flex items-center gap-1" />
             </div>
           </div>
           <CommandPalette />
