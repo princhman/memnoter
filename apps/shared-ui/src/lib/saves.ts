@@ -28,11 +28,6 @@ export function applyPendingSaves(doc: Y.Doc, updates: readonly number[][]) {
   }, LOAD_ORIGIN);
 }
 
-export function flushSaves(timeoutMs: number) {
-  return Promise.race([
-    saveQueue.flush(),
-    new Promise<boolean>((resolve) =>
-      window.setTimeout(() => resolve(false), timeoutMs),
-    ),
-  ]);
+export function flushSaves() {
+  return saveQueue.flush();
 }

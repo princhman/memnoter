@@ -1,3 +1,4 @@
+import { settled } from "@/lib/async-work";
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/core";
 import { call as invoke } from "./backend.ts";
@@ -41,7 +42,7 @@ export function useSearchIndexing(editor: Editor | null, moduleId: string, isRea
         console.error(`Failed to index open note ${moduleId}; retrying stored text:`, error);
         await refreshDerived(moduleId, permit);
       });
-      queue = write.catch(() => {});
+      queue = settled(write);
       return editors.track(write);
     };
     const debounce = editors.attach(flush);

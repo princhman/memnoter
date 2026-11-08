@@ -1,14 +1,13 @@
-import { isTauri } from "@/lib/backend";
+import { capabilities } from "@/lib/backend";
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { IS_IOS } from "@/lib/platform";
 
 // iOS windows have no title bar or traffic lights, so they count as full screen.
 export function useIsFullscreen() {
-  const [isFullscreen, setIsFullscreen] = useState(IS_IOS);
+  const [isFullscreen, setIsFullscreen] = useState(capabilities.fullscreenLayout);
 
   useEffect(() => {
-    if (IS_IOS || !isTauri()) return;
+    if (!capabilities.windowControls) return;
     const appWindow = getCurrentWindow();
 
     const update = async () => {

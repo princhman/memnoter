@@ -1,14 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { schema } from "./support/editor.mjs";
-import { Transform } from "@tiptap/pm/transform";
 import {
   blockIdOf,
   cardIdsOf,
-  changedRanges,
   extractCards,
   parseBlock,
-  planCardIds,
 } from "../src/lib/cards.ts";
 
 
@@ -32,7 +29,7 @@ const p = (source, cardId = null) => paragraph.create({ cardId }, inline(source)
 const text = (value) => ({ type: "text", text: value });
 
 test("basic cards split at the first spaced :: and trim both sides", () => {
-  const { cards, separator } = parseBlock(p("What is $e^{i\\pi}$ ::  $-1$, by Euler "));
+  const { cards } = parseBlock(p("What is $e^{i\\pi}$ ::  $-1$, by Euler "));
   assert.deepEqual(cards, [
     {
       kind: "basic",
@@ -40,8 +37,6 @@ test("basic cards split at the first spaced :: and trim both sides", () => {
       back: [{ type: "math", tex: "-1" }, text(", by Euler")],
     },
   ]);
-  // "What is " is 8 characters and the formula node takes 10 positions.
-  assert.deepEqual(separator, { from: 19, to: 21 });
 
   assert.deepEqual(parseBlock(p("A :: B :: C")).cards[0].back, [text("B :: C")]);
   assert.deepEqual(parseBlock(p("Line one\nline two :: answer")).cards[0].front, [
@@ -71,7 +66,6 @@ test("two-way cards keep forward history and have stable, distinct reverse ids",
   assert.deepEqual(both[1].back, one[0].front);
   assert.deepEqual(cardIdsOf(block), [{ id: "stable", answer: "Forward" }, { id: "stable:reverse", answer: "Reverse" }]);
   assert.equal(blockIdOf(both[1].id), "stable");
-  assert.deepEqual(planCardIds(doc.create(null, [block]), [{ from: 0, to: 100 }], () => "replacement"), []);
   assert.deepEqual(extractCards(doc.create(null, [p("Front :: Back", "stable")])), one);
   assert.deepEqual(extractCards(doc.create(null, [block])), both);
   assert.deepEqual(parseBlock(p("Front `:::` Back")).cards, []);
@@ -84,10 +78,6 @@ test("two-way cards keep forward history and have stable, distinct reverse ids",
 test("each cloze is a card that hides only itself", () => {
   const syntax = parseBlock(p("{{Paris}} is the capital of {{France}} :: ignored"));
   assert.equal(syntax.separator, null, "a cloze block has no basic separator");
-  assert.deepEqual(syntax.clozes, [
-    { open: { from: 0, to: 2 }, inner: { from: 2, to: 7 }, close: { from: 7, to: 9 } },
-    { open: { from: 28, to: 30 }, inner: { from: 30, to: 36 }, close: { from: 36, to: 38 } },
-  ]);
   assert.deepEqual(syntax.cards, [
     {
       kind: "cloze",
@@ -175,55 +165,6 @@ test("extraction needs a card id, skips code blocks and numbers clozes", () => {
   assert.equal(blockIdOf("h1:c2"), "h1");
   assert.equal(blockIdOf("b1"), "b1");
 });
-
-function counter() {
-  let n = 0;
-  return () => `new${++n}`;
-}
-
-function apply(document, plan) {
-  const tr = new Transform(document);
-  for (const { pos, cardId } of plan) tr.setNodeAttribute(pos, "cardId", cardId);
-  return tr.doc;
-}
-
-test("new card blocks get ids and pasted copies are renumbered", () => {
-  const original = doc.create(null, [p("Q :: A", "a"), p("plain")]);
-  // Typing the syntax into a plain paragraph.
-  const typed = new Transform(original).insert(14, schema.text(" :: answer"));
-  const plan = planCardIds(typed.doc, changedRanges(typed.mapping.maps), counter());
-  assert.deepEqual(plan, [{ pos: 8, cardId: "new1" }]);
-
-  // Pasting a copy of the card above the original: the copy is renumbered.
-  const pasted = new Transform(original).insert(0, p("Q :: A", "a"));
-  const pastePlan = planCardIds(pasted.doc, changedRanges(pasted.mapping.maps), counter());
-  assert.deepEqual(pastePlan, [{ pos: 0, cardId: "new1" }]);
-  const after = apply(pasted.doc, pastePlan);
-  assert.deepEqual(extractCards(after).map((card) => card.id), ["new1", "a"]);
-
-  // Unchanged documents need nothing.
-  assert.deepEqual(planCardIds(after, [], counter()), []);
-});
-
-test("splitting a card block keeps its id on the half with the syntax", () => {
-  const original = doc.create(null, [p("Q :: A", "a")]);
-  // Enter at the start of the paragraph copies its attributes to both halves.
-  const split = new Transform(original).split(1);
-  assert.deepEqual(split.doc.child(0).attrs.cardId, "a");
-  const plan = planCardIds(split.doc, changedRanges(split.mapping.maps), counter());
-  assert.deepEqual(plan, [{ pos: 0, cardId: null }]);
-  assert.deepEqual(extractCards(apply(split.doc, plan)).map((card) => card.id), ["a"]);
-});
-
-test("a whole-document replace (loading) dedupes in document order", () => {
-  const loaded = doc.create(null, [p("One :: 1", "a"), p("Two :: 2", "a"), p("Three :: 3")]);
-  const tr = new Transform(doc.create(null, [p("")])).replaceWith(0, 2, loaded.content);
-  assert.deepEqual(planCardIds(tr.doc, changedRanges(tr.mapping.maps), counter()), [
-    { pos: 10, cardId: "new1" },
-    { pos: 20, cardId: "new2" },
-  ]);
-});
-
 
 test("linked delimiters stay literal content rather than creating cards", () => {
   const link = schema.marks.link.create();

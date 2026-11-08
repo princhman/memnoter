@@ -1,3 +1,4 @@
+import { editorHost } from "@/lib/editor-host";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -49,7 +50,8 @@ export const HeadingActionOverlay = ({
       let dom: Node | null = null;
       try {
         dom = editor.view.nodeDOM($from.before(depth));
-      } catch {
+      } catch (error) {
+      console.error("Failed to update heading action selection:", error);
         // The view isn't mounted yet.
       }
       return dom instanceof HTMLElement
@@ -91,7 +93,8 @@ export const HeadingActionOverlay = ({
           return resolved.before(depth);
         }
       }
-    } catch {
+    } catch (error) {
+      console.error("Failed to update heading action selection:", error);
       // The heading can be replaced by an editor transaction between hover and click.
     }
     return null;
@@ -154,7 +157,7 @@ export const HeadingActionOverlay = ({
     const heading = hoveredHeadingRef.current;
     if (!editor || headingPosition === null || !heading) return;
 
-    const container = heading.closest<HTMLElement>(".app-scroll-container");
+    const container = editorHost.scrollContainer(heading);
     if (isCurrentlyInFocus()) {
       // Revealing the rest of the note pushes the heading down; scroll by the
       // same amount so it stays where it was on screen.

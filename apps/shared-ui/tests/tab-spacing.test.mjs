@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { schema } from "./support/editor.mjs";
-import { EditorState, TextSelection } from "@tiptap/pm/state";
-import { tabSpacing } from "../src/lib/tab-spacing.ts";
+import { Editor } from "@tiptap/core";
+import { editorExtensions } from "./support/editor.mjs";
 
 function run(type, text, from, to, outdent = false) {
   const doc = schema.node("doc", null, [schema.node(type, null, schema.text(text))]);
-  let state = EditorState.create({ doc, selection: TextSelection.create(doc, from, to) });
-  assert.equal(tabSpacing(outdent)(state, tr => { state = state.apply(tr); }), true);
-  return state.doc;
+  const editor = new Editor({ element: null, extensions: editorExtensions({ collaborative: false }), content: doc.toJSON() });
+  editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+  try {
+    editor.commands.setTextSelection({ from, to });
+    const handled = editor.state.plugins.some(plugin => plugin.props.handleKeyDown?.(editor.view, {
+      key: "Tab", keyCode: 9, shiftKey: outdent, preventDefault() {},
+    }));
+    assert.equal(handled, true);
+    return editor.state.doc;
+  } finally { editor.destroy(); }
 }
 test("prose spacing survives document serialization without changing card delimiters", () => {
   const doc = run("paragraph", "Q :: {{A}}", 3, 3);

@@ -30,7 +30,7 @@ export function registerCommand(command: Command) {
   };
 }
 
-export function getCommands() {
+function getCommands() {
   return commands;
 }
 
@@ -51,7 +51,6 @@ export function useCommand(command: Command) {
   );
 }
 
-// Every word of the query must start a word of the title or keywords.
 export function matchesCommand(command: Command, query: string) {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const haystack = [command.title, ...(command.keywords ?? [])]

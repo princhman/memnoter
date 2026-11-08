@@ -59,12 +59,16 @@ private final class AuthServer: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        let verified = request.url?.path == "/v1/auth/verify"
+        let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("sync/test/fixtures/protocol.json")
+        let fixture = try! JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as! [String: Any]
+        let paths = fixture["paths"] as! [String: String]
+        let responses = fixture["httpFixtures"] as! [String: Any]
+        let verified = request.url?.path == paths["authVerify"]
         let authorized = request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token"
         let status = verified || authorized ? 200 : 401
-        let body = verified ? #"{"token":"test-token","userId":"user","email":"a@example.com"}"# : authorized ? #"{"key":null}"# : #"{"error":"Expired session"}"#
+        let body = try! JSONSerialization.data(withJSONObject: responses[verified ? "verify" : authorized ? "newKey" : "expired"]!)
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(body.utf8)); client?.urlProtocolDidFinishLoading(self)
+        client?.urlProtocol(self, didLoad: body); client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
 }
@@ -79,7 +83,7 @@ final class SyncTransportTests: XCTestCase {
         let (token, user, isNew) = try await sync.signIn(server: "https://mock.local", email: "a@example.com", code: "123456")
         XCTAssertEqual(token, "test-token"); XCTAssertEqual(user, "user"); XCTAssertTrue(isNew)
         do { _ = try await sync.api("https://mock.local", "/v1/key", token: "expired"); XCTFail("401 must reject") }
-        catch { XCTAssertEqual(error.localizedDescription, "Expired session") }
+        catch { XCTAssertEqual(error.localizedDescription, "Sign in again") }
     }
 }
 

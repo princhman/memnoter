@@ -1,3 +1,4 @@
+import { editorHost } from "@/lib/editor-host";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { dropPoint } from "@tiptap/pm/transform";
@@ -52,7 +53,7 @@ function indicatorRect(view: EditorView, insert: number, inline: boolean) {
 }
 
 function autoScroll(view: EditorView, y: number) {
-  const container = view.dom.closest<HTMLElement>(".app-scroll-container");
+  const container = editorHost.scrollContainer(view.dom);
   if (!container) return;
   const { top, bottom } = container.getBoundingClientRect();
   if (y < top + 40) container.scrollTop -= 12;
@@ -110,7 +111,7 @@ export function startImagePointerMove(view: EditorView, getPos: () => number | u
     stopCapturing(view);
     view.dispatch(tr);
     stopCapturing(view);
-    if (!view.dom.hasAttribute("data-native-editor")) view.focus();
+    if (editorHost.restoreFocus) view.focus();
   };
   const up = () => finish(true);
   const cancel = () => finish(false);

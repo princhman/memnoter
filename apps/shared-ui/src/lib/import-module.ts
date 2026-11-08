@@ -25,7 +25,6 @@ async function runImport(folder: ImportFolder, progress: (message: string) => vo
     // The real editor assigns card identities and normalizes headings before
     // storage exists. Opening the imported document uses precisely this schema.
     editor.commands.setContent(plan.document);
-    await new Promise(resolve => setTimeout(resolve, 0));
     editor.state.doc.check();
     // Export the normalized tree into a fresh history. A first persisted update
     // must contain insertions only: the image lease validator rejects deletions

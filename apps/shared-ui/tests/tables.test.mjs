@@ -103,6 +103,7 @@ test("cell selection offers table actions while text in a cell keeps text format
     editor.commands.setTextSelection({ from: pos - 9, to: pos });
   });
   await page.getByRole("button", { name: "Bold", exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("toolbar", { name: "Table actions", exact: true }).waitFor({ state: "hidden" });
   await page.evaluate(() => {
     const cells = [];
     editor.state.doc.descendants((node, pos) => { if (node.type.name === "tableHeader") cells.push(pos); });
@@ -112,8 +113,62 @@ test("cell selection offers table actions while text in a cell keeps text format
   assert.equal(await page.getByRole("button", { name: "Bold", exact: true }).count(), 0);
   await page.getByRole("button", { name: "Merge cells", exact: true }).click();
   assert.equal((await counts()).tableHeader, 2);
-  assert.equal(await page.evaluate(() => execEditor(editor, "splitCell")), true);
+  await page.getByRole("button", { name: "Split cell", exact: true }).click();
   assert.equal((await counts()).tableHeader, 3);
+});
+
+test("edges appear on hover and caret, append at the end, and stay out of saved content", async () => {
+  await fresh();
+  await page.evaluate(() => {
+    editor.commands.setContent('<p>outside</p><table><tr><td><p>A</p></td><td><p>B</p></td></tr><tr><td><p>C</p></td><td><p>D</p></td></tr></table>');
+    editor.commands.setTextSelection(1);
+  });
+  await page.mouse.move(700, 500);
+  const row = page.getByRole("button", { name: "Add row", exact: true });
+  const column = page.getByRole("button", { name: "Add column", exact: true });
+  await row.waitFor({ state: "hidden" });
+  await page.locator("td").first().hover();
+  await column.waitFor({ state: "visible" });
+  await row.waitFor({ state: "visible" });
+  await column.click();
+  assert.deepEqual(await page.locator("tr").first().locator("td").allTextContents(), ["A", "B", ""]);
+  await cell(0);
+  await page.mouse.move(700, 500);
+  await row.click();
+  assert.deepEqual(await page.locator("tr").nth(1).locator("td").allTextContents(), ["C", "D", ""]);
+  assert.deepEqual(await page.locator("tr").last().locator("td").allTextContents(), ["", "", ""]);
+  const saved = await page.evaluate(() => JSON.stringify(editor.getJSON()) + editor.getHTML());
+  assert.doesNotMatch(saved, /button|toolbar|data-table-controls|table-edge|Add row|Add column/);
+  await page.evaluate(() => { for (let i = 0; i < 6; i++) editor.commands.addColumnAfter(); });
+  await page.locator(".tableWrapper").evaluate(el => { el.scrollLeft = el.scrollWidth; });
+  await page.waitForFunction(() => {
+    const edge = document.querySelector('[aria-label="Add column"]');
+    return edge && Math.abs(edge.getBoundingClientRect().left - document.querySelector('.tableWrapper').getBoundingClientRect().right) < 2;
+  });
+  await column.click();
+  assert.equal(await page.locator("tr").first().locator("td").count(), 10);
+});
+
+test("caret toolbar adds on each side and deletes rows, columns, and the table", async () => {
+  const toolbar = page.getByRole("toolbar", { name: "Table actions", exact: true });
+  for (const [label, expected] of [
+    ["Add row above", [["", ""], ["A", "B"], ["C", "D"]]],
+    ["Add row below", [["A", "B"], ["", ""], ["C", "D"]]],
+    ["Add column left", [["", "A", "B"], ["", "C", "D"]]],
+    ["Add column right", [["A", "", "B"], ["C", "", "D"]]],
+    ["Delete row", [["C", "D"]]],
+    ["Delete column", [["B"], ["D"]]],
+    ["Delete table", []],
+  ]) {
+    await fresh();
+    await page.evaluate(() => editor.commands.setContent('<table><tr><td><p>A</p></td><td><p>B</p></td></tr><tr><td><p>C</p></td><td><p>D</p></td></tr></table>'));
+    await cell(0);
+    await toolbar.waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("toolbar", { name: "Text formatting" }).isVisible(), false);
+    assert.equal(await toolbar.getByRole("button", { name: "Split cell", exact: true }).count(), 0);
+    await toolbar.getByRole("button", { name: label, exact: true }).click();
+    assert.deepEqual(await page.locator("tr").evaluateAll(rows => rows.map(row => Array.from(row.cells, c => c.textContent))), expected, label);
+  }
 });
 
 test("Yjs round trip preserves cell content, merges, edits, deletion and undo", async () => {
@@ -282,4 +337,19 @@ test("block math conversion cannot lift selected cell content out of the table",
   });
   assert.equal(changed, false);
   assert.deepEqual(await page.evaluate(() => editor.getJSON()), before);
+});
+
+test("/image keeps its file input attached until a pick, then hands over the images", async () => {
+  await fresh();
+  await page.keyboard.type("/image");
+  const chooser = page.waitForEvent("filechooser");
+  await page.keyboard.press("Enter");
+  const picker = await chooser;
+  // A detached input can be collected while the dialog is open, losing the pick.
+  assert.equal(await page.evaluate(() => document.querySelectorAll("input[data-image-picker]").length), 1);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+  await picker.setFiles({ name: "pixel.png", mimeType: "image/png", buffer: png });
+  await page.waitForFunction(() => window.pickedImages.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.pickedImages), ["pixel.png"]);
+  assert.equal(await page.evaluate(() => document.querySelectorAll("input[data-image-picker]").length), 0);
 });

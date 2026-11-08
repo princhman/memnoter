@@ -21,10 +21,17 @@ pub(crate) mod assets {
             file.write_all(bytes)?;
             file.sync_all()?;
             std::fs::rename(&partial, &path)?;
-            std::fs::File::open(data_dir.join("files"))?.sync_all()
+            // Windows cannot open a directory as a file; NTFS journals the rename.
+            #[cfg(unix)]
+            std::fs::File::open(data_dir.join("files"))?.sync_all()?;
+            Ok(())
         })();
         if let Err(error) = result {
-            let _ = std::fs::remove_file(&partial);
+            if let Err(cleanup) = std::fs::remove_file(&partial) {
+                if cleanup.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("Removing incomplete asset {}: {cleanup}", partial.display());
+                }
+            }
             return Err(db_err(error));
         }
         Ok(path)
@@ -140,7 +147,6 @@ pub fn save_file(
 
     assets::write(data_dir, &id, &bytes)?;
 
-    // ai-suggested error handling - cleanup if failed
     // The file row and its upload record commit together.
     let inserted = (|| -> CommandResult<()> {
         let tx = conn.unchecked_transaction().map_err(db_err)?;
@@ -175,10 +181,10 @@ pub fn save_file(
 pub fn read_file(
     data_dir: &Path,
     db: &Db,
-    module_id: String,
+    _module_id: String,
     file_id: String,
 ) -> CommandResult<FileContents> {
-    let _ = module_id; // Copied images may refer to another note's managed asset.
+    // Copied images may refer to another note's managed asset.
     let expected_path = assets::path(data_dir, &file_id)?;
     let conn = db.lock()?;
     let file_type: String = conn

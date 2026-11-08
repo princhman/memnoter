@@ -45,7 +45,6 @@ export type FsrsFields = {
   lastReviewAt: number | null;
 };
 
-// A due card from `due_cards`.
 export type StoredCard = FsrsFields & {
   id: string;
   moduleId: string;
@@ -126,7 +125,6 @@ export function scheduleReview(
   };
 }
 
-// When each rating would bring the card back, as FSRS previews it.
 export function previewDue(
   scheduler: Scheduler,
   card: StoredCard,
@@ -143,7 +141,6 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-// A short label for the time until a card is due, like Anki's buttons.
 export function formatInterval(ms: number) {
   const round = (value: number) =>
     value < 10 ? String(Math.round(value * 10) / 10).replace(/\.0$/, "") : String(Math.round(value));

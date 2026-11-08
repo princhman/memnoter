@@ -1,4 +1,5 @@
 import { MermaidView } from "@/lib/editor-schema/mermaid-view";
+import { useEditorHost } from "@/lib/editor-host-context";
 import { CardNavigationGuard } from "./card-navigation-guard";
 import { MathBlockView } from "@/lib/editor-schema/math-block-view";
 import { useNoteDocument } from "@/lib/note-document";
@@ -13,10 +14,9 @@ import { headingNumberingKey } from "@/lib/heading-numbering";
 import { watchWriteAdmission } from "@/lib/write-lifecycle";
 import { suppressesTextInput } from "@/lib/editor-input";
 import { useEditor, EditorContent } from "@tiptap/react";
-import { useEffect, useLayoutEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { redo as yRedo, undo as yUndo } from "@tiptap/y-tiptap";
-import { listen } from "../lib/backend.ts";
-import { setNativeEditorHistory } from "@/lib/native-history";
+import { useNativeHistory } from "@/lib/native-history";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
 import { LinkMenu } from "@/components/link-menu";
@@ -36,10 +36,11 @@ import {
 
 type TipTapProps = {
   moduleId: string;
-  hostOnly?: boolean;
 };
 
-const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
+const Tiptap = ({ moduleId }: TipTapProps) => {
+  const host = useEditorHost();
+  const element = useRef<HTMLDivElement>(null);
   const { data: modules } = useModules();
   const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
   const { yDoc, editorRef, isSuccess, filesContext, insertImages } = useNoteDocument(moduleId);
@@ -53,6 +54,7 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
       shouldRerenderOnTransaction: false,
       extensions: noteExtensions({
         document: yDoc,
+        scrollContainer: () => element.current ? host.scrollContainer(element.current) : null,
         ui: {
           savedImage: ImageWithView,
           inlineImage: InlineImageWithView,
@@ -68,9 +70,9 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
       }),
       editorProps: {
         handleScrollToSelection: (view) => {
-          if (hostOnly) { traceScroll("prosemirror.scrollIntoView.suppressed"); return true; }
+          if (host.isNative) { traceScroll("prosemirror.scrollIntoView.suppressed"); return true; }
           if (!view.state.selection.empty) return false;
-          const container = view.dom.closest<HTMLElement>(".app-scroll-container");
+          const container = host.scrollContainer(view.dom);
           if (!container) return false;
 
           const caret = view.coordsAtPos(view.state.selection.head);
@@ -88,8 +90,7 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
         },
         // Apply before NodeView focus calls; only text carets request a keyboard.
         attributes: ({ selection }) => ({
-          ...(hostOnly ? {
-            "data-native-editor": "true",
+          ...(host.isNative ? {
             ...(suppressesTextInput(selection)
               ? { inputmode: "none" } : {}),
           } : {}),
@@ -99,7 +100,6 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
           autocorrect: "off",
         }),
       },
-      // ai-suggested change to prevent double enter lag
       onTransaction: ({ editor, transaction }) => {
         const before = editor.state.selection.$from.nodeBefore;
         if (
@@ -142,37 +142,11 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
     if (editor && !editor.isDestroyed) editor.setEditable(isSuccess && !blocked, false);
   }), [editor, isSuccess]);
 
-  useEffect(() => {
-    if (!editor) return;
-    const dom = editor.view.dom;
-    // Serialize transitions, including unmount, so a delayed focus command
-    // cannot replace native text-field history after a newer blur.
-    let ready = false;
-    let disposed = false;
-    const update = () => {
-      if (ready) setNativeEditorHistory(document.activeElement === dom);
-    };
-    document.addEventListener("focusin", update);
-    document.addEventListener("focusout", update);
-    const unlisten = listen<string>("menu", ({ payload }) => {
-      if (disposed || !editor.isEditable || document.activeElement !== dom) return;
-      if (payload === "editor-undo") yUndo(editor.state);
-      if (payload === "editor-redo") yRedo(editor.state);
-    }).then((stop) => {
-      ready = true;
-      if (!disposed) update();
-      return stop;
-    });
-    void unlisten.catch(console.error);
-    return () => {
-      disposed = true;
-      ready = false;
-      document.removeEventListener("focusin", update);
-      document.removeEventListener("focusout", update);
-      setNativeEditorHistory(false);
-      void unlisten.then((stop) => stop()).catch(console.error);
-    };
-  }, [editor]);
+  useNativeHistory({
+    enabled: () => !!editor?.isEditable && document.activeElement === editor.view.dom,
+    undo: () => editor && yUndo(editor.state),
+    redo: () => editor && yRedo(editor.state),
+  }, editor);
 
   usePersistedView(editor, moduleId, isSuccess);
   useSearchIndexing(editor, moduleId, isSuccess);
@@ -196,10 +170,10 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
 
   return (
     <FilesContext.Provider value={filesContext}>
-      {!hostOnly && <CardNavigationGuard editor={editor} ready={isSuccess} />}
-      {hostOnly ? <>
+      <div ref={element} className="contents">
+      {!host.isNative && <CardNavigationGuard editor={editor} ready={isSuccess} />}
+      {host.isNative ? <>
         <EditorContent editor={editor} />
-        <TableOfContents editor={editor} store={tocStore} numbered={numbered} />
       </> : <>
       <HeadingActionOverlay editor={editor}>
         <EditorContent editor={editor} />
@@ -208,6 +182,7 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
       <LinkMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} numbered={numbered} />
       </>}
+      </div>
     </FilesContext.Provider>
   );
 };

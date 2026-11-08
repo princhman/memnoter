@@ -1,3 +1,4 @@
+import { editorHost } from "@/lib/editor-host";
 import type { Editor } from "@tiptap/core";
 import { createStore, useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
@@ -33,21 +34,20 @@ export function useCardReveal(editor: Editor | null, moduleId: string, ready: bo
     stopScrollRestore();
     // Section focus can hide the target even after its caret moves there.
     // Clear that filter; the caret also unfolds any folded ancestor.
-    editor.chain().showDocument().setTextSelection(start).focus(undefined, {
-      scrollIntoView: false,
-    }).run();
+    editor.chain().showDocument().setTextSelection(start).run();
+    editor.view.focus();
 
     // Focus runs on the next frame. Position the block after that, rather
     // than relying on caret scrolling, which only reveals the nearest edge.
     const position = start;
-    requestAnimationFrame(() => {
+    {
       if (editor.isDestroyed || !editor.view.dom.isConnected) return;
-      const container = editor.view.dom.closest<HTMLElement>(".app-scroll-container");
+      const container = editorHost.scrollContainer(editor.view.dom);
       const block = editor.view.nodeDOM(position - 1);
       if (!container || !(block instanceof HTMLElement)) return;
       const top = container.getBoundingClientRect().top + container.clientTop;
       container.scrollTop += block.getBoundingClientRect().top - top
         - Math.min(96, container.clientHeight / 4);
-    });
+    }
   }, [editor, moduleId, ready, request]);
 }

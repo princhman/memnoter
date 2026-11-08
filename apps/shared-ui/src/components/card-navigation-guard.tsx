@@ -5,7 +5,6 @@ import { flushCardSyncs } from "@/lib/card-sync";
 // Palette actions share the same flush/error behavior as blocked navigation.
 export async function openReview(navigate: () => Promise<unknown>) {
   try {
-    await flushCardSyncs();
     await navigate();
   } catch (error) {
     window.alert("Could not open review. Please retry saving flashcards first.");

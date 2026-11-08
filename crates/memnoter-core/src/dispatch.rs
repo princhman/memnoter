@@ -3,7 +3,6 @@ use crate::cards::{CardContent, ReviewLog, ReviewedCard};
 use crate::sync::RemoteEntry;
 use crate::{Core, CoreError, ImportImage};
 
-// Derive the accepted command inventory and dispatcher from the same entries.
 macro_rules! commands {
     ($core:ident; $( $name:ident ( $( $arg:ident : $ty:ty ),* ) => $call:expr; )*) => {
         pub const DATA_COMMANDS: &[&str] = &[$(stringify!($name)),*];

@@ -1,5 +1,5 @@
 import { Toast } from "./ui/toast";
-import { isTauri } from "@/lib/backend";
+import { capabilities } from "@/lib/backend";
 import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
@@ -57,7 +57,7 @@ const SaveStatus = () => {
   const [confirmClose, setConfirmClose] = useState(false);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!capabilities.appExit) return;
     let disposed = false;
 
     let busy = false;

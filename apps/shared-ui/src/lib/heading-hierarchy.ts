@@ -3,7 +3,6 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
 const correctionMeta = "heading-hierarchy-correction";
-const animationDurationMs = 1_500;
 interface HeadingHierarchyState {
   decorations: DecorationSet;
   correctionRevision: number;
@@ -90,7 +89,11 @@ export const HeadingHieararchy = Extension.create({
           },
         },
         view(editorView) {
-          let clearAnimationTimer: ReturnType<typeof setTimeout> | undefined;
+          const finish = (event: AnimationEvent) => {
+            if (!(event.target instanceof HTMLElement) || !event.target.classList.contains("heading-auto-corrected")) return;
+            if (!editorView.isDestroyed) editorView.dispatch(editorView.state.tr.setMeta(correctionMeta, []));
+          };
+          editorView.dom.addEventListener("animationend", finish);
 
           return {
             update(view, previousState) {
@@ -118,18 +121,9 @@ export const HeadingHieararchy = Extension.create({
                 void element.offsetWidth;
                 element.classList.add("heading-auto-corrected");
               });
-
-              clearTimeout(clearAnimationTimer);
-              clearAnimationTimer = setTimeout(() => {
-                if (!editorView.isDestroyed) {
-                  editorView.dispatch(
-                    editorView.state.tr.setMeta(correctionMeta, []),
-                  );
-                }
-              }, animationDurationMs);
             },
             destroy() {
-              clearTimeout(clearAnimationTimer);
+              editorView.dom.removeEventListener("animationend", finish);
             },
           };
         },

@@ -1,10 +1,9 @@
-import { isTauri, listen } from "./backend.ts";
-import { IS_MAC } from "./platform.ts";
+import { capabilities, listen } from "./backend.ts";
 import { action, SHORTCUTS, bindsInJS, matchesShortcut } from "./shortcuts.ts";
 
 // AppKit owns unmodified accelerators in the native macOS app.
 export function usesNativeMenuShortcuts() {
-  return isTauri() && IS_MAC;
+  return capabilities.nativeMenu;
 }
 
 // App-wide requests, dispatched on window so any part of the UI can make them.
@@ -21,7 +20,7 @@ export function requestApp(event: string) {
 // The create dialog hosts the import dialog, so it must open first.
 const APP_ACTIONS: Record<string, () => void> = {
   "settings.open": () => requestApp(OPEN_SETTINGS_EVENT),
-  "module.import": () => { requestApp(NEW_MODULE_EVENT); requestApp(IMPORT_FOLDER_EVENT); },
+  "module.import": () => requestApp(IMPORT_FOLDER_EVENT),
   "module.new": () => requestApp(NEW_MODULE_EVENT),
   "find.open": () => requestApp(FIND_EVENT),
   "sidebar.toggle": () => requestApp(TOGGLE_SIDEBAR_EVENT),
@@ -44,6 +43,6 @@ export function listenToMenu() {
     if (entry) APP_ACTIONS[entry.id]?.();
   }).catch(
     // Outside Tauri, e.g. the plain Vite dev server, there is no menu.
-    () => {},
+    error => console.error("Failed to listen to app menu:", error),
   );
 }

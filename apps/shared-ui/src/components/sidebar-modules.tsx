@@ -9,7 +9,7 @@ import { queryClient } from '@/lib/query-client';
 import { writeOperation } from '@/lib/write-lifecycle';
 import { moveSidebarItem, sidebarLayout, type SidebarItem } from '@/lib/sidebar-layout';
 import type { Module } from '@/lib/types';
-import CreateModule from './create-module';
+import { CreateModuleButton } from './create-module';
 import { Button } from './ui/button';
 import { SidebarMenu, SidebarMenuAction, SidebarMenuButton, SidebarMenuItem } from './ui/sidebar';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from './ui/dropdown-menu';
@@ -76,7 +76,7 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
     </SortableRow>;
   };
   return <>
-    <CreateModule onNewFolder={() => edit('new')} />
+    <CreateModuleButton onNewFolder={() => edit('new')} />
     {(query.error || mutation.error) && <p role="alert">{(query.error ?? mutation.error)?.message}</p>}
     <DndContext sensors={sensors} collisionDetection={args => {
       const active = items.find(item => item.id === args.active.id);

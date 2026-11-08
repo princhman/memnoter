@@ -21,17 +21,24 @@ export type InsertItem = {
 };
 
 
+// WebKit can collect a detached file input while its dialog is open, and its
+// change event then never fires. Keep it in the document until the dialog ends.
 function pickImages(onPick: (files: File[]) => void) {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = IMAGE_TYPES.join(",");
   input.multiple = true;
+  input.hidden = true;
+  input.dataset.imagePicker = "";
   input.addEventListener("change", () => {
+    input.remove();
     const files = Array.from(input.files ?? []).filter((file) =>
       IMAGE_TYPES.includes(file.type),
     );
     if (files.length) onPick(files);
   });
+  input.addEventListener("cancel", () => input.remove());
+  document.body.append(input);
   input.click();
 }
 
