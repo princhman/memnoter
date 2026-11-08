@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { ZoomIn, ZoomOut, PanelRight } from "lucide-react";
+import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
@@ -117,7 +117,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc:
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom(zoom - 0.1)}><ZoomOut /></ToolButton>
       <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom(zoom + 0.1)}><ZoomIn /></ToolButton>
-      {fullscreen && <ToolButton label="Open beside note" onClick={() => { openPdfPane(doc.moduleId, doc.id); void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }); }}><PanelRight /></ToolButton>}
+      {fullscreen && <ToolButton label="Open beside note" onClick={() => { openPdfPane(doc.moduleId, doc.id); void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }); }}>
+        {/* The small arrow says this moves the PDF into the note's side panel. */}
+        <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
+      </ToolButton>}
     </ReaderTools>
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" onScroll={event => {
       const element = event.currentTarget;
