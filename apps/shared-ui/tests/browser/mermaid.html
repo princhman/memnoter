@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="UTF-8"></head><body><div id="editor"></div><script type="module">
+import { Editor } from '@tiptap/core';
+import StarterKit from '@tiptap/starter-kit';
+import { MermaidView } from '../../src/lib/editor-schema/mermaid-view.ts';
+import '../../src/App.css';
+window.editor = new Editor({
+  element: document.querySelector('#editor'),
+  extensions: [StarterKit, MermaidView],
+  content: { type: 'doc', content: [
+    { type: 'paragraph', content: [{ type: 'text', text: 'Before' }] },
+    { type: 'codeBlock', attrs: { language: 'mermaid' }, content: [{ type: 'text', text: 'graph TD\nA[Start] --> B[Finish]' }] },
+    { type: 'paragraph', content: [{ type: 'text', text: 'After' }] },
+    { type: 'codeBlock', attrs: { language: 'js' }, content: [{ type: 'text', text: 'const answer = 42;' }] },
+  ] },
+});
+</script></body></html>
