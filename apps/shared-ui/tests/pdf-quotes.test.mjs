@@ -56,7 +56,7 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
       const blob = await cropPdfCanvas(canvas, source.region);
       const bitmap = await createImageBitmap(blob); const check = document.createElement('canvas'); check.width = bitmap.width; check.height = bitmap.height;
       const pixels = check.getContext('2d'); pixels.drawImage(bitmap, 0, 0);
-      window.insertion = owner.insertQuote(editor, new File([blob], 'quote.png', { type: 'image/png' }), source, { position: editor.state.selection.from }, () => {}, () => {});
+      window.insertion = owner.insertQuote(editor, { id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', status: 'draft', file: new File([blob], 'quote.png', { type: 'image/png' }), source }, { position: editor.state.selection.from }, () => {}, () => {});
       return { width: bitmap.width, height: bitmap.height, pixel: [...pixels.getImageData(0, 0, 1, 1).data] };
     }, source);
     assert.deepEqual(crop, { width: 200, height: 100, pixel: [0, 255, 0, 255] });
@@ -118,10 +118,10 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
       const { editor, owner } = window.quoteTest;
       const before = window.uploads.length;
       editor.setEditable(false);
-      const readOnly = await owner.insertQuote(editor, new File(['png'], 'denied.png'), source, { position: 1 }, () => {}, () => {}).then(() => false, () => true);
+      const readOnly = await owner.insertQuote(editor, { id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', status: 'draft', file: new File(['png'], 'denied.png'), source }, { position: 1 }, () => {}, () => {}).then(() => false, () => true);
       editor.setEditable(true);
       owner.editorRef.current = null;
-      const replaced = await owner.insertQuote(editor, new File(['png'], 'denied.png'), source, { position: 1 }, () => {}, () => {}).then(() => false, () => true);
+      const replaced = await owner.insertQuote(editor, { id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', status: 'draft', file: new File(['png'], 'denied.png'), source }, { position: 1 }, () => {}, () => {}).then(() => false, () => true);
       owner.editorRef.current = editor;
       return { readOnly, replaced, uploads: window.uploads.length - before };
     }, source);
@@ -135,7 +135,7 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
         { type: 'heading', attrs: { level: 1, 'data-toc-id': 'next' }, content: [{ type: 'text', text: 'Next' }] },
       ] });
       window.releaseUpload = null;
-      window.sectionInsert = owner.insertQuote(editor, new File(['png'], 'quote.png'), source, { headingId: 'stable' }, () => {}, () => {}).catch(error => String(error));
+      window.sectionInsert = owner.insertQuote(editor, { id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', status: 'draft', file: new File(['png'], 'quote.png'), source }, { headingId: 'stable' }, () => {}, () => {}).catch(error => String(error));
     }, source);
     await page.waitForFunction(() => window.releaseUpload);
     await page.evaluate(() => { window.quoteTest.editor.commands.insertContentAt(10, 'longer body'); window.releaseUpload(); });
@@ -146,7 +146,7 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
     await page.evaluate(source => {
       const { editor, owner } = window.quoteTest;
       window.releaseUpload = null; window.completed = 0;
-      window.retryInsert = owner.insertQuote(editor, new File(['png'], 'retry.png'), source, { headingId: 'stable' }, () => window.completed++, () => {}).catch(error => String(error));
+      window.retryInsert = owner.insertQuote(editor, { id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', status: 'draft', file: new File(['png'], 'retry.png'), source }, { headingId: 'stable' }, () => window.completed++, () => {}).catch(error => String(error));
     }, source);
     await page.waitForFunction(() => window.releaseUpload);
     await page.evaluate(() => {
@@ -169,9 +169,9 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
     const lifecycle = await page.evaluate(async source => {
       const { editor, owner, pendingPdfQuote } = window.quoteTest;
       const file = new File(['png'], 'discard.png');
-      pendingPdfQuote.setState(() => ({ moduleId: 'quote-module', file, source, section: true, status: 'draft' }));
+      pendingPdfQuote.setState(() => ({ id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', file, source, status: 'draft' }));
       window.releaseUpload = null;
-      window.discardInsert = owner.insertQuote(editor, file, source, { headingId: 'gone' }, () => {}, () => {
+      window.discardInsert = owner.insertQuote(editor, pendingPdfQuote.state, { headingId: 'gone' }, () => {}, () => {
         pendingPdfQuote.setState(draft => ({ ...draft, status: 'draft' }));
       }).catch(error => String(error));
       return window.uploads.length;
@@ -191,7 +191,7 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
     await page.evaluate(source => {
       const { editor, owner } = window.quoteTest;
       window.releaseUpload = null; window.notified = [];
-      window.callbackInsert = owner.insertQuote(editor, new File(['png'], 'callback.png'), source, { headingId: null }, () => {
+      window.callbackInsert = owner.insertQuote(editor, { id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', status: 'draft', file: new File(['png'], 'callback.png'), source }, { headingId: null }, () => {
         window.notified.push('inserted'); throw new Error('test consumer failure');
       }, () => window.notified.push('disposed')).then(() => true, () => false);
     }, source);
@@ -208,7 +208,7 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
     await page.evaluate(source => {
       const { editor, owner } = window.quoteTest;
       window.releaseUpload = null; window.replacedCallbacks = [];
-      window.replacedInsert = owner.insertQuote(editor, new File(['png'], 'replaced.png'), source, { headingId: null },
+      window.replacedInsert = owner.insertQuote(editor, { id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', status: 'draft', file: new File(['png'], 'replaced.png'), source }, { headingId: null },
         () => window.replacedCallbacks.push('inserted'), () => window.replacedCallbacks.push('disposed')).catch(error => String(error));
     }, source);
     await page.waitForFunction(() => window.releaseUpload);
@@ -224,6 +224,27 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
       return { uploads: window.uploads.length - uploads, failed, callbacks: window.replacedCallbacks,
         count: editor.getJSON().content.filter(n => n.type === 'image').length };
     }), { uploads: 0, failed: 1, callbacks: ['disposed'], count: 3 });
+    // Two drafts can reuse one file; an old operation must not change the new draft.
+    await page.evaluate(source => {
+      const { editor, owner, pendingPdfQuote } = window.quoteTest;
+      const file = new File(['png'], 'shared-file.png');
+      const oldDraft = { id: crypto.randomUUID(), kind: 'image', moduleId: 'quote-module', file, source, status: 'draft' };
+      window.releaseUpload = null;
+      pendingPdfQuote.setState(() => oldDraft);
+      window.staleInsert = owner.insertQuote(editor, oldDraft, { headingId: null }, () => {}, () => {}).catch(() => {});
+      window.nextDraftId = crypto.randomUUID();
+      pendingPdfQuote.setState(() => ({ ...oldDraft, id: window.nextDraftId }));
+    }, source);
+    await page.waitForFunction(() => window.releaseUpload);
+    await page.evaluate(() => { window.quoteTest.owner.editorRef.current = null; window.releaseUpload(); });
+    assert.deepEqual(await page.evaluate(async () => {
+      await window.staleInsert;
+      const { editor, owner, pendingPdfQuote, discardFailedImages } = window.quoteTest;
+      discardFailedImages(); owner.editorRef.current = editor;
+      const unchanged = pendingPdfQuote.state.id === window.nextDraftId && pendingPdfQuote.state.status === 'draft' && !pendingPdfQuote.state.error;
+      pendingPdfQuote.setState(() => null);
+      return unchanged;
+    }), true);
     // Actual pointer selection uses capture, clamps off-page coordinates and cancels on Escape.
     const selection = page.getByLabel('Drag a region on this PDF page');
     const box = await selection.boundingBox();

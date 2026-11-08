@@ -36,14 +36,14 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
   const headings = useEditorState({ editor: active?.editor ?? null, selector: ({ editor }) => editor ? outline(editor.state.doc) : [] }) ?? [];
   useEffect(() => {
     setChoosing(false);
-  }, [pending?.file, moduleId]);
+  }, [pending?.id, moduleId]);
   useEffect(() => {
     if (pending?.moduleId !== moduleId || pending.status !== "draft" || !active || choosing) return;
     return registerCommand({ ...action("pdf.quote.insert"), keywords: ["pdf", "quote", "cursor"], run: () => insertCommand.current?.() });
   }, [pending?.moduleId, pending?.status, moduleId, active?.editor, choosing]);
   if (!pending || pending.moduleId !== moduleId) return null;
   const insert = (target: { position: number } | { headingId: string | null }) => {
-    if (!active || active.editor.isDestroyed || !active.editor.isEditable || pendingPdfQuote.state?.file !== pending.file || pendingPdfQuote.state.status !== "draft") return;
+    if (!active || active.editor.isDestroyed || !active.editor.isEditable || pendingPdfQuote.state?.id !== pending.id || pendingPdfQuote.state.status !== "draft") return;
     if (!isWriteAdmitted()) {
       pendingPdfQuote.setState(() => ({ ...pending, error: "Saving is temporarily unavailable. Try again shortly." }));
       return;
@@ -51,11 +51,22 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
     const draft = pending;
     setChoosing(false);
     pendingPdfQuote.setState(() => ({ ...draft, status: "saving" }));
-    void active.insertQuote(active.editor, draft.file, draft.source, target,
-      () => { if (pendingPdfQuote.state?.file === draft.file) pendingPdfQuote.setState(() => null); },
-      () => { if (pendingPdfQuote.state?.file === draft.file) pendingPdfQuote.setState(() => ({ ...draft, status: "draft", error: undefined })); },
+    if (draft.kind === "text") {
+      try {
+        active.insertTextQuote(active.editor, draft.parts, target);
+        if (pendingPdfQuote.state?.id === draft.id) pendingPdfQuote.setState(() => null);
+      } catch (error) {
+        pendingPdfQuote.setState(current => current?.id === draft.id ? {
+          ...current, status: "draft", error: error instanceof Error ? error.message : "Could not insert the quote. Try again.",
+        } : current);
+      }
+      return;
+    }
+    void active.insertQuote(active.editor, draft, target,
+      () => { if (pendingPdfQuote.state?.id === draft.id) pendingPdfQuote.setState(() => null); },
+      () => { if (pendingPdfQuote.state?.id === draft.id) pendingPdfQuote.setState(() => ({ ...draft, status: "draft", error: undefined })); },
     ).catch(error => {
-      pendingPdfQuote.setState(current => current?.file === draft.file ? {
+      pendingPdfQuote.setState(current => current?.id === draft.id ? {
         ...current, status: current.status === "error" ? "error" : "draft",
         error: error instanceof Error ? error.message : "Could not save the quote. Try again.",
       } : current);
@@ -80,13 +91,14 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
     event.stopPropagation();
     handleInsertQuote();
   };
-  const sourceName = pending.source.name.split(/[\\/]/).pop() || "PDF";
+  const source = pending.kind === "image" ? pending.source : pending.parts[0]?.source;
+  const sourceName = (source?.name ?? "PDF").split(/[\\/]/).pop() || "PDF";
   const waiting = pending.status === "draft" && !active;
   return <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-end">
     <div className="pointer-events-auto min-w-0 max-w-sm overflow-y-auto rounded-lg floating-surface p-1 text-xs shadow-md" role="status">
-      <div role="group" aria-label="Image quote actions" className="flex min-w-0 items-center gap-1" onMouseDown={event => { if (event.button === 0) event.preventDefault(); }}>
-        <span className="min-w-0 truncate px-1 text-muted-foreground" title={waiting ? "Waiting for this module’s editable note" : `${sourceName}, page ${pending.source.page}`}>
-          {waiting ? "Waiting for note…" : `${sourceName}, page ${pending.source.page}`}
+      <div role="group" aria-label={pending.kind === "image" ? "Image quote actions" : "Text quote actions"} className="flex min-w-0 items-center gap-1" onMouseDown={event => { if (event.button === 0) event.preventDefault(); }}>
+        <span className="min-w-0 truncate px-1 text-muted-foreground" title={waiting ? "Waiting for this module’s editable note" : `${sourceName}, page ${source?.page ?? ""}`}>
+          {waiting ? "Waiting for note…" : `${sourceName}, page ${source?.page ?? ""}`}
         </span>
         <IconTooltip label="Insert at cursor" hint={formatKeys(action("pdf.quote.insert").keys)}>
           <Button size="sm" aria-keyshortcuts="Meta+Enter Control+Enter" disabled={!active || pending.status !== "draft"} onClick={handleInsertQuote}>
@@ -103,7 +115,7 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
       </div>
       {(pending.error || pending.status === "error") && <div className="grid gap-2 p-2 [overflow-wrap:anywhere]">
         <span role="alert">{pending.error || "Quote could not be saved"}</span>
-        {pending.status === "error" && <>
+        {pending.kind === "image" && pending.status === "error" && <>
           <Button size="xs" variant="outline" className="justify-self-start" disabled={retrying} onClick={() => {
             setRetrying(true);
             void retryFailedImages().catch(() => {}).finally(() => setRetrying(false));

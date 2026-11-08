@@ -27,6 +27,7 @@ import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
 import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
+import { PdfTextQuote } from "./editor-schema/pdf-text-quotes";
 import { Flashcards } from "@/lib/flashcards";
 
 // Outline layout reads force WebKit to lay out the whole note. Keep saved
@@ -58,7 +59,7 @@ const DeferredTableOfContents = TableOfContents.extend({
 
 type NoteExtensionOptions = {
   document: Y.Doc;
-  ui?: { inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
+  ui?: { inlineMath?: AnyExtension; mathBlock?: AnyExtension; pdfTextQuote?: typeof PdfTextQuote; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
   insertImages?: (editor: Editor, files: File[], position: number) => void;
   onTocUpdate?: (content: TableOfContentData) => void;
   onFirstRender?: () => void;
@@ -92,6 +93,7 @@ export function noteExtensions({
     ui.inlineMath ?? InlineMath,
     ui.mathBlock ?? MathBlock,
     Flashcards,
+    ui.pdfTextQuote ?? PdfTextQuote,
     HeadingHieararchy,
     SectionFocus,
     Sections,

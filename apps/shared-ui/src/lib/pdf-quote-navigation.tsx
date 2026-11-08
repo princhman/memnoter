@@ -8,7 +8,7 @@ import { getFocusedSectionRange, sectionFocusKey } from "./section-focus";
 import { getFoldedRanges, headingFoldKey } from "./heading-fold";
 import { Toast } from "@/components/ui/toast";
 
-type Target = { moduleId: string; imageId: string; cancel: () => void };
+type Target = { moduleId: string; quoteId: string; cancel: () => void };
 const pending = createStore<Target | null>(null);
 let active: Target | null = null;
 function clear(target: Target) {
@@ -30,15 +30,15 @@ function feedback(message: string) {
   </Toast>);
 }
 
-export function usePdfQuoteNavigation(moduleId: string): (imageId: string) => void {
+export function usePdfQuoteNavigation(moduleId: string): (quoteId: string) => void {
   const router = useRouter();
-  return useCallback((imageId: string) => {
+  return useCallback((quoteId: string) => {
     if (active) clear(active);
-    if (!imageId) { feedback("This quote is no longer available in the note."); return; }
+    if (!quoteId) { feedback("This quote is no longer available in the note."); return; }
     const destination = router.buildLocation({ to: "/$moduleId", params: { moduleId } });
     const isDestination = (pathname: string) => pathname.replace(/\/$/, "") === destination.pathname.replace(/\/$/, "");
     const token = crypto.randomUUID();
-    const target: Target = { moduleId, imageId, cancel: () => {} };
+    const target: Target = { moduleId, quoteId, cancel: () => {} };
     active = target;
     const sameNote = isDestination(router.state.location.pathname);
     // Tag only this history entry: a blocked promise may resolve on a later,
@@ -81,7 +81,10 @@ export function PdfQuoteNavigation({ moduleId }: { moduleId: string }) {
     // Resolve at execution, after loading and restoring the note's saved view.
     let position: number | undefined;
     editor.state.doc.descendants((node, pos) => {
-      if (position === undefined && (node.type.name === "image" || node.type.name === "inlineImage") && node.attrs.imageId === target.imageId) position = pos;
+      if (position !== undefined) return false;
+      const quoteId = node.type.name === "pdfTextQuote" ? node.attrs.quoteId
+        : node.type.name === "image" || node.type.name === "inlineImage" ? node.attrs.imageId : null;
+      if (quoteId === target.quoteId) position = pos;
     });
     clear(target);
     if (position === undefined) { feedback("This quote is no longer available in the note."); return; }

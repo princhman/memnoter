@@ -32,7 +32,7 @@ test('quote markers follow editor undo, persisted reload, pending saves and norm
     await page.goto(url);
     await page.waitForFunction(() => window.regionsEditor && !window.regionsTest.queryClient.isFetching());
     const source = { documentId: 'pdf-one', page: 1, name: 'Lecture.pdf', region: { x: .25, y: .2, width: .5, height: .4 } };
-    let expected = [[1, [{ ...source.region, uses: [{ imageId: "image-one", label: "Lecture notes, quote 1" }] }]]];
+    let expected = [[1, [{ ...source.region, uses: [{ quoteId: "image-one", label: "Lecture notes, quote 1" }] }]]];
     const waitRegions = value => page.waitForFunction(value => document.querySelector('output')?.textContent === JSON.stringify(value), value);
     await page.evaluate(source => window.regionsEditor.commands.insertContent([{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Lecture notes' }] }, { type: 'image', attrs: { fileId: 'quote-one', imageId: 'image-one', pdfSource: source } }]), source);
     await waitRegions(expected);
@@ -43,9 +43,9 @@ test('quote markers follow editor undo, persisted reload, pending saves and norm
         { type: 'image', attrs: { pdfSource: { ...source, documentId: 'other' } } },
         { type: 'image', attrs: { pdfSource: { ...source, region: { ...source.region, x: 2 } } } },
       ]);
-      window.regionsTest.pendingPdfQuote.setState(() => ({ moduleId: 'regions-module', file: new File([], 'quote.png'), source, section: false, status: 'draft' }));
+      window.regionsTest.pendingPdfQuote.setState(() => ({ id: crypto.randomUUID(), kind: 'image', moduleId: 'regions-module', file: new File([], 'quote.png'), source, status: 'draft' }));
     }, source);
-    expected = [[1, [{ ...source.region, uses: [{ imageId: "image-one", label: "Lecture notes, quote 1" }, { imageId: "image-two", label: "Lecture notes, quote 2" }] }]]];
+    expected = [[1, [{ ...source.region, uses: [{ quoteId: "image-one", label: "Lecture notes, quote 1" }, { quoteId: "image-two", label: "Lecture notes, quote 2" }] }]]];
     await waitRegions(expected);
     await page.evaluate(() => { window.firstPageRegions = window.regionsSnapshot.get(1); });
     // A draft on another page is retained through error/retry state and removed on discard.

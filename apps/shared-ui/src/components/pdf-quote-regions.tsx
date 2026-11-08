@@ -8,7 +8,7 @@ const regionKey = (region: PdfQuoteRegion) => `${region.x},${region.y},${region.
 /** Visuals pass through to PDF text; only the small corner controls take pointer input. */
 export const PdfQuoteRegions = memo(function PdfQuoteRegions({ regions, onNavigate, disabled = false }: {
   regions: readonly PdfQuoteRegion[] | undefined;
-  onNavigate?: (imageId: string) => void;
+  onNavigate?: (quoteId: string) => void;
   disabled?: boolean;
 }) {
   const overlay = useRef<HTMLDivElement>(null);
@@ -18,7 +18,7 @@ export const PdfQuoteRegions = memo(function PdfQuoteRegions({ regions, onNaviga
     if (disabled || !onNavigate) return;
     const [first] = region.uses;
     if (region.uses.length > 1) { navigating.current = false; setOpen(regionKey(region)); }
-    else if (first) onNavigate(first.imageId);
+    else if (first) onNavigate(first.quoteId);
   }, [disabled, onNavigate]);
   useEffect(() => {
     if (disabled) setOpen(null);
@@ -67,7 +67,7 @@ export const PdfQuoteRegions = memo(function PdfQuoteRegions({ regions, onNaviga
           : <DropdownMenu open={open === key} onOpenChange={value => { if (value) navigating.current = false; setOpen(value ? key : null); }}>
             <DropdownMenuTrigger className={control} aria-label={label} title={label}><ArrowUpRight aria-hidden="true" className="size-4" /></DropdownMenuTrigger>
             <DropdownMenuContent className="max-w-72" finalFocus={() => !navigating.current}>
-              {region.uses.map(use => <DropdownMenuItem key={use.imageId} onClick={() => { navigating.current = true; setOpen(null); onNavigate(use.imageId); }}>{use.label}</DropdownMenuItem>)}
+              {region.uses.map(use => <DropdownMenuItem key={use.quoteId} onClick={() => { navigating.current = true; setOpen(null); onNavigate(use.quoteId); }}>{use.label}</DropdownMenuItem>)}
             </DropdownMenuContent>
           </DropdownMenu>)}
       </div>;

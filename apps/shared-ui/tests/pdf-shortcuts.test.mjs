@@ -48,7 +48,7 @@ test('PDF shortcuts scope to the note and reader, cancel drags, preserve views, 
     const crop = await region.boundingBox();
     await page.mouse.move(crop.x + 30, crop.y + 30); await page.mouse.down(); await page.mouse.move(crop.x + 180, crop.y + 180); await page.mouse.up();
     await page.getByRole('button', { name: 'Insert at cursor', exact: true }).waitFor();
-    assert.deepEqual(JSON.parse(await page.locator('#pending').textContent()), { section: false, status: 'draft' });
+    assert.deepEqual(JSON.parse(await page.locator('#pending').textContent()), { kind: 'image', status: 'draft' });
     await page.keyboard.press('Control+Shift+x'); assert.equal(await select.getAttribute('aria-pressed'), 'false');
     await page.keyboard.press('Control+Enter'); await editor.waitFor();
     await page.getByRole('button', { name: 'Clear quote', exact: true }).click();

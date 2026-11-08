@@ -166,7 +166,7 @@ test('source navigation and section picker preserve destinations and retained dr
     for (const [section, shortcut] of [[true, 'Meta+Enter'], [false, 'Control+Enter']]) {
       await page.evaluate(section => {
         window.pickerTest.draft();
-        window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, section, source: { ...current.source, name: 'An extremely long lecture filename that must truncate.pdf' } }));
+        window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, source: { ...current.source, name: 'An extremely long lecture filename that must truncate.pdf' } }));
         window.pickerTest.editor.commands.setTextSelection(section ? 3 : 5);
       }, section);
       await assertCompactStrip();

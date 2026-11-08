@@ -39,8 +39,8 @@ function Picker() {
     if (!editor) return;
     const calls: unknown[] = [];
     const control = { rejectAdmission: false, finish: () => {} };
-    setActiveEditor({ editor, moduleId, isReady: true, insertQuote: async (_editor, _file, _source, target) => { if (control.rejectAdmission) throw new Error("Saving is temporarily unavailable"); calls.push(target); await new Promise<void>(resolve => { control.finish = resolve; }); } });
-    Object.assign(window, { pickerTest: { editor, calls, control, unrelatedFailure: () => imageOperation(async () => { throw new Error("Unrelated image failed"); }).catch(() => {}), setModuleId, pendingPdfQuote, draft: () => pendingPdfQuote.setState(() => ({ moduleId: "module-one", file: new File(["png"], "quote.png"), source, section: true, status: "draft" })) } });
+    setActiveEditor({ editor, moduleId, isReady: true, insertTextQuote: () => {}, insertQuote: async (_editor, _draft, target) => { if (control.rejectAdmission) throw new Error("Saving is temporarily unavailable"); calls.push(target); await new Promise<void>(resolve => { control.finish = resolve; }); } });
+    Object.assign(window, { pickerTest: { editor, calls, control, unrelatedFailure: () => imageOperation(async () => { throw new Error("Unrelated image failed"); }).catch(() => {}), setModuleId, pendingPdfQuote, draft: () => pendingPdfQuote.setState(() => ({ id: crypto.randomUUID(), kind: "image", moduleId: "module-one", file: new File(["png"], "quote.png"), source, status: "draft" })) } });
     return () => setActiveEditor(null);
   }, [editor, moduleId, setActiveEditor]);
   return <><header className="h-12 border-b">Note <input aria-label="Other field" className="w-24" /></header><main className="relative h-[600px] min-w-0"><PdfQuoteControls moduleId="module-one" /><EditorContent editor={editor} /></main></>;

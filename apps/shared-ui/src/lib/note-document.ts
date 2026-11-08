@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { Editor } from "@tiptap/core";
 import * as Y from "yjs";
-import { ySyncPluginKey } from "@tiptap/y-tiptap";
+import { ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "./backend";
 import { applyPendingSaves, saveQueue } from "./saves";
@@ -9,8 +9,8 @@ import { restoreView } from "./view-persistence";
 import { imageFilesOperation, assertWritable, isWriteAdmitted, MUTATIONS, type WritePermit } from "./write-lifecycle";
 import { applySavedContent, contentQueryOptions, acknowledgeCompaction, contentKey, LOAD_ORIGIN, patchContent, type ContentUpdate, loadContent, type FileType, type GetContentResponse } from "./content";
 
-import { parsePdfSource, quoteTarget, type PdfSource } from "./pdf-quote";
-import { pendingPdfQuote } from "./pending-pdf-quote";
+import { parsePdfSource, quoteTarget } from "./pdf-quote";
+import { pendingPdfQuote, type PdfTextQuotePart, type QuoteDraft } from "./pending-pdf-quote";
 
 const COMPACTION_THRESHOLD = 300;
 const COMPACTION_IDLE_MS = 3_000;
@@ -177,8 +177,9 @@ export function useNoteDocument(moduleId: string) {
       .catch(error => console.error("Failed to insert image:", error));
   }
 
-  const insertQuote = useCallback((currentEditor: Editor, file: File, source: PdfSource,
+  const insertQuote = useCallback((currentEditor: Editor, draft: Extract<QuoteDraft, { kind: "image" }>,
     target: { position: number } | { headingId: string | null }, onInserted: () => void, onDisposed: () => void) => {
+    const { file, source } = draft;
     const ownsEditor = () => persistenceTarget.current === yDoc &&
       editorRef.current === currentEditor && !currentEditor.isDestroyed &&
       ySyncPluginKey.getState(currentEditor.state)?.doc === yDoc;
@@ -193,9 +194,9 @@ export function useNoteDocument(moduleId: string) {
     const destination = quoteTarget(currentEditor, target);
     let inserted = false;
     const setStatus = (status: "saving" | "error", error?: unknown) => {
-      pendingPdfQuote.setState(draft => draft?.file === file && draft.moduleId === moduleId
-        ? { ...draft, status, error: error === undefined ? undefined : error instanceof Error ? error.message : String(error) }
-        : draft);
+      pendingPdfQuote.setState(current => current?.id === draft.id && current.moduleId === moduleId
+        ? { ...current, status, error: error === undefined ? undefined : error instanceof Error ? error.message : String(error) }
+        : current);
     };
     const attempt = <T,>(action: () => T): T => {
       try { return action(); }
@@ -230,6 +231,41 @@ export function useNoteDocument(moduleId: string) {
       },
     });
   }, [yDoc, moduleId, isSuccess, uploadFileMutation.mutateAsync]);
+
+  const insertTextQuote = useCallback((currentEditor: Editor, parts: readonly PdfTextQuotePart[],
+    target: { position: number } | { headingId: string | null }) => {
+    if (!isWriteAdmitted() || !isSuccess || persistenceTarget.current !== yDoc ||
+      editorRef.current !== currentEditor || currentEditor.isDestroyed || !currentEditor.isEditable ||
+      ySyncPluginKey.getState(currentEditor.state)?.doc !== yDoc) {
+      throw new Error("The destination note is not ready for editing. Try again when saving is available.");
+    }
+    if ("position" in target && (!Number.isSafeInteger(target.position) || target.position < 0 || target.position > currentEditor.state.doc.content.size)) {
+      throw new Error("The quote insertion point is invalid. Choose another position.");
+    }
+    if (!parts.length) throw new Error("Select text in the PDF first.");
+    const content = parts.map(part => {
+      const source = parsePdfSource(part.source);
+      if (!source || typeof part.text !== "string" || !part.text.trim()) throw new Error("The quote is invalid. Select the text again.");
+      return {
+        type: "pdfTextQuote",
+        attrs: { quoteId: crypto.randomUUID(), pdfSource: source },
+        content: part.text.split(/\r?\n/).map(text => ({
+          type: "paragraph", content: text ? [{ type: "text", text }] : [],
+        })),
+      };
+    });
+    const destination = quoteTarget(currentEditor, target);
+    try {
+      assertWritable();
+      const position = destination.resolve();
+      const undoManager = yUndoPluginKey.getState(currentEditor.state)?.undoManager;
+      undoManager?.stopCapturing();
+      if (!currentEditor.commands.insertContentAt(position, content)) throw new Error("Could not insert the quote. Try again.");
+      undoManager?.stopCapturing();
+    } finally {
+      destination.dispose();
+    }
+  }, [yDoc, isSuccess]);
 
   // compaction listener
   useEffect(() => {
@@ -309,5 +345,5 @@ export function useNoteDocument(moduleId: string) {
     [filesById, moduleId, uploadFileMutation.mutateAsync],
   );
 
-  return { yDoc, editorRef, isSuccess, filesContext, insertImages, insertQuote };
+  return { yDoc, editorRef, isSuccess, filesContext, insertImages, insertQuote, insertTextQuote };
 }

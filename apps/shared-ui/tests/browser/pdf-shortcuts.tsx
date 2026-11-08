@@ -24,7 +24,7 @@ function Shell() {
     <input aria-label="Unrelated input" /><div role="dialog"><button>Dialog action</button></div><div role="menu"><button>Menu action</button></div>
     <header><FilesPanelButton /><div id="pdf-toolbar" /></header>
     <output id="commands" hidden>{JSON.stringify(commands.map(({ id, shortcut }) => ({ id, shortcut })))}</output>
-    <output id="pending" hidden>{pending ? JSON.stringify({ section: pending.section, status: pending.status }) : "none"}</output>
+    <output id="pending" hidden>{pending ? JSON.stringify({ kind: pending.kind, status: pending.status }) : "none"}</output>
     <button onClick={() => pendingPdfQuote.setState(() => null)}>Clear quote</button><Outlet />
   </ActiveEditorProvider>;
 }

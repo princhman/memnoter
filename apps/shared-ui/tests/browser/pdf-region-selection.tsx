@@ -22,7 +22,7 @@ function Fixture() {
   const [crop, setCrop] = useState<object | null>(null);
   useEffect(() => {
     setCrop(null);
-    if (!pending) return;
+    if (!pending || pending.kind !== "image") return;
     void createImageBitmap(pending.file).then(bitmap => {
       const canvas = document.createElement("canvas"); canvas.width = bitmap.width; canvas.height = bitmap.height;
       const context = canvas.getContext("2d")!; context.drawImage(bitmap, 0, 0);
@@ -36,9 +36,9 @@ function Fixture() {
     <button onClick={() => setWidth(value => value === 200 ? 300 : 200)}>Resize page</button>
     <button onClick={() => setGeneration(value => value + 1)}>Replace page</button>
     <button onClick={() => pendingPdfQuote.setState(() => null)}>Clear quote</button>
-    <button onClick={() => pendingPdfQuote.setState(() => ({ moduleId: "other", file: new File(["existing"], "existing.png"), source: { documentId: "other", name: "Existing.pdf", page: 1, region: { x: 0, y: 0, width: 1, height: 1 } }, section: true, status: "draft" }))}>Stage other quote</button>
+    <button onClick={() => pendingPdfQuote.setState(() => ({ id: crypto.randomUUID(), kind: "image", moduleId: "other", file: new File(["existing"], "existing.png"), source: { documentId: "other", name: "Existing.pdf", page: 1, region: { x: 0, y: 0, width: 1, height: 1 } }, status: "draft" }))}>Stage other quote</button>
     <div hidden><output id="regions">{JSON.stringify(regions)}</output><output id="cancelled">{cancelled}</output>
-    <output id="crop">{JSON.stringify(crop)}</output><output id="pending">{pending?.source.name ?? "none"}</output></div>
+    <output id="crop">{JSON.stringify(crop)}</output><output id="pending">{pending?.kind === "image" ? pending.source.name : pending ? "text" : "none"}</output></div>
     <div id="selection-sandbox" style={{ position: "relative", width, height: 100, margin: 20 }}>
       {mounted && <PdfRegionSelection key={generation} onSelect={region => setRegions(previous => [...previous, region])} onCancel={() => setCancelled(value => value + 1)} />}
     </div>

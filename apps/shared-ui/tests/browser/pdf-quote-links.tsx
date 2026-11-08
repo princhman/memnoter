@@ -27,7 +27,7 @@ function Fixture() {
   return <><output aria-label="Selected quote">{selected}</output>
     <button onClick={() => { editor?.commands.setTextSelection(0); setSelected(""); window.getSelection()?.removeAllRanges(); }}>Reset target</button>
     <button onClick={() => editor?.commands.insertContentAt(editor.state.doc.content.size, [heading("Detailed analysis"), image("quote-second")])}>Add another use</button>
-    <button onClick={() => pendingPdfQuote.setState(() => ({ moduleId: "links-module", source: { ...source, region: { x: .1, y: .6, width: .8, height: .2 } }, file: new File([], "draft.png"), status: "draft", section: false }))}>Stage pending</button>
+    <button onClick={() => pendingPdfQuote.setState(() => ({ id: crypto.randomUUID(), kind: "image", moduleId: "links-module", source: { ...source, region: { x: .1, y: .6, width: .8, height: .2 } }, file: new File([], "draft.png"), status: "draft" }))}>Stage pending</button>
     <div id="viewer" style={{ height: 550 }}><PdfViewer doc={{ id: "links-pdf", moduleId: "links-module", moduleName: "Links", name: "Links.pdf", size: 1000, pageCount: 1, available: true, createdAt: 0 }} /></div>
     <PdfQuoteNavigation moduleId="links-module" />
   </>;
