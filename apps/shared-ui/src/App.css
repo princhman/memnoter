@@ -1579,5 +1579,11 @@ body {
     }
 }
 
-.pdf-page { color-scheme: light; }
+/* Pages have explicit dimensions; isolate their text layers during sidebar
+   resizing and let the browser skip off-screen content. */
+.pdf-page {
+    color-scheme: light;
+    contain: strict;
+    content-visibility: auto;
+}
 .pdf-page .textLayer { user-select: text; }
