@@ -55,12 +55,11 @@ struct SyncKeychain {
     }
 }
 
-/// Debouncing never owns a transfer. Wakes during a pass coalesce into one
+/// Wakes during a pass coalesce into one
 /// follow-up pass; only lifecycle cancellation interrupts active work.
 @MainActor final class SyncTransferWorker {
     private let pass: @MainActor () async throws -> Void
     private let onError: @MainActor (Error) -> Void
-    private var debounce: Task<Void, Never>?
     private var worker: Task<Void, Never>?
     private var again = false
     private var generation = UUID()
@@ -71,25 +70,18 @@ struct SyncKeychain {
     }
     func nudge() {
         if worker != nil { again = true; return }
-        debounce?.cancel()
-        debounce = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
-            guard let self else { return }
-            debounce = nil
-            let owner = generation
-            worker = Task {
-                repeat {
-                    again = false
-                    do { try await pass() }
-                    catch { if !Task.isCancelled, owner == generation { onError(error) } }
-                } while again && !Task.isCancelled && owner == generation
-                if owner == generation { worker = nil }
-            }
+        let owner = generation
+        worker = Task {
+            repeat {
+                again = false
+                do { try await pass() }
+                catch { if !Task.isCancelled, owner == generation { onError(error) } }
+            } while again && !Task.isCancelled && owner == generation
+            if owner == generation { worker = nil }
         }
     }
     func cancel() {
         generation = UUID()
-        debounce?.cancel(); debounce = nil
         worker?.cancel(); worker = nil; again = false
     }
 }
@@ -108,6 +100,8 @@ struct SyncKeychain {
     var onFile: ((String, String) async throws -> Void)?
     private var connection: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
+    private var fileRetryTask: Task<Void, Never>?
+    private var pushWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     @ObservationIgnored private var transfers: SyncTransferWorker!
     @ObservationIgnored private var fileTransfers: SyncFileTransfers!
     private var socket: URLSessionWebSocketTask?
@@ -124,7 +118,8 @@ struct SyncKeychain {
             guard let self else { return }
             try await push()
             guard ready, let account else { return }
-            do { try await fileTransfers.run(account: account, owner: generation) }
+            do { try await fileTransfers.run(account: account, owner: generation)
+                scheduleFileRetry() }
             catch let failure as SyncHTTPFailure where failure.status == 401 {
                 fatal = true; self.error = failure.localizedDescription; stop(); status = "Sync stopped."
                 throw failure
@@ -149,17 +144,20 @@ struct SyncKeychain {
         if body != nil { req.setValue(binary ? "application/octet-stream" : "application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await session.data(for: req)
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-            let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+            var message: String?
+            do { message = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String }
+            catch { NSLog("Sync HTTP error response was not JSON: %@", error.localizedDescription) }
             throw SyncHTTPFailure(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: message ?? "Sync server refused the request. Sign in again if your session expired.")
         }
         return data
     }
     func api(_ server: String, _ path: String, token: String? = nil, method: String = "GET", body: [String: Any]? = nil) async throws -> [String: Any] {
         let data = try await request(server: server, path: path, token: token, method: method, body: try body.map { try JSONSerialization.data(withJSONObject: $0) })
-        return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw SyncFailure(message: "Invalid sync server response") }
+        return result
     }
     private func identity(_ account: SyncAccount) throws -> String {
-        String(decoding: try JSONSerialization.data(withJSONObject: ["server": SyncConfiguration.server(account.server), "userId": account.userId], options: .sortedKeys), as: UTF8.self)
+        String(decoding: try JSONSerialization.data(withJSONObject: ["server": SyncConfiguration.server(account.server), "userId": account.userId], options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
     }
     func start() async {
         do {
@@ -210,7 +208,8 @@ struct SyncKeychain {
         _ = try await command("sync_disable"); pending = 0; lastSynced = nil; status = "Not running."
     }
     func stop() {
-        generation = UUID(); connection?.cancel(); ticker?.cancel(); transfers.cancel()
+        generation = UUID(); connection?.cancel(); ticker?.cancel(); fileRetryTask?.cancel(); transfers.cancel()
+        finishPushWaiters(false)
         connection = nil; ticker = nil; socket?.cancel(with: .goingAway, reason: nil); socket = nil
         ready = false; engine = nil; fileTransfers.reset()
     }
@@ -227,7 +226,9 @@ struct SyncKeychain {
                 catch {
                     guard !Task.isCancelled, owner == generation else { return }
                     if socket?.closeCode.rawValue == SyncConfiguration.integer("closeSignedOut") {
-                        try? await signOut(); self.error = "Signed out because the cloud data was deleted."; return
+                        do { try await signOut(); self.error = "Signed out because the cloud data was deleted." }
+                        catch { self.error = "Cloud data was deleted, but local sign-out failed: \(error.localizedDescription)" }
+                        return
                     }
                     if !fatal {
                         do {
@@ -235,7 +236,7 @@ struct SyncKeychain {
                             _ = try await api(current.server, SyncConfiguration.path("key"), token: current.token)
                         }
                         catch let auth as SyncHTTPFailure where auth.status == 401 { fatal = true }
-                        catch { }
+                        catch { NSLog("Sync authentication probe failed: %@", error.localizedDescription) }
                     }
                     if fatal || socket?.closeCode == .policyViolation {
                         stop(); self.error = error.localizedDescription; status = "Sync stopped."; return
@@ -243,21 +244,24 @@ struct SyncKeychain {
                     self.error = error.localizedDescription
                     status = "Offline. Changes are kept on this device and sync when you're back online."
                     ready = false; socket?.cancel(with: .goingAway, reason: nil)
-                    let actions = try? drive("closed", ["code": socket?.closeCode.rawValue ?? 1006, "reason": error.localizedDescription])
-                    let delay = actions?.first?["delay_ms"] as? Int ?? 1000
-                    try? await Task.sleep(for: .milliseconds(delay))
+                    do {
+                        let actions = try drive("closed", ["code": socket?.closeCode.rawValue ?? 1006, "reason": error.localizedDescription])
+                        if let delay = actions.first?["delay_ms"] as? Int {
+                            try await Task.sleep(for: .milliseconds(delay))
+                        } else { try await execute(actions, owner: owner) }
+                    } catch is CancellationError { return }
+                    catch { self.error = error.localizedDescription; stop(); return }
                 }
             }
         }
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(SyncConfiguration.integer("PING_EVERY_MS")))
+                do { try await Task.sleep(for: .milliseconds(SyncConfiguration.integer("PING_EVERY_MS"))) } catch { return }
                 guard !Task.isCancelled, let self else { return }
                 if socket != nil {
                     do { try await execute(drive("tick", [:]), owner: generation) }
-                    catch { socket?.cancel(with: .goingAway, reason: nil) }
+                    catch { self.error = error.localizedDescription; socket?.cancel(with: .goingAway, reason: nil) }
                 }
-                nudge()
             }
         }
     }
@@ -270,11 +274,45 @@ struct SyncKeychain {
         transfers.nudge()
     }
 
+    private func scheduleFileRetry() {
+        fileRetryTask?.cancel()
+        guard let delay = fileTransfers.nextDelay else { return }
+        fileRetryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(Int64(delay))) } catch { return }
+            self?.nudge()
+        }
+    }
+    private func finishPushWaiters(_ acknowledged: Bool) {
+        let waiters = pushWaiters.values
+        pushWaiters.removeAll()
+        for waiter in waiters { waiter.resume(returning: acknowledged) }
+    }
+    private func checkPushWaiters() async throws {
+        let state = try await command("sync_status") as? [String: Any] ?? [:]
+        pending = state["pending"] as? Int ?? 0
+        if pending == 0 { finishPushWaiters(true) }
+    }
+    func pushAndWait() async throws -> Bool {
+        guard account != nil else { return true }
+        try await checkPushWaiters()
+        if pending == 0 { return true }
+        let id = UUID()
+        return await withCheckedContinuation { continuation in
+            pushWaiters[id] = continuation
+            nudge()
+            Task {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                pushWaiters.removeValue(forKey: id)?.resume(returning: false)
+            }
+        }
+    }
+
     private func drive(_ event: String, _ payload: Any) throws -> [[String: Any]] {
-        guard let engine else { return [] }
+        guard let engine else { throw SyncFailure(message: "Sync session is unavailable") }
         let data = try JSONSerialization.data(withJSONObject: payload, options: .fragmentsAllowed)
         let result = try engine.drive(event: event, payload: String(decoding: data, as: UTF8.self))
-        return try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [[String: Any]] ?? []
+        guard let actions = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [[String: Any]] else { throw SyncFailure(message: "Invalid core sync actions") }
+        return actions
     }
     private func execute(_ actions: [[String: Any]], owner: UUID, frame: String? = nil) async throws {
         for action in actions {
@@ -286,7 +324,9 @@ struct SyncKeychain {
             case "apply":
                 let result = try await command("sync_apply", ["entries": action["entries"] ?? [], "cursor": action["cursor"] ?? 0, "generation": databaseGeneration])
                 try await deliver(result)
-            case "ack": _ = try await command("sync_ack", ["maxId": action["max_id"] ?? 0, "generation": databaseGeneration])
+            case "ack":
+                _ = try await command("sync_ack", ["maxId": action["max_id"] ?? 0, "generation": databaseGeneration])
+                try await checkPushWaiters()
             case "cursor": _ = try await command("sync_set_cursor", ["cursor": action["cursor"] ?? 0, "generation": databaseGeneration])
             case "upload":
                 guard let account, let id = action["id"] as? String, let bytes = action["bytes"] as? [UInt8] else { throw SyncFailure(message: "Invalid upload") }
@@ -312,7 +352,7 @@ struct SyncKeychain {
         }
     }
     private func connect(_ owner: UUID) async throws {
-        guard let account, var url = URLComponents(string: SyncConfiguration.server(account.server) + SyncConfiguration.path("sync")) else { return }
+        guard let account, var url = URLComponents(string: SyncConfiguration.server(account.server) + SyncConfiguration.path("sync")) else { throw SyncFailure(message: "Invalid sync connection URL") }
         url.scheme = url.scheme == "https" ? "wss" : "ws"
         let ws = session.webSocketTask(with: url.url!, protocols: [SyncConfiguration.text("protocol"), SyncConfiguration.text("authPrefix") + account.token])
         ws.maximumMessageSize = SyncConfiguration.integer("MAX_FRAME_BYTES"); socket = ws; ws.resume()
@@ -332,6 +372,8 @@ struct SyncKeychain {
     private func deliver(_ result: Any) async throws {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: result), as: UTF8.self)
         NotificationCenter.default.post(name: .syncDidApply, object: SyncApplyResult(json: json))
+        // Remote changes can announce images this device has yet to download.
+        if (result as? [String: Any])?["filesChanged"] as? Bool == true { transfers.nudge() }
     }
     private func object(_ kind: String, _ id: String, account: SyncAccount, put: Data? = nil) async throws -> Data {
         return try await request(server: account.server, path: SyncConfiguration.path(kind) + id, token: account.token, method: put == nil ? "GET" : "PUT", body: put, binary: true)
@@ -367,7 +409,9 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
     private let isCurrent: @MainActor (UUID) -> Bool
     private let onFile: @MainActor (String, String) async throws -> Void
     private let onError: @MainActor (Error) -> Void
-    private var retryAfter: [String: Date] = [:]
+    private var policy = SyncFilePolicy()
+    private var now: UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
+    var nextDelay: UInt64? { policy.nextDelay(nowMs: now) }
     init(command: @escaping @MainActor (String, [String: Any]) async throws -> Any,
          object: @escaping @MainActor (String, SyncAccount, Data?) async throws -> Data,
          isCurrent: @escaping @MainActor (UUID) -> Bool,
@@ -376,16 +420,16 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         self.command = command; self.object = object; self.isCurrent = isCurrent
         self.onFile = onFile; self.onError = onError
     }
-    func reset() { retryAfter.removeAll() }
+    func reset() { policy = SyncFilePolicy() }
     private func attempt(_ id: String, transfer: () async throws -> Void) async throws {
-        if let deadline = retryAfter[id], deadline > Date() { return }
+        guard policy.ready(id: id, nowMs: now) else { return }
         do {
             try await transfer()
-            retryAfter[id] = nil
+            policy.completed(id: id)
         } catch {
             try Task.checkCancellation()
             if let failure = error as? SyncHTTPFailure, failure.status == 401 { throw failure }
-            retryAfter[id] = Date().addingTimeInterval(30)
+            policy.failed(id: id, nowMs: now)
             // A 404 means the announcing device has not uploaded the image yet.
             if (error as? SyncHTTPFailure)?.status != 404 { onError(error) }
         }
@@ -399,19 +443,20 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         let pending = Set(uploads.map { "upload:" + $0 } + downloads.compactMap { file in
             file["fileId"].map { "download:" + $0 }
         })
-        retryAfter = retryAfter.filter { pending.contains($0.key) }
+        policy.retain(pending: Array(pending))
         for id in uploads {
             guard isCurrent(owner) && !Task.isCancelled else { return }
             try await attempt("upload:" + id) {
                 let file = try await command("read_file", ["moduleId": "", "fileId": id]) as? [String: Any] ?? [:]
-                guard let bytes = file["bytes"] as? [UInt8] else { return }
+                guard let bytes = file["bytes"] as? [UInt8] else { throw SyncFailure(message: "Core returned no bytes for image \(id)") }
                 _ = try await object(id, account, Data(nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: bytes, decrypt: false)))
                 guard isCurrent(owner) && !Task.isCancelled else { return }
                 _ = try await command("sync_upload_done", ["fileId": id, "generation": databaseGeneration])
             }
         }
         for file in downloads {
-            guard isCurrent(owner) && !Task.isCancelled, let id = file["fileId"], let module = file["moduleId"] else { return }
+            guard isCurrent(owner) && !Task.isCancelled else { return }
+            guard let id = file["fileId"], let module = file["moduleId"] else { throw SyncFailure(message: "Invalid missing-image record from core") }
             try await attempt("download:" + id) {
                 let blob = try await object(id, account, nil)
                 let bytes = try nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: Array(blob), decrypt: true)

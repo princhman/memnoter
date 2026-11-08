@@ -9,14 +9,12 @@ export type SearchText = { body: string; math: string };
 // Node names whose text is LaTeX source. It goes to its own column, so a
 // formula's commands do not crowd out prose in search snippets.
 const MATH_NODES = new Set(["inlineMath", "mathBlock"]);
-// Elements inside a line; everything else starts a new line.
 const INLINE_NODES = new Set(["inlineMath", "hardBreak", "inlineImage"]);
 
 // The two document shapes the extractor reads: a ProseMirror node from a live
 // editor, and the Yjs XML tree that Collaboration stores. Both are walked by
 // the same code, so the editor and backfill produce identical text.
 type Tree<N> = {
-  // null for a text run
   name(node: N): string | null;
   text(node: N): string;
   children(node: N): N[];
@@ -86,7 +84,6 @@ function collectText<N>(tree: Tree<N>, node: N): string {
     .join("");
 }
 
-// One line per block, single spaces, no blank lines.
 function tidy(text: string) {
   return text
     .split("\n")
@@ -100,6 +97,5 @@ export function extractFromDoc(doc: Node): SearchText {
 }
 
 export function extractFromYDoc(doc: Y.Doc): SearchText {
-  // Collaboration's default field.
   return extract<YNode>(yTree, doc.getXmlFragment("default"));
 }

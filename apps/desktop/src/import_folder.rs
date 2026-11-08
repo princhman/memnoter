@@ -18,8 +18,16 @@ pub(crate) struct Folder {
     name: String,
     entries: Vec<Entry>,
 }
-fn read_folder(root: &Path) -> CommandResult<Folder> {
-    fn walk(root: &Path, dir: &Path, entries: &mut Vec<Entry>) -> CommandResult<()> {
+const IMAGE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "gif"];
+
+/// `images_only` lists just image files and reads no note text.
+fn read_folder(root: &Path, images_only: bool) -> CommandResult<Folder> {
+    fn walk(
+        root: &Path,
+        dir: &Path,
+        images_only: bool,
+        entries: &mut Vec<Entry>,
+    ) -> CommandResult<()> {
         for item in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
             let item = item.map_err(|e| e.to_string())?;
             if item.file_name().to_string_lossy().starts_with('.') {
@@ -32,13 +40,16 @@ fn read_folder(root: &Path) -> CommandResult<Folder> {
             }
             let path = item.path();
             if kind.is_dir() {
-                walk(root, &path, entries)?;
+                walk(root, &path, images_only, entries)?;
             } else if kind.is_file() {
                 let ext = path
                     .extension()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_lowercase();
+                if images_only && !IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+                    continue;
+                }
                 entries.push(Entry {
                     path: path
                         .strip_prefix(root)
@@ -58,7 +69,7 @@ fn read_folder(root: &Path) -> CommandResult<Folder> {
         Ok(())
     }
     let mut entries = Vec::new();
-    walk(root, root, &mut entries)?;
+    walk(root, root, images_only, &mut entries)?;
     Ok(Folder {
         name: root
             .file_name()
@@ -71,12 +82,22 @@ fn read_folder(root: &Path) -> CommandResult<Folder> {
 
 #[tauri::command(async)]
 pub(crate) fn pick_import_folder() -> CommandResult<Option<Folder>> {
+    pick("Import Obsidian folder", false)
+}
+
+/// A folder to resolve missing images from; lists only its images.
+#[tauri::command(async)]
+pub(crate) fn pick_import_image_folder() -> CommandResult<Option<Folder>> {
+    pick("Choose image folder", true)
+}
+
+fn pick(title: &str, images_only: bool) -> CommandResult<Option<Folder>> {
     // Native picker and filesystem reads run outside the webview's UI thread.
     rfd::FileDialog::new()
-        .set_title("Import Obsidian folder")
+        .set_title(title)
         .pick_folder()
         .map(|path| {
-            let mut folder = read_folder(&path)?;
+            let mut folder = read_folder(&path, images_only)?;
             let mut roots = ROOTS
                 .get_or_init(Default::default)
                 .lock()
@@ -113,7 +134,7 @@ pub(crate) fn read_import_images(images: Vec<ImageRequest>) -> CommandResult<Vec
                 .canonicalize()
                 .map_err(|e| e.to_string())?;
             if !path.starts_with(root)
-                || !["png", "jpg", "jpeg", "webp", "gif"].contains(
+                || !IMAGE_EXTENSIONS.contains(
                     &path
                         .extension()
                         .unwrap_or_default()
@@ -134,18 +155,30 @@ mod tests {
     use super::*;
     #[test]
     fn lazy_image_reads_are_scoped_to_the_selected_root() {
-        let dir = std::env::temp_dir().join(format!("memnoter-import-scoped-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("memnoter-import-scoped-{}", std::process::id()));
         let root = dir.join("vault");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("used.png"), [1, 2]).unwrap();
         std::fs::write(dir.join("outside.png"), [3]).unwrap();
-        let folder = read_folder(&root).unwrap();
+        let folder = read_folder(&root, false).unwrap();
         assert!(folder.entries.iter().all(|entry| entry.bytes.is_none()));
-        ROOTS.get_or_init(Default::default).lock().unwrap().insert("test-root".into(), root.canonicalize().unwrap());
-        let request = |path: &str| ImageRequest { source_id: "test-root".into(), path: path.into() };
-        assert_eq!(read_import_images(vec![request("used.png")]).unwrap(), vec![vec![1, 2]]);
+        ROOTS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert("test-root".into(), root.canonicalize().unwrap());
+        let request = |path: &str| ImageRequest {
+            source_id: "test-root".into(),
+            path: path.into(),
+        };
+        assert_eq!(
+            read_import_images(vec![request("used.png")]).unwrap(),
+            vec![vec![1, 2]]
+        );
         assert!(read_import_images(vec![request("../outside.png")]).is_err());
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             std::os::unix::fs::symlink(dir.join("outside.png"), root.join("escape.png")).unwrap();
             assert!(read_import_images(vec![request("escape.png")]).is_err());
         }
@@ -161,7 +194,17 @@ mod tests {
         std::fs::write(dir.join("a.png"), [1, 2]).unwrap();
         std::fs::write(dir.join("a.pdf"), [3]).unwrap();
         std::fs::write(dir.join(".obsidian/config"), "private").unwrap();
-        let folder = read_folder(&dir).unwrap();
+        let images = read_folder(&dir, true).unwrap();
+        assert_eq!(
+            images
+                .entries
+                .iter()
+                .map(|e| e.path.as_str())
+                .collect::<Vec<_>>(),
+            ["a.png"]
+        );
+        assert!(images.entries.iter().all(|e| e.text.is_none()));
+        let folder = read_folder(&dir, false).unwrap();
         assert_eq!(folder.entries.len(), 3);
         assert_eq!(
             folder

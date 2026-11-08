@@ -42,7 +42,7 @@
     "doc": "key-check",
     "text": "memnoter-key-check",
     "vector": {
-      "passphrase": "cafe\u0301",
+      "passphrase": "café",
       "salt": "c2FsdA==",
       "key": "HIyffY3/HCyfTSe0MKcW80DfPKB21nFGdik8g2dypJM=",
       "check": "AQEBAQEBAQEBAQEBAaluNJcYIX0+SyMoIjxyUUTLUE7mscwobCbqvIzI93/282c="
@@ -57,5 +57,18 @@
     "vault": "/v1/vault",
     "files": "/v1/files/",
     "blobs": "/v1/blobs/"
+  },
+  "httpFixtures": {
+    "verify": {
+      "token": "test-token",
+      "userId": "user",
+      "email": "a@example.com"
+    },
+    "newKey": {
+      "key": null
+    },
+    "expired": {
+      "error": "Sign in again"
+    }
   }
 }

@@ -134,6 +134,7 @@ describe("sync between devices", () => {
     const applyRemote = b.store.applyRemote.bind(b.store);
     let failures = 0;
     b.store.applyRemote = async (entries, cursor) => {
+      expect(await b.store.cursor()).toBe(0);
       if (failures++ === 0) {
         // Slow, like a database or blob download, so the server's "ready" is
         // already queued behind this batch when it fails.
@@ -144,9 +145,6 @@ describe("sync between devices", () => {
     };
     b.engine.start();
     await waitFor(() => failures >= 1);
-    // Give a queued "ready" time to run (reconnecting takes at least 750 ms).
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(await b.store.cursor()).toBe(0);
 
     // After reconnecting it asks again from the stored cursor and catches up.
     await waitFor(() => b.store.text("note") === "must arrive", 15_000);
@@ -313,7 +311,7 @@ describe("vault protocol", () => {
     expect(old.received[0]).toMatchObject({ t: "error", fatal: true });
   });
 
-  it("answers pings without waking the object", async () => {
+  it("answers protocol pings with pong", async () => {
     const { token } = await signIn("ping@example.com");
     const response = await SELF.fetch(`${BASE}/v1/sync`, {
       headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": `memnoter.v1, auth.${token}` },

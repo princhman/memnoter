@@ -23,7 +23,6 @@ type HeadingFoldState = {
   // inside headings, where typing happens.
   hidden: DecorationSet;
   toggles: DecorationSet;
-  // What the decorations show, block by block; see foldLayout.
   layout: string;
 };
 
@@ -48,7 +47,6 @@ function sectionEnds(doc: PMNode): Map<number, number> {
   return new Map(outline(doc).map(heading => [heading.pos, heading.end]));
 }
 
-// The content each folded heading hides: from after the heading to its section end.
 function hiddenRanges(doc: PMNode, folded: string[]) {
   const foldedSet = new Set(folded);
   const ends = sectionEnds(doc);
@@ -64,12 +62,10 @@ function hiddenRanges(doc: PMNode, folded: string[]) {
   return ranges;
 }
 
-// What the folded headings currently hide.
 export function getFoldedRanges(state: EditorState) {
   return hiddenRanges(state.doc, headingFoldKey.getState(state)?.folded ?? []);
 }
 
-// Ids of the folded headings still in the document, for saving.
 export function getFoldedIds(state: EditorState) {
   return getFoldedRanges(state).map((range) => range.id);
 }
@@ -89,7 +85,6 @@ function createToggle(view: EditorView, getPos: () => number | undefined, folded
   button.addEventListener("click", (event) => {
     event.preventDefault();
     const pos = getPos();
-    // The widget sits at the start of the heading's content.
     const id = pos === undefined ? null : headingId(view.state.doc.nodeAt(pos - 1));
     if (id !== null) view.dispatch(foldTransaction(view.state, { type: "toggle", id }));
   });
@@ -145,7 +140,6 @@ function buildDecorations(doc: PMNode, folded: string[]) {
     if (id === null) return;
 
     const end = ends.get(pos)!;
-    // Nothing to fold under this heading.
     if (end <= nodeEnd) return;
 
     const isFolded = foldedSet.has(id);
@@ -262,7 +256,6 @@ export const HeadingFold = Extension.create({
     };
   },
 
-  // Like VS Code's fold and unfold.
   addKeyboardShortcuts() {
     return {
       [action("section.fold").keys]: () => this.editor.commands.foldCurrentSection(),

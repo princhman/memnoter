@@ -6,10 +6,9 @@ import { CardFace } from "@/components/card-face";
 import { flushCardSyncs } from "@/lib/card-sync";
 import { formatInterval, GRADES } from "@/lib/fsrs";
 import { cn } from "@/lib/utils";
-import { listen } from "../lib/backend.ts";
 import { blockIdOf } from "@/lib/cards";
 import { requestCardReveal } from "@/lib/card-reveal";
-import { setNativeEditorHistory } from "@/lib/native-history";
+import { useNativeHistory } from "@/lib/native-history";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { useReviewSession } from "@/lib/use-review-session";
 import { GRADE_STYLES } from "@/lib/review-palette";
@@ -30,11 +29,9 @@ function isTypingInField() {
   );
 }
 
-// A soft tint of each grade's colour, deepening on hover.
 const REVIEW_BUTTON =
   "group relative flex h-12 items-center justify-center gap-1.5 rounded-xl px-2 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring";
 
-// The key that presses a button, shown inside its top-right corner on hover or focus.
 function KeyHint({ children }: { children: string }) {
   return (
     <kbd className="pointer-events-none absolute top-1 right-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded bg-foreground/5 px-1 font-sans text-[0.55rem] leading-none text-current opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
@@ -51,7 +48,6 @@ function Review() {
   const { reveal, rate, undo, redo, showNow } = session;
   const source = card ? [...(moduleId ? [] : [card.moduleName || "Untitled module"]), ...card.section] : [];
 
-  // The toolbar's undo, redo and edit buttons act on this review.
   const actions = useRef({ undo, redo });
   actions.current = { undo, redo };
   useEffect(() => {
@@ -73,25 +69,11 @@ function Review() {
   useEffect(() => () => reviewActionsStore.setState(() => null), []);
 
   // The app menu's Undo and Redo, and ⌘Z and ⌘⇧Z, act on grades here.
-  useEffect(() => {
-    const update = () => setNativeEditorHistory(!isTypingInField());
-    update();
-    document.addEventListener("focusin", update);
-    document.addEventListener("focusout", update);
-    let disposed = false;
-    const unlisten = listen<string>("menu", ({ payload }) => {
-      if (disposed || isTypingInField()) return;
-      if (payload === "editor-undo") void actions.current.undo();
-      if (payload === "editor-redo") void actions.current.redo();
-    });
-    return () => {
-      disposed = true;
-      document.removeEventListener("focusin", update);
-      document.removeEventListener("focusout", update);
-      setNativeEditorHistory(false);
-      void unlisten.then((stop) => stop()).catch(console.error);
-    };
-  }, []);
+  useNativeHistory({
+    enabled: () => !isTypingInField(),
+    undo: () => actions.current.undo(),
+    redo: () => actions.current.redo(),
+  }, true);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

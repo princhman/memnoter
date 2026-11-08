@@ -88,6 +88,21 @@ pub struct CardContent {
     section: Vec<String>,
 }
 
+pub(crate) const CARD_STATE_FIELDS: &[&str] = &[
+    "due_at",
+    "stability",
+    "stability_fast",
+    "difficulty",
+    "scheduled_days",
+    "learning_step",
+    "state",
+    "schedule_status",
+    "last_review_at",
+    "reps",
+    "lapses",
+    "fsrs_model",
+];
+
 // The scheduling fields shared by a stored card and a review log row.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -283,7 +298,10 @@ fn sync_module_cards(
 }
 
 fn json_column(text: String) -> serde_json::Value {
-    serde_json::from_str(&text).unwrap_or(serde_json::Value::Null)
+    serde_json::from_str(&text).unwrap_or_else(|error| {
+        eprintln!("Malformed card content JSON (1 row): {error}");
+        serde_json::Value::Null
+    })
 }
 
 // A two-way sibling waits ten minutes after the other side's last review.
@@ -339,7 +357,10 @@ pub fn due_cards(
                 module_id: row.get(1)?,
                 module_name: row.get(2)?,
                 available_at: row.get(19)?,
-                section: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_default(),
+                section: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_else(|error| {
+                    eprintln!("Malformed card section JSON (1 row): {error}");
+                    Vec::new()
+                }),
                 kind: row.get(3)?,
                 front: json_column(row.get(4)?),
                 back: json_column(row.get(5)?),
@@ -440,11 +461,15 @@ fn write_card_state(
     let fsrs = &card.fsrs;
     let updated = tx
         .execute(
-            "update cards set due_at = ?3, stability = ?4, stability_fast = ?5,
-                 difficulty = ?6, scheduled_days = ?7, learning_step = ?8,
-                 state = ?9, schedule_status = ?10, last_review_at = ?11,
-                 reps = ?12, lapses = ?13, fsrs_model = ?14
-             where id = ?1 and reps = ?2 and deleted_at is null",
+            &format!(
+                "update cards set {} where id = ?1 and reps = ?2 and deleted_at is null",
+                CARD_STATE_FIELDS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| format!("{field} = ?{}", index + 3))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             params![
                 card_id,
                 expected_reps,
@@ -626,6 +651,22 @@ mod tests {
             Self { dir, core }
         }
 
+        fn asset(&self) -> String {
+            let raw = crate::dispatch(
+                &self.core,
+                "save_file",
+                &json!({
+                    "moduleId":"a", "bytes":[1,2,3], "mimeType":"image/png",
+                })
+                .to_string(),
+            )
+            .unwrap();
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+
         fn sync(&self, module: &str, cards: &[CardContent], now: i64) -> Vec<String> {
             sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, now).unwrap()
         }
@@ -664,16 +705,9 @@ mod tests {
             let mut content = basic(id, "Front", "Back");
             content.kind = kind.into();
             if kind == "occlusion" {
-                f.db.conn
-                    .lock()
-                    .unwrap()
-                    .execute(
-                        "insert into files values ('asset','a','/synthetic/asset','image/png')",
-                        [],
-                    )
-                    .unwrap();
-                content.front = json!({"fileId": "asset", "revealed": false});
-                content.back = json!({"fileId": "asset", "revealed": true});
+                let asset = f.asset();
+                content.front = json!({"fileId": asset, "revealed": false});
+                content.back = json!({"fileId": asset, "revealed": true});
             }
             let mut cards = vec![content];
             if let Some(sibling) = row["sibling"].as_str() {
@@ -941,19 +975,12 @@ mod tests {
     #[test]
     fn occlusion_edit_restore_and_missing_asset_share_the_review_lifecycle() {
         let f = Fixture::new();
-        f.db.conn
-            .lock()
-            .unwrap()
-            .execute(
-                "insert into files values ('asset','a','/synthetic/asset','image/png')",
-                [],
-            )
-            .unwrap();
+        let asset = f.asset();
         let mut card = CardContent {
             id: "image:o:mask".into(),
             kind: "occlusion".into(),
-            front: json!({"fileId":"asset","revealed":false}),
-            back: json!({"fileId":"asset","revealed":true}),
+            front: json!({"fileId":asset,"revealed":false}),
+            back: json!({"fileId":asset,"revealed":true}),
             section: Vec::new(),
         };
         f.sync("a", std::slice::from_ref(&card), 10);
@@ -970,7 +997,7 @@ mod tests {
         f.db.conn
             .lock()
             .unwrap()
-            .execute("delete from files where id = 'asset'", [])
+            .execute("delete from files where id = ?1", [&asset])
             .unwrap();
         f.sync("a", &[card], 140);
         assert!(f.due(None, 1000).is_empty());

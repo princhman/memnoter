@@ -18,9 +18,7 @@ import {
 import type { Env } from "./env";
 import { blobKey, userPrefix } from "./storage";
 
-// Catch-up frames are split at about this many payload bytes.
 const FRAME_TARGET_BYTES = 512 * 1024;
-// How many stored entries between checks for documents worth compacting.
 const HINT_CHECK_EVERY = 64;
 
 type Attachment = { ready: boolean };

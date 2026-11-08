@@ -205,11 +205,6 @@ pub(crate) fn open_db(app_dir: &Path) -> CommandResult<Db> {
     })
 }
 
-// Full-text search over every module: one row per module, with its title, the
-// plain text of the note and the LaTeX source of its formulas. unicode61 with
-// remove_diacritics folds case and accents; the prefix index keeps type-ahead
-// queries ("integ*") fast. search_index_state records which extractor version
-// produced each row, so the frontend can re-index after the extractor changes.
 pub(crate) fn migrate_module_numbering(conn: &Connection) -> CommandResult<()> {
     ensure_column(
         conn,
@@ -324,6 +319,11 @@ pub(crate) fn migrate(conn: &Connection) -> CommandResult<()> {
     Ok(())
 }
 
+// Full-text search over every module: one row per module, with its title, the
+// plain text of the note and the LaTeX source of its formulas. unicode61 with
+// remove_diacritics folds case and accents; the prefix index keeps type-ahead
+// queries ("integ*") fast. search_index_state records which extractor version
+// produced each row, so the frontend can re-index after the extractor changes.
 pub(crate) fn migrate_search(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(
         "

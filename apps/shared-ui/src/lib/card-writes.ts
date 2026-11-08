@@ -1,3 +1,4 @@
+import { cardsChanged } from "./card-events";
 import { call as invoke } from "./backend.ts";
 import { queryClient } from "@/lib/query-client";
 import { assertWritable, MUTATIONS, type WritePermit } from "./write-lifecycle.ts";
@@ -10,5 +11,5 @@ export function writeCards<T>(command: string, args: Record<string, unknown>, pe
     mutationKey: [MUTATIONS.cardWrite],
     gcTime: 0,
     mutationFn: () => invoke<T>(command, args),
-  }).execute(undefined);
+  }).execute(undefined).then(result => { cardsChanged(); return result; });
 }

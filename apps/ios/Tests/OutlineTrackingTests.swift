@@ -22,7 +22,7 @@ import XCTest
                         setTopInset() {}, setBottomInset() {}
                     };
                     window.__memnoterBridge = { emit() {} };
-                    window.webkit.messageHandlers.memnoter.postMessage({ kind: 'event', event: 'ready' });
+                    window.webkit.messageHandlers.memnoter.postMessage({ kind: 'event', event: 'ready', payload: { protocolVersion: \(BridgeProtocol.version) } });
                 }, 100);
                 </script>
                 """, baseURL: URL(string: "memnoter-app://localhost/editor.html"))

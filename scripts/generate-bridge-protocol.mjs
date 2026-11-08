@@ -56,7 +56,6 @@ const shortcutDeclarations = new Map(shortcutSource.statements.filter(ts.isVaria
 const shortcuts = shortcutDeclarations.get('SHORTCUTS').elements.map(row => Object.fromEntries(row.properties.map(p => [p.name.text, p.initializer.text])));
 const homeIds = shortcutDeclarations.get('HOME_ACTION_IDS').expression.elements.map(id => id.text);
 const formatKeys = keys => keys.split('-').map(key => ({ Mod: '⌘', Alt: '⌥', Shift: '⇧', Control: '⌃' }[key] ?? (key.length === 1 ? key.toUpperCase() : key))).join('');
-// Add the native hint list alongside the other generated bridge constants.
 output += `    static let homeShortcuts: [(keys: String, action: String)] = [\n${homeIds.map(id => {
   const row = shortcuts.find(row => row.id === id);
   return `        (${JSON.stringify(formatKeys(row.keys))}, ${JSON.stringify(row.title)})`;

@@ -95,3 +95,23 @@ test("realistic 200-line note preserves headings, cards, math and literal source
   assert.ok(words.includes("==literal== %%keep%%"));
   assert.ok(!words.includes("PRIVATE"));
 });
+
+test("inline math inside an Obsidian highlight keeps the highlight", () => {
+  const [math] = all(markdownToJSON("==before $x$ after=="), "inlineMath");
+  assert.deepEqual(math.marks, [{ type: "highlight", attrs: { color: "yellow" } }]);
+  assert.equal(all(markdownToJSON("plain $x$"), "inlineMath")[0].marks, undefined);
+});
+
+test("Obsidian one-line cards on consecutive lines become separate paragraphs", () => {
+  const item = all(markdownToJSON("- Unsatisfiable ::: $v$ for none\nValid ::: $v$ for all"), "listItem")[0];
+  assert.deepEqual(item.content.map(p => p.type), ["paragraph", "paragraph"]);
+  assert.match(item.content[1].content[0].text, /^Valid ::: $/);
+  // Hard breaks (two trailing spaces or a backslash) separate cards too.
+  for (const source of ["A :: B  \nC :: D", "A :: B\\\nC :: D"]) {
+    assert.equal(markdownToJSON(source).content.length, 2, source);
+  }
+  // Ordinary multi-line prose, clozes and `std::vector` keep their single paragraph.
+  for (const source of ["first line\nsecond line", "a {{b}} :: c\nd", "use std::vector\nhere"]) {
+    assert.equal(markdownToJSON(source).content.length, 1, source);
+  }
+});

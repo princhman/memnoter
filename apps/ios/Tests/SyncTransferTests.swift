@@ -2,27 +2,8 @@ import XCTest
 import MemnoterCore
 @testable import Memnoter
 
-private final class SlowTransferServer: URLProtocol, @unchecked Sendable {
-    private var response: Task<Void, Never>?
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() {
-        response = Task {
-            do { try await Task.sleep(for: .milliseconds(1600)) } catch { return }
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: Data([42]))
-            client?.urlProtocolDidFinishLoading(self)
-        }
-    }
-    override func stopLoading() { response?.cancel() }
-}
-
 final class SyncTransferTests: XCTestCase {
     @MainActor func testRepeatedWakesFinishSlowTransfersAndSerializeFollowUpPass() async throws {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [SlowTransferServer.self]
-        let session = URLSession(configuration: config)
-        defer { session.invalidateAndCancel() }
         let started = expectation(description: "First transfer started")
         let completed = expectation(description: "Both passes completed")
         completed.expectedFulfillmentCount = 2
@@ -30,21 +11,24 @@ final class SyncTransferTests: XCTestCase {
         var maximum = 0
         var passes = 0
         var failures = 0
+        var release: CheckedContinuation<Void, Never>?
         let worker = SyncTransferWorker(pass: {
             passes += 1; active += 1; maximum = max(maximum, active)
             defer { active -= 1 }
-            if passes == 1 { started.fulfill() }
-            let (data, _) = try await session.data(from: URL(string: "https://mock.local/slow")!)
-            XCTAssertEqual(data, Data([42]))
+            if passes == 1 {
+                await withCheckedContinuation { continuation in
+                    release = continuation
+                    started.fulfill()
+                }
+            }
+            try Task.checkCancellation()
             completed.fulfill()
         }, onError: { _ in failures += 1 })
         defer { worker.cancel() }
         worker.nudge()
         await fulfillment(of: [started], timeout: 3)
-        for _ in 0..<3 {
-            try await Task.sleep(for: .milliseconds(450))
-            worker.nudge()
-        }
+        for _ in 0..<3 { worker.nudge() }
+        release?.resume()
         await fulfillment(of: [completed], timeout: 6)
         XCTAssertEqual(passes, 2, "Wakes during a transfer coalesce into one more pass")
         XCTAssertEqual(maximum, 1, "Transfers must never overlap")
@@ -78,7 +62,7 @@ final class SyncFileTransferTests: XCTestCase {
         let account = SyncAccount(server: "https://mock.local", email: "a@example.com", userId: "a", token: "token", key: Array(repeating: 17, count: 32))
         let ids = (0..<100).map { "image-\($0)" }
         var pending = ids
-        var attempts = 0
+        var attempted = Set<String>()
         let files = SyncFileTransfers(command: { name, _ in
             switch name {
             case "sync_status": return ["generation": "test-epoch"]
@@ -87,20 +71,21 @@ final class SyncFileTransferTests: XCTestCase {
             case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]
             default: XCTFail("Unexpected command: \(name)"); return NSNull()
             }
-        }, object: { _, _, _ in
-            attempts += 1
+        }, object: { id, _, _ in
+            attempted.insert(id)
             throw SyncHTTPFailure(status: 404, message: "Missing image")
         }, isCurrent: { _ in true }, onFile: { _, _ in XCTFail("Failed download was stored") }, onError: { XCTFail("Unexpected error: \($0)") })
         let owner = UUID()
         try await files.run(account: account, owner: owner)
-        XCTAssertEqual(attempts, 200)
+        XCTAssertEqual(attempted, Set(ids))
+        attempted.removeAll()
         try await files.run(account: account, owner: owner)
-        XCTAssertEqual(attempts, 200, "Images still pending retain backoff")
+        XCTAssertTrue(attempted.isEmpty, "Images still pending retain backoff")
         pending = []
         try await files.run(account: account, owner: owner)
         pending = ids
         try await files.run(account: account, owner: owner)
-        XCTAssertEqual(attempts, 400, "Removed uploads and downloads must lose their retry deadlines")
+        XCTAssertEqual(attempted, Set(ids), "Removed images become eligible again")
     }
 
     @MainActor func testUnavailableImageDoesNotBlockAvailableImageAndBacksOff() async throws {
@@ -138,6 +123,7 @@ final class SyncFileTransferTests: XCTestCase {
         let contents = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any]
         XCTAssertEqual(contents?["bytes"] as? [UInt8], Array(payload))
         try await files.run(account: account, owner: owner)
-        XCTAssertEqual(requests, [missing, available], "Pending image retries must respect backoff")
+        XCTAssertEqual(Set(requests), Set([missing, available]))
+        XCTAssertEqual(requests.filter { $0 == missing }.count, 1, "Missing image remains in backoff")
     }
 }

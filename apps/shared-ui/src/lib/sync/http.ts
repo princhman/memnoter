@@ -48,7 +48,7 @@ export const transferTimeout = (bytes = 0) => 120_000 + Math.ceil(bytes / 32_768
 export async function readTransfer(response: Response, progress: () => void, signal: AbortSignal) {
   if (!response.body) return new Uint8Array(await response.arrayBuffer());
   const reader = response.body.getReader();
-  const cancel = () => { void reader.cancel(signal.reason).catch(() => {}); };
+  const cancel = () => { void reader.cancel(signal.reason).catch(error => console.error("Failed to cancel sync response:", error)); };
   signal.addEventListener("abort", cancel, { once: true });
   if (signal.aborted) cancel();
   const chunks: Uint8Array[] = [];

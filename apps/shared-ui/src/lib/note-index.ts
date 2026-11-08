@@ -1,3 +1,4 @@
+import { settled } from "@/lib/async-work";
 import * as Y from "yjs";
 import { call } from "@/lib/backend";
 import { applySavedContent, reconcileContent, type GetContentResponse } from "@/lib/content";
@@ -47,8 +48,8 @@ export function refreshDerived(moduleId: string, admittedPermit?: WritePermit): 
   });
   const task = admittedPermit ? run(admittedPermit) : writeOperation(run);
   pending.set(moduleId, task);
-  queue = task.catch(() => {});
-  void task.finally(() => { if (pending.get(moduleId) === task) pending.delete(moduleId); }).catch(() => {});
+  queue = settled(task);
+  void settled(task).then(() => { if (pending.get(moduleId) === task) pending.delete(moduleId); });
   return task;
 }
 

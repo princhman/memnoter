@@ -1,3 +1,4 @@
+import { beginHostNavigation, editorHost } from "@/lib/editor-host";
 import { postNativeEvent } from "../lib/backend.ts";
 import type { Editor } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
@@ -26,7 +27,7 @@ export function observeScroll(container: HTMLElement) {
 // Native owns viewport occlusion. Never subtract visualViewport here as well.
 export function revealCaret(view: EditorView, reason = "selection") {
   if (view.isDestroyed || !view.hasFocus() || suppressesTextInput(view.state.selection)) return;
-  const container = view.dom.closest<HTMLElement>(".app-scroll-container");
+  const container = editorHost.scrollContainer(view.dom);
   if (!container || anchors.has(container)) return;
   const inset = Number(container.dataset.bottomInset ?? 0);
   const caret = view.coordsAtPos(view.state.selection.head);
@@ -38,14 +39,14 @@ export function revealCaret(view: EditorView, reason = "selection") {
   const delta = caret.bottom > bottom ? (caret.top + caret.bottom) / 2 - (top + bottom) / 2
     : caret.top < top && reason !== "input" ? caret.top - top : 0;
   if (Math.abs(delta) < 1) return;
-  container.dispatchEvent(new Event("memnoter:reveal"));
+  beginHostNavigation(container);
   traceScroll("caret", { trigger: reason, from: container.scrollTop, delta });
   container.scrollTo({ top: Math.max(0, Math.min(container.scrollTop + delta, container.scrollHeight - container.clientHeight)),
     behavior: "instant" });
 }
 
 // One owner for section navigation, delayed layout and native inset changes.
-// Settle a navigation for at most 300ms; reader input always takes priority.
+// Observe layout until reader input or the next navigation takes priority.
 const anchors = new WeakMap<HTMLElement, { apply(): void; stop(): void }>();
 const inputEvents = ["wheel", "touchstart", "pointerdown", "keydown", "beforeinput"];
 
@@ -60,12 +61,15 @@ export function hasSectionAnchor(container: HTMLElement) {
 export function sectionToTop(editor: Editor, pos: number, offset = 0) {
   if (typeof window === "undefined") return;
   const heading = editor.view.nodeDOM(pos);
-  const container = editor.view.dom.closest<HTMLElement>(".app-scroll-container");
+  const container = editorHost.scrollContainer(editor.view.dom);
   if (!(heading instanceof HTMLElement) || !container) return;
   anchors.get(container)?.stop();
-  container.dispatchEvent(new Event("memnoter:reveal"));
+  beginHostNavigation(container);
   let frame = 0;
-  let deadline = 0;
+  let resizeFrame = 0;
+  let stableFrames = 0;
+  let assetsReady = false;
+  let stopped = false;
   const apply = () => {
     if (editor.isDestroyed || !heading.isConnected) { stop(); return; }
     const delta = heading.getBoundingClientRect().top - visibleTop(container) - offset;
@@ -79,27 +83,37 @@ export function sectionToTop(editor: Editor, pos: number, offset = 0) {
     container.scrollTo({ top: Math.min(target, Math.max(0, container.scrollHeight - container.clientHeight)), behavior: "instant" });
   };
   const observer = new ResizeObserver(() => {
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(apply);
+    stableFrames = 0;
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; apply(); });
   });
   const stop = () => {
+    stopped = true;
+    editor.off("destroy", stop);
     observer.disconnect();
     cancelAnimationFrame(frame);
-    window.clearTimeout(deadline);
+    cancelAnimationFrame(resizeFrame);
     inputEvents.forEach(event => container.removeEventListener(event, stop, true));
     anchors.delete(container);
   };
+  editor.on("destroy", stop);
   anchors.set(container, { apply, stop });
-  deadline = window.setTimeout(() => { apply(); stop(); }, 300);
   inputEvents.forEach(event => container.addEventListener(event, stop, { capture: true, passive: true }));
   observer.observe(editor.view.dom);
   observer.observe(container);
   apply();
-  frame = requestAnimationFrame(() => { apply(); frame = requestAnimationFrame(apply); });
+  const assets = [...editor.view.dom.querySelectorAll("img")].map(image => image.decode());
+  void Promise.allSettled([...assets, document.fonts.ready]).then(() => { assetsReady = true; });
+  const settle = () => {
+    if (stopped) return;
+    if (assetsReady && !resizeFrame && ++stableFrames >= 2) { stop(); return; }
+    frame = requestAnimationFrame(settle);
+  };
+  frame = requestAnimationFrame(settle);
 }
 
 export function sectionOffset(editor: Editor, pos: number) {
   const heading = editor.view.nodeDOM(pos);
-  const container = editor.view.dom.closest<HTMLElement>(".app-scroll-container");
+  const container = editorHost.scrollContainer(editor.view.dom);
   return heading instanceof HTMLElement && container ? heading.getBoundingClientRect().top - visibleTop(container) : 0;
 }

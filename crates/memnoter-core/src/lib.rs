@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use uuid::Uuid;
-pub mod asset_refs;
+mod asset_refs;
 pub mod backups;
-pub mod cards;
+mod cards;
 pub mod sidebar;
 pub mod sync;
 use cards::migrate_flashcards;
-pub mod db;
+mod db;
 pub use db::Db;
 pub(crate) use db::*;
 pub type CommandResult<T> = std::result::Result<T, String>;
@@ -97,10 +97,14 @@ impl Core {
         &self.data_dir
     }
 }
-pub mod import;
-pub use import::*;
-pub mod content;
-pub use content::*;
+mod import;
+pub(crate) use import::{import_module, ImportImage};
+mod content;
+pub(crate) use content::delete_module_data;
+pub(crate) use content::{
+    add_update, create_module, delete_module, get_content, modules, rename_module, save_compaction,
+    set_module_numbering,
+};
 #[derive(Debug, serde::Serialize)]
 pub struct Module {
     pub id: String,
@@ -126,11 +130,12 @@ pub struct FileType {
     pub file_type: String,
 }
 
-pub mod files;
-pub use files::*;
+mod files;
+pub(crate) use files::{cleanup_files, resolve_card_image, save_file};
+pub use files::{read_file, FileContents};
 
-pub mod search;
-pub use search::*;
+mod search;
+pub(crate) use search::{index_note, search_notes, unindexed_modules};
 
 #[cfg(test)]
 mod tests;

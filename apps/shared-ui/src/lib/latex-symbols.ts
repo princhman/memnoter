@@ -479,7 +479,7 @@ const ENVIRONMENTS: Spec[] = [
   ["\\begin{array}{§}  \\end{array}", "array table columns", "\\begin{array}{cc}a & b \\\\ c & d\\end{array}"],
 ];
 
-export const LATEX_ENTRIES: LatexEntry[] = [
+const LATEX_ENTRIES: LatexEntry[] = [
   ...group("Greek", GREEK),
   ...group("Operator", OPERATORS),
   ...group("Relation", RELATIONS),
@@ -499,7 +499,7 @@ export const LATEX_ENTRIES: LatexEntry[] = [
  * Commands that look alike or get mixed up, with what sets each one apart.
  * Every member of a group lists the others as similar.
  */
-export const LOOKALIKES: [label: string, note: string][][] = [
+const LOOKALIKES: [label: string, note: string][][] = [
   [
     ["\\epsilon", "Lunate ϵ, looks like a small ∈. Classic \"small quantity\" in analysis, but easy to confuse with set membership."],
     ["\\varepsilon", "Rounded ε, like a backwards 3. Often preferred because it can't be mistaken for ∈."],
