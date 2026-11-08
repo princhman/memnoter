@@ -1,3 +1,4 @@
+import { refreshPdfAnnotations } from "@/lib/pdf-annotation-store";
 import { appendSavedUpdate, contentKey, patchContent, type ContentUpdate, type FileType } from "@/lib/content";
 import { dueCountsKey, isModuleOpen } from "@/lib/card-sync";
 import { refreshDerived } from "@/lib/note-index";
@@ -18,6 +19,7 @@ export type ApplyResult = {
   deleted: string[];
   reviewsChanged: boolean;
   filesChanged: boolean;
+  annotationsChanged?: string[];
 };
 
 const reindexTimers = new Map<string, number>();
@@ -45,6 +47,7 @@ function scheduleReindex(moduleId: string) {
 }
 
 export function onRemote(result: ApplyResult) {
+  refreshPdfAnnotations(result.annotationsChanged ?? []);
   for (const { moduleId, update } of result.updates) {
     // The same path as a local save: an open editor applies the update from
     // the cache, and compaction then includes it.

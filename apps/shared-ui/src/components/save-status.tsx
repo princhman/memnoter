@@ -1,3 +1,4 @@
+import { pdfAnnotationSaveStatusStore, retryPdfAnnotationSaves } from "@/lib/pdf-annotation-store";
 import { Toast } from "./ui/toast";
 import { isTauri } from "@/lib/backend";
 import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, retryFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
@@ -47,6 +48,7 @@ async function confirmExitAfterRestore(discard = false, retryImages = false) {
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and
 // the queue keeps retrying in the background.
 const SaveStatus = () => {
+  const annotations = useSelector(pdfAnnotationSaveStatusStore, state => state);
   const imageErrors = useSelector(imageStatusStore, state => state.errors);
   const [exitError, setExitError] = useState("");
   const [retrying, setRetrying] = useState(false);
@@ -96,6 +98,12 @@ const SaveStatus = () => {
 
   return (
     <>
+      {annotations.pending > 0 && (
+        <Toast role={annotations.failing ? "alert" : "status"} className="flex items-center gap-2 rounded-lg p-2 text-sm shadow-sm" title={annotations.lastError ?? undefined}>
+          <span>{annotations.failing ? "PDF annotations not saved" : "Saving PDF annotations…"}</span>
+          {annotations.failing && <Button variant="outline" size="xs" disabled={blocked} onClick={retryPdfAnnotationSaves}>Retry annotations</Button>}
+        </Toast>
+      )}
       {imageErrors.length > 0 && (
         <Toast role="alert" className="max-w-md rounded-lg p-3 text-sm shadow-sm">
           {imageErrors.map((error, index) => <p key={index}>{error}</p>)}

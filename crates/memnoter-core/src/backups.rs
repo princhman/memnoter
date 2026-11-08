@@ -218,6 +218,7 @@ fn stage_restore(
     app_dir: &Path,
     account: Option<&str>,
     gone: &[String],
+    annotation_deleted: &[String],
 ) -> CommandResult<PathBuf> {
     let staging = app_dir.join(RESTORE_STAGING);
     remove_if_exists(&staging)?;
@@ -239,6 +240,9 @@ fn stage_restore(
     let snapshot_gone = super::sync::deleted_file_ids(&conn)?;
     super::sync::retain_deleted_files(&conn, &snapshot_gone)?;
     super::sync::retain_deleted_files(&conn, gone)?;
+    for id in annotation_deleted {
+        crate::pdf_annotations::retire(&conn, id)?;
+    }
     super::sync::reconcile_restored_account(&mut conn, account)?;
     Ok(staging)
 }
@@ -270,7 +274,14 @@ pub fn restore(
     create(conn, app_dir, now)?;
     let account = super::sync::status(conn)?.account;
     let gone = super::sync::deleted_file_ids(conn)?;
-    let staging = match stage_restore(&source, app_dir, account.as_deref(), &gone) {
+    let annotation_deleted = crate::pdf_annotations::tombstones(conn)?;
+    let staging = match stage_restore(
+        &source,
+        app_dir,
+        account.as_deref(),
+        &gone,
+        &annotation_deleted,
+    ) {
         Ok(staging) => staging,
         Err(error) => {
             let _ = remove_if_exists(&app_dir.join(RESTORE_STAGING));
@@ -331,6 +342,9 @@ pub fn restore_backup(
     let dir = data_dir;
     let mut conn = db.lock()?;
     let result = restore(&mut conn, dir, &id, Utc::now()).map_err(crate::CoreError::from);
+    if result.is_ok() {
+        *db.annotation_generation.lock().map_err(db_err)? = Uuid::new_v4().to_string();
+    }
     if result
         .as_ref()
         .is_err_and(|error| matches!(error, crate::CoreError::Unavailable))

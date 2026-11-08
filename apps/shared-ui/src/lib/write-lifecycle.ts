@@ -2,6 +2,22 @@ import { createStore } from "@tanstack/react-store";
 import { queryClient } from "@/lib/query-client";
 import { flushSaves, saveQueue } from "@/lib/saves";
 
+type WriteParticipant = {
+  flush: () => Promise<boolean>;
+  suspend: () => Promise<void>;
+  resume: () => void;
+  discard: () => void;
+};
+const participants = new Set<WriteParticipant>();
+// Queue owners retain this capability only for writes admitted before a drain.
+export function registerWriteParticipant(participant: WriteParticipant) {
+  participants.add(participant);
+  return async <T>(write: (permit: WritePermit) => Promise<T>): Promise<T> => {
+    assertWritable(drainPermit);
+    return write(drainPermit);
+  };
+}
+
 let exclusive = false;
 const listeners = new Set<(blocked: boolean) => void>();
 type TrackedWriteWork = {
@@ -137,10 +153,13 @@ export async function exclusiveWrite<T>(action: () => Promise<T>, work?: Exclusi
   try {
     await settleWork(discard, work?.kind === "exit" && work.unsaved === "retry");
     if (!discard) await flushAll({ timeoutMs: 3_000, permit: drainPermit });
-    await saveQueue.suspend();
+    await Promise.all([saveQueue.suspend(), ...[...participants].map(owner => owner.suspend())]);
     suspended = true;
     await drainMutations(work?.kind === "restore" ? MUTATIONS.restoreBackup : work?.kind === "delete" ? MUTATIONS.deleteModule : undefined);
     const result = await action();
+    if (discard || work?.kind === "restore" || work?.kind === "delete") {
+      for (const owner of participants) owner.discard();
+    }
     if (discard) {
       for (const item of trackedWork) disposeWork(item);
       trackedWork.clear();
@@ -150,7 +169,7 @@ export async function exclusiveWrite<T>(action: () => Promise<T>, work?: Exclusi
     return result;
   } finally {
     if (!completed || (work?.kind !== "restore" && work?.kind !== "exit")) {
-      if (suspended) saveQueue.resume();
+      if (suspended) { saveQueue.resume(); participants.forEach(owner => owner.resume()); }
       exclusive = false;
       listeners.forEach(listener => listener(false));
     }
@@ -198,6 +217,7 @@ export async function flushAll({ timeoutMs = 3_000, permit }: { timeoutMs?: numb
       (async () => {
         await settleWork();
         for (const flush of flushers.values()) await flush(permit);
+        if ((await Promise.all([...participants].map(owner => owner.flush()))).some(saved => !saved)) throw new Error("PDF annotations could not be saved. Please retry saving first.");
         if (!await flushSaves(timeoutMs)) throw new Error("Pending edits could not be saved. Please retry saving first.");
         await drainMutations(undefined, true);
       })(),

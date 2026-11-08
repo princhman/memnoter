@@ -141,6 +141,7 @@ fn delete_module_data_inner(
             [id], |r| r.get(0),
         ).map_err(db_err)?;
         if is_pdf {
+            crate::pdf_annotations::retire(&tx, id)?;
             if local {
                 sync::record_document(&tx, id, true)?;
                 sync::queue_file_delete(&tx, id)?;

@@ -126,6 +126,7 @@ pub struct FileType {
 }
 
 pub mod documents;
+pub mod pdf_annotations;
 pub use documents::*;
 pub mod files;
 pub use files::*;

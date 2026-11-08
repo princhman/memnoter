@@ -25,6 +25,8 @@ macro_rules! commands {
     }
 }
 commands! { core;
+    load_annotations(document_id: String) => crate::pdf_annotations::load_annotations(&core.db, document_id);
+    save_annotation_update(document_id: String, bytes: Vec<u8>, generation: String) => crate::pdf_annotations::save_annotation_update(&core.db, document_id, bytes, generation);
     set_module_numbering(module_id: String, enabled: bool) => crate::set_module_numbering(&core.db, module_id, enabled);
     import_module(name: String, bytes: Vec<u8>, images: Vec<ImportImage>) => crate::import_module(core.data_dir(), &core.db, name, bytes, images);
     create_module(name: String) => crate::create_module(&core.db, name);

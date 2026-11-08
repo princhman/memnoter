@@ -1,3 +1,4 @@
+import { pdfAnnotationSaveStatusStore } from "@/lib/pdf-annotation-store";
 import { BRIDGE_VERSION, EXEC_COMMANDS } from "./protocol";
 import { onRemote, onFileStored } from "@/lib/sync/apply-remote";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -108,12 +109,17 @@ export function Host() {
     const stopMutations = queryClient.getMutationCache().subscribe(event => {
       if (event.type === "updated" && event.action.type === "error") fail(event.mutation.state.error);
     });
-    const saveStatus = () => postNativeEvent("saveStatus", { ...saveStatusStore.state, imageErrors: imageStatusStore.state.errors });
+    const saveStatus = () => postNativeEvent("saveStatus", {
+      pending: saveStatusStore.state.pending + pdfAnnotationSaveStatusStore.state.pending,
+      failing: saveStatusStore.state.failing || pdfAnnotationSaveStatusStore.state.failing,
+      imageErrors: imageStatusStore.state.errors,
+    });
     const stopSaves = saveStatusStore.subscribe(saveStatus);
     const stopImages = imageStatusStore.subscribe(saveStatus);
+    const stopAnnotations = pdfAnnotationSaveStatusStore.subscribe(saveStatus);
     saveStatus();
     postNativeEvent("ready", { protocolVersion: BRIDGE_VERSION });
-    return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
+    return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); stopAnnotations.unsubscribe(); };
   }, []);
 
   useEffect(() => {

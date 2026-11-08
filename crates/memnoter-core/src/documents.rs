@@ -216,6 +216,7 @@ pub fn set_document_page_count(db: &Db, id: String, page_count: i64) -> CommandR
 pub(crate) fn remove_local(data_dir: &Path, conn: &Connection, id: &str) -> CommandResult<()> {
     let path = files::assets::path(data_dir, id)?;
     let tx = conn.unchecked_transaction().map_err(db_err)?;
+    crate::pdf_annotations::retire(&tx, id)?;
     tx.execute("delete from documents where id=?1", [id])
         .map_err(db_err)?;
     tx.execute("delete from files where id=?1", [id])

@@ -1,3 +1,4 @@
+import type { PdfAnnotationAnchor } from "./pdf-annotations";
 import type { PdfTextQuotePart } from "./pending-pdf-quote";
 
 /** Read rendered text only: canvas pixels, source controls and reader chrome never enter a quote. */
@@ -9,6 +10,7 @@ export function readPdfTextSelection(reader: HTMLElement, source: { id: string; 
   const start = layerFor(range.startContainer), end = layerFor(range.endContainer);
   if (!start || !end || !reader.contains(start) || !reader.contains(end)) return null;
   const parts: PdfTextQuotePart[] = [];
+  const anchors: PdfAnnotationAnchor[] = [];
   let anchor: DOMRect | undefined;
   for (const page of reader.querySelectorAll<HTMLElement>("[data-pdf-page]")) {
     const layer = page.querySelector(".textLayer");
@@ -53,7 +55,17 @@ export function readPdfTextSelection(reader: HTMLElement, source: { id: string; 
     const x = (left - bounds.left) / bounds.width, y = (top - bounds.top) / bounds.height;
     parts.push({ text, source: { documentId: source.id, name: source.name, page: Number(page.dataset.pdfPage),
       region: { x, y, width: Math.min(1 - x, (right - left) / bounds.width), height: Math.min(1 - y, (bottom - top) / bounds.height) } } });
+    // Preserve individual rendered line fragments rather than filling the
+    // whitespace inside the quote's per-page bounding box.
+    const regions = rectangles.flatMap(rect => {
+      const left = Math.max(bounds.left, rect.left), top = Math.max(bounds.top, rect.top);
+      const right = Math.min(bounds.right, rect.right), bottom = Math.min(bounds.bottom, rect.bottom);
+      if (right <= left || bottom <= top) return [];
+      const x = (left - bounds.left) / bounds.width, y = (top - bounds.top) / bounds.height;
+      return [{ x, y, width: Math.min(1 - x, (right - left) / bounds.width), height: Math.min(1 - y, (bottom - top) / bounds.height) }];
+    });
+    anchors.push({ page: Number(page.dataset.pdfPage), regions });
     anchor ??= rectangles[0];
   }
-  return parts.length && anchor ? { parts, anchor } : null;
+  return parts.length && anchor ? { parts, anchors, anchor } : null;
 }

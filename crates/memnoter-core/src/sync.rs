@@ -106,7 +106,7 @@ fn check_generation(conn: &Connection, expected: &str) -> CommandResult<()> {
     Ok(())
 }
 
-fn push_outbox(conn: &Connection, doc: &str, bytes: &[u8]) -> CommandResult<()> {
+pub(crate) fn push_outbox(conn: &Connection, doc: &str, bytes: &[u8]) -> CommandResult<()> {
     conn.execute(
         "insert into sync_outbox (doc, bytes) values (?1, ?2)",
         params![doc, bytes],
@@ -360,6 +360,9 @@ fn document_entries(conn: &Connection) -> CommandResult<Vec<(String, String)>> {
 }
 
 pub(crate) fn record_document(conn: &Connection, id: &str, deleted: bool) -> CommandResult<()> {
+    if deleted {
+        crate::pdf_annotations::publish_deleted(conn, id)?;
+    }
     if !is_enabled(conn)? || (!deleted && file_gone(conn, id)?) {
         return Ok(());
     }
@@ -391,6 +394,34 @@ fn deleted_documents(doc: &Doc) -> HashSet<String> {
             (record["deleted"] == true && uuid::Uuid::parse_str(&id).is_ok()).then_some(id)
         })
         .collect()
+}
+
+pub(crate) fn deleted_annotation_documents(
+    conn: &Connection,
+    doc: &Doc,
+) -> CommandResult<Vec<String>> {
+    let mut ids: Vec<_> = deleted_documents(doc).into_iter().collect();
+    let modules = vault_modules(doc);
+    for (id, record) in string_entries(doc, DOCUMENTS_MAP) {
+        if serde_json::from_str::<DocumentMetadata>(&record)
+            .is_ok_and(|r| modules.get(&r.module).is_some_and(|m| m.deleted))
+        {
+            ids.push(id);
+        }
+    }
+    let mut stmt = conn
+        .prepare("select id,module_id from documents")
+        .map_err(db_err)?;
+    for row in stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(db_err)?
+    {
+        let (id, module) = row.map_err(db_err)?;
+        if file_gone(conn, &id)? || modules.get(&module).is_some_and(|m| m.deleted) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
 }
 
 fn reconcile_documents(conn: &Connection, doc: &Doc) -> CommandResult<()> {
@@ -669,7 +700,7 @@ fn cursor(conn: &Connection) -> CommandResult<i64> {
     Ok(get_value::<i64>(conn, "cursor")?.unwrap_or(0))
 }
 
-fn load_vault(conn: &Connection) -> CommandResult<Doc> {
+pub(crate) fn load_vault(conn: &Connection) -> CommandResult<Doc> {
     let doc = Doc::new();
     if let Some(state) = get_value::<Vec<u8>>(conn, "vault")? {
         let update = Update::decode_v1(&state).map_err(db_err)?;
@@ -678,7 +709,7 @@ fn load_vault(conn: &Connection) -> CommandResult<Doc> {
     Ok(doc)
 }
 
-fn save_vault(conn: &Connection, doc: &Doc) -> CommandResult<()> {
+pub(crate) fn save_vault(conn: &Connection, doc: &Doc) -> CommandResult<()> {
     let state = doc
         .transact()
         .encode_state_as_update_v1(&StateVector::default());
@@ -813,6 +844,7 @@ fn seed(conn: &Connection) -> CommandResult<()> {
     }
     conn.execute_batch("delete from sync_file_uploads; insert into sync_file_uploads (file_id) select id from files where id not in (select file_id from sync_files_gone);")
         .map_err(db_err)?;
+    crate::pdf_annotations::seed(conn, &doc)?;
     save_vault(conn, &doc)?;
     let state = doc
         .transact()
@@ -944,6 +976,7 @@ pub struct ApplyResult {
     reviews_changed: bool,
     // Images this device does not have yet are known.
     files_changed: bool,
+    pub annotations_changed: Vec<String>,
 }
 
 pub(crate) fn status(conn: &Connection) -> CommandResult<SyncStatus> {
@@ -1003,6 +1036,20 @@ pub(crate) fn reconcile_restored_account(
         if !same {
             set_value(&tx, "cursor", 0)?;
             seed(&tx)?;
+        }
+    }
+    if same {
+        let doc = load_vault(&tx)?;
+        crate::pdf_annotations::seed(&tx, &doc)?;
+        save_vault(&tx, &doc)?;
+        let has_history: bool = tx.query_row("select exists(select 1 from pdf_annotations) or exists(select 1 from pdf_annotation_tombstones)", [], |r| r.get(0)).map_err(db_err)?;
+        if has_history {
+            push_outbox(
+                &tx,
+                VAULT_DOC,
+                &doc.transact()
+                    .encode_state_as_update_v1(&StateVector::default()),
+            )?;
         }
     }
     rotate_generation(&tx)?;
@@ -1068,11 +1115,13 @@ fn apply_remote(
                 txn.apply_update(update).map_err(db_err)?;
             }
         }
+        crate::pdf_annotations::admit_incoming(&load_vault(&tx)?, &doc)?;
         // Remote file tombstones leave local bytes intact: note/card references
         // and undo leases remain authoritative. Normal cleanup reclaims them.
         save_vault(&tx, &doc)?;
     }
     let (changed, deleted) = reconcile(&tx, &doc)?;
+    result.annotations_changed = crate::pdf_annotations::reconcile(&tx, &doc)?;
     result.modules_changed = changed;
     result.deleted = deleted;
     let vault = vault_modules(&doc);
@@ -1460,10 +1509,12 @@ pub fn sync_reconcile(data_dir: &Path, db: &Db, generation: String) -> CommandRe
     let tx = conn.transaction().map_err(db_err)?;
     let doc = load_vault(&tx)?;
     let (modules_changed, deleted) = reconcile(&tx, &doc)?;
+    let annotations_changed = crate::pdf_annotations::reconcile(&tx, &doc)?;
     tx.commit().map_err(db_err)?;
     delete_modules(&mut conn, &data_dir.join("files"), &deleted)?;
     Ok(ApplyResult {
         modules_changed,
+        annotations_changed,
         deleted,
         ..ApplyResult::default()
     })
