@@ -53,7 +53,7 @@ function retryFailedIndexing() {
   for (const [moduleId, { text, backfill }] of failed) void indexNote(moduleId, text, backfill);
 }
 
-async function indexNote(moduleId: string, text: SearchText, backfill = false) {
+async function indexNote(moduleId: string, text: SearchText, backfill = false, reportFailure = false) {
   const write = (latestWrite.get(moduleId) ?? 0) + 1;
   latestWrite.set(moduleId, write);
   failed.delete(moduleId);
@@ -73,6 +73,7 @@ async function indexNote(moduleId: string, text: SearchText, backfill = false) {
     if (latestWrite.get(moduleId) !== write || saveQueue.isSuspended()) return;
     failed.set(moduleId, { text, backfill });
     retryTimer ??= window.setTimeout(retryFailedIndexing, RETRY_MS);
+    if (reportFailure) throw error;
   }
 }
 
@@ -137,12 +138,12 @@ function whenIdle() {
 }
 
 // Builds a note's search text from its saved Yjs state, without an editor.
-export async function indexStoredNote(moduleId: string) {
+export async function indexStoredNote(moduleId: string, reportFailure = false) {
   const content = await invoke<GetContentResponse>("get_content", { moduleId });
   const doc = new Y.Doc();
   try {
     applySavedContent(doc, reconcileContent(moduleId, content));
-    await indexNote(moduleId, extractFromYDoc(doc), true);
+    await indexNote(moduleId, extractFromYDoc(doc), true, reportFailure);
   } finally {
     doc.destroy();
   }

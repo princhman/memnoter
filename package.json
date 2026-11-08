@@ -27,7 +27,8 @@
   },
   "pnpm": {
     "patchedDependencies": {
-      "@tanstack/history@1.162.0": "patches/@tanstack__history@1.162.0.patch"
+      "@tanstack/history@1.162.0": "patches/@tanstack__history@1.162.0.patch",
+      "@tiptap/y-tiptap@3.0.6": "patches/@tiptap__y-tiptap@3.0.6.patch"
     }
   }
 }

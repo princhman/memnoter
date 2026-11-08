@@ -12,9 +12,10 @@ const NEW_MODULE: (&str, &str, &str) = ("new-module", "New Module…", "CmdOrCtr
 const FIND: (&str, &str, &str) = ("find", "Find…", "CmdOrCtrl+F");
 const TOGGLE_SIDEBAR: (&str, &str, &str) = ("toggle-sidebar", "Toggle Sidebar", "CmdOrCtrl+D");
 
-const CUSTOM_ITEMS: [&str; 6] = [
+const CUSTOM_ITEMS: [&str; 7] = [
     SETTINGS.0,
     NEW_MODULE.0,
+    "import-folder",
     FIND.0,
     TOGGLE_SIDEBAR.0,
     "editor-undo",
@@ -47,6 +48,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&item(app, NEW_MODULE)?)
+        .item(&MenuItemBuilder::with_id("import-folder", "Import Folder…").build(app)?)
         .separator()
         .close_window()
         .build()?;

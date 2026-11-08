@@ -26,6 +26,7 @@ macro_rules! commands {
 }
 commands! { core;
     set_module_numbering(module_id: String, enabled: bool) => crate::set_module_numbering(&core.db, module_id, enabled);
+    import_module(name: String, bytes: Vec<u8>, images: Vec<ImportImage>) => crate::import_module(core.data_dir(), &core.db, name, bytes, images);
     create_module(name: String) => crate::create_module(&core.db, name);
     modules() => crate::modules(&core.db);
     rename_module(module_id: String, name: String) => crate::rename_module(&core.db, module_id, name);

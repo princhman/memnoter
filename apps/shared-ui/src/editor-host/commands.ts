@@ -35,7 +35,7 @@ export function editorOutline(editor: Editor) {
 }
 
 export function editorState(editor: Editor) {
-  const marks = ["bold", "italic", "underline", "strike", "code", "link"].filter(mark => editor.isActive(mark));
+  const marks = ["bold", "italic", "underline", "strike", "code", "link", "highlight"].filter(mark => editor.isActive(mark));
   const focusedPos = sectionFocusKey.getState(editor.state);
   const focusedHeading = focusedPos == null ? null : editor.state.doc.nodeAt(focusedPos);
   const caretHeading = editor.state.selection.$from.parent;
@@ -52,10 +52,13 @@ export function editorState(editor: Editor) {
     })),
     focusedSectionId: focusedHeading ? sectionId(focusedHeading, focusedPos!) : null,
     headingId: caretHeading.type.name === "heading" ? sectionId(caretHeading, editor.state.selection.$from.before()) : null,
+    highlightColor: editor.isActive("highlight") ? editor.getAttributes("highlight").color : null,
     marks, blockType: editor.state.selection.$from.parent.type.name,
     headingLevel: editor.isActive("heading") ? Number(editor.getAttributes("heading").level) : null,
     bulletList: editor.isActive("bulletList"), orderedList: editor.isActive("orderedList"),
     blockquote: editor.isActive("blockquote"),
+    inTable: editor.isActive("table"),
+    canMergeCells: editor.can().mergeCells(), canSplitCell: editor.can().splitCell(),
     canIndent: editor.can().sinkListItem("listItem"),
     canOutdent: editor.can().liftListItem("listItem"),
     canMakeCard: editor.can().makeCloze(), inCloze: editor.can().removeCloze(),
@@ -72,10 +75,26 @@ export function editorState(editor: Editor) {
 export function execEditor(editor: Editor, command: string, args: Record<string, unknown> = {}): boolean {
   const commands = editor.commands;
   switch (command) {
+    case "insertTable": return editor.isActive("table") ? false : commands.insertTable({ rows: 3, cols: 3, withHeaderRow: true });
+    case "addRowBefore": return commands.addRowBefore();
+    case "addRowAfter": return commands.addRowAfter();
+    case "addColumnBefore": return commands.addColumnBefore();
+    case "addColumnAfter": return commands.addColumnAfter();
+    case "deleteRow": return commands.deleteRow();
+    case "deleteColumn": return commands.deleteColumn();
+    case "toggleHeaderRow": return commands.toggleHeaderRow();
+    case "mergeCells": return commands.mergeCells();
+    case "splitCell": return commands.splitCell();
+    case "deleteTable": return commands.deleteTable();
     case "bold": return commands.toggleBold();
     case "italic": return commands.toggleItalic();
     case "underline": return commands.toggleUnderline();
     case "strike": return commands.toggleStrike();
+    case "highlight": return commands.toggleHighlight(typeof args.color === "string" ? { color: args.color } : undefined);
+    case "setHighlight":
+      if (typeof args.color !== "string") throw new Error("setHighlight requires color");
+      return commands.setHighlight({ color: args.color });
+    case "removeHighlight": return commands.unsetHighlight();
     case "code": return commands.toggleCode();
     case "paragraph": return commands.setParagraph();
     case "heading":

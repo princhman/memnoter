@@ -1,0 +1,31 @@
+<!doctype html><html><body><main id="audit"></main><script type="module">
+import '/src/App.css';
+import 'katex/dist/katex.min.css';
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
+import { Button } from '/src/components/ui/button.tsx';
+import { Input } from '/src/components/ui/input.tsx';
+import { Switch } from '/src/components/ui/switch.tsx';
+window.renderContrastControls = () => {
+  const host = document.createElement('div');
+  document.querySelector('#audit').append(host);
+  flushSync(() => createRoot(host).render(React.createElement(React.Fragment, null,
+    ...['background', 'popover', 'sidebar'].map(surface => React.createElement('section', {
+      key: surface, className: `bg-${surface} text-foreground`, 'data-audit': `controls ${surface}`,
+    },
+      React.createElement(Button, { variant: 'outline' }, 'Cancel'),
+      React.createElement(Input, { placeholder: 'Module name', 'data-audit-placeholder': `input placeholder ${surface}` }),
+      ...[false, true].map(checked => React.createElement(Switch, {
+        key: String(checked), checked, 'aria-label': checked ? 'Enabled' : 'Disabled',
+        'data-audit': `switch ${checked} ${surface}`, 'data-audit-nontext': 'backgroundColor',
+      })),
+    )),
+  )));
+  host.querySelectorAll('[data-slot="switch-thumb"]').forEach(el => {
+    el.dataset.audit = `${el.parentElement.dataset.audit} thumb`;
+    el.dataset.auditNontext = 'backgroundColor';
+  });
+};
+window.contrastReady = true;
+</script></body></html>

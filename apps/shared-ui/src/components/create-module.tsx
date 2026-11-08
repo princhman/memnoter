@@ -1,3 +1,6 @@
+import { isTauri } from "@/lib/backend";
+import { ImportFolderDialog } from "./import-folder";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "../lib/backend.ts";
 import { useCallback, useEffect, useState } from "react";
@@ -10,7 +13,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Plus } from "lucide-react";
 import { Field, FieldError, FieldGroup } from "@/components/ui/field";
@@ -20,7 +22,6 @@ import { Button } from "./ui/button";
 import { SidebarGroupAction } from "./ui/sidebar";
 import { useCommand } from "@/lib/commands";
 import { IconTooltip } from "./icon-tooltip";
-import { MOD_KEY } from "@/lib/utils";
 
 // Registered by the global copy only, so it outlives the sidebar sheet.
 const NewModuleCommand = ({ run }: { run: () => void }) => {
@@ -30,6 +31,11 @@ const NewModuleCommand = ({ run }: { run: () => void }) => {
     keywords: ["create", "note"],
     run,
   });
+  return null;
+};
+
+const ImportModuleCommand = ({ run }: { run: () => void }) => {
+  useCommand({ id: "module.import", title: "Import folder…", keywords: ["obsidian", "markdown"], run });
   return null;
 };
 
@@ -65,6 +71,8 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
     },
   });
 
+  const openImport = () => window.dispatchEvent(new Event("memnoter-import-folder"));
+
   const trimmedName = name.trim();
 
   const nameError =
@@ -84,21 +92,19 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
   };
 
   return (
+    <>
+    {global && isTauri() && <ImportFolderDialog onImported={async moduleId => {
+      await queryClient.invalidateQueries({ queryKey: ["modules"] });
+      void navigate({ to: "/$moduleId", params: { moduleId } });
+    }} />}
     <Dialog open={open} onOpenChange={setOpen}>
       {global && <NewModuleCommand run={openDialog} />}
+      {global && isTauri() && <ImportModuleCommand run={openImport} />}
       {!global && (
-        <IconTooltip label="New module" hint={`${MOD_KEY}N`} side="right">
-          <DialogTrigger
-            render={
-              <SidebarGroupAction
-                aria-label="New module"
-                className="invisible group-hover:visible pointer-coarse:visible"
-              />
-            }
-          >
-            <Plus className="size-3" />
-          </DialogTrigger>
-        </IconTooltip>
+        <DropdownMenu>
+          <IconTooltip label="Add module" side="right"><DropdownMenuTrigger render={<SidebarGroupAction aria-label="Add module" className="invisible group-hover:visible pointer-coarse:visible" />}><Plus className="size-3" /></DropdownMenuTrigger></IconTooltip>
+          <DropdownMenuContent side="right"><DropdownMenuItem onClick={openDialog}>New module</DropdownMenuItem>{isTauri() && <DropdownMenuItem onClick={openImport}>Import folder…</DropdownMenuItem>}</DropdownMenuContent>
+        </DropdownMenu>
       )}
       <DialogContent>
         <form onSubmit={handleSubmit}>
@@ -129,6 +135,7 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
         </form>
       </DialogContent>
     </Dialog>
+    </>
   );
 };
 

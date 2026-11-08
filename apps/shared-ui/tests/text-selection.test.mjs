@@ -84,7 +84,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
           const { from, to } = editor.state.selection;
           const column = editor.view.dom.getBoundingClientRect();
           const reference = document.createElement("span");
-          reference.style.background = "color-mix(in oklch, var(--primary) 80%, transparent)";
+          reference.style.background = "var(--selection)";
           document.body.append(reference);
           const originalColour = getComputedStyle(reference).backgroundColor;
           reference.remove();
@@ -155,7 +155,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         }, { before: baseline.toString("base64"), after: png.toString("base64") });
         console.log(dark ? "dark" : "light", action, JSON.stringify(evidence));
         if (action === "select-all") assert.ok(evidence.mathLit > 0, "rendered math has visible selection feedback");
-        assert.equal(evidence.wrongColour, 0, "selected glyph boxes retain the original 80% OKLCH colour");
+        assert.equal(evidence.wrongColour, 0, "selected glyph boxes use the semantic selection color");
         assert.equal(evidence.breakPaint, 0, "selected hard line breaks stay background");
         assert.equal(evidence.emptyPaint, 0, "selected empty paragraphs stay background");
         assert.equal(evidence.mathSpill, false, "rendered math does not fill its block width");

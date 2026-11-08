@@ -207,6 +207,7 @@ pub(crate) fn open_db(app_dir: &Path) -> CommandResult<Db> {
     migrate_update_ids(&conn)?;
 
     rebase_file_paths(&conn, &files_path)?;
+    crate::files::cleanup_orphan_files(&conn, &files_path)?;
 
     Ok(Db {
         conn: Mutex::new(conn),

@@ -1,8 +1,10 @@
+import { pointInTriangle, type Point } from "@/lib/menu-aim";
 import { isNativeHost } from "@/lib/backend";
-import { IconTooltip } from "@/components/icon-tooltip";
 import { headingNumbers } from "@/lib/heading-numbering";
 import {
+  type CSSProperties,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -31,23 +33,6 @@ export function createTocStore() {
 const DASH_WIDTHS = [28, 20, 14, 9];
 // Keeps the popup this far from the window edges.
 const VIEWPORT_MARGIN = 16;
-
-type HoveredSection = {
-  start: number;
-  // Exclusive: the next heading at the same or a higher level.
-  end: number;
-  // Centre of the hovered dash, relative to the nav.
-  anchor: number;
-};
-
-function getSectionEnd(items: TableOfContentData, start: number) {
-  const level = items[start].level;
-  for (let index = start + 1; index < items.length; index += 1) {
-    if (items[index].level <= level) return index;
-  }
-  return items.length;
-}
-
 // Headings keep inline math as raw LaTeX, so render it like the editor does.
 function HeadingTitle({ node }: { node: PMNode }) {
   const html = useMemo(() => {
@@ -81,8 +66,9 @@ function DesktopTableOfContents({
   store: TocStore;
   numbered?: boolean;
 }) {
-  const numbers = useEditorState({ editor, selector: ({ editor }) => editor ? [...headingNumbers(editor.state.doc)] : [] });
-  const numberAt = (pos: number) => numbered ? `${new Map(numbers ?? []).get(pos) ?? ""} ` : "";
+  const doc = useEditorState({ editor, selector: ({ editor }) => numbered ? editor?.state.doc : null, equalityFn: Object.is });
+  const numberMap = useMemo(() => numbered && doc ? headingNumbers(doc) : new Map<number, string>(), [doc, numbered]);
+  const numberAt = (pos: number) => numbered ? `${numberMap.get(pos) ?? ""} ` : "";
   const allItems = useSelector(store, (state) => state);
   // Focus changes don't touch the document, so the TOC extension won't report them.
   const focusRange = useEditorState({
@@ -107,211 +93,236 @@ function DesktopTableOfContents({
   // here too; their folded heading is marked instead.
   const items = useMemo(() => {
     const [from, to] = focusRange?.split(":").map(Number) ?? [];
-    return allItems.filter(
-      (item) =>
-        (!focusRange || (item.pos >= from && item.pos < to)) &&
-        !folded.some((range) => item.pos >= range.from && item.pos < range.to),
-    );
+    // Both the outline and folded ranges are in document order. Sweep once,
+    // rather than searching every fold for every heading.
+    let rangeIndex = 0;
+    return allItems.filter(item => {
+      while (rangeIndex < folded.length && folded[rangeIndex].to <= item.pos) rangeIndex++;
+      const range = folded[rangeIndex];
+      return (!focusRange || (item.pos >= from && item.pos < to))
+        && !(range && item.pos >= range.from && item.pos < range.to);
+    });
   }, [allItems, focusRange, folded]);
-  const isFolded = (item: TableOfContentDataItem) =>
-    folded.some((range) => range.heading === item.pos);
-  const [hovered, setHovered] = useState<HoveredSection | null>(null);
-  // Set while a finger opened the outline: it stays open until a tap elsewhere.
+  const shallowLevels = useMemo(() => [...new Set(items.map(item => item.originalLevel))].sort((a, b) => a - b).slice(0, 2), [items]);
+  const minLevel = shallowLevels[0];
+  const roots = useMemo(() => items.filter(item => item.originalLevel === minLevel), [items, minLevel]);
+  const sectionAt = (pos: number) => {
+    let low = 0, high = roots.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (roots[middle].pos <= pos) low = middle + 1;
+      else high = middle;
+    }
+    return roots[low - 1];
+  };
+  // Publish a section identity, not the cursor offset. In-section selections
+  // must not rebuild the rail or recreate its layout observer.
+  const selectionRootId = useEditorState({
+    editor,
+    selector: ({ editor }) => editor ? sectionAt(editor.state.selection.from)?.id ?? null : null,
+  });
+  let activeItem = items[0];
+  for (const item of items) if (item.isScrolledOver) activeItem = item;
+  const activeId = activeItem?.id;
+  const currentRoot = roots.find(item => item.id === selectionRootId) ?? sectionAt(activeItem?.pos ?? -1);
+  const nextRoot = roots[roots.findIndex(item => item.id === currentRoot?.id) + 1];
+  const railItems = items.filter(item => shallowLevels.includes(item.originalLevel)
+    || (currentRoot && item.pos >= currentRoot.pos && (!nextRoot || item.pos < nextRoot.pos)));
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const hovered = railItems.find(item => item.id === hoveredId);
+  const hoveredIndex = items.findIndex(item => item.id === hoveredId);
+  const descendants: TableOfContentData = [];
+  if (hovered) {
+    for (const item of items.slice(hoveredIndex + 1)) {
+      if (item.originalLevel <= hovered.originalLevel) break;
+      descendants.push(item);
+    }
+  }
+  const relatedIds = new Set([hovered?.id, ...descendants.map(item => item.id)]);
   const [pinned, setPinned] = useState(false);
-  // The pointer that pressed a dash, so its click knows whether it was a tap.
-  const pressTypeRef = useRef("");
   const navRef = useRef<HTMLElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const safeAreaRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const dashRefs = useRef(new Map<string, HTMLButtonElement>());
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointer = useRef<Point | null>(null);
+  const aimOrigin = useRef<Point | null>(null);
+  const pendingAim = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const pressType = useRef("");
+  const suppressFocus = useRef(false);
+  const popupId = useId();
+  const foldedHeadings = useMemo(() => new Set(folded.map(range => range.heading)), [folded]);
+  const isFolded = (item: TableOfContentDataItem) => foldedHeadings.has(item.pos);
 
-  // Centre the popup on the hovered dash, then clamp it inside the window.
-  // Showing or hiding sections moves headings, so recompute which one is current.
-  useEffect(() => {
-    setHovered(null);
+  function cancelClose() {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  }
+  function cancelAim() {
+    if (pendingAim.current) clearTimeout(pendingAim.current.timer);
+    pendingAim.current = null;
+    aimOrigin.current = null;
+  }
+  function closePopup() {
+    cancelAim();
+    pointer.current = null;
+    cancelClose();
+    setHoveredId(null);
     setPinned(false);
-    // A destroyed editor (e.g. replaced during a reload) has empty storage.
-    if (!editor || editor.isDestroyed) return;
-    editor.storage.tableOfContents.scrollHandler();
+  }
+  function openPopup(id: string) {
+    cancelAim();
+    cancelClose();
+    setHoveredId(id);
+  }
+  function trackPointer(event: React.PointerEvent<HTMLElement>) {
+    if (event.pointerType === "touch" || pinned) return;
+    const point = { x: event.clientX, y: event.clientY };
+    const previous = pointer.current;
+    pointer.current = point;
+    const dash = (event.target as Element).closest<HTMLButtonElement>(".toc-dash");
+    const id = dash?.dataset.headingId;
+    if (!id || id === hoveredId) { cancelAim(); return; }
+    const bounds = popupRef.current?.getBoundingClientRect();
+    const origin = aimOrigin.current ?? previous;
+    // The popup sits to the left. Vertical scrubbing must never be delayed.
+    if (bounds && origin && previous && point.x < previous.x && pointInTriangle(point, origin,
+      { x: bounds.right, y: bounds.top }, { x: bounds.right, y: bounds.bottom })) {
+      aimOrigin.current = origin;
+      if (pendingAim.current) clearTimeout(pendingAim.current.timer);
+      pendingAim.current = { id, timer: setTimeout(() => openPopup(id), 150) };
+      return;
+    }
+    openPopup(id);
+  }
+  function returnToDash() {
+    suppressFocus.current = true;
+    if (hoveredId) dashRefs.current.get(hoveredId)?.focus({ preventScroll: true });
+    suppressFocus.current = false;
+  }
+  useEffect(() => () => { cancelClose(); cancelAim(); }, []);
+  useEffect(() => {
+    closePopup();
+    if (editor && !editor.isDestroyed) editor.storage.tableOfContents.scrollHandler();
   }, [editor, focusRange, foldedRanges]);
-
-  // A tap outside closes an outline a tap opened.
   useEffect(() => {
     if (!pinned) return;
     const close = (event: PointerEvent) => {
-      if (event.target instanceof Node && navRef.current?.contains(event.target)) return;
-      setHovered(null);
-      setPinned(false);
+      if (event.target instanceof Node && !navRef.current?.contains(event.target)) closePopup();
     };
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
   }, [pinned]);
 
   useLayoutEffect(() => {
-    const nav = navRef.current;
-    const panel = panelRef.current;
-    if (!hovered || !nav || !panel) return;
+    const position = () => {
+      const popup = popupRef.current;
+      const nav = navRef.current;
+      const dash = hoveredId ? dashRefs.current.get(hoveredId) : null;
+      if (!popup || !nav || !dash) return;
+      const bounds = nav.getBoundingClientRect();
+      const anchor = dash.getBoundingClientRect();
+      const contentTop = editor?.view.dom.closest(".app-scroll-container")?.getBoundingClientRect().top ?? 0;
+      const minTop = Math.max(VIEWPORT_MARGIN, contentTop + VIEWPORT_MARGIN);
+      popup.style.maxHeight = `${Math.max(0, window.innerHeight - minTop - VIEWPORT_MARGIN)}px`;
+      popup.style.top = `${Math.max(minTop, Math.min(anchor.top + anchor.height / 2 - popup.offsetHeight / 2,
+        window.innerHeight - VIEWPORT_MARGIN - popup.offsetHeight)) - bounds.top}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    if (navRef.current) observer.observe(navRef.current);
+    if (popupRef.current) observer.observe(popupRef.current);
+    window.addEventListener("resize", position);
+    return () => { observer.disconnect(); window.removeEventListener("resize", position); };
+  }, [hoveredId, items, selectionRootId, editor]);
 
-    const navTop = nav.getBoundingClientRect().top;
-    const height = panel.offsetHeight;
-    const centred = navTop + hovered.anchor - height / 2;
-    const top = Math.max(
-      VIEWPORT_MARGIN,
-      Math.min(centred, window.innerHeight - VIEWPORT_MARGIN - height),
-    );
-    panel.style.top = `${top - navTop}px`;
-  }, [hovered]);
-
-  if (!editor || items.length === 0) return null;
-
-  // Hidden headings report as scrolled over, so pick the last visible one that is.
-  // Nothing is scrolled over at the very top, so fall back to the first heading.
-  const activeId =
-    [...items].reverse().find((item) => item.isScrolledOver)?.id ??
-    items[0].id;
-  const minLevel = Math.min(...items.map((item) => item.level));
-  // The hovered index can outlive an edit that removed headings.
-  const section =
-    hovered && hovered.start < items.length
-      ? { ...hovered, end: Math.min(hovered.end, items.length) }
-      : null;
-
-  // Stretches an invisible triangle from the pointer to the popup's edge. It sits
-  // above the rail, so heading for the popup diagonally neither hovers other
-  // dashes nor leaves the nav.
-  function updateSafeArea(event: React.PointerEvent) {
-    const nav = navRef.current;
-    const panel = panelRef.current;
-    const area = safeAreaRef.current;
-    if (!nav || !panel || !area) return;
-
-    const navRect = nav.getBoundingClientRect();
-    const panelRect = panel.getBoundingClientRect();
-    const top = Math.min(panelRect.top, event.clientY);
-    const bottom = Math.max(panelRect.bottom, event.clientY);
-    const width = event.clientX - panelRect.right;
-    area.style.left = `${panelRect.right - navRect.left}px`;
-    area.style.top = `${top - navRect.top}px`;
-    area.style.width = `${Math.max(width, 0)}px`;
-    area.style.height = `${bottom - top}px`;
-    area.style.clipPath = `polygon(${width}px ${event.clientY - top}px, 0 ${panelRect.top - top}px, 0 ${panelRect.bottom - top}px)`;
-  }
-
-  function openSection(index: number, dash: HTMLElement) {
-    setHovered({
-      start: index,
-      end: getSectionEnd(items, index),
-      anchor: dash.offsetTop + dash.offsetHeight / 2,
-    });
-  }
-
-  function closeOutline() {
-    setHovered(null);
-    setPinned(false);
-  }
+  useLayoutEffect(() => {
+    const popup = popupRef.current;
+    const active = popup?.querySelector<HTMLElement>('[data-active="true"]');
+    if (!popup || !active) return;
+    const bounds = popup.getBoundingClientRect();
+    const row = active.getBoundingClientRect();
+    if (row.top < bounds.top) popup.scrollTop -= bounds.top - row.top;
+    else if (row.bottom > bounds.bottom) popup.scrollTop += row.bottom - bounds.bottom;
+  }, [hoveredId, activeId]);
 
   function scrollTo(item: TableOfContentDataItem) {
-    // The stored DOM node can be replaced by a re-render, so look it up fresh.
-    const heading =
-      editor?.view.dom.querySelector<HTMLElement>(
-        `[data-toc-id="${CSS.escape(item.id)}"]`,
-      ) ?? item.dom;
+    const heading = editor?.view.dom.querySelector<HTMLElement>(`[data-toc-id="${CSS.escape(item.id)}"]`) ?? item.dom;
     heading.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  function renderRow(item: TableOfContentDataItem) {
+    return <button key={item.id} type="button" className="toc-item"
+      aria-label={numberAt(item.pos) + item.textContent} data-active={item.id === activeId}
+      style={{ paddingLeft: `${0.5 + Math.max(0, item.originalLevel - hovered!.originalLevel) * 0.625}rem` }}
+      onMouseDown={event => event.preventDefault()}
+      onClick={() => { scrollTo(item); closePopup(); }}>
+      <span className="toc-item-title">{numberAt(item.pos)}<HeadingTitle node={item.node} /></span>
+      {isFolded(item) && <ChevronRight aria-label="Folded" />}
+    </button>;
+  }
 
-  return (
-    <nav
-      ref={navRef}
-      className="toc"
-      aria-label="Table of contents"
-      onPointerLeave={(event) => {
-        if (event.pointerType !== "touch" && !pinned) setHovered(null);
-      }}
-    >
-      {section && (
-        // Keyed so a new section starts without the previous dash's triangle.
-        <div key={section.start} ref={safeAreaRef} className="toc-safe-area" />
-      )}
-      {section && (
-        <div ref={panelRef} className="toc-panel">
-          {items.slice(section.start, section.end).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="toc-item"
-              data-active={item.id === activeId}
-              data-folded={isFolded(item)}
-              style={{
-                paddingLeft: `${0.5 + (item.level - items[section.start].level) * 0.625}rem`,
-              }}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                scrollTo(item);
-                if (pinned) closeOutline();
-              }}
-            >
-              <span className="toc-item-title">
-                {numberAt(item.pos)}<HeadingTitle node={item.node} />
-              </span>
-              {isFolded(item) && <ChevronRight aria-label="Folded" />}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="toc-rail">
-        {items.map((item, index) => (
-          <IconTooltip key={item.id} label={numberAt(item.pos) + item.textContent} side="left">
-          <button
-            type="button"
-            className="toc-dash"
-            aria-label={numberAt(item.pos) + item.textContent}
-            data-active={item.id === activeId}
-            data-folded={isFolded(item)}
-            data-related={
-              section !== null && index >= section.start && index < section.end
-            }
-            onMouseDown={(event) => event.preventDefault()}
-            onPointerDown={(event) => {
-              pressTypeRef.current = event.pointerType;
-            }}
-            onPointerEnter={(event) => {
-              if (event.pointerType !== "touch" && !pinned) {
-                openSection(index, event.currentTarget);
-              }
-            }}
-            onPointerMove={(event) => {
-              if (event.pointerType !== "touch" && section?.start === index) {
-                updateSafeArea(event);
-              }
-            }}
-            onClick={(event) => {
-              // A finger can't hover, so its first tap opens the outline,
-              // and a second tap on the same dash goes to that heading.
-              const tapped = pressTypeRef.current === "touch";
-              pressTypeRef.current = "";
-              if (tapped && section?.start !== index) {
-                openSection(index, event.currentTarget);
-                setPinned(true);
-                return;
-              }
-              scrollTo(item);
-              if (pinned) closeOutline();
-            }}
-          >
-            <span
-              style={{
-                width:
-                  DASH_WIDTHS[
-                    Math.min(item.level - minLevel, DASH_WIDTHS.length - 1)
-                  ],
-              }}
-            />
-          </button>
-          </IconTooltip>
-        ))}
-      </div>
-    </nav>
-  );
+  if (!editor || !items.length) return null;
+  return <nav ref={navRef} className="toc" aria-label="Table of contents"
+    onKeyDown={event => {
+      if (event.key === "Escape") {
+        event.preventDefault(); returnToDash(); closePopup();
+      }
+    }}
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) closePopup(); }}
+    onPointerEnter={cancelClose}
+    onPointerMove={trackPointer}
+    onPointerLeave={event => {
+      cancelAim();
+      if (event.pointerType !== "touch" && !pinned && !navRef.current?.contains(document.activeElement)) {
+        cancelClose(); closeTimer.current = setTimeout(closePopup, 300);
+      }
+    }}>
+    {hovered && <div ref={popupRef} id={popupId} className="toc-popup" role="region"
+      aria-label={`Contents of ${numberAt(hovered.pos) + hovered.textContent}`}
+      onWheel={event => event.stopPropagation()}
+      onKeyDown={event => {
+        const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".toc-item")];
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const target = event.key === "ArrowDown" ? Math.min(index + 1, buttons.length - 1)
+          : event.key === "ArrowUp" ? Math.max(index - 1, 0)
+          : event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : null;
+        if (target !== null) { event.preventDefault(); buttons[target]?.focus(); }
+        if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+          event.preventDefault(); returnToDash();
+        }
+      }}>
+      {renderRow(hovered)}
+      {descendants.map(renderRow)}
+    </div>}
+    <div className="toc-rail" style={{ "--toc-rows": railItems.length } as CSSProperties}>
+      {railItems.map((item, index) => <button key={item.id} type="button" className="toc-dash"
+        ref={node => { if (node) dashRefs.current.set(item.id, node); else dashRefs.current.delete(item.id); }}
+        data-heading-id={item.id} data-active={item.id === activeId} data-folded={isFolded(item)} data-related={relatedIds.has(item.id)}
+        aria-label={numberAt(item.pos) + item.textContent} aria-expanded={hoveredId === item.id}
+        aria-controls={hoveredId === item.id ? popupId : undefined}
+        onMouseDown={event => event.preventDefault()}
+        onPointerDown={event => { pressType.current = event.pointerType; }}
+        onFocus={event => { if (!suppressFocus.current && event.currentTarget.matches(":focus-visible")) openPopup(item.id); }}
+        onKeyDown={event => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            const target = event.key === "Home" ? 0 : event.key === "End" ? railItems.length - 1
+              : Math.max(0, Math.min(railItems.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
+            dashRefs.current.get(railItems[target].id)?.focus();
+          } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            event.preventDefault(); openPopup(item.id);
+            requestAnimationFrame(() => popupRef.current?.querySelector<HTMLButtonElement>(".toc-item")?.focus());
+          }
+        }}
+        onClick={() => {
+          const touch = pressType.current === "touch";
+          pressType.current = "";
+          if (touch && (!pinned || hoveredId !== item.id)) { openPopup(item.id); setPinned(true); return; }
+          scrollTo(item); closePopup();
+        }}>
+        <span style={{ width: DASH_WIDTHS[Math.min(item.originalLevel - minLevel, DASH_WIDTHS.length - 1)] }} />
+      </button>)}
+    </div>
+  </nav>;
 }
 
 export function TableOfContents(props: { editor: Editor | null; store: TocStore; numbered?: boolean }) {

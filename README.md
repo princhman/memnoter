@@ -170,3 +170,23 @@ modified copy as a service must publish their changes.
 
 See [apps/ios/README.md](apps/ios/README.md) for the native SwiftUI iPad app and build instructions, and [crates/memnoter-core/README.md](crates/memnoter-core/README.md) for the shared Rust core and dispatch API.
 
+
+### Import an Obsidian folder (desktop)
+
+Choose **Import folder…** in the new-module dialog, the command palette, or
+**File → Import Folder…**. Select the folder itself. Memnoter creates one new
+module, shows progress and a summary, then opens it. Existing module names get
+a numeric suffix.
+
+The folder's matching hub note comes first. Root notes and nonempty subfolders
+become sections, ordered naturally; numeric folder prefixes are hidden in section
+titles. Nested notes retain their headings below their section. Markdown tables,
+yellow highlights, code and supported local images are preserved. PNG, JPEG,
+WebP and GIF files are copied into managed storage; unresolved images become
+readable placeholders. PDFs, text exports and other files are listed in the
+summary and are not imported. Hidden folders and symbolic links are skipped.
+The source folder is read-only; a failed import removes its partial module.
+
+Importer tests use a synthetic folder. Real-folder verification runs when the
+local COMP0002 folder exists, or when `MEMNOTER_IMPORT_FOLDER` points to it.
+No source notes or attachments are stored in this repository.

@@ -47,6 +47,9 @@ export const Sections = Extension.create({
       insertSection:
         (kind) =>
         ({ state, tr, dispatch, commands }) => {
+          // Sections belong to the note outline, never to a table cell.
+          if (Array.from({ length: state.selection.$from.depth }, (_, i) =>
+            state.selection.$from.node(i + 1).type.name).includes("table")) return false;
           const headingType = state.schema.nodes.heading;
           const { $from } = state.selection;
           const { heading, end } = currentSection(state);

@@ -170,6 +170,11 @@ export const MathBlock = Node.create({
         ({ state, tr, dispatch }) => {
           const { selection, schema } = state;
           const { $from, $to } = selection;
+          // replaceRangeWith can lift a block out of a cell whose schema does
+          // not allow math blocks. Keep the selection and table intact.
+          for (let depth = $from.depth; depth > 0; depth--) {
+            if ($from.node(depth).type.name === "table") return false;
+          }
           const parent = $from.parent;
           const start = $from.depth > 0 ? $from.before() : 0;
           const end = start + parent.nodeSize;

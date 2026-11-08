@@ -1,3 +1,4 @@
+import { highlightColor } from "./highlight.ts";
 import { maskCards, validMasks, type OcclusionFace } from "./occlusion.ts";
 import type { Node } from "@tiptap/pm/model";
 import type { StepMap } from "@tiptap/pm/transform";
@@ -17,8 +18,8 @@ import type { StepMap } from "@tiptap/pm/transform";
 export type CardKind = "basic" | "cloze" | "occlusion";
 
 export type Segment =
-  | { type: "text"; text: string; marks?: string[] }
-  | { type: "math"; tex: string }
+  | { type: "text"; text: string; marks?: string[]; highlightColor?: string }
+  | { type: "math"; tex: string; highlightColor?: string }
   | { type: "break" }
   // The answer of a cloze card, highlighted on the back.
   | { type: "cloze"; children: Segment[] }
@@ -53,8 +54,8 @@ export type BlockSyntax = {
 };
 
 type Unit =
-  | { type: "char"; char: string; marks: string[]; syntax: boolean; at: number }
-  | { type: "math"; tex: string; at: number; size: number }
+  | { type: "char"; char: string; marks: string[]; highlightColor?: string; syntax: boolean; at: number }
+  | { type: "math"; tex: string; highlightColor?: string; at: number; size: number }
   | { type: "break"; at: number };
 
 const KEPT_MARKS = new Set(["bold", "italic", "underline", "strike", "code", "highlight"]);
@@ -62,6 +63,8 @@ const KEPT_MARKS = new Set(["bold", "italic", "underline", "strike", "code", "hi
 function unitsOf(block: Node): Unit[] {
   const units: Unit[] = [];
   block.forEach((child, offset) => {
+    const highlight = child.marks.find(mark => mark.type.name === "highlight");
+    const color = highlight ? { highlightColor: highlightColor(highlight.attrs.color) } : {};
     if (child.isText) {
       const marks = child.marks.map((mark) => mark.type.name).filter((name) => KEPT_MARKS.has(name));
       const syntax = !child.marks.some((mark) => mark.type.spec.code || mark.type.name === "link");
@@ -69,12 +72,13 @@ function unitsOf(block: Node): Unit[] {
       // UTF-16 units, as ProseMirror does.
       let at = offset;
       for (const char of child.text!) {
-        units.push({ type: "char", char, marks, syntax, at });
+        units.push({ type: "char", char, marks, ...color, syntax, at });
         at += char.length;
       }
     } else if (child.type.name === "inlineMath") {
       units.push({
         type: "math",
+        ...color,
         tex: child.textContent.replace(/​/g, ""),
         at: offset,
         size: child.nodeSize,
@@ -119,15 +123,15 @@ function trim(units: Unit[]) {
 function segmentsOf(units: Unit[]): Segment[] {
   const segments: Segment[] = [];
   for (const unit of units) {
-    if (unit.type === "math") segments.push({ type: "math", tex: unit.tex });
+    if (unit.type === "math") segments.push({ type: "math", tex: unit.tex, ...(unit.highlightColor ? { highlightColor: unit.highlightColor } : {}) });
     else if (unit.type === "break") segments.push({ type: "break" });
     else {
       const last = segments[segments.length - 1];
       const marks = unit.marks.length ? unit.marks : undefined;
-      if (last?.type === "text" && String(last.marks) === String(marks)) {
+      if (last?.type === "text" && String(last.marks) === String(marks) && last.highlightColor === unit.highlightColor) {
         last.text += unit.char;
       } else {
-        segments.push(marks ? { type: "text", text: unit.char, marks } : { type: "text", text: unit.char });
+        segments.push({ type: "text", text: unit.char, ...(marks ? { marks } : {}), ...(unit.highlightColor ? { highlightColor: unit.highlightColor } : {}) });
       }
     }
   }
@@ -195,7 +199,7 @@ function mergeText(segments: Segment[]): Segment[] {
     if (
       segment.type === "text" &&
       last?.type === "text" &&
-      String(last.marks) === String(segment.marks)
+      String(last.marks) === String(segment.marks) && last.highlightColor === segment.highlightColor
     ) {
       merged[merged.length - 1] = { ...last, text: last.text + segment.text };
     } else {

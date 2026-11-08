@@ -8,6 +8,11 @@
 
 :root {
     --background: oklch(1 0 0);
+    --link: oklch(0.40 0.20 277);
+    --selection: #dce1ff;
+    --control-accent: var(--primary);
+    --switch-track: oklch(0.60 0 0);
+    --rail-related: oklch(0.60 0.14 277);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
@@ -18,13 +23,13 @@
     --secondary: oklch(0.967 0.001 286.375);
     --secondary-foreground: oklch(0.21 0.006 285.885);
     --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
+    --muted-foreground: oklch(0.46 0 0);
     --accent: oklch(0.97 0 0);
     --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
+    --destructive: oklch(0.46 0.19 27.325);
     --border: oklch(0.922 0 0);
     --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --ring: oklch(0.55 0 0);
     --chart-1: oklch(0.785 0.115 274.713);
     --chart-2: oklch(0.585 0.233 277.117);
     --chart-3: oklch(0.511 0.262 276.966);
@@ -38,42 +43,46 @@
     --sidebar-accent: oklch(0.97 0 0);
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar-ring: var(--ring);
 }
 
 .dark {
-    --background: #191919;
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.26 0 0);
+    --background: #111111;
+    --link: oklch(0.73 0.08 277);
+    --selection: #34395e;
+    --control-accent: var(--link);
+    --rail-related: oklch(0.68 0.12 277);
+    --foreground: oklch(0.90 0 0);
+    --card: oklch(0.18 0 0);
+    --card-foreground: oklch(0.90 0 0);
+    --popover: oklch(0.23 0 0);
     --floating-shadow: 0 8px 24px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.4);
-    --popover-foreground: oklch(0.985 0 0);
+    --popover-foreground: oklch(0.90 0 0);
     --primary: oklch(0.398 0.195 277.366);
     --primary-foreground: oklch(0.962 0.018 272.314);
-    --secondary: oklch(0.274 0.006 286.033);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.31 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
+    --secondary: oklch(0.25 0.006 286.033);
+    --secondary-foreground: oklch(0.90 0 0);
+    --muted: oklch(0.25 0 0);
+    --muted-foreground: oklch(0.72 0 0);
+    --accent: oklch(0.28 0 0);
+    --accent-foreground: oklch(0.90 0 0);
+    --destructive: oklch(0.77 0.10 22.216);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
+    --ring: oklch(0.72 0 0);
     --chart-1: oklch(0.785 0.115 274.713);
     --chart-2: oklch(0.585 0.233 277.117);
     --chart-3: oklch(0.511 0.262 276.966);
     --chart-4: oklch(0.457 0.24 277.023);
     --chart-5: oklch(0.398 0.195 277.366);
-    --sidebar: #202020;
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.585 0.233 277.117);
+    --sidebar: #171717;
+    --sidebar-foreground: oklch(0.90 0 0);
+    --sidebar-primary: oklch(0.69 0.10 277.117);
     --sidebar-primary-foreground: oklch(0.962 0.018 272.314);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.25 0 0);
+    --sidebar-accent-foreground: oklch(0.90 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar-ring: var(--ring);
 }
 
 @theme inline {
@@ -104,6 +113,9 @@
     --color-secondary: var(--secondary);
     --color-primary-foreground: var(--primary-foreground);
     --color-primary: var(--primary);
+    --color-link: var(--link);
+    --color-control-accent: var(--control-accent);
+    --color-switch-track: var(--switch-track);
     --color-popover-foreground: var(--popover-foreground);
     --color-popover: var(--popover);
     --color-card-foreground: var(--card-foreground);
@@ -404,7 +416,7 @@ body {
 
 /* Links, if enabled later */
 .tiptap a {
-    color: var(--primary);
+    color: var(--link);
     text-decoration: underline;
     text-underline-offset: 0.18em;
 }
@@ -425,7 +437,7 @@ body {
 }
 
 .tiptap .text-range-selected {
-    background: color-mix(in oklch, var(--primary) 80%, transparent);
+    background: var(--selection);
 }
 
 /* High-contrast modes recolour backgrounds to the canvas, which would hide the
@@ -527,7 +539,7 @@ body {
    bigger target than the chevron. */
 @media (pointer: coarse) {
     .heading-fold-toggle {
-        opacity: 0.45;
+        opacity: 1;
     }
     .heading-fold-toggle::after {
         content: "";
@@ -580,14 +592,14 @@ body {
     -webkit-user-select: none;
 }
 .note-image-block[data-selected="true"] .note-image {
-    outline: 2px solid var(--primary);
+    outline: 2px solid var(--control-accent);
 }
 .note-image-host [data-resize-handle] {
     width: 12px;
     height: 12px;
     border: 2px solid var(--background);
     border-radius: 3px;
-    background: var(--primary);
+    background: var(--control-accent);
     opacity: 0;
     touch-action: none;
 }
@@ -765,7 +777,7 @@ body {
     height: 14px;
     border: 2px solid white;
     border-radius: 3px;
-    background: var(--primary);
+    background: var(--control-accent);
     touch-action: none;
 }
 .image-crop-handle-n, .image-crop-handle-s { left: calc(50% - 11px); width: 22px; height: 10px; cursor: ns-resize; }
@@ -859,11 +871,7 @@ body {
 }
 
 .tiptap .inline-math-widget.is-selected {
-    --inline-math-selection: color-mix(
-        in srgb,
-        var(--primary) 80%,
-        var(--background)
-    );
+    --inline-math-selection: var(--selection);
 
     border-radius: 0;
     background: var(--inline-math-selection);
@@ -997,34 +1005,30 @@ body {
 }
 
 /* ---------- Floating table of contents ---------- */
-/* A rail of dashes on the right edge; hovering one shows that section's outline. */
 .toc {
     position: fixed;
     z-index: 30;
     top: 50%;
     right: 1.25rem;
-    display: flex;
-    align-items: flex-start;
     transform: translateY(-50%);
 }
 
 .toc-rail {
-    position: relative;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
+    height: min(calc(var(--toc-rows, 1) * 8px), 60vh);
     max-height: 60vh;
     padding-left: 0.75rem;
-    overflow: hidden;
 }
 
-/* Each dash gets a taller hit area than the 2px line it draws. */
+/* All rows shrink together; no heading is lost to a rail scrollbar. */
 .toc-dash {
     display: flex;
-    flex: none;
+    flex: 1 1 8px;
     align-items: center;
     justify-content: flex-end;
-    height: 8px;
+    min-height: 0;
     padding-left: 0.5rem;
     cursor: pointer;
 }
@@ -1032,95 +1036,18 @@ body {
 .toc-dash > span,
 .toc-dash[data-folded="true"]::before {
     height: 2px;
+    max-height: 50%;
     border-radius: 1px;
-    background: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
-    transition: background-color 120ms ease;
+    background: var(--muted-foreground);
+    pointer-events: none;
 }
 
 .toc-dash[data-related="true"] > span,
-.toc-dash[data-related="true"]::before {
-    background: var(--chart-1);
-}
-
-/* Taller dashes for a finger; tapping one opens its outline. */
-@media (pointer: coarse) {
-    .toc-dash {
-        height: 14px;
-        padding-left: 1rem;
-    }
-}
-
+.toc-dash[data-related="true"]::before { background: var(--rail-related); }
 .toc-dash[data-active="true"] > span,
-.toc-dash[data-active="true"]::before {
-    background: var(--chart-3);
-}
+.toc-dash[data-active="true"]::before { background: var(--link); }
+.toc-dash:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
-/* Positioned and clipped from script; catches the pointer on its way to the popup. */
-.toc-safe-area {
-    position: absolute;
-    z-index: 1;
-}
-
-/* Sits flush against the rail's padding, so hover carries over without a gap. */
-.toc-panel {
-    position: absolute;
-    right: 100%;
-    display: flex;
-    flex-direction: column;
-    width: max-content;
-    min-width: 10rem;
-    max-width: 16rem;
-    max-height: 50vh;
-    padding: 0.3rem;
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    border-radius: 0.75rem;
-    background: var(--popover);
-    color: var(--popover-foreground);
-    box-shadow: 0 12px 32px color-mix(in oklch, black 30%, transparent);
-    animation: toc-panel-in 120ms ease-out;
-}
-
-
-@keyframes toc-panel-in {
-    from {
-        opacity: 0;
-        transform: translateX(0.25rem);
-    }
-}
-
-.toc-item {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 0.25rem;
-    padding-block: 0.125rem;
-    padding-right: 0.5rem;
-    border-radius: 0.375rem;
-    color: var(--popover-foreground);
-    font-size: 0.8125rem;
-    line-height: 1.35;
-    text-align: left;
-    white-space: nowrap;
-    cursor: pointer;
-}
-
-.toc-item-title {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-/* Folded sections: a chevron in the outline, a dot before the dash in the rail. */
-.toc-item > svg {
-    flex: none;
-    width: 0.875rem;
-    height: 0.875rem;
-    color: var(--muted-foreground);
-}
-
-/* Colours come from the dash rules above, so the dot highlights with it. */
 .toc-dash[data-folded="true"]::before {
     content: "";
     width: 3px;
@@ -1129,22 +1056,43 @@ body {
     border-radius: 50%;
 }
 
-.toc-item:hover {
-    background: var(--accent);
+.toc-popup {
+    position: absolute;
+    right: 100%;
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    max-width: min(20rem, calc(100vw - 5rem));
+    padding: 0.375rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border-radius: 0.75rem;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 12px 32px color-mix(in oklch, black 30%, transparent);
 }
 
-.toc-item[data-active="true"] {
-    color: var(--sidebar-primary);
+.toc-item {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
 }
+.toc-item:hover, .toc-item:focus-visible { background: var(--accent); outline: none; }
+.toc-item-title { min-width: 0; overflow-wrap: anywhere; }
+.toc-item > svg { flex: none; width: 0.875rem; height: 0.875rem; }
+.toc-item[data-active="true"] { color: var(--sidebar-primary); }
+.toc-item .katex { font-size: 1em; }
 
-@media (prefers-reduced-motion: reduce) {
-    .toc-panel {
-        animation: none;
-    }
-}
-
-.toc-item .katex {
-    font-size: 1em;
+@media (pointer: coarse) {
+    .toc-rail { height: min(calc(var(--toc-rows, 1) * 14px), 60vh); }
+    .toc-dash { flex-basis: 14px; padding-left: 1rem; }
 }
 
 /* Search matches are drawn as boxes behind the text, never as spans inside it,
@@ -1173,11 +1121,11 @@ body {
 }
 
 .dark .find-highlight {
-  background-color: oklch(0.78 0.15 85 / 0.4);
+  background-color: oklch(0.34 0.045 85);
 }
 
 .dark .find-highlight-current {
-  background-color: oklch(0.72 0.17 60 / 0.75);
+  background-color: oklch(0.38 0.06 60);
 }
 
 /* Flashcards. Card syntax stays real, editable text and is only restyled:
@@ -1185,20 +1133,6 @@ body {
    caret arrives, so text never shifts under it. */
 .tiptap .card-block {
     position: relative;
-}
-
-/* A faint marker in the right margin; the left one holds fold toggles. */
-.tiptap .card-block::after {
-    content: "";
-    position: absolute;
-    top: 0.55em;
-    right: -0.8rem;
-    width: 0.3rem;
-    height: 0.3rem;
-    border-radius: 9999px;
-    background: var(--primary);
-    opacity: 0.35;
-    pointer-events: none;
 }
 
 /* Card info sits where headings keep their fold toggle. It shows on hover,
@@ -1252,16 +1186,16 @@ body {
 }
 
 .tiptap .card-info[data-state="new"] {
-    color: var(--color-sky-600);
+    color: var(--color-sky-700);
 }
 
 .tiptap .card-info[data-state="learning"],
 .tiptap .card-info[data-state="relearning"] {
-    color: var(--color-red-600);
+    color: var(--color-red-800);
 }
 
 .tiptap .card-info[data-state="review"] {
-    color: var(--color-emerald-600);
+    color: var(--color-emerald-800);
 }
 
 .dark .tiptap .card-info[data-state="new"] {
@@ -1280,9 +1214,9 @@ body {
     opacity: 1;
 }
 
-/* Full colour only when due; a card waiting its turn keeps a faint dot. */
+/* Keep status dots legible even while a card waits its turn. */
 .tiptap .card-info:not([data-due])::before {
-    opacity: 0.35;
+    opacity: 1;
 }
 
 .tiptap .card-info-popup {
@@ -1366,12 +1300,12 @@ body {
 }
 
 .tiptap .card-info-state:is([data-state="learning"], [data-state="relearning"]) {
-    color: var(--color-red-600);
+    color: var(--color-red-800);
     background: color-mix(in oklch, var(--color-red-500) 12%, transparent);
 }
 
 .tiptap .card-info-state[data-state="review"] {
-    color: var(--color-emerald-600);
+    color: var(--color-emerald-800);
     background: color-mix(in oklch, var(--color-emerald-500) 12%, transparent);
 }
 
@@ -1442,7 +1376,7 @@ body {
 .tiptap .card-block-active .card-sep {
     color: var(--muted-foreground);
     background: none;
-    opacity: 0.6;
+    opacity: 1;
 }
 
 /* Keep cloze markers hidden in both reading and editing states. */
@@ -1506,8 +1440,8 @@ body {
 .occlusion-other.is-peeked { fill: transparent; stroke-dasharray: 4 3; }
 /* The card a mask belongs to, as a tab in its top-left corner in the mask's
    colour; joined masks share the number. */
-.occlusion-number { position: absolute; margin: 3px; padding: 0 5px; border-radius: 4px; background: var(--color-sky-600); color: white; font-size: 11px; font-weight: 600; line-height: 16px; pointer-events: none; }
-.occlusion-number.is-selected { background: var(--color-amber-600); }
+.occlusion-number { position: absolute; margin: 3px; padding: 0 5px; border-radius: 4px; background: var(--color-sky-700); color: white; font-size: 11px; font-weight: 600; line-height: 16px; pointer-events: none; }
+.occlusion-number.is-selected { background: var(--color-amber-800); }
 /* The selected mask's box, with the crop dialog's handles. */
 .occlusion-selection { position: absolute; cursor: move; outline: 1.5px dashed white; outline-offset: 2px; }
 
@@ -1529,13 +1463,13 @@ body {
   z-index: 60;
   pointer-events: none;
   border-radius: 1px;
-  background: var(--primary);
+  background: var(--control-accent);
 }
 
 /* Preserve selection feedback over syntax backgrounds without replacing their
    arrow image or cloze underline. */
 .tiptap .text-range-selected:is(.card-sep, .cloze-text) {
-    background-color: color-mix(in oklch, var(--primary) 80%, transparent);
+    background-color: var(--selection);
 }
 
 
@@ -1559,8 +1493,133 @@ body {
 .dark .note-image-controls,
 .dark .image-crop-dialog,
 .dark .tiptap .inline-math-preview > span,
-.dark .toc-panel,
+.dark .toc-popup,
 .dark .tiptap .card-info-popup,
 .dark .occlusion-dialog {
     box-shadow: var(--floating-shadow);
+}
+
+/* Semantic note colours stay softer than amber find matches. Selection's
+   opaque indigo decoration takes precedence; clozes retain their underline. */
+:root {
+    --highlight-yellow: oklch(0.94 0.085 95);
+    --highlight-green: oklch(0.92 0.065 150);
+    --highlight-blue: oklch(0.92 0.05 235);
+    --highlight-pink: oklch(0.93 0.055 355);
+    --highlight-purple: oklch(0.92 0.055 300);
+}
+.dark {
+    --highlight-yellow: oklch(0.39 0.055 95);
+    --highlight-green: oklch(0.36 0.045 150);
+    --highlight-blue: oklch(0.37 0.05 235);
+    --highlight-pink: oklch(0.38 0.05 355);
+    --highlight-purple: oklch(0.38 0.055 300);
+}
+[data-color="yellow"] { --note-highlight: var(--highlight-yellow); }
+[data-color="green"] { --note-highlight: var(--highlight-green); }
+[data-color="blue"] { --note-highlight: var(--highlight-blue); }
+[data-color="pink"] { --note-highlight: var(--highlight-pink); }
+[data-color="purple"] { --note-highlight: var(--highlight-purple); }
+.note-highlight {
+    background-color: color-mix(in oklch, var(--note-highlight, var(--highlight-yellow)) 65%, transparent);
+    color: inherit;
+    border-radius: 0.15em;
+    box-decoration-break: clone;
+}
+
+/* Tables stay within the note column, with a touch-scrollable viewport. */
+.tiptap .tableWrapper {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-block: 1em;
+}
+.tiptap table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+.tiptap :is(td, th) {
+  position: relative;
+  min-width: 7rem;
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.tiptap th {
+  background: var(--muted);
+  font-weight: 600;
+  text-align: start;
+}
+.tiptap :is(td, th) > p {
+  margin-block: 0.25em;
+}
+/* Paint cell selection behind its contents so the tint never washes out ink. */
+.tiptap .selectedCell { isolation: isolate; }
+.tiptap .selectedCell::after {
+  z-index: -1;
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--primary) 18%, transparent);
+  box-shadow: inset 0 0 0 2px var(--control-accent);
+}
+
+/* Selection is a semantic state: nested links, code, marks and math must use
+   the same readable ink even when a mark wraps the selection decoration. */
+.tiptap .text-range-selected,
+.tiptap .text-range-selected *,
+.tiptap .inline-math-widget.is-selected,
+.tiptap .inline-math-widget.is-selected * {
+    color: var(--foreground) !important;
+}
+.tiptap .text-range-selected :is(mark, code, .inline-math-widget) {
+    background-color: transparent;
+}
+
+@media (forced-colors: active) {
+    .tiptap .text-range-selected, .tiptap .text-range-selected *,
+    .tiptap .inline-math-widget.is-selected, .tiptap .inline-math-widget.is-selected * {
+        color: HighlightText !important;
+        forced-color-adjust: none;
+        background-color: Highlight;
+    }
+}
+
+/* Portaled editor chrome stays out of table layout and serialization. */
+.table-edge {
+  position: fixed;
+  z-index: 39;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.table-edge-column { width: 18px; }
+.table-edge-row { height: 18px; }
+.table-caret-toolbar {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  max-width: calc(100vw - 16px);
+  gap: 2px;
+  padding: 4px;
+  border-radius: 8px;
+}
+.table-delete-icon { position: relative; display: inline-flex; }
+.table-delete-icon svg:last-child {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 10px;
+  height: 10px;
+  background: var(--popover);
+}
+.table-add-icon[data-new="first"] rect:first-of-type,
+.table-add-icon[data-new="last"] rect:last-of-type {
+  fill: var(--control-accent);
+  stroke: var(--control-accent);
 }

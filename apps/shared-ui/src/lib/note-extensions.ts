@@ -1,7 +1,10 @@
+import { MarkdownPaste } from "./markdown-paste-plugin";
 import type { Editor } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
 import { ImageMoveHistory } from "@/lib/image-move-history";
+import { NoteHighlight } from "@/lib/highlight";
+import { NoteTables } from "@/lib/note-tables";
 import StarterKit from "@tiptap/starter-kit";
 import type * as Y from "yjs";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -27,6 +30,33 @@ import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
 import { Flashcards } from "@/lib/flashcards";
 
+// Outline layout reads force WebKit to lay out the whole note. Keep saved
+// heading IDs synchronous (the upstream plugin), but coalesce visual refreshes.
+const tocRefreshes = new WeakMap<Editor, ReturnType<typeof setTimeout>>();
+const DeferredTableOfContents = TableOfContents.extend({
+  onTransaction({ transaction }) {
+    if (!transaction.docChanged || transaction.getMeta("toc")) return;
+    // Navigation must use current positions even while visual work is pending.
+    this.storage.content = this.storage.content.flatMap(item => {
+      const pos = transaction.mapping.map(item.pos);
+      const node = this.editor.state.doc.nodeAt(pos);
+      if (!node || node.attrs["data-toc-id"] !== item.id) return [];
+      return [{ ...item, pos, node }];
+    });
+    this.options.onUpdate?.(this.storage.content, false);
+    clearTimeout(tocRefreshes.get(this.editor));
+    tocRefreshes.set(this.editor, setTimeout(() => {
+      tocRefreshes.delete(this.editor);
+      if (!this.editor.isDestroyed) this.editor.commands.updateTableOfContents();
+    }, 100));
+  },
+  onDestroy() {
+    clearTimeout(tocRefreshes.get(this.editor));
+    tocRefreshes.delete(this.editor);
+    this.parent?.();
+  },
+});
+
 type NoteExtensionOptions = {
   document: Y.Doc;
   insertImages?: (editor: Editor, files: File[], position: number) => void;
@@ -48,6 +78,9 @@ export function noteExtensions({
       // Links open in the browser on ⌘-click, through LinkEditor.
       link: { openOnClick: false },
     }),
+    NoteHighlight,
+    ...NoteTables,
+    MarkdownPaste,
     TabSpacing,
     ImageMoveHistory,
     LinkEditor,
@@ -65,7 +98,7 @@ export function noteExtensions({
     HeadingNumbering,
     SlashCommand.configure({ insertImages }),
     LatexSuggest,
-    TableOfContents.configure({
+    DeferredTableOfContents.configure({
       scrollParent: () =>
         window.document.querySelector<HTMLElement>(".app-scroll-container") ??
         window,

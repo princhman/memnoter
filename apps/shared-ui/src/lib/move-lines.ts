@@ -15,6 +15,7 @@ function moveBlocks(
   const { $from, $to } = state.selection;
   const range = $from.blockRange($to);
   if (!range) return false;
+  if (["table", "tableRow"].includes(range.parent.type.name)) return true;
 
   let depth = range.depth;
   let start = range.startIndex;
@@ -71,6 +72,8 @@ function moveBlocks(
       }
     }
 
+    // Cell contents may reorder locally, but must never move cells or rows.
+    if (["tableCell", "tableHeader"].includes(parent.type.name)) return true;
     if (depth === 0) return true;
     // At the parent's edge with siblings left behind: stay put.
     if (!coversParent && (sibling < 0 || sibling >= parent.childCount)) {

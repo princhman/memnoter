@@ -94,6 +94,22 @@ struct FormattingBar: View {
         formatButton("Italic", "italic", "italic", active: mark("italic"))
         formatButton("Underline", "underline", "underline", active: mark("underline"))
         formatButton("Strikethrough", "strikethrough", "strike", active: mark("strike"))
+        Menu {
+            ForEach(["yellow", "green", "blue", "pink", "purple"], id: \.self) { color in
+                Button { session.exec("setHighlight", ["color": color]) } label: {
+                    if session.state.highlightColor == color {
+                        Label(color.capitalized, systemImage: "checkmark")
+                    } else { Text(color.capitalized) }
+                }
+            }
+            Button("Remove highlight") { session.exec("removeHighlight") }
+        } label: {
+            Image(systemName: "highlighter")
+                .foregroundStyle(highlightTint)
+        } primaryAction: { session.exec("highlight") }
+        .buttonStyle(FormatButtonStyle(active: mark("highlight")))
+        .accessibilityLabel("Highlight")
+        .accessibilityValue(session.state.highlightColor ?? "Off")
         formatButton("Code", "chevron.left.forwardslash.chevron.right", "code", active: mark("code"))
     }
 
@@ -128,6 +144,24 @@ struct FormattingBar: View {
             .popover(isPresented: $editingLink) {
                 linkEditor.padding().presentationCompactAdaptation(.popover)
             }
+        Menu {
+            if session.state.inTable {
+                Button("Add row above") { session.exec("addRowBefore") }
+                Button("Add row below") { session.exec("addRowAfter") }
+                Button("Add column left") { session.exec("addColumnBefore") }
+                Button("Add column right") { session.exec("addColumnAfter") }
+                Button("Toggle header row") { session.exec("toggleHeaderRow") }
+                Button("Merge cells") { session.exec("mergeCells") }.disabled(!session.state.canMergeCells)
+                Button("Split cell") { session.exec("splitCell") }.disabled(!session.state.canSplitCell)
+                Button("Delete row", role: .destructive) { session.exec("deleteRow") }
+                Button("Delete column", role: .destructive) { session.exec("deleteColumn") }
+                Button("Delete table", role: .destructive) { session.exec("deleteTable") }
+            } else {
+                Button("Insert table") { session.exec("insertTable") }
+            }
+        } label: { Image(systemName: "tablecells") }
+            .buttonStyle(FormatButtonStyle(active: session.state.inTable))
+            .accessibilityLabel("Table")
         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
             .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
     }
@@ -168,6 +202,17 @@ struct FormattingBar: View {
             .buttonStyle(FormatButtonStyle())
             .accessibilityLabel(link.isEmpty ? "Remove link" : "Apply link")
             .disabled(!link.isEmpty && URL(string: link)?.scheme == nil)
+        }
+    }
+
+    private var highlightTint: Color {
+        switch session.state.highlightColor {
+        case "yellow": .yellow
+        case "green": .green
+        case "blue": .blue
+        case "pink": .pink
+        case "purple": .purple
+        default: .primary
         }
     }
 

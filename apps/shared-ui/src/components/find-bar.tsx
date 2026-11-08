@@ -35,7 +35,7 @@ const ALT_KEY = MOD_KEY === "⌘" ? "⌥" : "Alt+";
 const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
 
 const inputClassName =
-  "h-7 min-w-0 flex-1 rounded-md bg-input/50 px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-input/30";
+  "h-7 min-w-0 flex-1 rounded-md bg-muted px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-muted";
 
 // A match outside the focused section or inside a fold is hidden, so show it first.
 function revealCurrentResult(editor: Editor) {
@@ -445,7 +445,7 @@ function ToggleButton({
         variant="ghost"
         aria-label={label}
         aria-pressed={pressed}
-        className={cn(pressed && "bg-primary/15 text-primary hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground")}
+        className={cn(pressed && "bg-primary/15 text-link hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground")}
         onClick={onToggle}
       >
         {children}

@@ -56,10 +56,12 @@ struct EditorState: Decodable {
     var focusedSectionPath: [SectionCrumb] = []
     var focusedSectionId: String?; var headingId: String?
     var blockType = "paragraph"; var headingLevel: Int?
+    var inTable = false; var canMergeCells = false; var canSplitCell = false
     var canIndent = false; var canOutdent = false
     var canMakeCard = false; var inCloze = false; var canJoinClozes = false
     var folded = false; var canFold = false
     var bulletList = false; var orderedList = false; var blockquote = false
+    var highlightColor: String? = nil
     var marks: [String] = []; var canUndo = false; var canRedo = false; var editable = false
 }
 // Report navigation/safe-area occlusion after UIKit has laid out the web view.

@@ -1,3 +1,4 @@
+import { highlightColor } from "@/lib/highlight";
 import katex from "katex";
 import { validatedOcclusionPair } from "@/lib/occlusion-face-validation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -46,14 +47,14 @@ function Segments({ segments }: { segments: Segment[] }) {
   return segments.map((segment, index) => {
     switch (segment.type) {
       case "math":
-        return <TexMath key={index} tex={segment.tex} />;
+        return <span key={index} className={segment.highlightColor ? "note-highlight" : undefined} data-color={segment.highlightColor ? highlightColor(segment.highlightColor) : undefined}><TexMath tex={segment.tex} /></span>;
       case "break":
         return <br key={index} />;
       case "blank":
         return (
           <span
             key={index}
-            className="mx-0.5 inline-block min-w-12 rounded-md bg-primary/10 px-2 text-center text-primary dark:bg-chart-1/14 dark:text-chart-1"
+            className="mx-0.5 inline-block min-w-12 rounded-md bg-primary/10 px-2 text-center text-link dark:bg-chart-1/14 dark:text-chart-1"
           >
             […]
           </span>
@@ -62,7 +63,7 @@ function Segments({ segments }: { segments: Segment[] }) {
         return <HiddenCloze key={index}>{segment.children}</HiddenCloze>;
       case "cloze":
         return (
-          <span key={index} className="rounded-md bg-primary/10 px-1 font-medium text-primary dark:bg-chart-1/14 dark:text-chart-1">
+          <span key={index} className="rounded-md bg-primary/10 px-1 font-medium text-link dark:bg-chart-1/14 dark:text-chart-1">
             <Segments segments={segment.children} />
           </span>
         );
@@ -70,7 +71,8 @@ function Segments({ segments }: { segments: Segment[] }) {
         let node: ReactNode = segment.text;
         for (const mark of segment.marks ?? []) {
           const Tag = MARK_TAGS[mark];
-          if (Tag) node = <Tag>{node}</Tag>;
+          if (mark === "highlight") node = <mark className="note-highlight" data-color={highlightColor(segment.highlightColor)}>{node}</mark>;
+          else if (Tag) node = <Tag>{node}</Tag>;
         }
         return <span key={index}>{node}</span>;
       }

@@ -78,14 +78,14 @@ function isTypingInField() {
 
 // A soft tint of each grade's colour, deepening on hover.
 const GRADE_STYLES: Record<Grade, string> = {
-  1: "bg-red-500/10 text-red-600 hover:bg-red-500/20 dark:text-red-400",
-  2: "bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400",
-  3: "bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400",
-  4: "bg-sky-500/10 text-sky-700 hover:bg-sky-500/20 dark:text-sky-400",
+  1: "bg-red-500/10 text-red-800 hover:bg-red-500/20 dark:text-red-300",
+  2: "bg-amber-500/10 text-amber-800 hover:bg-amber-500/20 dark:text-amber-400",
+  3: "bg-emerald-500/10 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-400",
+  4: "bg-sky-500/10 text-sky-800 hover:bg-sky-500/20 dark:text-sky-400",
 };
 
 const REVIEW_BUTTON =
-  "group relative flex h-12 items-center justify-center gap-1.5 rounded-xl px-2 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
+  "group relative flex h-12 items-center justify-center gap-1.5 rounded-xl px-2 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring";
 
 // The key that presses a button, shown inside its top-right corner on hover or focus.
 function KeyHint({ children }: { children: string }) {
@@ -443,7 +443,7 @@ function Review() {
         )}
         {queue !== null && !card && nextDueAt === null && (
           <div className="grid justify-items-center gap-3 text-center">
-            <CheckCircle2 className="size-10 text-emerald-600 dark:text-emerald-400" />
+            <CheckCircle2 className="size-10 text-emerald-800 dark:text-emerald-400" />
             <h1 className="text-2xl font-semibold">{unindexed.length ? "No due cards in checked notes" : "All caught up"}</h1>
             <p className="text-muted-foreground">
               {reviewed > 0
@@ -491,7 +491,7 @@ function Review() {
               >
                 {label}
                 {preview && (
-                  <span className="font-normal tabular-nums opacity-70">
+                  <span className="font-normal tabular-nums">
                     ({formatInterval(preview[rating] - now)})
                   </span>
                 )}

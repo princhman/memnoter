@@ -1,0 +1,12 @@
+import { createRoot } from "react-dom/client";
+import { createRootRoute, createRoute, createRouter, RouterProvider, Outlet } from "@tanstack/react-router";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/query-client";
+import CreateModule from "@/components/create-module";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import "@/App.css";
+const root = createRootRoute({ component: () => <QueryClientProvider client={queryClient}><TooltipProvider><SidebarProvider><div className="group relative w-60 p-10"><CreateModule /></div><CreateModule global /><Outlet /></SidebarProvider></TooltipProvider></QueryClientProvider> });
+const imported = createRoute({ getParentRoute: () => root, path: "/$moduleId", component: () => <p>Opened imported module</p> });
+const router = createRouter({ routeTree: root.addChildren([imported]) });
+createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);

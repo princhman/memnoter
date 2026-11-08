@@ -19,6 +19,7 @@ export function requestApp(event: string) {
 // Ids of the custom items in the native menu (apps/desktop/src/menu.rs).
 const MENU_ACTIONS: Record<string, () => void> = {
   settings: () => requestApp(OPEN_SETTINGS_EVENT),
+  "import-folder": () => { requestApp(NEW_MODULE_EVENT); requestApp("memnoter-import-folder"); },
   "new-module": () => requestApp(NEW_MODULE_EVENT),
   find: () => requestApp(FIND_EVENT),
   "toggle-sidebar": () => requestApp(TOGGLE_SIDEBAR_EVENT),

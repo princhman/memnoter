@@ -8,6 +8,7 @@ let exclusive = false;
 const listeners = new Set<(blocked: boolean) => void>();
 type ImageWork = {
   run: () => Promise<unknown>;
+  rollbackOnFailure?: boolean;
   pending?: Promise<unknown>;
   error?: string;
   retry?: boolean;
@@ -34,7 +35,8 @@ async function runImage(work: ImageWork) {
     work.dispose?.();
     return result;
   } catch (error) {
-    work.error = `An image could not be saved: ${error instanceof Error ? error.message : String(error)}${work.retry ? "" : ". Keep editing to reapply it, then explicitly discard this failed operation."}`;
+    if (work.rollbackOnFailure) images.delete(work);
+    else work.error = `An image could not be saved: ${error instanceof Error ? error.message : String(error)}${work.retry ? "" : ". Keep editing to reapply it, then explicitly discard this failed operation."}`;
     throw error;
   } finally {
     work.pending = undefined;
@@ -49,6 +51,15 @@ export async function imageOperation<T>(operation: () => Promise<T>, options: {
 } = {}): Promise<T> {
   if (exclusive || saveQueue.isSuspended()) throw new Error("Image writes are suspended.");
   const work: ImageWork = { run: operation, ...options };
+  images.add(work);
+  return await runImage(work) as T;
+}
+
+// Imports roll back ordinary failures themselves. Share image admission and
+// draining so restore/quit wait through the entire operation and its rollback.
+export async function writeOperation<T>(operation: () => Promise<T>): Promise<T> {
+  if (exclusive || saveQueue.isSuspended()) throw new Error("Writes are suspended.");
+  const work: ImageWork = { run: operation, rollbackOnFailure: true };
   images.add(work);
   return await runImage(work) as T;
 }
