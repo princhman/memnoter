@@ -107,6 +107,14 @@ const ITEMS: InsertItem[] = [
   },
   {
     group: "Blocks",
+    title: "Mermaid diagram",
+    keywords: ["mermaid", "diagram", "flowchart", "chart", "graph", "sequence"],
+    hint: "",
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).setCodeBlock({ language: "mermaid" }).run(),
+  },
+  {
+    group: "Blocks",
     title: "Quote",
     keywords: ["quote", "blockquote", "citation", ">"],
     hint: formatKeys(action("block.quote").keys),

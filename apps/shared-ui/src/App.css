@@ -1565,6 +1565,66 @@ body {
     }
 }
 
+.tiptap .mermaid-block {
+    margin-block: 1.25rem;
+    --pele-bg: var(--background);
+    --pele-fg: var(--foreground);
+    --pele-muted: var(--muted-foreground);
+    --pele-line: var(--muted-foreground);
+    --pele-surface: var(--muted);
+    --pele-surface-alt: var(--secondary);
+    --pele-border: var(--border);
+    --pele-accent: var(--link);
+    --pele-radius: var(--radius);
+    --pele-series-1: var(--link);
+    --pele-series-2: var(--rail-related);
+    --pele-series-3: var(--destructive);
+    --pele-series-4: var(--muted-foreground);
+    --pele-series-5: color-mix(in oklch, var(--link) 65%, var(--foreground));
+    --pele-series-6: color-mix(in oklch, var(--destructive) 65%, var(--link));
+    --pele-series-7: color-mix(in oklch, var(--rail-related) 65%, var(--foreground));
+    --pele-series-8: color-mix(in oklch, var(--destructive) 65%, var(--foreground));
+    --pele-critical: var(--destructive);
+    --pele-error: var(--destructive);
+    --pele-font: var(--font-sans);
+    --pele-font-mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace;
+}
+
+.tiptap .mermaid-block pre {
+    margin: 0 0 0.75rem;
+}
+
+.tiptap .mermaid-block pre[hidden] {
+    display: none;
+}
+
+.tiptap .mermaid-preview {
+    overflow-x: auto;
+    min-height: 2rem;
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    color: var(--muted-foreground);
+    white-space: pre-wrap;
+    cursor: pointer;
+}
+
+.tiptap .mermaid-preview svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin-inline: auto;
+}
+
+.tiptap .mermaid-preview.has-error {
+    color: var(--destructive);
+    font-size: 0.86em;
+}
+
+.tiptap .mermaid-block.is-editing .mermaid-preview {
+    border-top: 1px solid var(--border);
+    cursor: default;
+}
+
 /* Portaled editor chrome stays out of table layout and serialization. */
 .table-edge {
   position: fixed;

@@ -1,3 +1,4 @@
+import { MermaidView } from "@/lib/editor-schema/mermaid-view";
 import { useEditorHost } from "@/lib/editor-host-context";
 import { CardNavigationGuard } from "./card-navigation-guard";
 import { MathBlockView } from "@/lib/editor-schema/math-block-view";
@@ -59,6 +60,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           inlineImage: InlineImageWithView,
           inlineMath: InlineMathView,
           mathBlock: MathBlockView,
+          mermaidView: MermaidView,
           menus: [SlashCommand.configure({ insertImages }), LatexSuggest],
         },
         insertImages: (currentEditor, files, position) => {
