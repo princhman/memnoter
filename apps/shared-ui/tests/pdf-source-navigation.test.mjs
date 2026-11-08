@@ -66,9 +66,44 @@ test('source navigation and section picker preserve destinations and retained dr
     const noteBounds = await note.boundingBox();
     const assertStableNote = async () => assert.deepEqual(await note.boundingBox(), noteBounds);
     await page.evaluate(() => window.pickerTest.draft());
-    await page.getByRole('dialog').waitFor();
-    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    const insertQuote = page.getByRole('button', { name: 'Insert quote', exact: true });
+    await insertQuote.waitFor();
+    const strip = page.getByRole('group', { name: 'Image quote actions' });
+    assert.equal(await strip.getByRole('button').count(), 3);
+    const primaryColor = await insertQuote.evaluate(element => getComputedStyle(element).backgroundColor);
+    for (const name of ['Choose section', 'Dismiss quote']) {
+      assert.notEqual(await strip.getByRole('button', { name, exact: true }).evaluate(element => getComputedStyle(element).backgroundColor), primaryColor, 'secondary controls stay visually quiet');
+    }
+    assert.equal(await page.getByText('Image quote ready', { exact: true }).count(), 0);
+    const assertCompactStrip = async () => {
+      const bounds = await strip.boundingBox();
+      const buttons = await strip.getByRole('button').all();
+      const buttonBounds = await Promise.all(buttons.map(button => button.boundingBox()));
+      assert.ok(bounds.height <= 44, 'ready strip stays one compact row');
+      assert.ok(buttonBounds.every(button => button.y === buttonBounds[0].y), 'actions do not wrap');
+      assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= page.viewportSize().width);
+    };
+    await assertCompactStrip();
     await assertStableNote();
+    assert.equal(await strip.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return document.elementFromPoint(13, bounds.y + bounds.height / 2)?.tagName;
+    }), 'MAIN', 'floating anchor passes pointer events through outside the card');
+    await insertQuote.focus();
+    await page.keyboard.press('Control+Enter');
+    await page.getByRole('dialog').waitFor();
+    await page.keyboard.press('Control+Enter');
+    assert.deepEqual(await page.evaluate(() => window.pickerTest.calls), [], 'insert shortcut does not submit behind an open picker');
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Insert quote');
+    await assertStableNote();
+    assert.equal(await page.evaluate(() => window.pickerTest.pendingPdfQuote.state.status), 'draft');
+    await page.getByRole('button', { name: 'Choose section', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await page.getByRole('dialog').waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Choose section');
     assert.equal(await page.evaluate(() => window.pickerTest.pendingPdfQuote.state.status), 'draft');
     await page.evaluate(async () => { await window.pickerTest.unrelatedFailure(); window.pickerTest.control.rejectAdmission = true; });
     await page.getByRole('button', { name: 'Choose section', exact: true }).click();
@@ -82,12 +117,16 @@ test('source navigation and section picker preserve destinations and retained dr
     await page.getByRole('button', { name: 'Renamed First section', exact: true }).click();
     assert.deepEqual(await page.evaluate(() => window.pickerTest.calls), [{ headingId: 'stable-section' }]);
     await page.getByRole('status').filter({ hasText: 'Saving quote' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Saving quote…', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Dismiss quote', exact: true }).isDisabled(), true);
     await assertStableNote();
     await page.setViewportSize({ width: 280, height: 800 });
     const narrowNoteBounds = await note.boundingBox();
     await page.evaluate(() => window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, status: 'error', error: 'ConnectionUnavailable'.repeat(80) })));
     const retry = page.getByRole('button', { name: 'Retry images', exact: true });
     await retry.waitFor();
+    assert.equal(await insertQuote.isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Choose section', exact: true }).isDisabled(), true);
     await retry.focus();
     assert.equal(await retry.evaluate(element => element === document.activeElement), true);
     const controlBounds = await page.getByRole('status').filter({ has: retry }).boundingBox();
@@ -100,22 +139,30 @@ test('source navigation and section picker preserve destinations and retained dr
     await page.evaluate(() => {
       window.pickerTest.draft();
       window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, section: false }));
+      window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, source: { ...current.source, name: 'An extremely long lecture filename that must truncate.pdf' } }));
       window.pickerTest.editor.commands.setTextSelection(3);
     });
+    await assertCompactStrip();
+    assert.deepEqual(await note.boundingBox(), narrowNoteBounds);
     const cursor = await page.evaluate(() => window.pickerTest.editor.state.selection.from);
-    await page.getByRole('button', { name: 'Quote at cursor', exact: true }).click();
+    await page.evaluate(() => window.pickerTest.editor.view.focus());
+    await page.keyboard.press('Meta+Enter');
     assert.deepEqual(await page.evaluate(() => window.pickerTest.calls.at(-1)), { position: cursor });
     await page.evaluate(() => {
       window.pickerTest.draft();
       window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, section: false }));
     });
-    await page.getByRole('button', { name: 'Discard', exact: true }).focus();
+    await page.getByRole('button', { name: 'Dismiss quote', exact: true }).focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => window.pickerTest.pendingPdfQuote.state), null);
     await page.evaluate(() => window.pickerTest.setModuleId('module-other'));
     await page.waitForFunction(() => window.pickerTest.calls.length === 0);
     await page.evaluate(() => window.pickerTest.draft());
     assert.equal(await page.getByRole('button', { name: 'Choose section', exact: true }).isDisabled(), true);
+    assert.equal(await insertQuote.isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Dismiss quote', exact: true }).isEnabled(), true);
+    await page.getByText('Waiting for note…', { exact: true }).waitFor();
+    await page.keyboard.press('Control+Enter');
     assert.deepEqual(await page.evaluate(() => window.pickerTest.calls), []);
   } finally {
     await browser?.close();

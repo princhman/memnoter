@@ -1,9 +1,10 @@
+import { action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer } from "lucide-react";
+import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
@@ -94,6 +95,17 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     finally { cropBusy.current = false; setCropping(false); }
   }, [doc.id, doc.moduleId, doc.name, fullscreen]);
   const navigate = useNavigate();
+  useEffect(() => {
+    if (!fullscreen || pending?.moduleId !== doc.moduleId || pending.status !== "draft") return;
+    const insert = (event: KeyboardEvent) => {
+      if (event.repeat || event.isComposing || !matchesShortcut(event, action("pdf.quote.insert").keys)) return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"], [role="menu"], [role="listbox"]')) return;
+      event.preventDefault(); event.stopPropagation();
+      void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error)));
+    };
+    window.addEventListener("keydown", insert, true);
+    return () => window.removeEventListener("keydown", insert, true);
+  }, [fullscreen, pending, doc.moduleId, navigate]);
   const [saved] = useState(() => ({ ...readPdfView(doc.id), ...(initialPage ? { page: initialPage } : {}) }));
   const [zoom, setZoom] = useState(saved.zoom);
   const [pinching, setPinching] = useState(false);
@@ -335,9 +347,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     </ReaderTools>
     {(selecting || cropping || quoteError || (fullscreen && pending?.moduleId === doc.moduleId)) && <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-center">
       <div className="pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
-        {selecting && !pending && <>Drag to select a quote. Escape to cancel.<Button size="xs" variant="ghost" onClick={() => setSelecting(false)}>Cancel</Button></>}
+        {selecting && !pending && <>Drag to select a quote<ToolButton label="Exit selection" onClick={cancelSelection}><X /></ToolButton></>}
         {cropping && "Preparing quote"}{quoteError && <span role="alert">{quoteError}</span>}
-        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" onClick={() => { void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error))); }}>Add to note</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current === pending && current.status === "draft" ? null : current)}>Discard</Button>}</>}
+        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" title={`Insert quote (${formatKeys(action("pdf.quote.insert").keys)})`} aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => { void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error))); }}>Add to note</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current === pending && current.status === "draft" ? null : current)}>Discard</Button>}</>}
       </div>
     </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>

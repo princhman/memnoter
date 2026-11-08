@@ -17,6 +17,7 @@ export const SHORTCUTS: readonly ShortcutAction[] = [
   { id: "sidebar.toggle", title: "Toggle sidebar", keys: "Mod-d", menuId: "toggle-sidebar" },
   { id: "history.undo", title: "Undo", keys: "Mod-z", menuId: "editor-undo" },
   { id: "history.redo", title: "Redo", keys: "Mod-Shift-z", menuId: "editor-redo" },
+  { id: "pdf.quote.insert", title: "Insert PDF quote", keys: "Mod-Enter" },
   { id: "palette.open", title: "Search modules and commands", keys: "Mod-k" },
   { id: "section.sibling", title: "New section", keys: "Mod-Alt-s" },
   { id: "section.child", title: "Subsection", keys: "Mod-Alt-d" },

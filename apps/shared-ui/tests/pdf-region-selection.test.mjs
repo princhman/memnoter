@@ -59,7 +59,7 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
     await assertStablePage();
     assert.equal(await viewer.getByRole('button', { name: 'Select region', exact: true }).getAttribute('aria-pressed'), 'true');
-    await viewer.getByRole('button', { name: 'Cancel', exact: true }).focus();
+    await viewer.getByRole('button', { name: 'Exit selection', exact: true }).focus();
     await page.keyboard.press('Enter');
     await assertStablePage();
     await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
