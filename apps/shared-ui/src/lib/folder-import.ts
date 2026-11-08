@@ -62,7 +62,7 @@ export async function prepareFolderImport(folder: ImportFolder, progress: (messa
     // References may name the picked image folder, e.g. `attachments/pic.png`
     // after picking `attachments`.
     const folderName = options.extraImageFolder;
-    const picked = folderName ? images.filter(e => e.sourceId && paths.some(path => path === `${folderName}/${e.path}` || path.endsWith(`/${folderName}/${e.path}`))) : [];
+    const picked = folderName ? (options.extraImages ?? []).filter(e => imageMime(e.path) && paths.some(path => path === `${folderName}/${e.path}` || path.endsWith(`/${folderName}/${e.path}`))) : [];
     if (picked.length) return { image: picked.length === 1 ? picked[0] : undefined, ambiguous: picked.length > 1 };
     // A path-qualified reference must never silently select an unrelated namesake.
     const matches = target.replace(/^\.\//, "").includes("/") ? [] : images.filter(e => basename(e.path) === basename(target));
