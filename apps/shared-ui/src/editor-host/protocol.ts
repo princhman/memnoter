@@ -2,7 +2,7 @@
 import type { FileType } from "../lib/content";
 import type { ApplyResult } from "../lib/sync/apply-remote";
 import type { ModuleView } from "../lib/store";
-import type { StoredCard, Grade, scheduleReview } from "../lib/fsrs";
+import type { Grade } from "../lib/fsrs";
 
 export const BRIDGE_VERSION = 1;
 export const FILE_SCHEME = "memnoter-file";
@@ -92,6 +92,7 @@ export interface NativeViewState {
 export interface NativeEvents {
   viewState: NativeViewState;
   cardsChanged: null;
+  reviewState: ReviewState;
   "skip-cards-created-today": boolean;
   outline: { moduleId: string; headings: Heading[] };
   outlineCurrent: { moduleId: string; currentHeadingId: string | null };
@@ -116,10 +117,32 @@ export interface EditorApi {
   setOutlineTracking(enabled: boolean): void;
   focus(): boolean;
 }
+export interface ReviewCountsState { new: number; learning: number; review: number; }
+export interface ReviewState {
+  counts: ReviewCountsState;
+  laterToday: ReviewCountsState;
+  countsLabel: string;
+  currentKind: string | null;
+  intervals: string[];
+  canUndo: boolean;
+  canRedo: boolean;
+  revealed: boolean;
+  busy: boolean;
+  hasCard: boolean;
+  canShowNow: boolean;
+  loading: boolean;
+  reviewed: number;
+  moduleId: string | null;
+  cardId: string | null;
+  error: string | null;
+}
 export interface ReviewApi {
-  show(card: StoredCard, revealed: boolean): void;
-  preview(card: StoredCard): Promise<string[]>;
-  rate(card: StoredCard, rating: Grade): Promise<ReturnType<typeof scheduleReview>>;
+  load(scope: string | null): Promise<void>;
+  reveal(): void;
+  showNow(): void;
+  rate(grade: Grade): Promise<void>;
+  undo(): Promise<void>;
+  redo(): Promise<void>;
 }
 declare global {
   interface Window { memnoterEditor: EditorApi; memnoterReview: ReviewApi; }

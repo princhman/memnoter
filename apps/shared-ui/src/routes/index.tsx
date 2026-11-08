@@ -1,4 +1,4 @@
-import { action, formatKeys } from "@/lib/shortcuts";
+import { action, formatKeys, HOME_ACTION_IDS } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
@@ -10,7 +10,7 @@ import { appStore, setOpenedModule } from "@/lib/store";
 import type { Module } from "@/lib/types";
 import appIcon from "../../../../brand/icon-purple-256.png";
 
-const HOME_ACTIONS = ["block.insert", "module.new", "find.open", "palette.open", "link.edit", "section.sibling", "section.fold", "section.unfold", "math.inline", "sidebar.toggle"].map(action);
+const HOME_ACTIONS = HOME_ACTION_IDS.map(action);
 
 const RECENT_SHOWN = 5;
 

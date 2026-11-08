@@ -89,7 +89,7 @@ struct RootView: View {
         } detail: {
             VStack(spacing: 0) {
                 if selected == "review", let client = store.client {
-                    ReviewView(client: client, directory: store.directory, moduleId: reviewModule, editCard: editReviewCard)
+                    ReviewView(client: client, directory: store.directory, moduleId: reviewModule, preferences: store.preferences, editCard: editReviewCard)
                         .id(reviewModule ?? "all")
                 } else if module != nil, let session {
                     if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec(.find, ["text": value]) } }
@@ -334,7 +334,7 @@ struct RootView: View {
             throw error
         }
     }
-    func editReviewCard(_ card: StoredCard) {
+    func editReviewCard(_ moduleId: String, _ cardId: String) {
         guard !busy, let session else { return }
         busy = true
         Task {
@@ -342,10 +342,10 @@ struct RootView: View {
             do {
                 try await session.flush()
                 // Queue the shared reveal before opening, so it waits for note restoration.
-                _ = try await session.callEditor(.revealCard, ["moduleId": card.moduleId, "cardId": card.id], parameters: ["moduleId", "cardId"])
-                try await session.open(card.moduleId)
-                store.recordOpenedModule(card.moduleId)
-                selected = card.moduleId
+                _ = try await session.callEditor(.revealCard, ["moduleId": moduleId, "cardId": cardId], parameters: ["moduleId", "cardId"])
+                try await session.open(moduleId)
+                store.recordOpenedModule(moduleId)
+                selected = moduleId
             } catch { store.error = String(describing: error) }
         }
     }
