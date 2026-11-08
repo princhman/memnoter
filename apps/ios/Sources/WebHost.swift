@@ -206,12 +206,11 @@ import ImageIO
                 #if DEBUG
                 print("[editor exec] \(command) \(args)")
                 #endif
-                let reply = try await execute(command, args)
+                // Tiptap also returns false for harmless no-ops, such as setting
+                // an existing paragraph. Failures arrive through the error event
+                // or the JavaScript exception handled below.
+                _ = try await execute(command, args)
                 if focusAfter { _ = try await callEditor(.focus) }
-                #if DEBUG
-                print("[editor reply] \(command): \(String(describing: reply))")
-                #endif
-                if reply as? Bool == false { self.error = "Editor could not perform \(command)." }
             } catch { self.error = String(describing: error) }
         }
     }
