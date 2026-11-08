@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCommand } from "@/lib/commands";
@@ -13,6 +13,11 @@ import { Toast } from "./ui/toast";
 export const DROP_PDFS_EVENT = "memnoter:drop-pdfs";
 export function dropPdfs(files: File[], moduleId?: string) {
   window.dispatchEvent(new CustomEvent(DROP_PDFS_EVENT, { detail: { files, moduleId } }));
+}
+const PICK_PDFS_EVENT = "memnoter:pick-pdfs";
+// Opens the file picker for a module, or asks which module first.
+export function pickPdfs(moduleId?: string) {
+  window.dispatchEvent(new CustomEvent(PICK_PDFS_EVENT, { detail: { moduleId } }));
 }
 export function AddPdf() {
   const location = useRouterState({ select: state => state.location });
@@ -45,11 +50,20 @@ export function AddPdf() {
     } catch (error) { setError(String(error instanceof Error ? error.message : error)); }
     finally { setBusy(false); setPending(null); void client.invalidateQueries({ queryKey: documentsKey }); }
   }
-  useCommand({ id: "pdf.add", title: "Add PDF…", run: () => {
+  function pick(target = moduleId) {
     if (!isTauri()) return;
-    if (moduleId) return add(moduleId, []);
+    if (target) return void add(target, []);
     setPending({ files: [] });
-  } });
+  }
+  useCommand({ id: "pdf.add", title: "Add PDF…", run: () => pick() });
+  // Listeners outlive renders, so they call through the latest picker.
+  const latestPick = useRef(pick);
+  latestPick.current = pick;
+  useEffect(() => {
+    const receive = (event: Event) => latestPick.current((event as CustomEvent<{ moduleId?: string }>).detail.moduleId);
+    window.addEventListener(PICK_PDFS_EVENT, receive);
+    return () => window.removeEventListener(PICK_PDFS_EVENT, receive);
+  }, []);
   // The drop event carries File objects without serializing their bytes.
   useEffect(() => {
     const receive = (event: Event) => {

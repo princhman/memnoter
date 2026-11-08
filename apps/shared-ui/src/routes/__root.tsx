@@ -1,4 +1,5 @@
 import { AddPdf } from "@/components/add-pdf";
+import { PdfHeaderActions } from "@/components/pdf-header-actions";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
@@ -117,6 +118,7 @@ const RootLayout = () => {
                 <FileBreadcrumb />
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-2 pr-3">
+                <PdfHeaderActions />
                 {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} current={reviewCurrent} /> : <ModuleReviewButton />}
               </div>
             </header>
@@ -133,7 +135,7 @@ const RootLayout = () => {
               <IconTooltip label="Toggle sidebar" hint={formatKeys(action("sidebar.toggle").keys)} side="bottom">
                 <SidebarTrigger aria-label="Toggle sidebar" />
               </IconTooltip>
-              <UndoRedo /><div id="pdf-toolbar" className="flex items-center gap-1" />
+              <UndoRedo />
             </div>
           </div>
           <CommandPalette />

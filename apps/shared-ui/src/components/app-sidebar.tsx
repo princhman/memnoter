@@ -18,7 +18,9 @@ import {
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import CreateModule from "./create-module";
-import { Ellipsis, FileText, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
+import { pickPdfs } from "./add-pdf";
+import { isTauri } from "@/lib/backend";
+import { Ellipsis, FilePlus, FileText, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,6 +60,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
         <Layers className="size-3" />Review
       </Item>
       <Item onClick={() => void navigate({ to: "/files", search: { module: moduleId } })}><FileText className="size-3" />Files</Item>
+      {isTauri() && <Item onClick={() => pickPdfs(moduleId)}><FilePlus className="size-3" />Add PDF…</Item>}
       <Item onClick={() => setRenameOpen(true)}>
         <Pencil className="size-3" />
         Rename

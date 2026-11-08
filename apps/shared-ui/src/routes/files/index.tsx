@@ -4,7 +4,8 @@ import { useDocuments } from "@/lib/use-documents";
 import { useModules } from "@/lib/modules";
 import { documentName } from "@/lib/pdf-state";
 import { DocumentActions } from "@/components/document-actions";
-import { dropPdfs } from "@/components/add-pdf";
+import { dropPdfs, pickPdfs } from "@/components/add-pdf";
+import { isTauri } from "@/lib/backend";
 export const Route = createFileRoute("/files/")({
   validateSearch: (search: Record<string, unknown>): { module?: string } => typeof search.module === "string" ? { module: search.module } : {},
   component: Files,
@@ -16,7 +17,7 @@ function Files() {
   return <div className="min-h-full" onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }} onDrop={event => { event.preventDefault(); dropPdfs(Array.from(event.dataTransfer.files), moduleId); }}>
     <div className="mx-auto grid max-w-md gap-6 py-8">
       {error && <p role="alert" className="text-center text-sm text-destructive">{error.message}</p>}
-      {!docs.length && <p className="text-center text-sm text-muted-foreground">PDFs can be dropped here.</p>}
+      {!docs.length && <p className="text-center text-sm text-muted-foreground">Drop PDFs here{isTauri() && <>, or <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => pickPdfs(moduleId)}>choose files</button></>}.</p>}
       {docs.length > 0 && modules.filter(module => !moduleId || module.id === moduleId).map(module => <section key={module.id} onDrop={event => { event.preventDefault(); event.stopPropagation(); dropPdfs(Array.from(event.dataTransfer.files), module.id); }}>
         <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">{module.name}</h2>
         <ul className="grid gap-0.5">{docs.filter(doc => doc.moduleId === module.id).map(doc => <li key={doc.id}><DocumentActions doc={doc}>
