@@ -357,6 +357,101 @@ fn sync_identity_scrubs_secrets_before_backup_and_preserves_outbox() {
 }
 
 #[test]
+fn sidebar_order_folders_and_membership_survive_reopen_and_folder_deletion() {
+    let f = Fixture::new();
+    let module = f.call("create_module", json!({"name":"Algebra"}));
+    let folder = json!({"id":"folder-study","name":"Study","folder_id":null,"sort_order":2,"collapsed":true,"deleted":false});
+    let note = json!({"id":module,"name":null,"folder_id":"folder-study","sort_order":1,"collapsed":false,"deleted":false});
+    f.call("save_sidebar_items", json!({"items":[folder, note]}));
+    let reopened = Core::open(&f.dir).unwrap();
+    let items: Value =
+        serde_json::from_str(&dispatch(&reopened, "sidebar_items", "{}").unwrap()).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 2);
+    assert!(items.as_array().unwrap().contains(&folder));
+    assert!(items.as_array().unwrap().contains(&note));
+    let mut deleted = folder.clone();
+    deleted["deleted"] = json!(true);
+    f.call("save_sidebar_items", json!({"items":[deleted]}));
+    assert_eq!(f.call("modules", json!({}))[0]["id"], module);
+    assert!(dispatch(
+        &f.core,
+        "save_sidebar_items",
+        &json!({"items":[folder]}).to_string()
+    )
+    .is_err());
+}
+
+#[test]
+fn sidebar_table_is_added_to_existing_version_3_database() {
+    let f = Fixture::new();
+    f.core
+        .db
+        .lock()
+        .unwrap()
+        .execute_batch("drop table sidebar_items; PRAGMA user_version = 3;")
+        .unwrap();
+    let upgraded = Core::open(&f.dir).unwrap();
+    assert_eq!(dispatch(&upgraded, "sidebar_items", "{}").unwrap(), "[]");
+}
+
+#[test]
+fn sidebar_changes_sync_including_seeded_folders_and_deletion() {
+    let source = Fixture::new();
+    let target = Fixture::new();
+    let module = source.call("create_module", json!({"name":"Math"}));
+    let folder = json!({"id":"folder-math","name":"Math folder","folder_id":null,"sort_order":0,"collapsed":false,"deleted":false});
+    let note = json!({"id":module,"name":null,"folder_id":"folder-math","sort_order":3,"collapsed":false,"deleted":false});
+    source.call("save_sidebar_items", json!({"items":[folder, note]}));
+    source.call("sync_enable", json!({"account":"{}"}));
+    target.call("sync_enable", json!({"account":"{}"}));
+    let source_gen = source.call("sync_status", json!({}))["generation"].clone();
+    let target_gen = target.call("sync_status", json!({}))["generation"].clone();
+    let transfer = || {
+        let snapshot = source.call(
+            "sync_snapshot",
+            json!({"doc":"vault","generation":source_gen}),
+        );
+        target.call("sync_apply", json!({"entries":[{"doc":"vault","bytes":snapshot,"seq":1}],"cursor":1,"generation":target_gen}));
+    };
+    transfer();
+    assert_eq!(
+        target.call("sidebar_items", json!({})),
+        source.call("sidebar_items", json!({}))
+    );
+    assert_eq!(target.call("modules", json!({}))[0]["id"], module);
+    let mut changed = note.clone();
+    changed["folder_id"] = Value::Null;
+    changed["sort_order"] = json!(9);
+    source.call("save_sidebar_items", json!({"items":[changed]}));
+    let mut deleted = folder.clone();
+    deleted["deleted"] = json!(true);
+    source.call("save_sidebar_items", json!({"items":[deleted]}));
+    transfer();
+    assert_eq!(
+        target.call("sidebar_items", json!({})),
+        source.call("sidebar_items", json!({}))
+    );
+    assert_eq!(
+        target.call("modules", json!({})).as_array().unwrap().len(),
+        1
+    );
+}
+
+#[test]
+fn invalid_sidebar_batch_is_atomic() {
+    let f = Fixture::new();
+    let folder = json!({"id":"folder-valid","name":"Valid","folder_id":null,"sort_order":0,"collapsed":false,"deleted":false});
+    let invalid = json!({"id":"folder-invalid","name":"Invalid","folder_id":"folder-valid","sort_order":1,"collapsed":false,"deleted":false});
+    assert!(dispatch(
+        &f.core,
+        "save_sidebar_items",
+        &json!({"items":[folder, invalid]}).to_string()
+    )
+    .is_err());
+    assert_eq!(f.call("sidebar_items", json!({})), json!([]));
+}
+
+#[test]
 fn saved_images_are_announced_downloaded_and_not_echoed_as_uploads() {
     let a = Fixture::new();
     let b = Fixture::new();

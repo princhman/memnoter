@@ -59,6 +59,7 @@ export function onRemote(result: ApplyResult) {
   }
   if (result.modulesChanged || result.deleted.length > 0) {
     void modulesCache.invalidate();
+    void queryClient.invalidateQueries({ queryKey: ["sidebar-items"] });
   }
   if (result.modulesChanged || result.deleted.length > 0 || result.reviewsChanged) {
     cardsChanged();

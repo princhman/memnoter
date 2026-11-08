@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
-import { CreateModuleButton } from "./create-module";
+import { SidebarModules } from "./sidebar-modules";
 import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
@@ -36,6 +36,7 @@ import {
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
+import { BetaBadge } from "./beta-notice";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { useEffect, useState, useRef, type ReactNode } from "react";
@@ -160,15 +161,13 @@ const AppSidebar = () => {
         </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
-          <CreateModuleButton />
 
           {isPending && <div>Loading...</div>}
           {error && <div>Error: {error.message}</div>}
 
           {data && (
             <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {data.map((module) => {
+              <SidebarModules modules={data} renderModule={(module) => {
                   const isActive = !!matchRoute({
                     to: "/$moduleId",
                     params: { moduleId: module.id },
@@ -189,8 +188,7 @@ const AppSidebar = () => {
                       </SidebarMenuButton>
                     </ModuleMenu>
                   );
-                })}
-              </SidebarMenu>
+                }} />
             </SidebarGroupContent>
           )}
         </SidebarGroup>
@@ -198,6 +196,7 @@ const AppSidebar = () => {
 
       <SidebarFooter>
         <UpdateStatus>
+          <BetaBadge />
           <IconTooltip label="Settings" hint={formatKeys(action("settings.open").keys)} side="top">
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
           </IconTooltip>

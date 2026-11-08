@@ -273,8 +273,21 @@ fn migrate_base(conn: &Connection) -> CommandResult<()> {
     .map_err(db_err)
 }
 
-const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] =
-    &[migrate_base, migrate_unversioned, migrate_update_ids];
+const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] = &[
+    migrate_base,
+    migrate_unversioned,
+    migrate_update_ids,
+    migrate_sidebar_items,
+];
+
+fn migrate_sidebar_items(conn: &Connection) -> CommandResult<()> {
+    conn.execute(
+        "create table if not exists sidebar_items (id TEXT PRIMARY KEY, data TEXT NOT NULL)",
+        [],
+    )
+    .map(|_| ())
+    .map_err(db_err)
+}
 
 fn migrate_unversioned(conn: &Connection) -> CommandResult<()> {
     migrate_module_numbering(conn)?;

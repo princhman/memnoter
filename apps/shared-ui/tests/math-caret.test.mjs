@@ -124,24 +124,28 @@ test("up and down cross a line with an inline formula", async () => {
   );
 });
 
+// Explicit groups keep the caret fixtures independent of greedy script shorthand.
 test("up and down stop beside a formula that is alone on its line", async () => {
   assert.equal(
     await walk(
-      [p(text("line one here")), p(math("x^2+y^2")), p(text("line three"))],
+      [p(text("line one here")), p(math("x^{2}+y^{2}")), p(text("line three"))],
       3,
       "DDDUUU",
     ),
-    "3p D16p D27p D37p U25p U9p U1p",
+    "3p D16p D31p D41p U29p U9p U1p",
   );
 });
 
 test("down and up wrap through a formula that spans two lines", async () => {
-  const long = String.raw`AA7B_{16} = 10*16^3+10*16^2+7*16^1+11*16 = 43643_{10}`;
+  const long = String.raw`AA7B_{16} = 10*16^{3}+10*16^{2}+7*16^{1}+11*16 = 43643_{10}`;
   const steps = (
     await walk([p(text("hexadecimal system - "), math(long), text(" (0x)")), p(text("next line"))], 3, "DDUU")
   ).split(" ");
   assert.notEqual(steps[1], "D3p", "down got stuck on the first line");
-  assert.match(steps[2], /^D9\dp$/, "down did not reach the next paragraph");
+  const nextLineStart = "hexadecimal system - ".length + long.length + " (0x)".length + 5;
+  const down = Number(steps[2].slice(1, -1));
+  assert.ok(steps[2].endsWith("p") && down >= nextLineStart && down <= nextLineStart + 9,
+    "down did not reach the next paragraph");
   assert.notEqual(steps[3], steps[2].replace("D", "U"), "up got stuck");
 });
 

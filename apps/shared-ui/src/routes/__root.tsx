@@ -16,6 +16,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { useIsFullscreen } from "@/hooks/use-fullscreen";
+import { IS_MAC } from "@/lib/platform";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ModuleReviewButton } from "@/components/module-review-button";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
@@ -31,7 +32,7 @@ import { useCommand } from "@/lib/commands";
 import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/app-events";
 
 const RootLayout = () => {
-  const isFullScrean = useIsFullscreen();
+  const isFullscreen = useIsFullscreen();
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   const navigate = useNavigate();
   const router = useRouter();
@@ -122,7 +123,7 @@ const RootLayout = () => {
             </main>
           </SidebarInset>
           <div ref={toolbar} data-tauri-drag-region="deep" className="absolute left-0 top-0 z-50 flex h-8 items-center">
-            {!isFullScrean && <div className="h-full w-18" />}
+            {IS_MAC && !isFullscreen && <div className="h-full w-18" />}
             <div className="flex items-center pl-2 gap-1.5">
               <IconTooltip label="Toggle sidebar" hint={formatKeys(action("sidebar.toggle").keys)} side="bottom">
                 <SidebarTrigger aria-label="Toggle sidebar" />

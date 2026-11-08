@@ -25,11 +25,12 @@ import { SidebarGroupAction } from "./ui/sidebar";
 import { useCommand, registerCommand } from "@/lib/commands";
 import { IconTooltip } from "./icon-tooltip";
 
-export function CreateModuleButton() {
+export function CreateModuleButton({ onNewFolder }: { onNewFolder?: () => void }) {
   return <DropdownMenu>
     <IconTooltip label="Add module" side="right"><DropdownMenuTrigger render={<SidebarGroupAction aria-label="Add module" className="invisible group-hover:visible pointer-coarse:visible" />}><Plus className="size-3" /></DropdownMenuTrigger></IconTooltip>
     <DropdownMenuContent side="right">
       <DropdownMenuItem onClick={() => window.dispatchEvent(new Event(NEW_MODULE_EVENT))}>New module</DropdownMenuItem>
+      {onNewFolder && <DropdownMenuItem onClick={onNewFolder}>New folder</DropdownMenuItem>}
       {capabilities.folderImport && <DropdownMenuItem onClick={() => window.dispatchEvent(new Event(IMPORT_FOLDER_EVENT))}>Import folder…</DropdownMenuItem>}
     </DropdownMenuContent>
   </DropdownMenu>;

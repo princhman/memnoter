@@ -33,8 +33,8 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
 
-      # apps/shared-ui/tests/math-caret.test.mjs drives the editor in WebKit.
-      - run: pnpm --filter memnoter-shared-ui exec playwright install webkit
+      # Editor tests use WebKit; desktop navigation also covers Chromium layout.
+      - run: pnpm --filter memnoter-shared-ui exec playwright install webkit chromium
 
       - run: pnpm test
 

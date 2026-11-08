@@ -21,6 +21,7 @@ import type { Node as PMNode } from "@tiptap/pm/model";
 import { useEditorState } from "@tiptap/react";
 import { createStore, useSelector } from "@tanstack/react-store";
 import katex from "katex";
+import { groupMathScripts } from "@/lib/latex-render";
 import { ChevronRight } from "lucide-react";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { getFoldedRanges } from "@/lib/heading-fold";
@@ -42,7 +43,7 @@ function HeadingTitle({ node }: { node: PMNode }) {
     node.forEach((child) => {
       if (child.type.name === "inlineMath") {
         parts.push(
-          katex.renderToString(child.textContent.replace(/\u200b/g, ""), {
+          katex.renderToString(groupMathScripts(child.textContent.replace(/\u200b/g, "")), {
             throwOnError: false,
             displayMode: false,
           }),

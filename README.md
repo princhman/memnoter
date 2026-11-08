@@ -16,6 +16,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
+> **Beta:** Memnoter is in beta, so bugs are expected. Please send a report or message to [hello@memnoter.com](mailto:hello@memnoter.com) or [open a GitHub issue](https://github.com/princhman/memnoter/issues).
+
 ---
 
 Most study workflows split notes from flashcards: you write in one app, then

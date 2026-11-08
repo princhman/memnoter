@@ -452,6 +452,31 @@ fn cursor(conn: &Connection) -> CommandResult<i64> {
     Ok(get_value::<i64>(conn, "cursor")?.unwrap_or(0))
 }
 
+pub(crate) fn record_sidebar(
+    conn: &Connection,
+    items: &[crate::sidebar::SidebarItem],
+) -> CommandResult<()> {
+    if !is_enabled(conn)? {
+        return Ok(());
+    }
+    let doc = load_vault(conn)?;
+    let map = doc.get_or_insert_map("sidebar");
+    let update = {
+        let mut txn = doc.transact_mut();
+        for item in items {
+            map.insert(
+                &mut txn,
+                item.id.as_str(),
+                serde_json::to_string(item).map_err(db_err)?,
+            );
+        }
+        txn.encode_update_v1()
+    };
+    save_vault(conn, &doc)?;
+    push_outbox(conn, VAULT_DOC, &update)?;
+    Ok(())
+}
+
 fn load_vault(conn: &Connection) -> CommandResult<Doc> {
     let doc = Doc::new();
     if let Some(state) = get_value::<Vec<u8>>(conn, "vault")? {
@@ -533,6 +558,20 @@ fn reconcile(tx: &Transaction, doc: &Doc) -> CommandResult<(bool, Vec<String>)> 
             Some(_) => {}
         }
     }
+    {
+        let map = doc.get_or_insert_map("sidebar");
+        let txn = doc.transact();
+        for (id, value) in map.iter(&txn) {
+            if let Out::Any(Any::String(json)) = value {
+                let item: crate::sidebar::SidebarItem =
+                    serde_json::from_str(&json).map_err(db_err)?;
+                if item.id != id {
+                    return Err("Invalid sidebar entry".into());
+                }
+                changed |= crate::sidebar::store(tx, &item)?;
+            }
+        }
+    }
     Ok((changed, deleted))
 }
 
@@ -560,6 +599,17 @@ fn seed(conn: &Connection) -> CommandResult<()> {
             if recorded != Some(name.as_str()) {
                 map.insert(&mut txn, format!("{id}.name"), name.as_str());
             }
+        }
+    }
+    {
+        let sidebar = doc.get_or_insert_map("sidebar");
+        let mut txn = doc.transact_mut();
+        for item in crate::sidebar::read(conn)? {
+            sidebar.insert(
+                &mut txn,
+                item.id.as_str(),
+                serde_json::to_string(&item).map_err(db_err)?,
+            );
         }
     }
     let files: Vec<(String, String, String)> = {

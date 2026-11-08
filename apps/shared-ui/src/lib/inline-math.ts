@@ -1,9 +1,10 @@
 import { action } from "@/lib/shortcuts";
 import { Node, PasteRule, type Editor } from "@tiptap/core";
-import { Node as PMNode } from "@tiptap/pm/model";
+import { Node as PMNode, type ResolvedPos } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import katex from "katex";
+import { groupMathScripts } from "@/lib/latex-render";
 import { createMathIndex } from "./math-index";
 
 declare module "@tiptap/core" {
@@ -19,9 +20,23 @@ export function cleanMathText(tex: string) {
   return tex.replace(/\u200b/g, "");
 }
 
+// Shared by typed closing dollars and command completion in unfinished math.
+export function findInlineMathOpening($pos: ResolvedPos) {
+  let before = "";
+  $pos.parent.forEach((child, offset) => {
+    if (offset >= $pos.parentOffset) return;
+    before += child.isText
+      ? child.text!.slice(0, $pos.parentOffset - offset)
+      : "\ufffc".repeat(child.nodeSize);
+  });
+  const match = /(^|[^$\\])\$([^$\n]*)$/.exec(before);
+  if (!match || match[2].includes("\ufffc")) return null;
+  return { from: $pos.pos - match[2].length - 1, tex: match[2] };
+}
+
 export function renderKatex(el: HTMLElement, tex: string, displayMode = false) {
   try {
-    katex.render(tex, el, { throwOnError: false, displayMode });
+    katex.render(groupMathScripts(tex), el, { throwOnError: false, displayMode });
   } catch {
     el.textContent = tex;
   }
@@ -383,23 +398,9 @@ export const InlineMath = Node.create<InlineMathOptions>({
             const parent = $pos.parent;
             if (!parent.inlineContent || parent.type.spec.code) return false;
 
-            // Text before the caret; non-text inline nodes keep their length
-            // so string offsets line up with document positions.
-            let before = "";
-            parent.forEach((child, offset) => {
-              if (offset >= $pos.parentOffset) return;
-              before += child.isText
-                ? child.text!.slice(0, $pos.parentOffset - offset)
-                : "\ufffc".repeat(child.nodeSize);
-            });
-
-            const match = /(^|[^$\\])\$([^$\n]+)$/.exec(before);
-            if (!match) return false;
-
-            const tex = match[2];
-            if (!tex.trim() || tex.includes("\ufffc")) return false;
-
-            const start = from - tex.length - 1;
+            const opening = findInlineMathOpening($pos);
+            if (!opening || !opening.tex.trim()) return false;
+            const { from: start, tex } = opening;
             const node = type.create(null, state.schema.text(tex));
             const tr = state.tr.replaceWith(start, from, node);
             tr.setSelection(

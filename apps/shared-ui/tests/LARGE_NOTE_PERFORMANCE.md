@@ -123,7 +123,8 @@ resolved by the owning agent, and these two harnesses now disable HMR.
 
 ## Massive-note clipboard investigation (2026-11-08)
 
-Run `node --experimental-strip-types --test tests/copy-large-note.test.mjs`.
+Run `node --experimental-strip-types --import ./tests/support/register.mjs --test tests/copy-large-note.bench.mjs`.
+The normal test command runs this timing gate after the other UI suites finish, so concurrent browser tests do not compete for CPU during the measurement.
 The synthetic fixture contains 1,000 root sections, 3,000 headings, 100 tables,
 100 block formulas, 1,000 inline formulas and 100 locally served images
 (14,800 descendants, 350,670 text characters). The large-note harness now mounts
