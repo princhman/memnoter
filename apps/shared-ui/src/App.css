@@ -1160,6 +1160,8 @@ body {
 .toc-item > svg { flex: none; width: 0.875rem; height: 0.875rem; }
 .toc-item[data-active="true"] { color: var(--sidebar-primary); }
 .toc-item .katex { font-size: 1em; }
+.toc-block { color: var(--muted-foreground); }
+.toc-block-icon { display: inline; width: 0.7rem; height: 0.7rem; margin-right: 0.35rem; vertical-align: -0.05em; }
 
 @media (pointer: coarse) {
     .toc-rail { height: min(calc(var(--toc-rows, 1) * 14px), 60vh); }

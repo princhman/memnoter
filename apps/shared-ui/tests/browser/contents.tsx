@@ -5,6 +5,13 @@ import { InlineMathView as InlineMath } from "@/components/inline-math-view";
 import Toc from "@tiptap/extension-table-of-contents";
 import { TableOfContents, createTocStore } from "@/components/table-of-contents";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { MathBlock } from "@/lib/math-block";
+import { NoteTables } from "@/lib/note-tables";
+import Image from "@tiptap/extension-image";
+import OutlineSection from "@/components/settings/outline-section";
+import { FoldableBlock } from "@/lib/foldable-block";
+import { HeadingFold } from "@/lib/heading-fold";
+import { SectionFocus } from "@/lib/section-focus";
 import "@/App.css";
 
 const store = createTocStore();
@@ -26,13 +33,13 @@ const content = Array.from({ length: weeks }, (_, week) => {
 }).join("");
 function Outline() {
   const editor = useEditor({
-    extensions: [StarterKit, InlineMath, Toc.configure({
+    extensions: [StarterKit, InlineMath, ...FoldableBlock, MathBlock, ...NoteTables, Image, HeadingFold, SectionFocus, Toc.configure({
       scrollParent: () => document.querySelector<HTMLElement>("main")!,
       onUpdate: (items) => store.setState(() => items),
     })],
     content: `<p>Introduction before the first section.</p>${content}`,
     onCreate: ({ editor }) => Object.assign(window, { editor, store }),
   });
-  return <TooltipProvider><header style={{ height: 64, background: "var(--background)", position: "relative", zIndex: 40 }}>Programming notes</header><main className="app-scroll-container" style={{ height: "calc(100vh - 64px)", overflow: "auto", padding: "32px 64px" }}><EditorContent editor={editor} /><TableOfContents editor={editor} store={store} numbered={params.has("numbered")} /></main></TooltipProvider>;
+  return <TooltipProvider><header style={{ height: 64, background: "var(--background)", position: "relative", zIndex: 40 }}>Programming notes</header><main className="app-scroll-container" style={{ height: "calc(100vh - 64px)", overflow: "auto", padding: "32px 64px" }}>{params.has("blocks") && <OutlineSection />}<EditorContent editor={editor} /><TableOfContents editor={editor} store={store} numbered={params.has("numbered")} /></main></TooltipProvider>;
 }
 createRoot(document.getElementById("root")!).render(<Outline />);

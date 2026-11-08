@@ -25,6 +25,8 @@ type appState = {
   // Review shows a card due soon when none is due yet, as Anki does.
   learnAhead: boolean;
   skipCardsCreatedToday: boolean;
+  // List foldable block titles under their heading in the outline popup.
+  foldableBlocksInOutline: boolean;
 };
 
 declare global {
@@ -43,6 +45,7 @@ const defaultState: appState = {
   recentModuleIds: [],
   learnAhead: false,
   skipCardsCreatedToday: false,
+  foldableBlocksInOutline: false,
 };
 
 function normalizeState(value: Partial<appState> | null): appState {
@@ -139,6 +142,10 @@ export function forgetModule(moduleId: string) {
 
 export function setSidebarOpen(open: boolean) {
   appStore.setState((state) => ({ ...state, sidebarOpen: open }));
+}
+
+export function setFoldableBlocksInOutline(foldableBlocksInOutline: boolean) {
+  appStore.setState((state) => ({ ...state, foldableBlocksInOutline }));
 }
 
 export function setLearnAhead(learnAhead: boolean) {
