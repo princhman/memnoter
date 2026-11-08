@@ -11,7 +11,7 @@ import { yUndoPluginKey } from "@tiptap/y-tiptap";
 const THRESHOLD = 4;
 
 // Where the node at `from` would land if dropped at document position `target`.
-export function imageDropPosition(state: EditorState, from: number, target: number) {
+function imageDropPosition(state: EditorState, from: number, target: number) {
   const node = state.doc.nodeAt(from);
   if (!node) return null;
   const insert = dropPoint(state.doc, target, new Slice(Fragment.from(node), 0, 0));
@@ -22,7 +22,7 @@ export function imageDropPosition(state: EditorState, from: number, target: numb
 
 // The node keeps its attributes (asset, caption, masks) because the same node
 // is reinserted; nothing passes through HTML.
-export function moveImage(state: EditorState, from: number, target: number): Transaction | null {
+function moveImage(state: EditorState, from: number, target: number): Transaction | null {
   const node = state.doc.nodeAt(from);
   const insert = imageDropPosition(state, from, target);
   if (!node || insert === null) return null;

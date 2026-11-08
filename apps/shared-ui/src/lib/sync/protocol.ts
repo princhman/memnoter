@@ -8,7 +8,6 @@
 //
 // Frames are JSON text; `data` fields are base64.
 
-export const VAULT_DOC = "vault";
 export const PROTOCOL_VERSION = 1;
 // WebSocket subprotocols: this one, plus "auth.<token>", because browsers
 // cannot set headers on a WebSocket request.
@@ -61,7 +60,7 @@ export const CLOSE_SIGNED_OUT = 4003;
 // one byte 2 and the 32 hex characters of its id, unencrypted, so the server
 // can delete the object when the entry is compacted or dropped. Encrypted
 // blobs always start with byte 1.
-export const BLOB_REF_FORMAT = 2;
+const BLOB_REF_FORMAT = 2;
 const BLOB_REF_LENGTH = 33;
 
 export function makeBlobRef(id: string): Uint8Array {

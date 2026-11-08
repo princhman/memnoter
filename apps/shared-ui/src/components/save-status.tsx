@@ -1,3 +1,4 @@
+import { Toast } from "./ui/toast";
 import { isTauri } from "@/lib/backend";
 import { exclusiveWrite, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
@@ -96,16 +97,16 @@ const SaveStatus = () => {
   return (
     <>
       {imageErrors.length > 0 && (
-        <div role="alert" className="fixed left-4 bottom-4 z-50 max-w-md rounded-lg floating-surface bg-background dark:bg-popover p-3 text-sm shadow-sm">
+        <Toast role="alert" className="max-w-md rounded-lg p-3 text-sm shadow-sm">
           {imageErrors.map((error, index) => <p key={index}>{error}</p>)}
           <Button variant="outline" disabled={blocked} onClick={() => discardFailedImages()}>Discard failed image operations</Button>
-        </div>
+        </Toast>
       )}
       {failing && (
-        <div
+        <Toast
           role="status"
           title={lastError ?? undefined}
-          className="fixed right-4 bottom-4 z-50 flex items-center gap-2 rounded-lg floating-surface bg-background dark:bg-popover py-1 pr-1 pl-2.5 text-sm shadow-sm"
+          className="flex items-center gap-2 rounded-lg py-1 pr-1 pl-2.5 text-sm shadow-sm"
         >
           <AlertCircle className="size-4 text-destructive" />
           <span>Not saved</span>
@@ -116,7 +117,7 @@ const SaveStatus = () => {
           >
             Retry
           </Button>
-        </div>
+        </Toast>
       )}
 
       <Dialog open={confirmClose} onOpenChange={setConfirmClose}>

@@ -6,7 +6,8 @@ import {
   useState,
 } from "react";
 import { isCoarsePointer } from "@/lib/platform";
-import { HeadingAction, type HeadingActionPosition } from "./heading-action";
+import { ToolButton } from "./ui/tool-button";
+import { Maximize2, Minimize2 } from "lucide-react";
 import type { Editor } from "@tiptap/core";
 import { sectionFocusKey } from "@/lib/section-focus";
 
@@ -206,3 +207,45 @@ export const HeadingActionOverlay = ({
     </main>
   );
 };
+
+type HeadingActionPosition = {
+  left: number;
+  top: number;
+};
+
+type HeadingActionProps = {
+  position: HeadingActionPosition;
+  level: string;
+  onClick: () => void;
+  inFocus: () => boolean;
+};
+
+function HeadingAction({
+  position,
+  level,
+  onClick,
+  inFocus,
+}: HeadingActionProps) {
+  const focused = inFocus();
+  const label = focused ? "Show the whole note" : "Focus on this section";
+  return (
+    <div
+      data-heading-action=""
+      className="absolute z-10 flex items-center gap-2"
+      style={{
+        ...position,
+        transform: `translateX(calc(${HEADING_ACTION_SIZE}px - 100%))`,
+      }}
+    >
+      <span className="text-xs text-muted-foreground">{level}</span>
+      <ToolButton label={label}
+          data-heading-action=""
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onClick}
+        >
+          {focused ? <Minimize2 /> : <Maximize2 />}
+        </ToolButton>
+    </div>
+  );
+}

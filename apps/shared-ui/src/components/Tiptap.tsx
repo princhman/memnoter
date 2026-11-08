@@ -11,7 +11,7 @@ import { headingNumberingKey } from "@/lib/heading-numbering";
 import { watchWriteAdmission } from "@/lib/write-lifecycle";
 import { suppressesTextInput } from "@/lib/editor-input";
 import { useEditor, EditorContent } from "@tiptap/react";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 import { redo as yRedo, undo as yUndo } from "@tiptap/y-tiptap";
 import { listen } from "../lib/backend.ts";
 import { setNativeEditorHistory } from "@/lib/native-history";
@@ -42,7 +42,6 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
   const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
   const { yDoc, editorRef, isSuccess, filesContext, insertImages } = useNoteDocument(moduleId);
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
-  const hasInsertedInitialContent = useRef(false);
 
   const { setActiveEditor } = useActiveEditor();
 
@@ -172,17 +171,6 @@ const Tiptap = ({ moduleId, hostOnly = false }: TipTapProps) => {
     };
   }, [editor]);
 
-  // if editor is empty
-  useEffect(() => {
-    if (!editor || !isSuccess || !editor.isEditable || hasInsertedInitialContent.current) return;
-
-    hasInsertedInitialContent.current = true;
-    if (editor.isEmpty) {
-      editor.commands.setContent("<p>Hello World!</p>");
-    }
-  }, [editor, isSuccess]);
-
-  // restore where the reader left off; runs after the empty-note content above
   usePersistedView(editor, moduleId, isSuccess);
   useSearchIndexing(editor, moduleId, isSuccess);
 

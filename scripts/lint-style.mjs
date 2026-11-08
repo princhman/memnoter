@@ -14,8 +14,8 @@ import postcss from "postcss";
 
 const CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html)$/;
 const SKIPPED = /(^|\/)(node_modules|dist|target)\/|routeTree\.gen\.ts$|pnpm-lock/;
-// Floating surfaces, by the class names this project gives them.
-const SURFACE = /popup|popover|menu|dialog|tooltip|toast|card-face/;
+// The shared marker identifies surfaces independently of component names.
+const SURFACE = /\.floating-surface(?![\w-])/;
 // Tailwind classes that draw a ring around a surface, as shadcn outlines do.
 const RING_CLASS = /(?<![\w-])(?:[\w-]+:)*ring-(?:1|px|foreground\/\d+|border|sidebar-border)(?![\w/-])/;
 // A border on all four sides; on a rounded box that outlines a card. The

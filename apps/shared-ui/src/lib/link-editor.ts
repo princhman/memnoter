@@ -17,7 +17,7 @@ declare module "@tiptap/core" {
 // The selection the URL field was opened for; moving it closes the field.
 type LinkEditorState = { from: number; to: number } | null;
 
-export const linkEditorKey = new PluginKey<LinkEditorState>("link-editor");
+const linkEditorKey = new PluginKey<LinkEditorState>("link-editor");
 
 // Bubble menu plugin keys; a meta of "show" or "hide" sets their visibility.
 export const LINK_MENU_KEY = "linkMenu";
