@@ -29,7 +29,7 @@ export function PdfAnnotationPopover({ position, body, required, disabled, savin
   const close = useRef(onClose);
   close.current = onClose;
   useEffect(() => {
-    (host.current?.querySelector("textarea") ?? host.current?.querySelector("button"))?.focus({ preventScroll: true });
+    (host.current?.querySelector("textarea") ?? host.current)?.focus({ preventScroll: true });
     const dismiss = (event: PointerEvent) => {
       if (!(event.target instanceof Node) || host.current?.contains(event.target)) return;
       restoreFocus.current = false;
@@ -43,13 +43,13 @@ export function PdfAnnotationPopover({ position, body, required, disabled, savin
     };
   }, []);
   const attempt = (fn: () => void) => { try { fn(); setError(""); } catch (error) { setError(error instanceof Error ? error.message : String(error)); } };
-  return <div ref={host} role="dialog" aria-label="PDF annotation" className="absolute z-40 w-64 max-w-[calc(100%-1rem)] rounded-lg floating-surface p-2 text-xs shadow-lg" style={position} onPointerDown={event => event.stopPropagation()} onKeyDown={event => {
+  return <div ref={host} role="dialog" aria-label="PDF annotation" tabIndex={-1} className="outline-none absolute z-40 w-64 max-w-[calc(100%-1rem)] rounded-lg floating-surface p-2 text-xs shadow-lg" style={position} onPointerDown={event => event.stopPropagation()} onKeyDown={event => {
     event.stopPropagation();
     if (event.key === "Escape") { event.preventDefault(); onClose(); }
     if (event.key === "Tab") {
       const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled),textarea:not(:disabled)"));
       const next = event.shiftKey ? controls[controls.length - 1] : controls[0];
-      if (document.activeElement === (event.shiftKey ? controls[0] : controls[controls.length - 1])) { event.preventDefault(); next?.focus(); }
+      if (document.activeElement === host.current || document.activeElement === (event.shiftKey ? controls[0] : controls[controls.length - 1])) { event.preventDefault(); next?.focus(); }
     }
   }}>
     {onColorChange && <div className="mb-2"><PdfHighlightColors color={color} disabled={disabled} onChange={color => attempt(() => onColorChange(color))} /></div>}

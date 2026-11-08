@@ -61,6 +61,18 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     await viewer.getByRole('button', { name: 'Edit PDF highlight', exact: true }).first().click();
     await editor.waitFor();
     assert.equal(await editor.getByRole('textbox').count(), 0, 'a plain highlight opens colour controls, not a comment field');
+    assert.equal(await editor.evaluate(element => element === document.activeElement), true, 'opening the menu focuses its surface rather than a colour swatch');
+    assert.equal(await page.getByRole('tooltip').filter({ hasText: 'Purple highlight' }).count(), 0, 'opening a highlight does not announce an unrelated colour tooltip');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await editor.getByRole('button', { name: 'Add comment', exact: true }).evaluate(element => element === document.activeElement), true, 'backward tab from the surface stays in the menu');
+    await page.keyboard.press('Tab');
+    assert.equal(await editor.getByRole('button', { name: 'Purple highlight', exact: true }).evaluate(element => element === document.activeElement), true);
+    await page.getByRole('tooltip').filter({ hasText: 'Purple highlight' }).waitFor();
+    await page.keyboard.press('Escape');
+    await editor.waitFor({ state: 'detached' });
+    await viewer.getByRole('button', { name: 'Edit PDF highlight', exact: true }).first().click();
+    await editor.waitFor();
+    assert.equal(await editor.evaluate(element => element === document.activeElement), true);
     const fill = viewer.locator('[data-pdf-annotations] > div').first();
     const purpleFill = await fill.evaluate(element => getComputedStyle(element).backgroundColor);
     await editor.getByRole('button', { name: 'Blue highlight', exact: true }).click();
