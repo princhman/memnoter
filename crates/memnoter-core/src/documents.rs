@@ -103,7 +103,12 @@ pub fn add_document_bytes(
             ],
         )
         .map_err(db_err)?;
-        sync::record_file(&tx, &id, &module_id, "application/pdf")?;
+        // Not in the vault's image list: older builds would download every PDF,
+        // delete it as an unused image and fetch it again on each launch.
+        if sync::is_enabled(&tx)? {
+            tx.execute("insert or ignore into sync_file_uploads (file_id) values (?1)", [&id])
+                .map_err(db_err)?;
+        }
         sync::record_document(&tx, &id, false)?;
         tx.commit().map_err(db_err)
     })();

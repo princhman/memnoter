@@ -755,8 +755,9 @@ fn seed(conn: &Connection) -> CommandResult<()> {
         }
     }
     let files: Vec<(String, String, String)> = {
+        // PDFs are announced through the documents map only; see record_document.
         let mut stmt = conn
-            .prepare("select id, module_id, file_type from files where id not in (select file_id from sync_files_gone)")
+            .prepare("select id, module_id, file_type from files where id not in (select id from documents) and id not in (select file_id from sync_files_gone)")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
@@ -1201,6 +1202,26 @@ fn missing_files(conn: &Connection) -> CommandResult<Vec<MissingFile>> {
                 module_id: module_id.to_string(),
                 file_type: file_type.to_string(),
             });
+        }
+    }
+    // PDFs whose synced metadata arrived before their bytes. Deleted ones have
+    // no row, and the documents row cascades with its module.
+    let mut stmt = conn
+        .prepare(
+            "select id, module_id from documents d
+             where not exists (select 1 from files f where f.id = d.id)",
+        )
+        .map_err(db_err)?;
+    let pdfs = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(db_err)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_err)?;
+    for (file_id, module_id) in pdfs {
+        if !file_gone(conn, &file_id)?
+            && !deleted_documents.contains(&file_id)
+            && !missing.iter().any(|file| file.file_id == file_id) {
+            missing.push(MissingFile { file_id, module_id, file_type: "application/pdf".into() });
         }
     }
     Ok(missing)
@@ -1742,6 +1763,13 @@ mod tests {
         .unwrap();
         // Enabling sync must seed documents imported while offline.
         enable(&mut a.db.lock().unwrap(), "{}").unwrap();
+        {
+            // Older builds read the images map, so PDFs must stay out of it.
+            let conn = a.db.lock().unwrap();
+            let vault = load_vault(&conn).unwrap();
+            assert!(!string_entries(&vault, FILES_MAP).iter().any(|(id, _)| *id == pdf.id));
+            assert_eq!(pending_uploads(&conn).unwrap(), vec![pdf.id.clone()]);
+        }
         let (b_dir, mut b) = db();
         enable(&mut b, "{}").unwrap();
         let mut seq = 0;
