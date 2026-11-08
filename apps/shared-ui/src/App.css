@@ -544,6 +544,85 @@ body {
     }
 }
 
+/* Foldable block: a title line and content that fold on their own. */
+.tiptap .foldable-block {
+    display: flex;
+    gap: 0.25rem;
+    margin: 1rem 0;
+    padding: 0.4rem 0.75rem 0.4rem 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.tiptap .foldable-block > div {
+    flex: 1;
+    min-width: 0;
+}
+
+.tiptap .foldable-block summary {
+    display: block;
+    font-weight: 600;
+    list-style: none;
+}
+
+.tiptap .foldable-block summary::-webkit-details-marker {
+    display: none;
+}
+
+/* An empty title shows what it is for. */
+.tiptap .foldable-block summary:has(> .ProseMirror-trailingBreak:only-child)::before {
+    content: "Title";
+    float: left;
+    height: 0;
+    color: var(--muted-foreground);
+    font-weight: 400;
+    pointer-events: none;
+}
+
+.tiptap .foldable-block [data-type="detailsContent"] {
+    margin-top: 0.25rem;
+}
+
+.tiptap .foldable-block [data-type="detailsContent"] > :first-child {
+    margin-top: 0;
+}
+
+.tiptap .foldable-block [data-type="detailsContent"] > :last-child {
+    margin-bottom: 0;
+}
+
+.tiptap .foldable-block [data-type="detailsContent"][hidden] {
+    display: none;
+}
+
+.foldable-block-toggle {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    /* One line tall, so the chevron centres on the title. */
+    height: 1lh;
+    border-radius: 0.25rem;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    user-select: none;
+}
+
+.foldable-block-toggle:hover {
+    color: var(--foreground);
+}
+
+.foldable-block-toggle svg {
+    width: 1rem;
+    height: 1rem;
+    transition: transform 150ms ease-out;
+}
+
+.foldable-block:not(.is-open) .foldable-block-toggle svg {
+    transform: rotate(-90deg);
+}
+
 /* Saved images use Tiptap's resize handles and persist their node attributes. */
 .note-image-block {
     position: relative;

@@ -30,6 +30,7 @@
     "@tiptap/core": "^3.29.2",
     "@tiptap/extension-bubble-menu": "^3.27.1",
     "@tiptap/extension-collaboration": "^3.27.3",
+    "@tiptap/extension-details": "3.29.2",
     "@tiptap/extension-document": "^3.27.3",
     "@tiptap/extension-file-handler": "^3.31.3",
     "@tiptap/extension-find-and-replace": "^3.32.0",

@@ -28,6 +28,7 @@ import { MoveLines } from "@/lib/move-lines";
 import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
 import { Flashcards } from "@/lib/flashcards";
+import { FoldableBlock } from "@/lib/foldable-block";
 
 // Outline layout reads force WebKit to lay out the whole note. Keep saved
 // heading IDs synchronous (the upstream plugin), but coalesce visual refreshes.
@@ -92,6 +93,7 @@ export function noteExtensions({
     ui.inlineMath ?? InlineMath,
     ui.mathBlock ?? MathBlock,
     Flashcards,
+    ...FoldableBlock,
     HeadingHieararchy,
     SectionFocus,
     Sections,
