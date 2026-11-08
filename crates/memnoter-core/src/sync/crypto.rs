@@ -107,7 +107,7 @@ mod contract_tests {
     use base64::{Engine, engine::general_purpose::STANDARD};
     #[test]
     fn shared_key_check_vector() {
-        let contract: serde_json::Value = serde_json::from_str(include_str!("../../../../../apps/sync/test/fixtures/protocol.json")).unwrap();
+        let contract: serde_json::Value = serde_json::from_str(include_str!("../../../../apps/sync/test/fixtures/protocol.json")).unwrap();
         let v = &contract["keyCheck"]["vector"];
         let key = derive_key(v["passphrase"].as_str().unwrap(), &STANDARD.decode(v["salt"].as_str().unwrap()).unwrap());
         assert_eq!(STANDARD.encode(key), v["key"]);

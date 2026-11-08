@@ -20,6 +20,7 @@
 //! Nothing is recorded while sync is off; turning it on seeds the outbox with
 //! everything stored locally.
 pub mod crypto;
+pub mod session;
 
 use crate::{db_err, delete_module_data, CommandResult, ContentUpdate, Db};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
