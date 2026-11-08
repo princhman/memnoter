@@ -370,7 +370,11 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
           anchor: selection.anchorOffset, head: selection.focusOffset,
           text: selection.anchorNode?.textContent, scroll: document.querySelector('.app-scroll-container').scrollTop };
       });
-      const tapDot = () => dot.tap();
+      // Tap the dot at its centre; locator.tap() left the popup open on CI.
+      const tapDot = async () => {
+        const box = await dot.boundingBox();
+        await menu.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+      };
       for (const focused of [true, false]) {
         if (!focused) {
           await menu.evaluate(() => { document.activeElement?.blur(); window.getSelection()?.removeAllRanges(); });
