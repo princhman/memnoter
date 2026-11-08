@@ -1,26 +1,24 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
-import { webkit } from 'playwright';
 
-let browser, server, cacheDir;
+import { fileURLToPath } from 'node:url';
+
+const { createServer, webkit } = browserHarness(import.meta.url);
+
+let browser, server;
 before(async () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
-  cacheDir = await mkdtemp(join(tmpdir(), 'import-dialog-'));
-  server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: 'error' });
+  server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
   await server.listen(); browser = await webkit.launch();
 });
-after(async () => { await browser?.close(); await server?.close(); await rm(cacheDir, { recursive: true, force: true }); });
+after(async () => { await browser?.close(); await server?.close(); });
 async function open(folder, viewport = { width: 900, height: 800 }) {
   const page = await browser.newPage({ viewport });
   page.setDefaultTimeout(30000);
   page.setDefaultNavigationTimeout(60000);
   await page.exposeFunction('pickFolder', () => folder);
-  await page.addInitScript(() => { window.__TAURI_INTERNALS__ = { invoke: command => command === 'pick_import_folder' ? window.pickFolder() : Promise.resolve([]), convertFileSrc: path => path }; });
+  await page.addInitScript(() => { window.installTestBridge({ tauri: { invoke: command => command === 'pick_import_folder' ? window.pickFolder() : Promise.resolve([]) } }); });
   await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/import-dialog.html`);
   await page.locator('.group').first().hover();
   await page.getByRole('button', { name: 'Add module', exact: true }).waitFor();

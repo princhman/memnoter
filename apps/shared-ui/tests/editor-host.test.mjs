@@ -1,13 +1,12 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createServer } from 'vite';
-import { webkit } from 'playwright';
-import { mkdtemp, rm } from 'node:fs/promises';
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 test('WK host opens shared editors, publishes state and outline, and persists edits without desktop APIs', async t => {
   const root = new URL('../', import.meta.url).pathname;
-  const cacheDir = await mkdtemp(`${root}node_modules/.memnoter-host-`);
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   try {
     await server.listen();
@@ -20,7 +19,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await context.addInitScript(() => {
       window.__memnoterScrollDebug = true;
       window.messages = [];
-      window.webkit = { messageHandlers: { memnoter: { postMessage(message) {
+      window.installTestBridge({ native: function(message) {
         window.messages.push(message);
         if (message.kind !== 'call') return;
         const { id, command, args } = message;
@@ -33,7 +32,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
         else if (command === 'index_note') result = null;
         else throw Error(`Unexpected command: ${command}`);
         queueMicrotask(() => window.__memnoterBridge.resolve(id, result));
-      } } } };
+      } });
     });
     // Saved native preferences are untrusted across app upgrades. A bad caret
     // or missing heading must not turn a successful content read into failure.
@@ -571,6 +570,6 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal((await state()).suppressKeyboard, false);
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true });
+    await browser?.close(); await server.close();
   }
 });

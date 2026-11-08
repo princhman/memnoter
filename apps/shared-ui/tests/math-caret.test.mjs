@@ -1,11 +1,12 @@
+import { browserHarness } from "./support/browser.mjs";
 // Caret movement around inline and block math, in a real WebKit (the engine
 // behind Tauri on macOS). Rendered formulas hide their source, so native
 // movement skips or sticks on them unless the math extensions step over it.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 let server, browser, page;

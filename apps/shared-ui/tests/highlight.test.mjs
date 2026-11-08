@@ -1,17 +1,15 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 // Real pointer and keyboard interactions protect selection across the portaled
 // picker, as well as the official extension's input rule and collaborative schema.
 test("highlight picker, syntax, bridge and old-schema compatibility", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const cacheDir = await mkdtemp(join(root, "node_modules/.highlight-vite-"));
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: "error" });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
     await server.listen();
@@ -98,6 +96,6 @@ test("highlight picker, syntax, bridge and old-schema compatibility", async () =
     assert.equal(compatibility.editorText, "");
     assert.equal(compatibility.storedText.includes("gentle"), false);
   } finally {
-    await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true });
+    await browser?.close(); await server.close();
   }
 });

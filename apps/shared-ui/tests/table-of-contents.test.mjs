@@ -1,8 +1,9 @@
+import { browserHarness } from "./support/browser.mjs";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 let server, browser, page;
 before(async () => {
@@ -162,7 +163,7 @@ test("touch first tap opens, second tap navigates; native host still omits the T
   assert.equal(await touch.locator(".toc-popup").count(), 0);
   await touch.close();
   const native = await browser.newPage();
-  await native.addInitScript(() => { window.webkit = { messageHandlers: { memnoter: { postMessage() {} } } }; });
+  await native.addInitScript(() => { window.installTestBridge({ native: function() {} }); });
   await load("?short", 900, 800, native);
   assert.equal(await native.locator(".toc").count(), 0);
   await native.close();
@@ -177,7 +178,6 @@ test("popup renders numbered titles", async () => {
     `1.2 ${topic(1, 2)}`, `1.2.1 ${detail(1, 2)}`, `1.2.1.1 ${example(1, 2)}`,
   ]);
 });
-
 
 test("menu aim protects diagonal travel, releases outside the triangle, and expires when still", async () => {
   await load();
@@ -227,7 +227,6 @@ test("long subtree popup scrolls internally and reveals its active heading", asy
   await page.mouse.wheel(0, 1000);
   assert.equal(await page.locator("main").evaluate(el => el.scrollTop), 0);
 });
-
 
 test("descendants preserve relative indentation and render inline math", async () => {
   await load("?short&numbered");

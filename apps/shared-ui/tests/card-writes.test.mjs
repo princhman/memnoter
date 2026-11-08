@@ -1,16 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { register } from 'node:module';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
 
-// Resolve the application's Vite aliases while exercising its real IPC owners.
-const src = new URL('../src/', import.meta.url).href;
-register(`data:text/javascript,${encodeURIComponent(`
-  export function resolve(specifier, context, next) {
-    if (specifier.startsWith('@/')) specifier = ${JSON.stringify(src)} + specifier.slice(2) + '.ts';
-    return next(specifier, context);
-  }
-`)}`, import.meta.url);
 globalThis.window = { setTimeout, clearTimeout };
 const { writeCards, drainCardWrites } = await import('../src/lib/card-writes.ts');
 const { saveQueue } = await import('../src/lib/saves.ts');

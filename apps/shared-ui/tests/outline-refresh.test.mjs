@@ -1,19 +1,20 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { browserHarness } from "./support/browser.mjs";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 test("outline navigation, numbering, folding and Yjs stay correct across edits and undo", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const cacheDir = await mkdtemp(`${tmpdir()}/memnoter-benchmark-`);
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false, hmr: false, watch: null }, logLevel: "error" });
+  const server = await createServer({ root, server: { port: 0, strictPort: false, hmr: false, watch: null }, logLevel: "error" });
   let browser;
   try {
     await server.listen(); browser = await webkit.launch();
     const page = await browser.newPage();
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/large-note.html`);
     await page.waitForFunction(() => !!window.openLargeNote);
     await page.evaluate(() => window.openLargeNote({ name: "Outline", entries: [{ path: "Outline.md", text: "# First\n\nSome editable paragraph text.\n\n# Second\n\nAnother editable paragraph text." }] }));
@@ -38,5 +39,6 @@ test("outline navigation, numbering, folding and Yjs stay correct across edits a
     // A pending visual callback must not dispatch after teardown.
     await page.evaluate(() => { editor.commands.insertContent("x"); editor.destroy(); });
     await page.waitForTimeout(150);
-  } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
+    assert.deepEqual(errors, [], "teardown must not dispatch into a destroyed editor");
+  } finally { await browser?.close(); await server.close(); }
 });

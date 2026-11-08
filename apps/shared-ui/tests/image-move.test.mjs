@@ -1,16 +1,15 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { browserHarness } from "./support/browser.mjs";
+
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 // Real pointer input in Tauri's browser engine: pressing on an image and
 // dragging moves it, while a press without moving still selects it.
 test("dragging block and inline images moves them with assets, descriptions and masks, in one undo step", async () => {
-  const cacheDir = await mkdtemp(join(fileURLToPath(new URL("../node_modules/", import.meta.url)), ".memnoter-vite-"));
-  const server = await createServer({ cacheDir, root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
     await server.listen();
@@ -98,5 +97,5 @@ test("dragging block and inline images moves them with assets, descriptions and 
     await page.evaluate(() => editor.destroy());
     await page.waitForFunction(() => !document.querySelector(".note-image-drop-indicator") && !document.documentElement.classList.contains("is-moving-image"));
     await page.mouse.up();
-  } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
+  } finally { await browser?.close(); await server.close(); }
 });

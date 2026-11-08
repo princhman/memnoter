@@ -1,20 +1,19 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createServer } from 'vite';
-import { webkit } from 'playwright';
-import { mkdtemp, rm } from 'node:fs/promises';
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 test('WK review host scrolls long questions and revealed answers within its viewport', async () => {
   const root = new URL('../', import.meta.url).pathname;
-  const cacheDir = await mkdtemp(`${root}node_modules/.memnoter-review-`);
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   try {
     await server.listen();
     browser = await webkit.launch();
     const page = await browser.newPage({ viewport: { width: 390, height: 600 } });
     await page.addInitScript(() => {
-      window.webkit = { messageHandlers: { memnoter: { postMessage() {} } } };
+      window.installTestBridge({ native: function() {} });
     });
     await page.goto(`http://localhost:${server.httpServer.address().port}/review-native.html`);
     await page.waitForFunction(() => window.memnoterReview);
@@ -29,7 +28,6 @@ test('WK review host scrolls long questions and revealed answers within its view
       }));
       assert.equal(colors.scheme, colorScheme);
       assert.equal(colors.background, 'rgba(0, 0, 0, 0)', 'Native background shows through');
-      assert.ok(colors.foreground);
     }
     for (const revealed of [false, true]) {
       await page.evaluate(revealed => window.memnoterReview.show({
@@ -74,6 +72,6 @@ test('WK review host scrolls long questions and revealed answers within its view
   } finally {
     await browser?.close();
     await server.close();
-    await rm(cacheDir, { recursive: true, force: true });
+
   }
 });

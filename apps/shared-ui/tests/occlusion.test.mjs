@@ -61,7 +61,9 @@ test("coordinates align across viewport sizes; reverse drags and all closed shap
   assert.deepEqual(p, {x:.5,y:.5});
   assert.deepEqual(normalizedPoint(250,150,{left:50,top:50,width:400,height:200}), p);
   assert.deepEqual(normalizedPoint(-1,500,{left:0,top:0,width:100,height:100}), {x:0,y:1});
-  assert.deepEqual(drawMask("rectangle", [{x:.8,y:.7},{x:.2,y:.1}], "r"), {id:"r",shape:"rectangle",x:.2,y:.1,width:.6000000000000001,height:.6});
+  const drawnRectangle = drawMask("rectangle", [{x:.8,y:.7},{x:.2,y:.1}], "r");
+  assert.deepEqual({ ...drawnRectangle, width: undefined }, {id:"r",shape:"rectangle",x:.2,y:.1,width:undefined,height:.6});
+  assert.ok(Math.abs(drawnRectangle.width - .6) < 1e-10);
   assert.equal(drawMask("ellipse", [{x:0,y:0},{x:1,y:1}], "e").rx, .5);
   assert.equal(validMasks([rectangle, ellipse, freehand]).length, 3);
   assert.deepEqual(validMasks([{...rectangle,width:2},{...ellipse,rx:0},{...freehand,points:[{x:0,y:0},{x:0,y:0},{x:0,y:0}]}, {...rectangle,x:NaN}]), []);

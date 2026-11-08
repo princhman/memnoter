@@ -1,18 +1,18 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { createServer } from 'vite';
-import { webkit } from 'playwright';
 import { measureContrast } from './helpers-contrast.mjs';
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 // Protects readable rendered text through token, utility and state changes. Existing
 // editor tests check selection/schema, but do not measure the colors WebKit paints.
 test('light and dark rendered UI contrast', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
-  const cacheDir = await mkdtemp(join(root, 'node_modules/.contrast-vite-'));
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   const recipes = [];
   async function inventory(dir) {
@@ -119,5 +119,5 @@ test('light and dark rendered UI contrast', async () => {
     if (process.env.CONTRAST_REPORT) await writeFile(process.env.CONTRAST_REPORT, JSON.stringify(report, null, 2));
     const failures = report.filter(p => p.ratio + .005 < p.minimum);
     assert.equal(failures.length, 0, `${failures.length} contrast failures:\n${failures.slice(0, 65).map(p => `${p.theme} ${p.label}: ${p.ratio.toFixed(2)} < ${p.minimum} (${p.foreground} on ${p.background})`).join('\n')}`);
-  } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
+  } finally { await browser?.close(); await server.close(); }
 });
