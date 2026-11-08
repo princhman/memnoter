@@ -1,6 +1,7 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { BASE, signIn } from "./helpers";
+import contract from "./fixtures/protocol.json";
 
 function post(path: string, body: unknown, token?: string) {
   return SELF.fetch(`${BASE}${path}`, {
@@ -14,6 +15,7 @@ describe("sign-in", () => {
   it("issues a token for the right code and keeps the user id", async () => {
     const first = await signIn("Ada@Example.com");
     expect(first.token).toMatch(/\./);
+    expect(Object.keys(first).sort()).toEqual(Object.keys(contract.httpFixtures.verify).sort());
     // Codes cannot be requested again for 30 seconds; a second account works.
     const other = await signIn("grace@example.com");
     expect(other.userId).not.toBe(first.userId);
@@ -57,13 +59,15 @@ describe("sign-in", () => {
 describe("key info", () => {
   it("requires a token", async () => {
     expect((await SELF.fetch(`${BASE}/v1/key`)).status).toBe(401);
-    expect((await SELF.fetch(`${BASE}/v1/key`, { headers: { Authorization: "Bearer a.b" } })).status).toBe(401);
+    const invalid = await SELF.fetch(`${BASE}${contract.paths.key}`, { headers: { Authorization: "Bearer a.b" } });
+    expect(invalid.status).toBe(401);
+    expect(await invalid.json()).toEqual(contract.httpFixtures.expired);
   });
 
   it("keeps the first device's salt", async () => {
     const { token } = await signIn("keys@example.com");
     const get = await SELF.fetch(`${BASE}/v1/key`, { headers: { Authorization: `Bearer ${token}` } });
-    expect(await get.json()).toEqual({ key: null });
+    expect(await get.json()).toEqual(contract.httpFixtures.newKey);
 
     const put = (salt: string) =>
       SELF.fetch(`${BASE}/v1/key`, {

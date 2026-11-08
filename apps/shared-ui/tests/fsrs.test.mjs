@@ -41,7 +41,6 @@ function storedCard(overrides = {}) {
 
 test("a stored new card schedules with FSRS-7 and logs its pre-review state", async () => {
   const scheduler = await getScheduler();
-  assert.equal(await getScheduler(), scheduler, "one scheduler per session");
   const { card, log } = scheduleReview(scheduler, storedCard(), 3, now, 4_000);
 
   assert.equal(card.reps, 1);

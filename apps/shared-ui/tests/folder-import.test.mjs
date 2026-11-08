@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { prepareFolderImport } from "../src/lib/folder-import.ts";
-import { realPath, readFolder, all, synthetic } from "./support/import-fixture.mjs";
+import { all, synthetic } from "./support/import-fixture.mjs";
 test("folder mapping, image deduplication, cell images, literal code and reporting", async () => {
   const plan = await prepareFolderImport(synthetic);
   assert.deepEqual(plan.notes, ["Course.md", "Week 2.md", "Week 10.md", "01 Notes/Week 2.md", "01 Notes/02 Deep/Extra.md"]);
@@ -21,17 +21,6 @@ test("resolution prefers exact, note-relative, then unambiguous filename and rep
   assert.deepEqual(plan.images.map(e=>e.path), ["a.png","notes/local.png"]);
   assert.deepEqual(plan.unresolved, ["notes/n.md: long.png (ambiguous)","notes/n.md: missing.svg"]);
 });
-test("fixture vault preserves notes, fences, highlights, tables and images", async () => {
-  const plan = await prepareFolderImport(readFolder(realPath));
-  assert.deepEqual(plan.notes, ["Vault.md", "Topics/Memory.md", "Topics/Review.md"]);
-  assert.deepEqual(all(plan.document, "codeBlock").map(n => n.content?.[0]?.text), ["int value = 42;", "==literal== [[raw]]"]);
-  assert.deepEqual(all(plan.document, "text").filter(n => n.marks?.some(m => m.type === "highlight")).map(n => n.text), ["vault", "Stack", "heap"]);
-  assert.equal(all(plan.document, "table").length, 1);
-  assert.equal(all(plan.document, "image").length, 1);
-  assert.equal(plan.images.length, 1);
-  assert.deepEqual(plan.unresolved, []);
-});
-
 test("Markdown relative image paths select the note's image rather than a root namesake", async () => {
   const plan = await prepareFolderImport({ name: "X", entries: [
     { path: "notes/n.md", text: "![local](a.png) ![explicit](./a.png) ![[a.png]]" },

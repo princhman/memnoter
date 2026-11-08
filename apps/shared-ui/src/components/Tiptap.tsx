@@ -98,7 +98,6 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           autocorrect: "off",
         }),
       },
-      // ai-suggested change to prevent double enter lag
       onTransaction: ({ editor, transaction }) => {
         const before = editor.state.selection.$from.nodeBefore;
         if (

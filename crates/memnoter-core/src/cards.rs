@@ -651,6 +651,22 @@ mod tests {
             Self { dir, core }
         }
 
+        fn asset(&self) -> String {
+            let raw = crate::dispatch(
+                &self.core,
+                "save_file",
+                &json!({
+                    "moduleId":"a", "bytes":[1,2,3], "mimeType":"image/png",
+                })
+                .to_string(),
+            )
+            .unwrap();
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+
         fn sync(&self, module: &str, cards: &[CardContent], now: i64) -> Vec<String> {
             sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, now).unwrap()
         }
@@ -689,16 +705,9 @@ mod tests {
             let mut content = basic(id, "Front", "Back");
             content.kind = kind.into();
             if kind == "occlusion" {
-                f.db.conn
-                    .lock()
-                    .unwrap()
-                    .execute(
-                        "insert into files values ('asset','a','/synthetic/asset','image/png')",
-                        [],
-                    )
-                    .unwrap();
-                content.front = json!({"fileId": "asset", "revealed": false});
-                content.back = json!({"fileId": "asset", "revealed": true});
+                let asset = f.asset();
+                content.front = json!({"fileId": asset, "revealed": false});
+                content.back = json!({"fileId": asset, "revealed": true});
             }
             let mut cards = vec![content];
             if let Some(sibling) = row["sibling"].as_str() {
@@ -966,19 +975,12 @@ mod tests {
     #[test]
     fn occlusion_edit_restore_and_missing_asset_share_the_review_lifecycle() {
         let f = Fixture::new();
-        f.db.conn
-            .lock()
-            .unwrap()
-            .execute(
-                "insert into files values ('asset','a','/synthetic/asset','image/png')",
-                [],
-            )
-            .unwrap();
+        let asset = f.asset();
         let mut card = CardContent {
             id: "image:o:mask".into(),
             kind: "occlusion".into(),
-            front: json!({"fileId":"asset","revealed":false}),
-            back: json!({"fileId":"asset","revealed":true}),
+            front: json!({"fileId":asset,"revealed":false}),
+            back: json!({"fileId":asset,"revealed":true}),
             section: Vec::new(),
         };
         f.sync("a", std::slice::from_ref(&card), 10);
@@ -995,7 +997,7 @@ mod tests {
         f.db.conn
             .lock()
             .unwrap()
-            .execute("delete from files where id = 'asset'", [])
+            .execute("delete from files where id = ?1", [&asset])
             .unwrap();
         f.sync("a", &[card], 140);
         assert!(f.due(None, 1000).is_empty());

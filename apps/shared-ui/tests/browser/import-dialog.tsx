@@ -6,7 +6,7 @@ import CreateModule, { CreateModuleButton } from "@/components/create-module";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/App.css";
-const root = createRootRoute({ component: () => <QueryClientProvider client={queryClient}><TooltipProvider><SidebarProvider><div className="group relative w-60 p-10"><CreateModuleButton /></div><CreateModule /><Outlet /></SidebarProvider></TooltipProvider></QueryClientProvider> });
+const root = createRootRoute({ component: () => <QueryClientProvider client={queryClient}><TooltipProvider><SidebarProvider><div role="region" aria-label="Module actions" className="group relative w-60 p-10"><CreateModuleButton /></div><CreateModule /><Outlet /></SidebarProvider></TooltipProvider></QueryClientProvider> });
 const imported = createRoute({ getParentRoute: () => root, path: "/$moduleId", component: () => <p>Opened imported module</p> });
 const router = createRouter({ routeTree: root.addChildren([imported]) });
 createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);

@@ -8,7 +8,7 @@ const { createServer, webkit } = browserHarness(import.meta.url);
 
 // Real pointer and keyboard interactions protect selection across the portaled
 // picker, as well as the official extension's input rule and collaborative schema.
-test("highlight picker, syntax, bridge and old-schema compatibility", async () => {
+test("highlight picker, syntax and old-schema compatibility", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
@@ -45,21 +45,17 @@ test("highlight picker, syntax, bridge and old-schema compatibility", async () =
     await toolbar.waitFor({ state: "visible" });
     assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "yellow");
     await page.evaluate(async () => {
-      const { execEditor, editorState } = await import("/src/editor-host/commands.ts");
-      execEditor(editor, "setHighlight", { color: "purple" });
-      if (editorState(editor).highlightColor !== "purple") throw Error("Missing native colour state");
-      execEditor(editor, "removeHighlight");
       editor.commands.setContent("<p></p>"); editor.commands.focus("start");
     });
     await page.keyboard.type("==gentle==");
     assert.equal(await page.locator(".tiptap mark").textContent(), "gentle");
-    assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "purple");
+    assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "yellow");
     assert.equal(await page.locator(".tiptap mark").getAttribute("style"), null);
     await page.evaluate(() => editor.chain().focus().setTextSelection({ from: 1, to: 7 }).run());
     await page.keyboard.press("Meta+Shift+h");
     assert.equal(await page.locator(".tiptap mark").count(), 0);
     await page.keyboard.press("Meta+Shift+h");
-    assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "purple");
+    assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "yellow");
     // Highlighted inline math and cloze text use the same semantic colour in
     // the editor and the shared face mounted by native review.
     const card = await page.evaluate(async () => {

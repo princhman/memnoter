@@ -92,7 +92,6 @@ pub fn list(app_dir: &Path) -> CommandResult<Vec<Backup>> {
             });
         }
     }
-    // Newest first.
     backups.sort_by(|a, b| b.id.cmp(&a.id));
     Ok(backups)
 }
@@ -333,7 +332,7 @@ pub fn restore_backup(
 }
 
 /// Run the launch-time daily backup check off the caller's thread.
-/// As on desktop, this checks once; the 24-hour interval is persisted in snapshots.
+/// The 24-hour backup interval is persisted in snapshots.
 pub fn daily_backup(core: &crate::Core) -> CommandResult<()> {
     let conn = core.db.lock()?;
     backup_if_due(&conn, core.data_dir(), Utc::now())?;
@@ -350,6 +349,24 @@ pub fn spawn_daily_backup(core: std::sync::Arc<crate::Core>) -> std::thread::Joi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn save_image(dir: &Path, module: &str, bytes: &[u8]) -> String {
+        let core = crate::Core::open(dir).unwrap();
+        let raw = crate::dispatch(
+            &core,
+            "save_file",
+            &serde_json::json!({
+                "moduleId":module, "bytes":bytes, "mimeType":"image/png",
+            })
+            .to_string(),
+        )
+        .unwrap();
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
     use chrono::TimeZone;
     use rusqlite::params;
 
@@ -478,19 +495,13 @@ mod tests {
         let dir = TempDir::new();
         let db = open_db(&dir.0).unwrap();
         let conn = db.lock().unwrap();
-        let image = Uuid::new_v4().to_string();
-        let image_path = dir.0.join("files").join(&image);
-        std::fs::write(&image_path, b"image bytes").unwrap();
         conn.execute_batch(
             "insert into modules (id, name) values ('note', 'Note');
              insert into contents values ('note', X'01');",
         )
         .unwrap();
-        conn.execute(
-            "insert into files values (?1, 'note', ?2, 'image/png')",
-            params![image, image_path.to_str().unwrap()],
-        )
-        .unwrap();
+        let image = save_image(&dir.0, "note", b"image bytes");
+        let image_path = dir.0.join("files").join(&image);
         drop(conn);
         super::super::index_note(
             &db,
@@ -582,14 +593,8 @@ mod tests {
              insert into contents values ('source', X'0000'), ('copy', X'0000');",
         )
         .unwrap();
-        let image = Uuid::new_v4().to_string();
+        let image = save_image(&dir.0, "source", b"shared pixels");
         let path = dir.0.join("files").join(&image);
-        std::fs::write(&path, b"shared pixels").unwrap();
-        conn.execute(
-            "insert into files values (?1, 'source', ?2, 'image/png')",
-            params![image, path.to_str().unwrap()],
-        )
-        .unwrap();
         let doc = yrs::Doc::new();
         let root = doc.get_or_insert_xml_fragment("default");
         let mut txn = doc.transact_mut();
@@ -667,14 +672,7 @@ mod tests {
             let mut conn = open_db(&dir.0).unwrap().conn.into_inner().unwrap();
             conn.execute("insert into modules (id,name) values ('note','Note')", [])
                 .unwrap();
-            let image = Uuid::new_v4().to_string();
-            let path = dir.0.join("files").join(&image);
-            std::fs::write(&path, b"pixels").unwrap();
-            conn.execute(
-                "insert into files values (?1,'note',?2,'image/png')",
-                params![image, path.to_str().unwrap()],
-            )
-            .unwrap();
+            let image = save_image(&dir.0, "note", b"pixels");
             if let Some(account) = restored {
                 conn.execute("insert into sync_state values ('account',?1)", [account])
                     .unwrap();

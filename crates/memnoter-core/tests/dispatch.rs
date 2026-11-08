@@ -355,3 +355,64 @@ fn sync_identity_scrubs_secrets_before_backup_and_preserves_outbox() {
     }
     inspect(&f.dir.join("backups"));
 }
+
+#[test]
+fn saved_images_are_announced_downloaded_and_not_echoed_as_uploads() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"Images"}));
+    let first = a.call(
+        "save_file",
+        json!({"moduleId":module,"bytes":[1,2,3],"mimeType":"image/png"}),
+    );
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    let ga = a.call("sync_status", json!({}))["generation"].clone();
+    let gb = b.call("sync_status", json!({}))["generation"].clone();
+    assert_eq!(
+        a.call("sync_pending_uploads", json!({"generation":ga})),
+        json!([first["id"]])
+    );
+    let later = a.call(
+        "save_file",
+        json!({"moduleId":module,"bytes":[4,5,6],"mimeType":"image/jpeg"}),
+    );
+    let uploads = a.call("sync_pending_uploads", json!({"generation":ga}));
+    assert_eq!(uploads.as_array().unwrap().len(), 2);
+    assert!(uploads.as_array().unwrap().contains(&later["id"]));
+    let entries = a.call("sync_outbox", json!({"limitBytes":1048576,"generation":ga}));
+    let remote: Vec<_> = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, e)| json!({"seq":i+1,"doc":e["doc"],"bytes":e["bytes"]}))
+        .collect();
+    b.call(
+        "sync_apply",
+        json!({"entries":remote,"cursor":remote.len(),"generation":gb}),
+    );
+    let missing = b.call("sync_missing_files", json!({"generation":gb}));
+    assert_eq!(missing.as_array().unwrap().len(), 2);
+    assert!(missing
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| file["fileId"] == later["id"]));
+    b.call("sync_store_file", json!({"fileId":later["id"],"moduleId":module,"fileType":"image/jpeg","bytes":[4,5,6],"generation":gb}));
+    assert_eq!(
+        b.call("read_file", json!({"fileId":later["id"],"moduleId":module}))["bytes"],
+        json!([4, 5, 6])
+    );
+    assert_eq!(
+        b.call("sync_missing_files", json!({"generation":gb}))
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        b.call("sync_pending_uploads", json!({"generation":gb})),
+        json!([])
+    );
+}
