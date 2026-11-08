@@ -39,12 +39,17 @@ function PdfPage({ page, zoom, active }: { page: PDFPageProxy; zoom: number; act
     {error && <p role="alert" className="relative bg-background p-2 text-sm text-destructive">{error}</p>}
   </div>;
 }
-function ReaderTools({ children, fullscreen }: { children: ReactNode; fullscreen: boolean }) {
+// Full screen puts the tools in the app header; the pane gets one slim row,
+// with the pane's own controls on either side of them.
+function ReaderTools({ children, fullscreen, leading, trailing }: { children: ReactNode; fullscreen: boolean; leading?: ReactNode; trailing?: ReactNode }) {
   const [target, setTarget] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => { if (fullscreen) setTarget(document.getElementById("pdf-toolbar")); }, [fullscreen]);
-  return fullscreen ? target && createPortal(children, target) : <div className="flex shrink-0 items-center justify-end gap-1 bg-background px-2 py-1">{children}</div>;
+  if (fullscreen) return target && createPortal(children, target);
+  return <div className="flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
+    <div className="flex min-w-0 flex-1 items-center gap-1">{leading}</div>{children}{trailing}
+  </div>;
 }
-export function PdfViewer({ doc, fullscreen = false }: { doc: DocumentRecord; fullscreen?: boolean }) {
+export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode }) {
   const client = useQueryClient();
   const navigate = useNavigate();
   const [saved] = useState(() => readPdfView(doc.id));
@@ -105,14 +110,14 @@ export function PdfViewer({ doc, fullscreen = false }: { doc: DocumentRecord; fu
     setZoom(value);
   }
   return <div className="flex h-full min-h-0 min-w-0 flex-col bg-muted/50">
-    <ReaderTools fullscreen={fullscreen}>
+    <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
       <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onChange={event => setInput(event.target.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
         const page = parsePage(input, pages.length); if (page !== null) { jump(page); setCurrent(page); } else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom(zoom - 0.1)}><ZoomOut /></ToolButton>
       <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom(zoom + 0.1)}><ZoomIn /></ToolButton>
-      <ToolButton label="Open beside note" onClick={() => { openPdfPane(doc.moduleId, doc.id); void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }); }}><PanelRight /></ToolButton>
+      {fullscreen && <ToolButton label="Open beside note" onClick={() => { openPdfPane(doc.moduleId, doc.id); void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }); }}><PanelRight /></ToolButton>}
     </ReaderTools>
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" onScroll={event => {
       const element = event.currentTarget;
