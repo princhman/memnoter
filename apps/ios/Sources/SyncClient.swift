@@ -157,7 +157,7 @@ struct SyncKeychain {
         return result
     }
     private func identity(_ account: SyncAccount) throws -> String {
-        String(decoding: try JSONSerialization.data(withJSONObject: ["server": SyncConfiguration.server(account.server), "userId": account.userId], options: .sortedKeys), as: UTF8.self)
+        String(decoding: try JSONSerialization.data(withJSONObject: ["server": SyncConfiguration.server(account.server), "userId": account.userId], options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
     }
     func start() async {
         do {
@@ -372,6 +372,8 @@ struct SyncKeychain {
     private func deliver(_ result: Any) async throws {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: result), as: UTF8.self)
         NotificationCenter.default.post(name: .syncDidApply, object: SyncApplyResult(json: json))
+        // Remote changes can announce images this device has yet to download.
+        if (result as? [String: Any])?["filesChanged"] as? Bool == true { transfers.nudge() }
     }
     private func object(_ kind: String, _ id: String, account: SyncAccount, put: Data? = nil) async throws -> Data {
         return try await request(server: account.server, path: SyncConfiguration.path(kind) + id, token: account.token, method: put == nil ? "GET" : "PUT", body: put, binary: true)

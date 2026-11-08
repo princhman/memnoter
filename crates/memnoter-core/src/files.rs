@@ -21,7 +21,10 @@ pub(crate) mod assets {
             file.write_all(bytes)?;
             file.sync_all()?;
             std::fs::rename(&partial, &path)?;
-            std::fs::File::open(data_dir.join("files"))?.sync_all()
+            // Windows cannot open a directory as a file; NTFS journals the rename.
+            #[cfg(unix)]
+            std::fs::File::open(data_dir.join("files"))?.sync_all()?;
+            Ok(())
         })();
         if let Err(error) = result {
             if let Err(cleanup) = std::fs::remove_file(&partial) {
