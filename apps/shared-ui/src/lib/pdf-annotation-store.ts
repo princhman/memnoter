@@ -5,8 +5,8 @@ import { call } from "./backend.ts";
 import { createSaveQueue, type SaveQueueStatus } from "./save-queue.ts";
 import { assertWritable, registerWriteParticipant } from "./write-lifecycle.ts";
 import {
-  createPdfAnnotation, readPdfAnnotations, removePdfAnnotation, updatePdfAnnotationComment,
-  type PdfAnnotation, type PdfAnnotationInput,
+  createPdfAnnotation, readPdfAnnotations, removePdfAnnotation, updatePdfAnnotationComment, updatePdfAnnotationColor,
+  type PdfAnnotation, type PdfAnnotationInput, type PdfAnnotationColor,
 } from "./pdf-annotations.ts";
 
 type Receipt = { state: number[] | null; revision: number; generation: string };
@@ -179,6 +179,12 @@ export function openPdfAnnotations(documentId: string) {
       doc.transact(() => { updated = updatePdfAnnotationComment(doc, input); }, LOCAL);
       return updated;
     },
+    updateColor(input: { id: string; color: PdfAnnotationColor }): boolean {
+      const doc = writableDoc();
+      let updated = false;
+      doc.transact(() => { updated = updatePdfAnnotationColor(doc, input); }, LOCAL);
+      return updated;
+    },
     remove(id: string): void {
       const doc = writableDoc();
       doc.transact(() => removePdfAnnotation(doc, id), LOCAL);
@@ -203,5 +209,6 @@ export function usePdfAnnotations(documentId: string) {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return { ...snapshot, create: (input: PdfAnnotationInput) => owner().create(input),
     updateComment: (input: { id: string; body: string }) => owner().updateComment(input),
+    updateColor: (input: { id: string; color: PdfAnnotationColor }) => owner().updateColor(input),
     remove: (id: string) => owner().remove(id), retry: () => owner().retry() };
 }

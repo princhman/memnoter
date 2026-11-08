@@ -56,8 +56,18 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     await select(first, second);
     await viewer.getByRole('button', { name: 'Highlight', exact: true }).click();
     const editor = viewer.getByRole('dialog', { name: 'PDF annotation' });
-    await editor.waitFor();
     await waitSaved(items => items.length === 1);
+    assert.equal(await editor.count(), 0, 'highlight applies immediately without opening a comment editor');
+    await viewer.getByRole('button', { name: 'Edit PDF highlight', exact: true }).first().click();
+    await editor.waitFor();
+    assert.equal(await editor.getByRole('textbox').count(), 0, 'a plain highlight opens colour controls, not a comment field');
+    const fill = viewer.locator('[data-pdf-annotations] > div').first();
+    const purpleFill = await fill.evaluate(element => getComputedStyle(element).backgroundColor);
+    await editor.getByRole('button', { name: 'Blue highlight', exact: true }).click();
+    await waitSaved(items => items[0]?.color === 'blue');
+    const blueFill = await fill.evaluate(element => getComputedStyle(element).backgroundColor);
+    assert.notEqual(blueFill, purpleFill, 'recolouring changes the visible PDF fill');
+    await editor.getByRole('button', { name: 'Add comment', exact: true }).click();
     let [highlight] = readPdfAnnotations(persisted);
     assert.equal(highlight.kind, 'highlight');
     assert.deepEqual(highlight.anchors.map(anchor => anchor.page), [1, 2]);
@@ -79,6 +89,8 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     await page.reload(); await first.waitFor();
     await viewer.getByRole('button', { name: 'Edit PDF comment: Remember this <plain>' }).first().click();
     assert.equal(await editor.getByRole('textbox').inputValue(), 'Remember this <plain>');
+    assert.equal(readPdfAnnotations(persisted)[0].color, 'blue', 'colour survives reload');
+    assert.equal(await fill.evaluate(element => getComputedStyle(element).backgroundColor), blueFill);
     await editor.getByRole('textbox').fill('Unsaved changes');
     await page.getByRole('button', { name: 'Outside action', exact: true }).click();
     await editor.waitFor({ state: 'detached' });
@@ -94,6 +106,30 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     assert.equal(await editor.getByRole('textbox').inputValue(), 'Keep input after failure');
     fail = false; await editor.getByRole('button', { name: 'Retry saving', exact: true }).click();
     await waitSaved(items => items[0]?.body === 'Keep input after failure');
+    await editor.getByRole('button', { name: 'Delete annotation', exact: true }).click();
+    await waitSaved(items => items.length === 0);
+    await select();
+    // Selection is still PDF text while an unrelated control has focus.
+    await page.getByRole('button', { name: 'Outside action', exact: true }).focus();
+    await page.keyboard.press('Control+Shift+h');
+    assert.equal(readPdfAnnotations(persisted).length, 0, 'shortcut ignores unrelated controls');
+    await viewer.getByRole('button', { name: 'Highlight', exact: true }).focus();
+    for (const extra of [{ repeat: true }, { isComposing: true }]) {
+      await viewer.getByRole('button', { name: 'Highlight', exact: true }).dispatchEvent('keydown', { key: 'H', code: 'KeyH', ctrlKey: true, shiftKey: true, ...extra });
+      assert.equal(readPdfAnnotations(persisted).length, 0);
+    }
+    await page.keyboard.press('Control+Shift+h');
+    await waitSaved(items => items.length === 1 && items[0].color === 'blue');
+    assert.equal(await editor.count(), 0, 'keyboard highlight has no comment prompt');
+    await viewer.getByRole('button', { name: 'Edit PDF highlight', exact: true }).first().click();
+    await editor.getByRole('button', { name: 'Delete annotation', exact: true }).click();
+    await waitSaved(items => items.length === 0);
+    await select();
+    await viewer.getByRole('button', { name: 'Highlight colour', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Yellow highlight', exact: true }).click();
+    await waitSaved(items => items.length === 1 && items[0].color === 'yellow');
+    assert.equal(await editor.count(), 0, 'choosing a colour applies the selected highlight');
+    await viewer.getByRole('button', { name: 'Edit PDF highlight', exact: true }).first().click();
     await editor.getByRole('button', { name: 'Delete annotation', exact: true }).click();
     await waitSaved(items => items.length === 0);
     await select(); await viewer.getByRole('button', { name: 'Comment', exact: true }).click();
@@ -130,6 +166,8 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     await page.mouse.move(box.x + 300, box.y + 260); await page.mouse.down(); await page.mouse.move(box.x + 360, box.y + 290); await page.mouse.up();
     await viewer.getByRole('button', { name: 'Highlight area', exact: true }).click();
     await waitSaved(items => items.length === 3 && items.some(item => item.kind === 'highlight' && !item.excerpt));
+    assert.equal(await editor.count(), 0, 'area highlight also applies without a comment prompt');
+    await viewer.getByRole('button', { name: 'Edit PDF highlight', exact: true }).click();
     await editor.getByRole('button', { name: 'Delete annotation', exact: true }).click();
     await waitSaved(items => items.length === 2);
     await page.getByRole('button', { name: 'Block writes briefly' }).click();

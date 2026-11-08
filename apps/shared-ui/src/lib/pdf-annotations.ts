@@ -2,12 +2,17 @@ import * as Y from "yjs";
 import type { PdfRegion } from "./pdf-quote";
 
 export type PdfAnnotationAnchor = { page: number; regions: readonly PdfRegion[] };
-type Selection = { anchors: readonly PdfAnnotationAnchor[]; excerpt?: string };
+export const PDF_ANNOTATION_COLORS = ["primary", "yellow", "green", "blue", "pink"] as const;
+export type PdfAnnotationColor = typeof PDF_ANNOTATION_COLORS[number];
+export function parsePdfAnnotationColor(value: unknown): PdfAnnotationColor | null {
+  return PDF_ANNOTATION_COLORS.find(color => color === value) ?? null;
+}
+type Selection = { color?: PdfAnnotationColor; anchors: readonly PdfAnnotationAnchor[]; excerpt?: string };
 export type PdfAnnotationInput = Selection & (
   | { kind: "highlight"; body?: string }
   | { kind: "comment"; body: string }
 );
-export type PdfAnnotation = PdfAnnotationInput & { id: string; color: "primary" };
+export type PdfAnnotation = PdfAnnotationInput & { id: string; color: PdfAnnotationColor };
 
 // One caller-owned document per PDF. These roots are not note content.
 const annotationsKey = "pdfAnnotations";
@@ -49,8 +54,9 @@ function parseAnchors(value: unknown): PdfAnnotationAnchor[] | null {
 function parseInput(value: unknown, requireCommentBody = true): PdfAnnotationInput | null {
   if (!isRecord(value)) return null;
   const anchors = parseAnchors(value.anchors);
+  if (value.color !== undefined && !parsePdfAnnotationColor(value.color)) return null;
   if (!anchors || (value.excerpt !== undefined && !isPlainText(value.excerpt))) return null;
-  const selection: Selection = value.excerpt === undefined ? { anchors } : { anchors, excerpt: value.excerpt };
+  const selection: Selection = { anchors, ...(value.excerpt === undefined ? {} : { excerpt: value.excerpt }), ...(value.color === undefined ? {} : { color: parsePdfAnnotationColor(value.color) ?? "primary" }) };
   if (value.kind === "comment" && isPlainText(value.body) && (!requireCommentBody || value.body.trim())) {
     return { ...selection, kind: "comment", body: value.body };
   }
@@ -72,7 +78,7 @@ function readEntry(id: string, value: unknown): PdfAnnotation | null {
   const body = value.get("body");
   if (!(body instanceof Y.Text) || body.toDelta().some((part: unknown) => !isRecord(part) || typeof part.insert !== "string")) return null;
   const input = parseInput({ kind: value.get("kind"), anchors: value.get("anchors"), excerpt: value.get("excerpt"), body: body.toString() }, false);
-  return input ? { ...input, id, color: "primary" } : null;
+  return input ? { ...input, id, color: parsePdfAnnotationColor(value.get("color")) ?? "primary" } : null;
 }
 
 /** Pure snapshot, ordered by stable ID. Malformed remote entries are omitted.
@@ -102,6 +108,7 @@ export function createPdfAnnotation(doc: Y.Doc, input: PdfAnnotationInput): stri
   doc.transact(() => {
     const entry = new Y.Map<unknown>();
     entry.set("kind", parsed.kind);
+    entry.set("color", parsed.color ?? "primary");
     entry.set("anchors", parsed.anchors);
     if (parsed.excerpt !== undefined) entry.set("excerpt", parsed.excerpt);
     const body = new Y.Text();
@@ -150,6 +157,17 @@ export function updatePdfAnnotationComment(doc: Y.Doc, input: { id: string; body
     if (removedLength) body.delete(offset, removedLength);
     if (inserted) body.insert(offset, inserted);
   });
+  return true;
+}
+
+/** Colour is an independent Y.Map field so recolouring merges with comment edits. */
+export function updatePdfAnnotationColor(doc: Y.Doc, input: { id: string; color: PdfAnnotationColor }): boolean {
+  validateId(input.id);
+  if (!parsePdfAnnotationColor(input.color)) throw new TypeError("Invalid PDF annotation colour");
+  if (existingMap(doc, deletionsKey)?.has(input.id)) return false;
+  const entry = existingMap(doc, annotationsKey)?.get(input.id);
+  if (!(entry instanceof Y.Map) || !readEntry(input.id, entry)) return false;
+  if (entry.get("color") !== input.color) entry.set("color", input.color);
   return true;
 }
 

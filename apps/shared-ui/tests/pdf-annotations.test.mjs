@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as Y from 'yjs';
 import {
-  createPdfAnnotation, readPdfAnnotations, removePdfAnnotation, updatePdfAnnotationComment,
+  createPdfAnnotation, readPdfAnnotations, removePdfAnnotation, updatePdfAnnotationComment, updatePdfAnnotationColor,
 } from '../src/lib/pdf-annotations.ts';
 
 const anchors = [
@@ -198,4 +198,34 @@ test('malformed remote entries are skipped without hiding valid annotations', ()
   const wrongRoot = new Y.Doc();
   wrongRoot.getArray('pdfAnnotations').push(['bad']);
   assert.deepEqual(readPdfAnnotations(wrongRoot), []);
+});
+
+
+test('colours survive reload, default legacy entries, merge with comments, and respect deletion', () => {
+  const left = new Y.Doc();
+  for (const color of ['primary', 'yellow', 'green', 'blue', 'pink']) {
+    const id = createPdfAnnotation(left, { ...highlight(), color });
+    assert.equal(readPdfAnnotations(copy(left)).find(item => item.id === id).color, color);
+  }
+  const legacyId = createPdfAnnotation(left, highlight());
+  left.getMap('pdfAnnotations').get(legacyId).delete('color');
+  assert.equal(readPdfAnnotations(copy(left)).find(item => item.id === legacyId).color, 'primary');
+  left.getMap('pdfAnnotations').get(legacyId).set('color', 'future-colour');
+  assert.equal(readPdfAnnotations(copy(left)).find(item => item.id === legacyId).color, 'primary', 'unknown colours retain the annotation');
+  const right = copy(left);
+  updatePdfAnnotationColor(left, { id: legacyId, color: 'green' });
+  updatePdfAnnotationComment(right, { id: legacyId, body: 'Concurrent comment' });
+  Y.applyUpdate(left, Y.encodeStateAsUpdate(right));
+  Y.applyUpdate(right, Y.encodeStateAsUpdate(left));
+  assert.deepEqual(readPdfAnnotations(left), readPdfAnnotations(right));
+  const edited = readPdfAnnotations(copy(right)).find(item => item.id === legacyId);
+  assert.equal(edited.color, 'green');
+  assert.equal(edited.body, 'Concurrent comment');
+  assert.throws(() => createPdfAnnotation(left, { ...highlight(), color: 'red' }), /Invalid/);
+  assert.throws(() => updatePdfAnnotationColor(left, { id: legacyId, color: 'red' }), /Invalid/);
+  removePdfAnnotation(left, legacyId);
+  assert.equal(updatePdfAnnotationColor(left, { id: legacyId, color: 'pink' }), false);
+  Y.applyUpdate(left, Y.encodeStateAsUpdate(right));
+  assert.equal(readPdfAnnotations(left).some(item => item.id === legacyId), false);
+  left.destroy(); right.destroy();
 });

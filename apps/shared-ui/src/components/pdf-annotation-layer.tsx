@@ -1,4 +1,5 @@
-import { MessageSquare, Plus } from "lucide-react";
+import { MessageSquare, Highlighter } from "lucide-react";
+import { pdfHighlightColors } from "./pdf-highlight-colors";
 import { memo, useEffect, useRef } from "react";
 import type { PdfAnnotation } from "@/lib/pdf-annotations";
 
@@ -47,8 +48,8 @@ export const PdfAnnotationLayer = memo(function PdfAnnotationLayer({ annotations
   }, [annotations, pageNumber, disabled, onOpen]);
   return <div ref={overlay} data-pdf-annotations className="pointer-events-none absolute inset-0 z-[4]">
     {annotations.flatMap(annotation => annotation.anchors.filter(anchor => anchor.page === pageNumber).flatMap(anchor => anchor.regions.map((region, index) =>
-      <div key={`${annotation.id}:${index}`} className="absolute rounded-[1px] bg-primary/25" style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%` }}>
-        {index === 0 && !disabled && <button type="button" aria-label={annotation.body ? `Edit PDF comment: ${annotation.body}` : "Edit PDF highlight"} className="pointer-events-auto absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-sm bg-primary text-primary-foreground focus-visible:outline-2 focus-visible:outline-primary" onClick={event => { event.stopPropagation(); onOpen(annotation.id, event.currentTarget.getBoundingClientRect(), pageNumber); }}>{annotation.body ? <MessageSquare className="size-3" aria-hidden="true" /> : <Plus className="size-3" aria-hidden="true" />}</button>}
+      <div key={`${annotation.id}:${index}`} className="absolute rounded-[1px]" style={{ backgroundColor: `color-mix(in srgb, ${pdfHighlightColors[annotation.color].value} 30%, transparent)`, left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%` }}>
+        {index === 0 && !disabled && <button type="button" aria-label={annotation.body ? `Edit PDF comment: ${annotation.body}` : "Edit PDF highlight"} className="pointer-events-auto absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-sm bg-primary text-primary-foreground focus-visible:outline-2 focus-visible:outline-primary" onClick={event => { event.stopPropagation(); onOpen(annotation.id, event.currentTarget.getBoundingClientRect(), pageNumber); }}>{annotation.body ? <MessageSquare className="size-3" aria-hidden="true" /> : <Highlighter className="size-3" aria-hidden="true" />}</button>}
       </div>))) }
   </div>;
 });

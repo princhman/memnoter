@@ -1,7 +1,8 @@
 import { usePdfAnnotations } from "@/lib/pdf-annotation-store";
-import type { PdfAnnotation, PdfAnnotationAnchor } from "@/lib/pdf-annotations";
+import { parsePdfAnnotationColor, type PdfAnnotationColor, type PdfAnnotation, type PdfAnnotationAnchor } from "@/lib/pdf-annotations";
 import { watchWriteAdmission } from "@/lib/write-lifecycle";
 import { PdfAnnotationLayer } from "./pdf-annotation-layer";
+import { PdfHighlightColors, pdfHighlightColors } from "./pdf-highlight-colors";
 import { PdfAnnotationPopover } from "./pdf-annotation-popover";
 import { usePdfQuoteNavigation } from "@/lib/pdf-quote-navigation";
 import { usePdfQuoteRegions, type PdfQuoteRegion } from "@/lib/use-pdf-quote-regions";
@@ -12,7 +13,7 @@ import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, Highlighter, MessageSquare, Quote, X } from "lucide-react";
+import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, Highlighter, MessageSquare, Quote, ChevronDown, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
@@ -90,6 +91,14 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const annotations = usePdfAnnotations(doc.id);
   const [writeBlocked, setWriteBlocked] = useState(false);
   useEffect(() => watchWriteAdmission(setWriteBlocked), []);
+  const [highlightColor, setHighlightColor] = useState<PdfAnnotationColor>(() => {
+    try { return parsePdfAnnotationColor(localStorage.getItem("pdf-highlight-color")) ?? "primary"; } catch { return "primary"; }
+  });
+  const [showHighlightColors, setShowHighlightColors] = useState(false);
+  const chooseHighlightColor = (color: PdfAnnotationColor) => {
+    setHighlightColor(color);
+    try { localStorage.setItem("pdf-highlight-color", color); } catch { /* Preference storage may be unavailable. */ }
+  };
   const [annotationArea, setAnnotationArea] = useState(false);
   type AnnotationEditor = { left: number; top: number; anchorPage: number } & (
     | { kind: "existing"; id: string }
@@ -125,7 +134,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     if (annotationArea) {
       const bounds = canvas.getBoundingClientRect();
       setAnnotationEditor({ kind: "area", anchorPage: page, anchors: [{ page, regions: [region] }], ...annotationPosition(new DOMRect(bounds.left + region.x * bounds.width, bounds.top + region.y * bounds.height, region.width * bounds.width, region.height * bounds.height)) });
-      setSelecting(false); setAnnotationArea(false); return;
+      setSelecting(false); setAnnotationArea(false); setShowHighlightColors(false); return;
     }
     if (cropBusy.current || pendingPdfQuote.state) return;
     cropBusy.current = true; setCropping(true); setQuoteError(""); setSelecting(false);
@@ -429,6 +438,22 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     window.addEventListener("resize", reposition);
     return () => { viewport?.removeEventListener("scroll", reposition); window.removeEventListener("resize", reposition); };
   }, [annotationEditor, annotations.annotations, annotationPosition, zoom]);
+  const annotateText = (kind: "highlight" | "comment", color = highlightColor) => {
+    if (selecting || cropping || pinching || pending || writeBlocked || !annotations.ready || !content.current) return;
+    const selected = readPdfTextSelection(content.current, doc);
+    if (!selected) return;
+    const draft = { anchors: selected.anchors, excerpt: selected.parts.map(part => part.text).join("\n") };
+    try {
+      if (kind === "highlight") { annotations.create({ kind, ...draft, color }); setAnnotationEditor(null); }
+      else setAnnotationEditor({ kind: "new", anchorPage: selected.anchors[0].page, ...draft, ...annotationPosition(selected.anchor) });
+      window.getSelection()?.removeAllRanges(); setTextAction(null); setShowHighlightColors(false);
+    } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); }
+  };
+  const highlightArea = (color = highlightColor) => {
+    if (annotationEditor?.kind !== "area" || !annotations.ready || writeBlocked) return;
+    try { annotations.create({ kind: "highlight", anchors: annotationEditor.anchors, color }); setAnnotationEditor(null); setShowHighlightColors(false); }
+    catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); }
+  };
   const quoteText = () => {
     if (selecting || cropping || pinching || pendingPdfQuote.state || !content.current) return;
     const selected = readPdfTextSelection(content.current, doc);
@@ -462,9 +487,16 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     return registerCommand({ ...action("pdf.open-beside"), keywords: ["pdf", "note"], run: openBeside });
   }, [fullscreen, openBeside]);
   useEffect(() => {
+    if (!textAction || annotationEditor || !annotations.ready || writeBlocked) return;
+    return registerCommand({ ...action("text.highlight"), id: "pdf.highlight", title: "Highlight selected PDF text", shortcut: formatKeys(action("text.highlight").keys), run: () => annotateText("highlight") });
+  }, [textAction, annotationEditor, annotations.ready, writeBlocked, annotateText]);
+  useEffect(() => {
     const handle = (event: KeyboardEvent) => {
       if (!acceptsPdfShortcut(event, [root.current, root.current?.closest('[data-pdf-note]') ?? null, fullscreen ? document.getElementById("pdf-toolbar") : null])) return;
-      if (matchesShortcut(event, action("pdf.select-region").keys)) {
+      if (matchesShortcut(event, action("text.highlight").keys)) {
+        if (annotationEditor || selecting || cropping || pinching || pending || writeBlocked || !annotations.ready || !content.current || !readPdfTextSelection(content.current, doc)) return;
+        event.preventDefault(); event.stopPropagation(); annotateText("highlight");
+      } else if (matchesShortcut(event, action("pdf.select-region").keys)) {
         if (!pdf || pending || cropping) return;
         event.preventDefault(); event.stopPropagation(); toggleSelection();
       } else if (fullscreen && matchesShortcut(event, action("pdf.open-beside").keys)) {
@@ -475,7 +507,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     };
     window.addEventListener("keydown", handle, true);
     return () => window.removeEventListener("keydown", handle, true);
-  }, [fullscreen, pdf, pending, cropping, doc.moduleId, toggleSelection, openBeside, showCursorAction]);
+  }, [fullscreen, pdf, pending, cropping, doc.moduleId, toggleSelection, openBeside, showCursorAction, annotateText, annotationEditor, selecting, pinching, writeBlocked, annotations.ready]);
   useEffect(() => {
     if (!fullscreen || pending?.moduleId !== doc.moduleId || pending.status !== "draft") return;
     return registerCommand({ ...action("pdf.quote.insert"), keywords: ["pdf", "quote", "cursor"], run: showCursorAction });
@@ -484,38 +516,33 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
 
   // The backdrop matches the app header, so the page sits on one surface.
   return <div ref={root} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="relative flex h-full min-h-0 min-w-0 flex-col bg-background">
-    {textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="absolute z-30 flex max-w-[calc(100%-1rem)] items-center gap-0.5 overflow-x-auto rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
-      <Button size="xs" variant="ghost" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote text</Button>
-      {(["highlight", "comment"] as const).map(kind => <Button key={kind} size="xs" variant="ghost" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => {
-        const selected = content.current && readPdfTextSelection(content.current, doc);
-        if (!selected) return;
-        const draft = { anchors: selected.anchors, excerpt: selected.parts.map(part => part.text).join("\n") };
-        try {
-          if (kind === "highlight") {
-            const id = annotations.create({ kind, ...draft });
-            setAnnotationEditor({ kind: "existing", id, anchorPage: selected.anchors[0].page, ...annotationPosition(selected.anchor) });
-          } else setAnnotationEditor({ kind: "new", anchorPage: selected.anchors[0].page, ...draft, ...annotationPosition(selected.anchor) });
-          window.getSelection()?.removeAllRanges(); setTextAction(null);
-        } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); }
-      }}>{kind === "highlight" ? <Highlighter aria-hidden="true" /> : <MessageSquare aria-hidden="true" />}{kind === "highlight" ? "Highlight" : "Comment"}</Button>)}
+    {textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
+      <div className="flex items-center gap-0.5 overflow-x-auto">
+        <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
+        <Button size="xs" variant="ghost" className="px-1.5" title={`Highlight (${formatKeys(action("text.highlight").keys)})`} aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button>
+        <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => setShowHighlightColors(value => !value)}>
+          <span className="size-2 rounded-full" style={{ backgroundColor: pdfHighlightColors[highlightColor].value }} /><ChevronDown className="size-3" />
+        </ToolButton>
+        <Button size="xs" variant="ghost" className="px-1.5" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("comment")}><MessageSquare aria-hidden="true" />Comment</Button>
+      </div>
+      {showHighlightColors && <div className="mt-1 px-1"><PdfHighlightColors color={highlightColor} disabled={!annotations.ready || writeBlocked} onChange={color => { chooseHighlightColor(color); annotateText("highlight", color); }} /></div>}
     </div>}
-    {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="absolute z-30 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-0.5 rounded-lg floating-surface p-1 text-foreground shadow-md" style={annotationEditor}>
-      <Button size="xs" variant="ghost" aria-label="Highlight area" disabled={!annotations.ready || writeBlocked} onClick={() => {
-        try { const id = annotations.create({ kind: "highlight", anchors: annotationEditor.anchors }); setAnnotationEditor({ kind: "existing", id, anchorPage: annotationEditor.anchorPage, left: annotationEditor.left, top: annotationEditor.top }); }
-        catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); }
-      }}><Highlighter aria-hidden="true" />Highlight</Button>
+    {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="absolute z-30 flex w-64 max-w-[calc(100%-1rem)] flex-wrap items-center gap-0.5 rounded-lg floating-surface p-1 text-foreground shadow-md" style={annotationEditor}>
+      <Button size="xs" variant="ghost" aria-label="Highlight area" disabled={!annotations.ready || writeBlocked} onClick={() => highlightArea()}><Highlighter aria-hidden="true" />Highlight</Button>
+      <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onClick={() => setShowHighlightColors(value => !value)}><ChevronDown /></ToolButton>
       <Button size="xs" variant="ghost" aria-label="Comment on area" disabled={!annotations.ready || writeBlocked} onClick={() => setAnnotationEditor({ ...annotationEditor, kind: "new" })}><MessageSquare aria-hidden="true" />Comment</Button>
       <ToolButton size="icon-xs" label="Cancel area annotation" onClick={() => setAnnotationEditor(null)}><X /></ToolButton>
+      {showHighlightColors && <div className="mt-1 basis-full px-1"><PdfHighlightColors color={highlightColor} disabled={!annotations.ready || writeBlocked} onChange={color => { chooseHighlightColor(color); highlightArea(color); }} /></div>}
     </div>}
     {annotationEditor && annotationEditor.kind !== "area" && (() => {
       const existing = annotationEditor.kind === "existing" ? annotations.annotations.find(annotation => annotation.id === annotationEditor.id) : undefined;
       if (annotationEditor.kind === "existing" && !existing) return null;
-      return <PdfAnnotationPopover key={annotationEditor.kind === "existing" ? annotationEditor.id : "new"} position={annotationEditor} body={existing?.body ?? ""} required={existing ? existing.kind === "comment" : true} disabled={!annotations.ready || writeBlocked} saving={annotations.saving} persistenceError={annotations.error} onRetry={annotations.retry} onClose={() => setAnnotationEditor(null)} onSave={body => {
+      return <PdfAnnotationPopover key={annotationEditor.kind === "existing" ? annotationEditor.id : "new"} position={annotationEditor} color={existing?.color ?? highlightColor} onColorChange={existing ? color => { if (!annotations.updateColor({ id: existing.id, color })) throw new Error("This annotation has been deleted."); chooseHighlightColor(color); } : undefined} body={existing?.body ?? ""} required={existing ? existing.kind === "comment" : true} disabled={!annotations.ready || writeBlocked} saving={annotations.saving} persistenceError={annotations.error} onRetry={annotations.retry} onClose={() => setAnnotationEditor(null)} onSave={body => {
         if (writeBlocked || !annotations.ready) throw new Error("Annotation writes are suspended.");
         if (annotationEditor.kind === "existing") {
           if (!annotations.updateComment({ id: annotationEditor.id, body })) throw new Error("This annotation has been deleted.");
         } else {
-          const id = annotations.create({ kind: "comment", anchors: annotationEditor.anchors, excerpt: annotationEditor.excerpt, body });
+          const id = annotations.create({ kind: "comment", anchors: annotationEditor.anchors, excerpt: annotationEditor.excerpt, body, color: highlightColor });
           setAnnotationEditor({ kind: "existing", id, anchorPage: annotationEditor.anchorPage, left: annotationEditor.left, top: annotationEditor.top });
         }
       }} onDelete={existing ? () => { annotations.remove(existing.id); setAnnotationEditor(null); } : undefined} />;
