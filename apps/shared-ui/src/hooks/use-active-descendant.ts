@@ -1,17 +1,17 @@
-import { useEffect } from "react";
+import { useEffect, type RefObject } from "react";
 import type { Editor } from "@tiptap/core";
 
-// Focus stays in the editor while a suggestion list is open, so the editor
-// points screen readers at the list's highlighted option. With no option
-// (an empty list is not shown) it points nowhere.
+// The focused editor or filter input points screen readers at the list's
+// highlighted option. Empty lists have no active descendant.
 export function useActiveDescendant(
   editor: Editor,
   listboxId: string,
   optionId: string | null,
+  focusTarget?: RefObject<HTMLElement | null>,
 ) {
   useEffect(() => {
     if (!optionId) return;
-    const dom = editor.view.dom;
+    const dom = focusTarget?.current ?? editor.view.dom;
     dom.setAttribute("aria-controls", listboxId);
     dom.setAttribute("aria-expanded", "true");
     dom.setAttribute("aria-activedescendant", optionId);
@@ -20,5 +20,5 @@ export function useActiveDescendant(
       dom.removeAttribute("aria-expanded");
       dom.removeAttribute("aria-activedescendant");
     };
-  }, [editor, listboxId, optionId]);
+  }, [editor, listboxId, optionId, focusTarget]);
 }
