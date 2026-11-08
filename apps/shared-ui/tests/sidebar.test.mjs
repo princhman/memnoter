@@ -10,13 +10,14 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await server?.close(); });
 
-// A sidebar stored in localStorage, optionally starting with `seed` items.
-const useSidebarStore = (page, seed = []) => page.addInitScript(seed => {
+// A sidebar stored in localStorage, optionally starting with `seed` items; saving takes `delay` ms.
+const useSidebarStore = (page, seed = [], delay = 0) => page.addInitScript(([seed, delay]) => {
   if (localStorage.getItem('sidebar') === null && seed.length) localStorage.setItem('sidebar', JSON.stringify(seed));
   window.installTestBridge({ tauri: { invoke: async (command, args) => {
     const items = JSON.parse(localStorage.getItem('sidebar') ?? '[]');
     if (command === 'sidebar_items') return items;
     if (command === 'save_sidebar_items') {
+      await new Promise(resolve => setTimeout(resolve, delay));
       for (const item of args.items) {
         const index = items.findIndex(entry => entry.id === item.id);
         if (index < 0) items.push(item); else items[index] = item;
@@ -26,7 +27,7 @@ const useSidebarStore = (page, seed = []) => page.addInitScript(seed => {
     }
     return [];
   } } });
-}, seed);
+}, [seed, delay]);
 
 test('sidebar creates, renames, collapses and deletes folders while preserving modules and reloads order', async () => {
   const page = await browser.newPage();
@@ -122,5 +123,40 @@ test('a dragged module is previewed under the pointer, also while over a folder'
     await page.mouse.up();
     await preview.waitFor({ state: 'detached', timeout: 3000 });
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar')).some(item => item.id === '1' && item.folder_id === 'folder-study'));
+  } finally { await page.close(); }
+});
+
+test('a reordered row stays where it was dropped while the change is still being saved', async () => {
+  const page = await browser.newPage();
+  // A slow save: until it finishes the list must not fall back to the old order and then jump.
+  await useSidebarStore(page, [], 1500);
+  try {
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/sidebar.html`);
+    const row = id => page.locator(`[data-sidebar-item="${id}"]`).first();
+    await row('0').waitFor();
+    const order = () => page.locator('[data-sidebar-item]').evaluateAll(rows => rows.map(row => row.dataset.sidebarItem));
+    assert.deepEqual(await order(), ['0', '1', '2']);
+    const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const [from, over] = await Promise.all([row('2').boundingBox(), row('0').boundingBox()]);
+    await page.mouse.move(from.x + 40, from.y + 12); await page.mouse.down();
+    await page.mouse.move(from.x + 40, from.y - 4, { steps: 3 }); await frames();
+    await page.mouse.move(over.x + 40, over.y + 6, { steps: 15 }); await frames();
+    // Record the row order on every frame from here on, so a single frame in the old order shows.
+    await page.evaluate(() => {
+      window.frameOrders = [];
+      const record = () => {
+        window.frameOrders.push({ dragging: !!document.querySelector('[data-sidebar-drag-preview]'), order: [...document.querySelectorAll('[data-sidebar-item]')].map(row => row.dataset.sidebarItem).join() });
+        requestAnimationFrame(record);
+      };
+      record();
+    });
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    // After the drop (the save is still running) the rows are already in their new order, in every frame.
+    const afterDrop = (await page.evaluate(() => window.frameOrders)).filter(frame => !frame.dragging);
+    assert.ok(afterDrop.length > 5, 'frames were recorded after the drop');
+    assert.deepEqual([...new Set(afterDrop.map(frame => frame.order))], ['2,0,1'], 'rows never fall back to the old order');
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar') ?? '[]').some(item => item.id === '2' && item.sort_order === 0), null, { timeout: 5000 });
+    assert.deepEqual(await order(), ['2', '0', '1'], 'and stays so once saved');
   } finally { await page.close(); }
 });

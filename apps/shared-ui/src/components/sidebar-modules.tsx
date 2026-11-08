@@ -53,13 +53,28 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
   const [dragging, setDragging] = useState<{ id: string; width: number }>();
   const mutation = useMutation({
     mutationFn: (items: SidebarItem[]) => writeOperation(() => call('save_sidebar_items', { items })),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: sidebarKey }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: sidebarKey }),
   });
   const items = sidebarLayout(modules, query.data ?? []);
   const dragged = dragging ? items.find(item => item.id === dragging.id) : undefined;
   const draggedModule = dragged ? modules.find(module => module.id === dragged.id) : undefined;
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const save = (next: SidebarItem[]) => mutation.mutate(next.filter(item => JSON.stringify(item) !== JSON.stringify(query.data?.find(saved => saved.id === item.id))));
+  const save = (next: SidebarItem[]) => {
+    const changed = next.filter(item => JSON.stringify(item) !== JSON.stringify(query.data?.find(saved => saved.id === item.id)));
+    // Show the new layout in the same tick as the drop. Dropping clears the drag offsets at
+    // once, so waiting for the write and the refetch would snap rows back and then jump them.
+    const previous = queryClient.getQueryData<SidebarItem[]>(sidebarKey);
+    void queryClient.cancelQueries({ queryKey: sidebarKey });
+    queryClient.setQueryData<SidebarItem[]>(sidebarKey, saved => {
+      const merged = [...saved ?? []];
+      for (const item of changed) {
+        const index = merged.findIndex(entry => entry.id === item.id);
+        if (index < 0) merged.push(item); else merged[index] = item;
+      }
+      return merged;
+    });
+    mutation.mutate(changed, { onError: () => queryClient.setQueryData(sidebarKey, previous) });
+  };
   const edit = (item: SidebarItem | 'new') => { setEditing(item); setName(item === 'new' ? '' : item.name ?? ''); };
   const row = (item: SidebarItem): ReactNode => {
     const module = modules.find(module => module.id === item.id);
