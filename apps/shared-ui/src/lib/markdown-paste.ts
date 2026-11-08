@@ -120,6 +120,9 @@ md.inline.ruler.before("escape", "obsidian", (state, silent) => {
   return false;
 });
 
+// `::` or `:::` with only space (or math, as a space here) beside it, as cards.ts parses it.
+const CARD_SEPARATOR = /(?<!\S):{2,3}(?!\S)/;
+
 export type ImageResolver = (target: string, alt: string, width?: number, syntax?: "markdown" | "wiki") => JSONContent | undefined;
 
 function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageResolver): JSONContent[] {
@@ -221,6 +224,18 @@ export function markdownToJSON(source: string, resolveImage?: ImageResolver, opt
       stack.pop();
     }
   }
+  // Obsidian cards are one per line (`Front ::: Back`), but a note card is one
+  // per paragraph. Give each line its own paragraph when any line is a card.
+  function cardLines(node: JSONContent): JSONContent[] {
+    const lines: JSONContent[][] = [[]];
+    for (const child of node.content ?? []) {
+      if (child.type === "text" && child.text === "\n") lines.push([]);
+      else lines[lines.length - 1].push(child);
+    }
+    const prose = (line: JSONContent[]) => line.map(child => child.type === "text" && !child.marks?.some(mark => mark.type === "code") ? child.text : " ").join("");
+    if (lines.length < 2 || lines.some(line => prose(line).includes("{{")) || !lines.some(line => CARD_SEPARATOR.test(prose(line)))) return [node];
+    return lines.filter(line => line.length).map(content => ({ ...node, content }));
+  }
   // Image placeholders always occupy their own paragraph, including in lists.
   function split(node: JSONContent): JSONContent[] {
     if (node.type === "paragraph" || node.type === "heading") {
@@ -233,7 +248,7 @@ export function markdownToJSON(source: string, resolveImage?: ImageResolver, opt
         } else run.push(child);
       }
       if (run.length || !result.length) result.push({ ...node, content: run });
-      return result;
+      return node.type === "paragraph" ? result.flatMap(cardLines) : result;
     }
     let content = node.content?.flatMap(split);
     // Note cells allow paragraphs and images. Keep display formulas as inline
