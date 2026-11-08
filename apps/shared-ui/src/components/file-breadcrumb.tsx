@@ -95,8 +95,14 @@ export function FileBreadcrumb() {
         <Breadcrumb>
           <BreadcrumbList className={isReview || isFiles ? "flex-nowrap" : undefined}>
             {isFiles ? (<>
-              <BreadcrumbItem><BreadcrumbLink render={<Link to="/files" search={{}} />}>Files</BreadcrumbLink></BreadcrumbItem>
-              {pdf && <><BreadcrumbSeparator>/</BreadcrumbSeparator><BreadcrumbItem className="min-w-0"><BreadcrumbLink className="truncate" render={<Link to="/files" search={{ module: pdf.moduleId }} />}>{pdf.moduleName}</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator>›</BreadcrumbSeparator><BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate whitespace-nowrap">{documentName(pdf.name)}</BreadcrumbPage></BreadcrumbItem></>}
+              {/* Like Review: the module scope first, then the page. */}
+              <BreadcrumbItem className="min-w-0"><ReviewScopeMenu page="files" current={pdf?.moduleId} /></BreadcrumbItem>
+              <BreadcrumbSeparator>/</BreadcrumbSeparator>
+              {pdf ? <>
+                <BreadcrumbItem className="shrink-0"><BreadcrumbLink render={<Link to="/files" search={{ module: pdf.moduleId }} />}>Files</BreadcrumbLink></BreadcrumbItem>
+                <BreadcrumbSeparator>›</BreadcrumbSeparator>
+                <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate whitespace-nowrap">{documentName(pdf.name)}</BreadcrumbPage></BreadcrumbItem>
+              </> : <BreadcrumbItem className="shrink-0"><BreadcrumbPage data-tauri-drag-region="deep">Files</BreadcrumbPage></BreadcrumbItem>}
             </>) : isReview ? (
               <>
                 {/* The module under review comes first, as it will for a module's other pages. */}
