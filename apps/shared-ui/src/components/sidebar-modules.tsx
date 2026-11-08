@@ -67,7 +67,7 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
             <DropdownMenuContent><DropdownMenuItem onClick={() => edit(item)}>Rename</DropdownMenuItem><DropdownMenuItem variant="destructive" onClick={() => save([{ ...item, deleted: true }])}>Delete folder (keep modules)</DropdownMenuItem></DropdownMenuContent>
           </DropdownMenu>
         </SidebarMenuItem></SidebarMenu></DropZone>
-        {!item.collapsed && <DropZone id={`folder:${item.id}:contents`}><div className="pl-4 min-h-2" role="group" aria-label={item.name}>
+        {!item.collapsed && <DropZone id={`folder:${item.id}:contents`}><div className="pl-4 pt-0.5 min-h-2 space-y-0.5" role="group" aria-label={item.name}>
           <SortableContext items={items.filter(entry => entry.folder_id === item.id).map(entry => entry.id)} strategy={verticalListSortingStrategy}>
             {items.filter(entry => entry.folder_id === item.id).map(row)}
           </SortableContext>
