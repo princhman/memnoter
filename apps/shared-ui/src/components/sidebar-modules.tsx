@@ -16,6 +16,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from './ui/dialog';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Field, FieldError, FieldGroup } from './ui/field';
 
 export const sidebarKey = ['sidebar-items'] as const;
 
@@ -110,8 +111,14 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
         mutation.mutate([item], { onSuccess: () => setEditing(null) });
       }}>
         <DialogHeader><DialogTitle>{editing === 'new' ? 'New folder' : 'Rename folder'}</DialogTitle></DialogHeader>
-        <Label htmlFor="folder-name">Name</Label><Input id="folder-name" value={name} onChange={event => setName(event.target.value)} autoFocus />
-        {mutation.error && <p role="alert">{mutation.error.message}</p>}
+        <FieldGroup className="pb-2 pt-4">
+          <Field data-invalid={!!mutation.error}>
+            <Label htmlFor="folder-name">Name</Label>
+            <Input id="folder-name" value={name} onChange={event => setName(event.target.value)} placeholder="Year 1" autoFocus disabled={mutation.isPending}
+              aria-invalid={!!mutation.error} aria-describedby={mutation.error ? "folder-name-error" : undefined} />
+            <FieldError id="folder-name-error">{mutation.error?.message}</FieldError>
+          </Field>
+        </FieldGroup>
         <DialogFooter><DialogClose render={<Button variant="outline">Cancel</Button>} /><Button type="submit" disabled={!name.trim() || mutation.isPending}>Save</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>

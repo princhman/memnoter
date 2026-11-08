@@ -51,6 +51,9 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
     await page.locator('.group').first().hover();
     await page.getByRole('button', { name: 'Add module', exact: true }).click();
     await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
+    // The field is set apart from the title, as in the new-module dialog.
+    const [titleBox, labelBox] = await Promise.all([page.getByRole('heading', { name: 'New folder', exact: true }).boundingBox(), page.getByText('Name', { exact: true }).boundingBox()]);
+    assert.ok(labelBox.y - (titleBox.y + titleBox.height) >= 8, `label sits clear of the title: ${labelBox.y - (titleBox.y + titleBox.height)}px`);
     await page.getByLabel('Name', { exact: true }).fill('Study');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
