@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub mod asset_refs;
 pub mod backups;
 pub mod cards;
+pub mod sidebar;
 pub mod sync;
 use cards::migrate_flashcards;
 pub mod db;

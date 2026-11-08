@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
-import CreateModule from "./create-module";
+import { SidebarModules } from "./sidebar-modules";
 import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
@@ -161,15 +161,13 @@ const AppSidebar = () => {
         </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
-          <CreateModule />
 
           {isPending && <div>Loading...</div>}
           {error && <div>Error: {error.message}</div>}
 
           {data && (
             <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {data.map((module) => {
+              <SidebarModules modules={data} renderModule={(module) => {
                   const isActive = !!matchRoute({
                     to: "/$moduleId",
                     params: { moduleId: module.id },
@@ -190,8 +188,7 @@ const AppSidebar = () => {
                       </SidebarMenuButton>
                     </ModuleMenu>
                   );
-                })}
-              </SidebarMenu>
+                }} />
             </SidebarGroupContent>
           )}
         </SidebarGroup>

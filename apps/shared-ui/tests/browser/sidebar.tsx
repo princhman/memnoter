@@ -1,0 +1,12 @@
+import { createRoot } from 'react-dom/client';
+import { createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '@/lib/query-client';
+import { SidebarProvider } from '@/components/ui/sidebar';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { SidebarModules } from '@/components/sidebar-modules';
+import '@/App.css';
+const modules = ['Algebra', 'Biology', 'Chemistry'].map((name, index) => ({ id: String(index), name, heading_numbering: false }));
+const root = createRootRoute({ component: () => <QueryClientProvider client={queryClient}><TooltipProvider><SidebarProvider><div className="group relative w-72 p-4"><SidebarModules modules={modules} renderModule={module => <li className="p-2">{module.name}</li>} /></div></SidebarProvider></TooltipProvider></QueryClientProvider> });
+const router = createRouter({ routeTree: root });
+createRoot(document.getElementById('root')!).render(<RouterProvider router={router} />);
