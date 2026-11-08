@@ -102,11 +102,25 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
     <DndContext sensors={sensors} collisionDetection={args => {
       const active = items.find(item => item.id === args.active.id);
       if (active?.name === null && args.pointerCoordinates) {
-        const hits = pointerWithin(args).filter(hit => hit.id !== args.active.id);
+        const all = pointerWithin(args);
+        const hits = all.filter(hit => hit.id !== args.active.id);
         const note = hits.find(hit => items.some(item => item.id === hit.id && item.name === null));
         // A folder is nested inside the root list, so prefer it over root.
         const zone = hits.find(hit => String(hit.id).startsWith('folder:')) ?? hits.find(hit => hit.id === 'root');
-        if (note || zone) return [note ?? zone!];
+        if (note) return [note];
+        // On its own slot: put down where it was picked up, so nothing is targeted.
+        if (all.some(hit => hit.id === args.active.id)) return [];
+        if (zone) {
+          // Not over another row, but inside the list the row already belongs to (a gap, or its
+          // own slot): the nearest sibling decides. Targeting the zone itself would light it up
+          // and, on drop, send the row to the end of the list.
+          const parent = zone.id === 'root' ? null : String(zone.id).slice('folder:'.length).replace(/:contents$/, '');
+          if (active.folder_id === parent) return closestCenter({ ...args, droppableContainers: args.droppableContainers.filter(container => {
+            const item = items.find(item => item.id === container.id);
+            return item && item.id !== active.id && item.folder_id === parent;
+          }) });
+          return [zone];
+        }
       }
       return closestCenter({ ...args, droppableContainers: args.droppableContainers.filter(container => {
         const item = items.find(item => item.id === container.id);

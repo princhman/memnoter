@@ -160,3 +160,69 @@ test('a reordered row stays where it was dropped while the change is still being
     assert.deepEqual(await order(), ['2', '0', '1'], 'and stays so once saved');
   } finally { await page.close(); }
 });
+
+test('reordering inside a folder previews the row and never flashes the folder grey', async () => {
+  const page = await browser.newPage();
+  const module = (id, order) => ({ id, name: null, folder_id: 'folder-study', sort_order: order, collapsed: false, deleted: false });
+  await useSidebarStore(page, [{ id: 'folder-study', name: 'Study', folder_id: null, sort_order: 0, collapsed: false, deleted: false }, module('0', 1), module('1', 2)]);
+  try {
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/sidebar.html`);
+    const group = page.getByRole('group', { name: 'Study' });
+    const row = id => group.locator(`[data-sidebar-item="${id}"]`);
+    await row('1').waitFor();
+    const order = () => group.locator('[data-sidebar-item]').evaluateAll(rows => rows.map(row => row.dataset.sidebarItem));
+    assert.deepEqual(await order(), ['0', '1']);
+    const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const [from, over] = await Promise.all([row('1').boundingBox(), row('0').boundingBox()]);
+    // Every frame: is a preview shown, and is the folder body (the zone around its rows) painted?
+    await page.evaluate(() => {
+      window.recorded = [];
+      const record = () => {
+        const body = document.querySelector('[role=group][aria-label=Study]').parentElement;
+        window.recorded.push({ preview: !!document.querySelector('[data-sidebar-drag-preview]'), grey: getComputedStyle(body).backgroundColor !== 'rgba(0, 0, 0, 0)' });
+        requestAnimationFrame(record);
+      };
+      record();
+    });
+    // Move like a hand: small steps, a frame between each, across the rows and the gap between them.
+    let at = { x: from.x + 40, y: from.y + from.height / 2 };
+    const glide = async (y, steps) => {
+      const start = at.y;
+      for (let step = 1; step <= steps; step++) { at = { x: at.x, y: start + (y - start) * step / steps }; await page.mouse.move(at.x, at.y); await frames(); }
+    };
+    await page.mouse.move(at.x, at.y); await page.mouse.down();
+    await glide(from.y + 2, 4);
+    await glide(over.y + over.height / 2, 30);
+    await glide(over.y + 2, 8);
+    const during = await page.evaluate(() => window.recorded.filter(frame => frame.preview));
+    assert.ok(during.length > 10, 'a preview follows the pointer while reordering inside the folder');
+    assert.equal(during.filter(frame => frame.grey).length, 0, 'the folder body is never painted grey while reordering inside it');
+    await page.mouse.up();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar')).find(item => item.id === '1').sort_order < JSON.parse(localStorage.getItem('sidebar')).find(item => item.id === '0').sort_order);
+    assert.deepEqual(await order(), ['1', '0']);
+  } finally { await page.close(); }
+});
+
+test('letting go of a row inside its own folder, away from other rows, does not move it', async () => {
+  const page = await browser.newPage();
+  const module = (id, order) => ({ id, name: null, folder_id: 'folder-study', sort_order: order, collapsed: false, deleted: false });
+  await useSidebarStore(page, [{ id: 'folder-study', name: 'Study', folder_id: null, sort_order: 0, collapsed: false, deleted: false }, module('0', 1), module('1', 2), module('2', 3)]);
+  try {
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/sidebar.html`);
+    const group = page.getByRole('group', { name: 'Study' });
+    const first = group.locator('[data-sidebar-item="0"]');
+    await first.waitFor();
+    const order = () => group.locator('[data-sidebar-item]').evaluateAll(rows => rows.map(row => row.dataset.sidebarItem));
+    const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const box = await first.boundingBox();
+    // Pick the row up and put it down again on its own slot.
+    await page.mouse.move(box.x + 40, box.y + box.height / 2); await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y + box.height / 2 + 8, { steps: 4 }); await frames();
+    await page.mouse.move(box.x + 40, box.y + box.height / 2, { steps: 4 }); await frames();
+    await page.mouse.up();
+    await frames();
+    await page.waitForFunction(() => !document.querySelector('[data-sidebar-drag-preview]'));
+    assert.deepEqual(await order(), ['0', '1', '2']);
+    assert.ok(JSON.parse(await page.evaluate(() => localStorage.getItem('sidebar'))).every(item => item.id !== '0' || item.sort_order === 1), 'nothing was reordered in storage');
+  } finally { await page.close(); }
+});
