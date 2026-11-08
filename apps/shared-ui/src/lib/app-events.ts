@@ -9,6 +9,7 @@ export function usesNativeMenuShortcuts() {
 // App-wide requests, dispatched on window so any part of the UI can make them.
 export const OPEN_SETTINGS_EVENT = "memnoter:open-settings";
 export const NEW_MODULE_EVENT = "memnoter:new-module";
+export const IMPORT_ANKI_EVENT = "memnoter-import-anki";
 export const IMPORT_FOLDER_EVENT = "memnoter-import-folder";
 export const FIND_EVENT = "memnoter:find";
 export const TOGGLE_SIDEBAR_EVENT = "memnoter:toggle-sidebar";
@@ -20,6 +21,7 @@ export function requestApp(event: string) {
 // The create dialog hosts the import dialog, so it must open first.
 const APP_ACTIONS: Record<string, () => void> = {
   "settings.open": () => requestApp(OPEN_SETTINGS_EVENT),
+  "module.importAnki": () => requestApp(IMPORT_ANKI_EVENT),
   "module.import": () => requestApp(IMPORT_FOLDER_EVENT),
   "module.new": () => requestApp(NEW_MODULE_EVENT),
   "find.open": () => requestApp(FIND_EVENT),

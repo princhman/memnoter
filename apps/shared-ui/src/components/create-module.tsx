@@ -1,4 +1,5 @@
-import { IMPORT_FOLDER_EVENT } from "@/lib/app-events";
+import { ImportAnkiDialog } from "./import-anki";
+import { IMPORT_ANKI_EVENT, IMPORT_FOLDER_EVENT } from "@/lib/app-events";
 import { modulesCache } from "@/lib/modules";
 import { capabilities } from "@/lib/backend";
 import { ImportFolderDialog } from "./import-folder";
@@ -31,6 +32,7 @@ export function CreateModuleButton({ onNewFolder }: { onNewFolder?: () => void }
     <DropdownMenuContent side="right">
       <DropdownMenuItem onClick={() => window.dispatchEvent(new Event(NEW_MODULE_EVENT))}>New module</DropdownMenuItem>
       {onNewFolder && <DropdownMenuItem onClick={onNewFolder}>New folder</DropdownMenuItem>}
+      {capabilities.folderImport && <DropdownMenuItem onClick={() => window.dispatchEvent(new Event(IMPORT_ANKI_EVENT))}>Import Anki deck…</DropdownMenuItem>}
       {capabilities.folderImport && <DropdownMenuItem onClick={() => window.dispatchEvent(new Event(IMPORT_FOLDER_EVENT))}>Import folder…</DropdownMenuItem>}
     </DropdownMenuContent>
   </DropdownMenu>;
@@ -68,6 +70,8 @@ const CreateModule = () => {
   useEffect(() => capabilities.folderImport ? registerCommand({ id: "module.import", title: "Import folder…", keywords: ["obsidian", "markdown"], run: openImport }) : undefined, []);
 
 
+  useEffect(() => capabilities.folderImport ? registerCommand({ id: "module.importAnki", title: "Import Anki deck…", keywords: ["apkg", "flashcards"], run: () => { window.dispatchEvent(new Event(IMPORT_ANKI_EVENT)); } }) : undefined, []);
+
   const trimmedName = name.trim();
 
   const nameError =
@@ -88,6 +92,7 @@ const CreateModule = () => {
 
   return (
     <>
+    {capabilities.folderImport && <ImportAnkiDialog onImported={async moduleId => { await modulesCache.invalidate(); void navigate({ to: "/$moduleId", params: { moduleId } }); }} />}
     {capabilities.folderImport && <ImportFolderDialog onImported={async moduleId => {
       await modulesCache.invalidate();
       void navigate({ to: "/$moduleId", params: { moduleId } });

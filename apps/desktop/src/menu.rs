@@ -11,14 +11,16 @@ const NEW_MODULE: (&str, &str, &str) = ("new-module", "New Module…", "CmdOrCtr
 const FIND: (&str, &str, &str) = ("find", "Find…", "CmdOrCtrl+F");
 const TOGGLE_SIDEBAR: (&str, &str, &str) = ("toggle-sidebar", "Toggle Sidebar", "CmdOrCtrl+D");
 
+const IMPORT_ANKI: &str = "import-anki";
 const IMPORT_FOLDER: &str = "import-folder";
 const EDITOR_UNDO: (&str, &str, &str) = ("editor-undo", "Undo", "CmdOrCtrl+Z");
 const EDITOR_REDO: (&str, &str, &str) = ("editor-redo", "Redo", "CmdOrCtrl+Shift+Z");
 
-const CUSTOM_ITEMS: [&str; 7] = [
+const CUSTOM_ITEMS: [&str; 8] = [
     SETTINGS.0,
     NEW_MODULE.0,
     IMPORT_FOLDER,
+    IMPORT_ANKI,
     FIND.0,
     TOGGLE_SIDEBAR.0,
     EDITOR_UNDO.0,
@@ -52,6 +54,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&item(app, NEW_MODULE)?)
         .item(&MenuItemBuilder::with_id(IMPORT_FOLDER, "Import Folder…").build(app)?)
+        .item(&MenuItemBuilder::with_id(IMPORT_ANKI, "Import Anki Deck…").build(app)?)
         .separator()
         .close_window()
         .build()?;
