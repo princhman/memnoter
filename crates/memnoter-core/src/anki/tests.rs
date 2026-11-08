@@ -262,12 +262,19 @@ fn reads_a_latest_package() {
     let dir = temp();
     let db = dir.0.join("latest.db");
     let conn = Connection::open(&db).unwrap();
+    // Only the writer here knows the collation; the reader has to bring its own.
+    conn.create_collation("unicase", |a, b| a.to_lowercase().cmp(&b.to_lowercase())).unwrap();
     conn.execute_batch(
         "create table col (decks text, models text, crt integer default 1000);
          insert into col (decks, models) values ('', '');
-         create table decks (id integer, name text);
-         create table notetypes (id integer, name text, config blob);
-         create table fields (ntid integer, ord integer, name text);
+         -- Anki indexes names with its own collation, which the reader must supply.
+         create table decks (id integer, name text collate unicase);
+         create unique index idx_decks_name on decks (name);
+         create table notetypes (id integer, name text collate unicase, config blob);
+         create unique index idx_notetypes_name on notetypes (name);
+         create table fields (ntid integer not null, ord integer not null, name text not null collate unicase, config blob,
+                              primary key (ntid, ord)) without rowid;
+         create unique index idx_fields_name_ntid on fields (name, ntid);
          create table templates (ntid integer, ord integer);",
     )
     .unwrap();
@@ -321,7 +328,7 @@ fn reads_a_latest_package() {
         .unwrap();
         for (ord, field) in fields.iter().enumerate() {
             conn.execute(
-                "insert into fields values (?1, ?2, ?3)",
+                "insert into fields (ntid, ord, name) values (?1, ?2, ?3)",
                 rusqlite::params![id, ord as i64, field],
             )
             .unwrap();

@@ -180,6 +180,12 @@ struct EnhancedSet {
 pub fn read(path: &Path, archive: &AnkiArchive) -> CommandResult<AnkiPackage> {
     let conn =
         Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(db_err)?;
+    // Anki's newer collections index names with its own case-insensitive
+    // collation; without it SQLite cannot plan any query on those tables.
+    conn.create_collation("unicase", |a, b| {
+        a.to_lowercase().cmp(&b.to_lowercase())
+    })
+    .map_err(db_err)?;
     let (deck_rows, notetypes) = if table_exists(&conn, "notetypes")? {
         latest_meta(&conn)?
     } else {

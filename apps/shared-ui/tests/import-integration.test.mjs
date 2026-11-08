@@ -201,6 +201,10 @@ test("sidebar dropdown leads to a configurable import dialog and commits only on
     await ui.getByRole('button',{name:'Cancel',exact:true}).click();
     await ui.getByRole('region', { name: 'Module actions' }).hover();
     await ui.getByRole('button',{name:'Add module',exact:true}).click();
+    // The menu opens from a small icon button; its entries must not wrap to fit it.
+    await ui.getByRole('menuitem',{name:'Import Anki deck…',exact:true}).waitFor();
+    const heights = await ui.getByRole('menuitem').evaluateAll(items => items.map(item => Math.round(item.getBoundingClientRect().height)));
+    assert.ok(heights.length >= 3 && new Set(heights).size === 1, `every entry fits on one line, heights: ${heights}`);
     await ui.getByRole('menuitem',{name:'Import folder…',exact:true}).click();
     await ui.getByLabel('Module name', {exact:false}).fill('Planned module');
     await ui.getByRole('button',{name:'Next',exact:true}).click();
