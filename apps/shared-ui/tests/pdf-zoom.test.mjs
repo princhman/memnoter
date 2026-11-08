@@ -12,7 +12,7 @@ test('reader zoom preserves the reading point, scroll, crop and gesture lifecycl
     await server.listen(); browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ deviceScaleFactor: 2, viewport: { width: 1000, height: 1000 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
-    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => { if (command === 'document_path') return '/selection.pdf'; throw new Error(command); } } });`);
+    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => { if (command === 'get_content') return { state: [], updates: [], files: [] }; if (command === 'document_path') return '/selection.pdf'; throw new Error(command); } } });`);
     await page.route('**/selection.pdf', route => route.fulfill({ contentType: 'application/pdf', body: pdfBytes() }));
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-region-selection.html`);
     const viewer = page.locator('#viewer');

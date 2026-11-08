@@ -17,6 +17,9 @@ export const SHORTCUTS: readonly ShortcutAction[] = [
   { id: "sidebar.toggle", title: "Toggle sidebar", keys: "Mod-d", menuId: "toggle-sidebar" },
   { id: "history.undo", title: "Undo", keys: "Mod-z", menuId: "editor-undo" },
   { id: "history.redo", title: "Redo", keys: "Mod-Shift-z", menuId: "editor-redo" },
+  { id: "pdf.toggle-pane", title: "Toggle files panel", keys: "Mod-Shift-d" },
+  { id: "pdf.open-beside", title: "Open PDF beside note", keys: "Mod-Shift-o" },
+  { id: "pdf.select-region", title: "Select PDF region", keys: "Mod-Shift-x" },
   { id: "pdf.quote.insert", title: "Insert PDF quote", keys: "Mod-Enter" },
   { id: "palette.open", title: "Search modules and commands", keys: "Mod-k" },
   { id: "section.sibling", title: "New section", keys: "Mod-Alt-s" },
@@ -76,3 +79,15 @@ export function bindsInJS(entry: ShortcutAction, nativeMenu: boolean): boolean {
 }
 
 export const HOME_ACTION_IDS = ["block.insert", "module.new", "find.open", "palette.open", "link.edit", "section.sibling", "section.fold", "section.unfold", "math.inline", "sidebar.toggle"] as const;
+
+// PDF commands may run from the adjacent note cursor, but never from find,
+// page-number fields, unrelated editors, or portalled menus and dialogs.
+export function acceptsPdfShortcut(event: KeyboardEvent, scopes: readonly (Element | null)[]): boolean {
+  if (event.defaultPrevented || event.repeat || event.isComposing) return false;
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  if (target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], input, textarea, select, [role="textbox"]:not(.ProseMirror)')) return false;
+  if (target !== document.body && !scopes.some(scope => scope?.contains(target))) return false;
+  const editable = target.closest('[contenteditable="true"]');
+  return !editable || editable.matches('.ProseMirror') && !!editable.closest('[data-pdf-note]');
+}

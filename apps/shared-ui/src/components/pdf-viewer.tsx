@@ -1,4 +1,6 @@
-import { action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
+import { usePdfQuoteRegions } from "@/lib/use-pdf-quote-regions";
+import { PdfQuoteRegions } from "./pdf-quote-regions";
+import { acceptsPdfShortcut, action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
@@ -13,6 +15,7 @@ import { parsePage, readPdfView, visiblePages } from "@/lib/pdf-state";
 import { documentsKey } from "@/lib/use-documents";
 import { requestSyncedFile } from "@/lib/sync/file-requests";
 import { openPdfPane, pdfPageRequest } from "@/lib/pdf-pane";
+import { registerCommand } from "@/lib/commands";
 import { ToolButton } from "./ui/tool-button";
 import { PdfRegionSelection } from "./pdf-region-selection";
 import { cropPdfCanvas, type PdfRegion } from "@/lib/pdf-quote";
@@ -28,7 +31,7 @@ type Size = { width: number; height: number };
 
 // Memoized: scrolling re-renders the viewer, but a page only redraws when it
 // arrives, the zoom changes, or it enters or leaves the render window.
-const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, onSelect, onCancel }: { page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number) => void; onCancel: () => void }) {
+const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, quoteRegions, onSelect, onCancel }: { page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; quoteRegions?: readonly PdfRegion[]; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number) => void; onCancel: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
@@ -51,6 +54,7 @@ const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, a
   }, [page, zoom, live]);
   return <div className="pdf-page relative shrink-0 bg-white shadow-sm" style={{ width, height, "--scale-factor": zoom, "--total-scale-factor": zoom * (page?.userUnit ?? 1) } as React.CSSProperties}>
     {live && <><canvas ref={canvas} className="absolute inset-0 size-full" /><div ref={text} className="textLayer" /></>}
+    {live && <PdfQuoteRegions regions={quoteRegions} />}
     {live && ready && ready.page === page && ready.zoom === zoom && selecting && <PdfRegionSelection key={zoom} onCancel={onCancel} onSelect={region => { if (canvas.current) onSelect(canvas.current, region, pageNumber); }} />}
     {error && <p role="alert" className="relative bg-background p-2 text-sm text-destructive">{error}</p>}
   </div>;
@@ -71,6 +75,8 @@ const sameList = (a: number[], b: number[]) => a.length === b.length && a.every(
 
 export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number }) {
   const client = useQueryClient();
+  const quoteRegions = usePdfQuoteRegions(doc.moduleId, doc.id);
+  const root = useRef<HTMLDivElement>(null);
   const [selecting, setSelecting] = useState(false);
   const [cropping, setCropping] = useState(false);
   const [quoteError, setQuoteError] = useState("");
@@ -90,22 +96,11 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       const blob = await cropPdfCanvas(canvas, region);
       if (pendingPdfQuote.state) throw new Error("Another quote is waiting. Finish it, then select this region again.");
       pendingPdfQuote.setState(previous => previous ?? ({ moduleId: doc.moduleId, file: new File([blob], `${doc.name}, page ${page}.png`, { type: "image/png" }),
-        source: { documentId: doc.id, name: doc.name, page, region }, section: fullscreen, status: "draft" }));
+        source: { documentId: doc.id, name: doc.name, page, region }, section: false, status: "draft" }));
     } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); setSelecting(!pendingPdfQuote.state); }
     finally { cropBusy.current = false; setCropping(false); }
-  }, [doc.id, doc.moduleId, doc.name, fullscreen]);
+  }, [doc.id, doc.moduleId, doc.name]);
   const navigate = useNavigate();
-  useEffect(() => {
-    if (!fullscreen || pending?.moduleId !== doc.moduleId || pending.status !== "draft") return;
-    const insert = (event: KeyboardEvent) => {
-      if (event.repeat || event.isComposing || !matchesShortcut(event, action("pdf.quote.insert").keys)) return;
-      if (event.target instanceof Element && event.target.closest('[role="dialog"], [role="menu"], [role="listbox"]')) return;
-      event.preventDefault(); event.stopPropagation();
-      void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error)));
-    };
-    window.addEventListener("keydown", insert, true);
-    return () => window.removeEventListener("keydown", insert, true);
-  }, [fullscreen, pending, doc.moduleId, navigate]);
   const [saved] = useState(() => ({ ...readPdfView(doc.id), ...(initialPage ? { page: initialPage } : {}) }));
   const [zoom, setZoom] = useState(saved.zoom);
   const [pinching, setPinching] = useState(false);
@@ -327,10 +322,50 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   useEffect(() => {
     if (pageRequest?.id === doc.id && pages.length) { jump(Math.max(1, Math.min(pages.length, pageRequest.page))); pdfPageRequest.setState(() => null); }
   }, [pageRequest, doc.id, pages.length]);
+  const toggleSelection = useCallback(() => {
+    if (cropBusy.current || pendingPdfQuote.state || !pdf) return;
+    setQuoteError(""); setSelecting(value => !value);
+  }, [pdf]);
+  const openBeside = useCallback(() => {
+    const finalZoom = finishPinch.current?.() ?? zoomValue.current;
+    try { localStorage.setItem(`pdf-view:${doc.id}`, JSON.stringify({ page: shownPage.current, zoom: finalZoom })); } catch { /* Storage may be unavailable. */ }
+    openPdfPane(doc.moduleId, doc.id);
+    void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error)));
+  }, [doc.id, doc.moduleId, navigate]);
+  const showCursorAction = useCallback(() => {
+    void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error)));
+  }, [doc.moduleId, navigate]);
+  useEffect(() => {
+    if (!pdf || pending || cropping) return;
+    return registerCommand({ ...action("pdf.select-region"), keywords: ["pdf", "quote"], run: toggleSelection });
+  }, [pdf, pending, cropping, toggleSelection]);
+  useEffect(() => {
+    if (!fullscreen) return;
+    return registerCommand({ ...action("pdf.open-beside"), keywords: ["pdf", "note"], run: openBeside });
+  }, [fullscreen, openBeside]);
+  useEffect(() => {
+    const handle = (event: KeyboardEvent) => {
+      if (!acceptsPdfShortcut(event, [root.current, root.current?.closest('[data-pdf-note]') ?? null, fullscreen ? document.getElementById("pdf-toolbar") : null])) return;
+      if (matchesShortcut(event, action("pdf.select-region").keys)) {
+        if (!pdf || pending || cropping) return;
+        event.preventDefault(); event.stopPropagation(); toggleSelection();
+      } else if (fullscreen && matchesShortcut(event, action("pdf.open-beside").keys)) {
+        event.preventDefault(); event.stopPropagation(); openBeside();
+      } else if (fullscreen && pending?.moduleId === doc.moduleId && pending.status === "draft" && matchesShortcut(event, action("pdf.quote.insert").keys)) {
+        event.preventDefault(); event.stopPropagation(); showCursorAction();
+      }
+    };
+    window.addEventListener("keydown", handle, true);
+    return () => window.removeEventListener("keydown", handle, true);
+  }, [fullscreen, pdf, pending, cropping, doc.moduleId, toggleSelection, openBeside, showCursorAction]);
+  useEffect(() => {
+    if (!fullscreen || pending?.moduleId !== doc.moduleId || pending.status !== "draft") return;
+    return registerCommand({ ...action("pdf.quote.insert"), keywords: ["pdf", "quote", "cursor"], run: showCursorAction });
+  }, [fullscreen, pending?.moduleId, pending?.status, doc.moduleId, showCursorAction]);
   const activeSet = useMemo(() => new Set(active), [active]);
 
   // The backdrop matches the app header, so the page sits on one surface.
-  return <div className="relative flex h-full min-h-0 min-w-0 flex-col bg-background">
+  return <div ref={root} className="relative flex h-full min-h-0 min-w-0 flex-col bg-background">
     <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
       <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onChange={event => setInput(event.target.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
@@ -339,8 +374,8 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
       <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
       <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn /></ToolButton>
-      <ToolButton label="Select region" pressed={selecting} disabled={!!pending || cropping || !pdf} onClick={() => { setQuoteError(""); setSelecting(value => !value); }}><SquareDashedMousePointer /></ToolButton>
-      {fullscreen && <ToolButton label="Open beside note" onClick={() => { openPdfPane(doc.moduleId, doc.id); void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }); }}>
+      <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Select region" pressed={selecting} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>
+      {fullscreen && <ToolButton label="Open beside note" hint={formatKeys(action("pdf.open-beside").keys)} onClick={openBeside}>
         {/* The small arrow says this moves the PDF into the note's side panel. */}
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
       </ToolButton>}
@@ -349,12 +384,12 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       <div className="pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
         {selecting && !pending && <>Drag to select a quote<ToolButton label="Exit selection" onClick={cancelSelection}><X /></ToolButton></>}
         {cropping && "Preparing quote"}{quoteError && <span role="alert">{quoteError}</span>}
-        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" title={`Insert quote (${formatKeys(action("pdf.quote.insert").keys)})`} aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => { void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error))); }}>Add to note</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current === pending && current.status === "draft" ? null : current)}>Discard</Button>}</>}
+        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" title={`Insert at cursor (${formatKeys(action("pdf.quote.insert").keys)})`} aria-keyshortcuts="Meta+Enter Control+Enter" disabled={pending.status !== "draft"} onClick={showCursorAction}>Insert at cursor</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current === pending && current.status === "draft" ? null : current)}>Discard</Button>}</>}
       </div>
     </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF</p>}
-      <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
+      <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} quoteRegions={quoteRegions.get(index + 1)} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
     </div>}
   </div>;
 }

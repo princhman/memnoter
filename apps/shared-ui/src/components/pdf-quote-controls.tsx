@@ -1,3 +1,4 @@
+import { registerCommand } from "@/lib/commands";
 import { action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { useEditorState } from "@tiptap/react";
 import { useEffect, useRef, useState } from "react";
@@ -8,6 +9,7 @@ import { isWriteAdmitted, retryFailedImages } from "@/lib/write-lifecycle";
 import { outline } from "@/lib/outline";
 import { ChevronDown, X } from "lucide-react";
 import { ToolButton } from "./ui/tool-button";
+import { IconTooltip } from "./ui/icon-tooltip";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 
@@ -16,13 +18,15 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
   const { activeEditor } = useActiveEditor();
   const [choosing, setChoosing] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const primaryAction = useRef<(() => void) | null>(null);
+  const insertCommand = useRef<(() => void) | null>(null);
+  insertCommand.current = null;
+  const primaryAction = useRef<((event: KeyboardEvent) => void) | null>(null);
   primaryAction.current = null;
   useEffect(() => {
     const insert = (event: KeyboardEvent) => {
-      if (!primaryAction.current || event.repeat || event.isComposing || !matchesShortcut(event, action("pdf.quote.insert").keys)) return;
-      if (event.target instanceof Element && event.target.closest('[role="dialog"], [role="menu"], [role="listbox"]')) return;
-      event.preventDefault(); event.stopPropagation(); primaryAction.current();
+      if (!primaryAction.current || event.defaultPrevented || event.repeat || event.isComposing || !matchesShortcut(event, action("pdf.quote.insert").keys)) return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
+      primaryAction.current(event);
     };
     window.addEventListener("keydown", insert, true);
     return () => window.removeEventListener("keydown", insert, true);
@@ -33,6 +37,10 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
   useEffect(() => {
     setChoosing(false);
   }, [pending?.file, moduleId]);
+  useEffect(() => {
+    if (pending?.moduleId !== moduleId || pending.status !== "draft" || !active || choosing) return;
+    return registerCommand({ ...action("pdf.quote.insert"), keywords: ["pdf", "quote", "cursor"], run: () => insertCommand.current?.() });
+  }, [pending?.moduleId, pending?.status, moduleId, active?.editor, choosing]);
   if (!pending || pending.moduleId !== moduleId) return null;
   const insert = (target: { position: number } | { headingId: string | null }) => {
     if (!active || active.editor.isDestroyed || !active.editor.isEditable || pendingPdfQuote.state?.file !== pending.file || pendingPdfQuote.state.status !== "draft") return;
@@ -60,21 +68,31 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
   };
   const handleInsertQuote = () => {
     if (!active || pending.status !== "draft") return;
-    if (pending.section) openSectionPicker();
-    else insert({ position: active.editor.state.selection.from });
+    insert({ position: active.editor.state.selection.from });
   };
-  if (active && pending.status === "draft" && !choosing) primaryAction.current = handleInsertQuote;
+  if (active && pending.status === "draft" && !choosing) insertCommand.current = handleInsertQuote;
+  if (active && pending.status === "draft" && !choosing) primaryAction.current = event => {
+    if (event.target instanceof Element) {
+      const editable = event.target.closest('input, textarea, select, [contenteditable="true"]');
+      if (editable && !active.editor.view.dom.contains(editable)) return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    handleInsertQuote();
+  };
   const sourceName = pending.source.name.split(/[\\/]/).pop() || "PDF";
   const waiting = pending.status === "draft" && !active;
   return <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-end">
     <div className="pointer-events-auto min-w-0 max-w-sm overflow-y-auto rounded-lg floating-surface p-1 text-xs shadow-md" role="status">
-      <div role="group" aria-label="Image quote actions" className="flex min-w-0 items-center gap-1">
+      <div role="group" aria-label="Image quote actions" className="flex min-w-0 items-center gap-1" onMouseDown={event => { if (event.button === 0) event.preventDefault(); }}>
         <span className="min-w-0 truncate px-1 text-muted-foreground" title={waiting ? "Waiting for this module’s editable note" : `${sourceName}, page ${pending.source.page}`}>
           {waiting ? "Waiting for note…" : `${sourceName}, page ${pending.source.page}`}
         </span>
-        <Button size="sm" title={`Insert quote (${formatKeys(action("pdf.quote.insert").keys)})`} aria-keyshortcuts="Meta+Enter Control+Enter" disabled={!active || pending.status !== "draft"} onClick={handleInsertQuote}>
-          {pending.status === "saving" ? "Saving quote…" : "Insert quote"}
-        </Button>
+        <IconTooltip label="Insert at cursor" hint={formatKeys(action("pdf.quote.insert").keys)}>
+          <Button size="sm" aria-keyshortcuts="Meta+Enter Control+Enter" disabled={!active || pending.status !== "draft"} onClick={handleInsertQuote}>
+            {pending.status === "saving" ? "Saving quote…" : "Insert at cursor"}
+          </Button>
+        </IconTooltip>
         <ToolButton size="icon-sm" label="Choose section" disabled={!active || pending.status !== "draft"} onClick={openSectionPicker}>
           <ChevronDown />
         </ToolButton>

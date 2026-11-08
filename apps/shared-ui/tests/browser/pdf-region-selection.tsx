@@ -1,3 +1,4 @@
+import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import "@/App.css";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -46,4 +47,4 @@ function Fixture() {
 }
 const route = createRootRoute({ component: Fixture });
 const router = createRouter({ routeTree: route });
-createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>);
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><ActiveEditorProvider><RouterProvider router={router} /></ActiveEditorProvider></QueryClientProvider>);

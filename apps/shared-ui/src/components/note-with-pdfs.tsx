@@ -4,6 +4,7 @@ import { ChevronLeft, FileText, Maximize2, Plus, X } from "lucide-react";
 import { useDocuments } from "@/lib/use-documents";
 import { documentName } from "@/lib/pdf-state";
 import { openPdfPane, updatePdfPane, usePdfPane } from "@/lib/pdf-pane";
+import { acceptsPdfShortcut, action, matchesShortcut } from "@/lib/shortcuts";
 import { registerCommand } from "@/lib/commands";
 import { isTauri } from "@/lib/backend";
 import type { DocumentRecord } from "@/lib/documents";
@@ -43,6 +44,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
   const { data: docs = [] } = useDocuments(moduleId);
   const pane = usePdfPane(moduleId);
   const navigate = useNavigate();
+  const root = useRef<HTMLDivElement>(null);
   const guide = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; element: HTMLDivElement; width: number; right: number; left: number; dividerWidth: number; maxWidth: number; cleanup: () => void } | null>(null);
   const finishResize = useCallback((commit = true) => {
@@ -63,7 +65,16 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
   }, [open, pane.width]);
   useEffect(() => registerCommand({ id: "pdf.toggle-pane", title: "Toggle files panel", keywords: ["pdf"],
     run: () => updatePdfPane(moduleId, { open: !pane.open }) }), [moduleId, pane.open]);
-  return <div className="relative flex h-full min-h-0 flex-col"><PdfQuoteControls moduleId={moduleId} /><div className="note-with-pdfs flex min-h-0 min-w-0 flex-1">
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (!matchesShortcut(event, action("pdf.toggle-pane").keys) || !acceptsPdfShortcut(event, [root.current])) return;
+      event.preventDefault(); event.stopPropagation();
+      updatePdfPane(moduleId, { open: !pane.open });
+    };
+    window.addEventListener("keydown", toggle, true);
+    return () => window.removeEventListener("keydown", toggle, true);
+  }, [moduleId, pane.open]);
+  return <div ref={root} data-pdf-note={moduleId} className="relative flex h-full min-h-0 flex-col"><PdfQuoteControls moduleId={moduleId} /><div className="note-with-pdfs flex min-h-0 min-w-0 flex-1">
     <div className="app-scroll-container min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">{children}</div>
     {open && <>
       <div role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuenow={pane.width} aria-valuemin={320} aria-valuemax={1000} tabIndex={0} className="relative w-1 shrink-0 touch-none cursor-col-resize bg-border hover:bg-primary focus-visible:bg-primary focus-visible:outline-none" onKeyDown={event => {

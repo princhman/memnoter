@@ -13,7 +13,7 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     await server.listen(); browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ deviceScaleFactor: 2, viewport: { width: 1000, height: 1000 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
-    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => { if (command === 'document_path') return '/selection.pdf'; throw new Error(command); } } });`);
+    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => { if (command === 'get_content') return { state: [], updates: [], files: [] }; if (command === 'document_path') return '/selection.pdf'; throw new Error(command); } } });`);
     await page.route('**/selection.pdf', route => route.fulfill({ contentType: 'application/pdf', body: pdfBytes() }));
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-region-selection.html`);
     const sandbox = page.locator('#selection-sandbox');
@@ -100,6 +100,9 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     });
     await dragCrop();
     await viewer.getByRole('status').filter({ hasText: 'Preparing quote' }).waitFor();
+    await page.keyboard.press('Control+Shift+x');
+    assert.equal(await viewer.getByRole('button', { name: 'Select region', exact: true }).isDisabled(), true);
+    assert.equal(await viewer.getByLabel('Drag a region on this PDF page').count(), 0);
     await assertStablePage();
     await page.evaluate(() => { window.finishCrop(); HTMLCanvasElement.prototype.toBlob = window.originalToBlob; });
     await page.waitForFunction(() => document.querySelector('#crop').textContent !== 'null');
@@ -107,6 +110,13 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     const crop = JSON.parse(await page.locator('#crop').textContent());
     assert.deepEqual({ width: crop.width, height: crop.height, pixel: crop.pixel }, { width: 400, height: 400, pixel: [0, 255, 0, 255] });
     assert.deepEqual(crop.source, { documentId: 'selection-pdf', name: 'Selection.pdf', page: 1, region: { x: .25, y: .25, width: .5, height: .5 } });
+    const marker = viewer.locator('.pdf-page > [aria-hidden="true"] > div');
+    await marker.first().waitFor();
+    const pageBox = await viewer.locator('.pdf-page').first().boundingBox();
+    const markerBox = await marker.first().boundingBox();
+    assert.ok(Math.abs(markerBox.width - pageBox.width * .5) < 1);
+    assert.ok(Math.abs(markerBox.x - pageBox.x - pageBox.width * .25) < 1);
+    assert.equal(await marker.first().evaluate(element => getComputedStyle(element).pointerEvents), 'none');
     // Encoding failure must leave selection recoverable and no draft behind.
     await page.getByRole('button', { name: 'Clear quote', exact: true }).click();
     await viewer.getByRole('button', { name: 'Select region', exact: true }).click();

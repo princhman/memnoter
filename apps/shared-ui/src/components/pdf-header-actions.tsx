@@ -1,5 +1,6 @@
 import { useMatchRoute, useRouterState } from "@tanstack/react-router";
 import { PanelRight, Plus } from "lucide-react";
+import { action, formatKeys } from "@/lib/shortcuts";
 import { updatePdfPane, usePdfPane } from "@/lib/pdf-pane";
 import { isTauri } from "@/lib/backend";
 import { pickPdfs } from "./add-pdf";
@@ -33,6 +34,6 @@ export function FilesPanelButton() {
 
 function PanelToggle({ moduleId }: { moduleId: string }) {
   const pane = usePdfPane(moduleId);
-  return <ToolButton label={pane.open ? "Hide files" : "Show files"} pressed={pane.open}
+  return <ToolButton hint={formatKeys(action("pdf.toggle-pane").keys)} label={pane.open ? "Hide files" : "Show files"} pressed={pane.open}
     onClick={() => updatePdfPane(moduleId, { open: !pane.open })}><PanelRight /></ToolButton>;
 }

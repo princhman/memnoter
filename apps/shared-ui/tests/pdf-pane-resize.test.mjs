@@ -24,7 +24,7 @@ test('files resize previews a fixed layout, commits on release, and cleans up ev
     await server.listen(); browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1400, height: 950 }, hasTouch: true });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
-    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => {
+    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => { if (command === 'get_content') return { state: [], updates: [], files: [] };
       if (command === 'list_documents') return [{ id: 'resize-pdf', moduleId: 'resize-module', moduleName: 'Resize', name: 'Resize.pdf', size: 1000, pageCount: 1, createdAt: 0, available: true }];
       if (command === 'document_path') return '/resize.pdf';
       throw new Error(command);

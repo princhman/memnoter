@@ -66,10 +66,13 @@ test('source navigation and section picker preserve destinations and retained dr
     const noteBounds = await note.boundingBox();
     const assertStableNote = async () => assert.deepEqual(await note.boundingBox(), noteBounds);
     await page.evaluate(() => window.pickerTest.draft());
-    const insertQuote = page.getByRole('button', { name: 'Insert quote', exact: true });
+    const insertQuote = page.getByRole('button', { name: 'Insert at cursor', exact: true });
     await insertQuote.waitFor();
     const strip = page.getByRole('group', { name: 'Image quote actions' });
     assert.equal(await strip.getByRole('button').count(), 3);
+    await insertQuote.hover();
+    await page.getByRole('tooltip').filter({ hasText: 'Insert at cursor' }).waitFor();
+    assert.match(await page.getByRole('tooltip').textContent(), /Ctrl\+Enter|⌘↵/);
     const primaryColor = await insertQuote.evaluate(element => getComputedStyle(element).backgroundColor);
     for (const name of ['Choose section', 'Dismiss quote']) {
       assert.notEqual(await strip.getByRole('button', { name, exact: true }).evaluate(element => getComputedStyle(element).backgroundColor), primaryColor, 'secondary controls stay visually quiet');
@@ -89,13 +92,37 @@ test('source navigation and section picker preserve destinations and retained dr
       const bounds = element.getBoundingClientRect();
       return document.elementFromPoint(13, bounds.y + bounds.height / 2)?.tagName;
     }), 'MAIN', 'floating anchor passes pointer events through outside the card');
-    await insertQuote.focus();
+    await page.getByRole('textbox', { name: 'Other field' }).focus();
     await page.keyboard.press('Control+Enter');
+    assert.deepEqual(await page.evaluate(() => window.pickerTest.calls), [], 'the quote shortcut leaves other editable fields alone');
+    // Fullscreen-origin drafts use the editor's restored/current cursor too.
+    await page.evaluate(() => {
+      window.pickerTest.editor.commands.setTextSelection({ from: 3, to: 6 });
+      window.pickerTest.editor.view.focus();
+    });
+    await insertQuote.click();
+    assert.deepEqual(await page.evaluate(() => window.pickerTest.calls), [{ position: 3 }]);
+    assert.equal(await page.getByRole('dialog').count(), 0, 'cursor insertion needs no destination dialog');
+    assert.deepEqual(await page.evaluate(() => {
+      const { from, to } = window.pickerTest.editor.state.selection;
+      return { from, to };
+    }), { from: 3, to: 6 }, 'clicking quote controls preserves the editor selection');
+    await page.evaluate(() => window.pickerTest.editor.commands.setTextSelection(9));
+    await page.locator('header').click();
+    await page.keyboard.press('Control+Enter');
+    assert.deepEqual(await page.evaluate(() => window.pickerTest.calls), [{ position: 3 }], 'a pending handoff cannot retarget or submit twice');
+    await page.evaluate(() => {
+      window.pickerTest.control.finish();
+      window.pickerTest.calls.length = 0;
+      window.pickerTest.draft();
+    });
+    await page.getByRole('button', { name: 'Choose section', exact: true }).focus();
+    await page.keyboard.press('Enter');
     await page.getByRole('dialog').waitFor();
     await page.keyboard.press('Control+Enter');
     assert.deepEqual(await page.evaluate(() => window.pickerTest.calls), [], 'insert shortcut does not submit behind an open picker');
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await page.waitForFunction(() => document.activeElement?.textContent === 'Insert quote');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Choose section');
     await assertStableNote();
     assert.equal(await page.evaluate(() => window.pickerTest.pendingPdfQuote.state.status), 'draft');
     await page.getByRole('button', { name: 'Choose section', exact: true }).focus();
@@ -136,22 +163,21 @@ test('source navigation and section picker preserve destinations and retained dr
     assert.deepEqual(await note.boundingBox(), narrowNoteBounds);
     await page.evaluate(() => window.pickerTest.pendingPdfQuote.setState(() => null));
     assert.deepEqual(await note.boundingBox(), narrowNoteBounds);
-    await page.evaluate(() => {
-      window.pickerTest.draft();
-      window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, section: false }));
-      window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, source: { ...current.source, name: 'An extremely long lecture filename that must truncate.pdf' } }));
-      window.pickerTest.editor.commands.setTextSelection(3);
-    });
-    await assertCompactStrip();
-    assert.deepEqual(await note.boundingBox(), narrowNoteBounds);
-    const cursor = await page.evaluate(() => window.pickerTest.editor.state.selection.from);
-    await page.evaluate(() => window.pickerTest.editor.view.focus());
-    await page.keyboard.press('Meta+Enter');
-    assert.deepEqual(await page.evaluate(() => window.pickerTest.calls.at(-1)), { position: cursor });
-    await page.evaluate(() => {
-      window.pickerTest.draft();
-      window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, section: false }));
-    });
+    for (const [section, shortcut] of [[true, 'Meta+Enter'], [false, 'Control+Enter']]) {
+      await page.evaluate(section => {
+        window.pickerTest.draft();
+        window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, section, source: { ...current.source, name: 'An extremely long lecture filename that must truncate.pdf' } }));
+        window.pickerTest.editor.commands.setTextSelection(section ? 3 : 5);
+      }, section);
+      await assertCompactStrip();
+      assert.deepEqual(await note.boundingBox(), narrowNoteBounds);
+      const cursor = await page.evaluate(() => window.pickerTest.editor.state.selection.from);
+      await page.evaluate(() => window.pickerTest.editor.view.focus());
+      await page.keyboard.press(shortcut);
+      assert.deepEqual(await page.evaluate(() => window.pickerTest.calls.at(-1)), { position: cursor });
+      await page.evaluate(() => window.pickerTest.control.finish());
+    }
+    await page.evaluate(() => window.pickerTest.draft());
     await page.getByRole('button', { name: 'Dismiss quote', exact: true }).focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => window.pickerTest.pendingPdfQuote.state), null);

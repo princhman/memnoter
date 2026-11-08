@@ -38,12 +38,12 @@ function Picker() {
   useEffect(() => {
     if (!editor) return;
     const calls: unknown[] = [];
-    const control = { rejectAdmission: false };
-    setActiveEditor({ editor, moduleId, isReady: true, insertQuote: async (_editor, _file, _source, target) => { if (control.rejectAdmission) throw new Error("Saving is temporarily unavailable"); calls.push(target); } });
+    const control = { rejectAdmission: false, finish: () => {} };
+    setActiveEditor({ editor, moduleId, isReady: true, insertQuote: async (_editor, _file, _source, target) => { if (control.rejectAdmission) throw new Error("Saving is temporarily unavailable"); calls.push(target); await new Promise<void>(resolve => { control.finish = resolve; }); } });
     Object.assign(window, { pickerTest: { editor, calls, control, unrelatedFailure: () => imageOperation(async () => { throw new Error("Unrelated image failed"); }).catch(() => {}), setModuleId, pendingPdfQuote, draft: () => pendingPdfQuote.setState(() => ({ moduleId: "module-one", file: new File(["png"], "quote.png"), source, section: true, status: "draft" })) } });
     return () => setActiveEditor(null);
   }, [editor, moduleId, setActiveEditor]);
-  return <><header className="h-12 border-b">Note</header><main className="relative h-[600px] min-w-0"><PdfQuoteControls moduleId="module-one" /><EditorContent editor={editor} /></main></>;
+  return <><header className="h-12 border-b">Note <input aria-label="Other field" className="w-24" /></header><main className="relative h-[600px] min-w-0"><PdfQuoteControls moduleId="module-one" /><EditorContent editor={editor} /></main></>;
 }
 const root = createRootRoute({ component: Outlet });
 const module = createRoute({ getParentRoute: () => root, path: "/$moduleId/", component: Module });
