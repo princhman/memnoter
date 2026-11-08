@@ -382,6 +382,19 @@ fn sidebar_order_folders_and_membership_survive_reopen_and_folder_deletion() {
 }
 
 #[test]
+fn sidebar_table_is_added_to_existing_version_3_database() {
+    let f = Fixture::new();
+    f.core
+        .db
+        .lock()
+        .unwrap()
+        .execute_batch("drop table sidebar_items; PRAGMA user_version = 3;")
+        .unwrap();
+    let upgraded = Core::open(&f.dir).unwrap();
+    assert_eq!(dispatch(&upgraded, "sidebar_items", "{}").unwrap(), "[]");
+}
+
+#[test]
 fn sidebar_changes_sync_including_seeded_folders_and_deletion() {
     let source = Fixture::new();
     let target = Fixture::new();
@@ -429,6 +442,11 @@ fn invalid_sidebar_batch_is_atomic() {
     let f = Fixture::new();
     let folder = json!({"id":"folder-valid","name":"Valid","folder_id":null,"sort_order":0,"collapsed":false,"deleted":false});
     let invalid = json!({"id":"folder-invalid","name":"Invalid","folder_id":"folder-valid","sort_order":1,"collapsed":false,"deleted":false});
-    assert!(dispatch(&f.core, "save_sidebar_items", &json!({"items":[folder, invalid]}).to_string()).is_err());
+    assert!(dispatch(
+        &f.core,
+        "save_sidebar_items",
+        &json!({"items":[folder, invalid]}).to_string()
+    )
+    .is_err());
     assert_eq!(f.call("sidebar_items", json!({})), json!([]));
 }
