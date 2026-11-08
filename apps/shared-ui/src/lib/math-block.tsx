@@ -1,3 +1,4 @@
+import { action } from "./shortcuts.ts";
 import { Node, selectionToInsertionEnd } from "@tiptap/core";
 import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
@@ -309,7 +310,7 @@ export const MathBlock = Node.create({
     };
 
     return {
-      "Mod-Alt-m": () => this.editor.commands.toggleMathBlock(),
+      [action("math.block").keys]: () => this.editor.commands.toggleMathBlock(),
 
       ArrowUp: () => enter(-1, "line"),
       ArrowDown: () => enter(1, "line"),

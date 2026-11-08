@@ -1,3 +1,4 @@
+import { action, formatKeys } from "@/lib/shortcuts";
 import {
   forwardRef,
   Fragment,
@@ -14,7 +15,7 @@ import Suggestion, {
   type SuggestionKeyDownProps,
   type SuggestionProps,
 } from "@tiptap/suggestion";
-import { cn, MOD_KEY } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { useActiveDescendant } from "@/hooks/use-active-descendant";
 
 export type SlashCommandOptions = {
@@ -31,10 +32,6 @@ type SlashItem = {
   run: (editor: Editor, range: Range, options: SlashCommandOptions) => void;
 };
 
-const ALT_KEY = MOD_KEY === "⌘" ? "⌥" : "Alt+";
-const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
-const shortcut = (key: string) => `${MOD_KEY}${ALT_KEY}${key}`;
-const shiftShortcut = (key: string) => `${MOD_KEY}${SHIFT_KEY}${key}`;
 
 export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
@@ -58,7 +55,7 @@ const ITEMS: SlashItem[] = [
     group: "Sections",
     title: "Sibling section",
     keywords: ["section", "same", "next", "heading"],
-    hint: shortcut("S"),
+    hint: formatKeys(action("section.sibling").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).insertSection("sibling").run(),
   },
@@ -66,7 +63,7 @@ const ITEMS: SlashItem[] = [
     group: "Sections",
     title: "Subsection",
     keywords: ["section", "child", "nested", "deeper", "heading"],
-    hint: shortcut("D"),
+    hint: formatKeys(action("section.child").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).insertSection("subsection").run(),
   },
@@ -75,7 +72,7 @@ const ITEMS: SlashItem[] = [
       group: "Headings",
       title: `Heading ${level}`,
       keywords: [`h${level}`, "heading", "title"],
-      hint: shortcut(String(level)),
+      hint: formatKeys(action(`heading.${level}`).keys),
       run: (editor, range) =>
         editor
           .chain()
@@ -97,7 +94,7 @@ const ITEMS: SlashItem[] = [
     group: "Blocks",
     title: "Bullet list",
     keywords: ["list", "bullet", "unordered", "ul", "-"],
-    hint: shiftShortcut("8"),
+    hint: formatKeys(action("list.bullet").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).toggleBulletList().run(),
   },
@@ -105,7 +102,7 @@ const ITEMS: SlashItem[] = [
     group: "Blocks",
     title: "Numbered list",
     keywords: ["list", "numbered", "ordered", "ol", "1."],
-    hint: shiftShortcut("7"),
+    hint: formatKeys(action("list.ordered").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).toggleOrderedList().run(),
   },
@@ -113,7 +110,7 @@ const ITEMS: SlashItem[] = [
     group: "Blocks",
     title: "Code block",
     keywords: ["code", "pre", "snippet", "```"],
-    hint: shortcut("C"),
+    hint: formatKeys(action("block.code").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).toggleCodeBlock().run(),
   },
@@ -121,7 +118,7 @@ const ITEMS: SlashItem[] = [
     group: "Blocks",
     title: "Quote",
     keywords: ["quote", "blockquote", "citation", ">"],
-    hint: shiftShortcut("B"),
+    hint: formatKeys(action("block.quote").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).toggleBlockquote().run(),
   },
@@ -141,7 +138,7 @@ const ITEMS: SlashItem[] = [
     group: "Math",
     title: "Inline math",
     keywords: ["math", "equation", "latex", "formula", "$"],
-    hint: `${MOD_KEY}${MOD_KEY === "⌘" ? "⇧" : "Shift+"}M`,
+    hint: formatKeys(action("math.inline").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).toggleInlineMath().run(),
   },
@@ -149,7 +146,7 @@ const ITEMS: SlashItem[] = [
     group: "Math",
     title: "Math block",
     keywords: ["math", "equation", "latex", "formula", "$$"],
-    hint: shortcut("M"),
+    hint: formatKeys(action("math.block").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).toggleMathBlock().run(),
   },

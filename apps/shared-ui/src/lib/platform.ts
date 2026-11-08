@@ -1,14 +1,17 @@
+export const IS_APPLE = typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad|iPod/.test(navigator.platform + navigator.userAgent);
+
 // iPadOS reports itself as a Mac ("MacIntel"), but Macs have no touch points.
 export const IS_IOS =
-  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  typeof navigator !== "undefined" && (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+
+export const IS_MAC = IS_APPLE && !IS_IOS;
 
 // A finger, not a mouse or trackpad, is the main way to point: there is no
 // hover, so controls that only appear on hover need another way to show up.
-const coarsePointer = window.matchMedia("(pointer: coarse)");
-
 export function isCoarsePointer() {
-  return coarsePointer.matches;
+  return window.matchMedia("(pointer: coarse)").matches;
 }
 
 // iOS keeps the page full height under the on-screen keyboard and scrolls the

@@ -1,3 +1,4 @@
+import { action, formatKeys, bindsInJS, matchesShortcut } from "@/lib/shortcuts";
 import {
   useEffect,
   useRef,
@@ -29,10 +30,8 @@ import { stopScrollRestore } from "@/lib/view-persistence";
 import { FIND_EVENT, usesNativeMenuShortcuts } from "@/lib/app-events";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { cn, MOD_KEY } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
-const ALT_KEY = MOD_KEY === "⌘" ? "⌥" : "Alt+";
-const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
 
 const inputClassName =
   "h-7 min-w-0 flex-1 rounded-md bg-muted px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-muted";
@@ -212,15 +211,14 @@ export function FindBar() {
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.code === "KeyF") {
-        if (!event.altKey && usesNativeMenuShortcuts()) return;
+      const find = action("find.open");
+      const replace = action("find.replace");
+      if ((bindsInJS(find, usesNativeMenuShortcuts()) && matchesShortcut(event, find.keys)) || matchesShortcut(event, replace.keys)) {
         event.preventDefault();
-        handlers.current.open(event.altKey);
-      } else if (event.code === "KeyG" && canStep) {
-        // Steps through matches from the editor, without going to the bar.
+        handlers.current.open(matchesShortcut(event, replace.keys));
+      } else if (canStep && (matchesShortcut(event, action("find.next").keys) || matchesShortcut(event, action("find.previous").keys))) {
         event.preventDefault();
-        if (event.shiftKey) handlers.current.goToPrevious();
+        if (matchesShortcut(event, action("find.previous").keys)) handlers.current.goToPrevious();
         else handlers.current.goToNext();
       }
     };
@@ -292,7 +290,7 @@ export function FindBar() {
       <div className="flex items-center gap-1">
         <IconTooltip
           label="Toggle replace"
-          hint={`${MOD_KEY}${ALT_KEY}F`}
+          hint={formatKeys(action("find.replace").keys)}
           side="bottom"
         >
           <Button
@@ -353,7 +351,7 @@ export function FindBar() {
         </ToggleButton>
         <IconTooltip
           label="Previous match"
-          hint={`${MOD_KEY}${SHIFT_KEY}G`}
+          hint={formatKeys(action("find.previous").keys)}
           side="bottom"
         >
           <Button
@@ -366,7 +364,7 @@ export function FindBar() {
             <ChevronUp />
           </Button>
         </IconTooltip>
-        <IconTooltip label="Next match" hint={`${MOD_KEY}G`} side="bottom">
+        <IconTooltip label="Next match" hint={formatKeys(action("find.next").keys)} side="bottom">
           <Button
             size="icon-xs"
             variant="ghost"

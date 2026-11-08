@@ -1,5 +1,7 @@
 "use client";
 
+import { action, bindsInJS, matchesShortcut } from "@/lib/shortcuts";
+
 import { usesNativeMenuShortcuts } from "@/lib/app-events";
 import * as React from "react";
 import { mergeProps } from "@base-ui/react/merge-props";
@@ -30,7 +32,6 @@ const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_ICON = "3rem";
-const SIDEBAR_KEYBOARD_SHORTCUT = "d";
 
 type SidebarContextProps = {
   state: "expanded" | "collapsed";
@@ -102,10 +103,9 @@ function SidebarProvider({
   // Adds a keyboard shortcut to toggle the sidebar.
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (usesNativeMenuShortcuts()) return;
+      if (!bindsInJS(action("sidebar.toggle"), usesNativeMenuShortcuts())) return;
       if (
-        event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
-        (event.metaKey || event.ctrlKey)
+        matchesShortcut(event, action("sidebar.toggle").keys)
       ) {
         event.preventDefault();
         toggleSidebar();

@@ -1,3 +1,4 @@
+import { action } from "./shortcuts.ts";
 import { Extension } from "@tiptap/core";
 import type { EditorState } from "@tiptap/pm/state";
 import { TextSelection } from "@tiptap/pm/state";
@@ -89,8 +90,8 @@ export const Sections = Extension.create({
 
   addKeyboardShortcuts() {
     return {
-      "Mod-Alt-s": () => this.editor.commands.insertSection("sibling"),
-      "Mod-Alt-d": () => this.editor.commands.insertSection("subsection"),
+      [action("section.sibling").keys]: () => this.editor.commands.insertSection("sibling"),
+      [action("section.child").keys]: () => this.editor.commands.insertSection("subsection"),
     };
   },
 });

@@ -1,3 +1,4 @@
+import { IMPORT_FOLDER_EVENT } from "@/lib/app-events";
 import { useEffect, useState } from "react";
 import { call } from "@/lib/backend";
 import { defaultImportOptions, importNoteOrder, prepareFolderImport, type ImportFolder, type ImportOptions } from "@/lib/folder-import";
@@ -31,8 +32,8 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
       } catch (e) { setSummary({ text: "Could not scan folder", details: [String(e)] }); }
       finally { picking = false; }
     };
-    window.addEventListener("memnoter-import-folder", pick);
-    return () => window.removeEventListener("memnoter-import-folder", pick);
+    window.addEventListener(IMPORT_FOLDER_EVENT, pick);
+    return () => window.removeEventListener(IMPORT_FOLDER_EVENT, pick);
   }, []);
   useEffect(() => {
     if (!folder) return;

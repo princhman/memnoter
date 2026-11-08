@@ -1,3 +1,4 @@
+import { IMPORT_FOLDER_EVENT } from "@/lib/app-events";
 import { isTauri } from "@/lib/backend";
 import { ImportFolderDialog } from "./import-folder";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
@@ -71,7 +72,7 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
     },
   });
 
-  const openImport = () => window.dispatchEvent(new Event("memnoter-import-folder"));
+  const openImport = () => window.dispatchEvent(new Event(IMPORT_FOLDER_EVENT));
 
   const trimmedName = name.trim();
 
