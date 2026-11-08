@@ -107,6 +107,7 @@ pub fn run() {
             confirm_restart,
             core,
             import_folder::pick_import_folder,
+            import_folder::pick_import_image_folder,
             import_folder::read_import_images
         ])
         .build(tauri::generate_context!())

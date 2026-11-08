@@ -51,6 +51,25 @@ test('light and dark rendered UI contrast', async () => {
       assert.ok(pairs.length > 20, 'real editor content must be measured');
       report.push(...pairs.map(pair => ({ ...pair, theme: dark ? 'dark' : 'light', label: `editor ${selected ? 'selected' : ''} ${pair.label}` })));
     }
+    // Measure the actual table chrome, including icon ink, in both themes.
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/tables.html`);
+    await page.waitForFunction(() => window.editor);
+    await page.evaluate(() => { editor.commands.insertTable({ rows: 2, cols: 2 }); editor.commands.focus(); });
+    await page.getByRole('toolbar', { name: 'Table actions', exact: true }).waitFor();
+    for (const dark of [false, true]) {
+      await page.evaluate(dark => {
+        document.documentElement.classList.toggle('dark', dark);
+        document.querySelectorAll('[data-table-controls] button:not(:disabled) svg').forEach(el => {
+          el.dataset.auditNontext = 'color';
+          el.dataset.audit = el.closest('button').getAttribute('aria-label');
+        });
+      }, dark);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))));
+      const pairs = await page.evaluate(measureContrast, '[data-table-controls]');
+      assert.ok(pairs.length >= 9, 'table edge and toolbar icons must be measured');
+      report.push(...pairs.map(pair => ({ ...pair, theme: dark ? 'dark' : 'light' })));
+    }
     if (process.env.CONTRAST_REPORT) await writeFile(process.env.CONTRAST_REPORT, JSON.stringify(report, null, 2));
     const failures = report.filter(p => p.ratio + .005 < p.minimum);
     assert.equal(failures.length, 0, `${failures.length} contrast failures:\n${failures.slice(0, 65).map(p => `${p.theme} ${p.label}: ${p.ratio.toFixed(2)} < ${p.minimum} (${p.foreground} on ${p.background})`).join('\n')}`);

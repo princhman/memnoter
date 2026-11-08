@@ -28,24 +28,38 @@ struct NSRange {
 }
 
 fn clamp(range: NSRange) -> NSRange {
-    NSRange { location: range.location, length: range.length.min(MAX_LENGTH) }
+    NSRange {
+        location: range.location,
+        length: range.length.min(MAX_LENGTH),
+    }
 }
 
 type AsyncFn = unsafe extern "C-unwind" fn(*mut AnyObject, Sel, NSRange, *mut c_void);
-type SyncFn = unsafe extern "C-unwind" fn(*mut AnyObject, Sel, NSRange, *mut NSRange) -> *mut AnyObject;
+type SyncFn =
+    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, NSRange, *mut NSRange) -> *mut AnyObject;
 
 static ASYNC_ORIGINAL: OnceLock<AsyncFn> = OnceLock::new();
 static SYNC_ORIGINAL: OnceLock<SyncFn> = OnceLock::new();
 
 // -attributedSubstringForProposedRange:completionHandler:
-unsafe extern "C-unwind" fn clamped_async(this: *mut AnyObject, cmd: Sel, range: NSRange, handler: *mut c_void) {
+unsafe extern "C-unwind" fn clamped_async(
+    this: *mut AnyObject,
+    cmd: Sel,
+    range: NSRange,
+    handler: *mut c_void,
+) {
     if let Some(original) = ASYNC_ORIGINAL.get() {
         original(this, cmd, clamp(range), handler);
     }
 }
 
 // -attributedSubstringForProposedRange:actualRange:
-unsafe extern "C-unwind" fn clamped_sync(this: *mut AnyObject, cmd: Sel, range: NSRange, actual: *mut NSRange) -> *mut AnyObject {
+unsafe extern "C-unwind" fn clamped_sync(
+    this: *mut AnyObject,
+    cmd: Sel,
+    range: NSRange,
+    actual: *mut NSRange,
+) -> *mut AnyObject {
     match SYNC_ORIGINAL.get() {
         Some(original) => original(this, cmd, clamp(range), actual),
         None => std::ptr::null_mut(),
