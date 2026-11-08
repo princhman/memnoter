@@ -116,7 +116,15 @@ impl Session {
                             None => return Ok(vec![Action::Download { id }]),
                         }
                     }
-                    let bytes = crypto::decrypt_blob(&self.key, doc, &blob)?;
+                    let bytes = match crypto::decrypt_blob(&self.key, doc, &blob) {
+                        Ok(bytes) => bytes,
+                        Err(_) => return Ok(vec![Action::Close {
+                            code: 1008,
+                            reason:
+                                "Synced data could not be decrypted. Check your sync passphrase."
+                                    .into(),
+                        }]),
+                    };
                     cursor = cursor.max(e["seq"].as_i64().ok_or("Invalid sequence")?);
                     entries.push(json!({"seq":e["seq"],"doc":doc,"bytes":bytes}));
                 }
@@ -291,6 +299,38 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn downloaded_entries_apply_before_cursor_and_wrong_keys_stop() {
+        let mut session = Session::new(&[7; 32], 4).unwrap();
+        let blob = crypto::encrypt_blob(&[7; 32], "note", b"remote").unwrap();
+        let id = contract()["blobRef"]["id"].as_str().unwrap().to_owned();
+        let mut reference = vec![2];
+        reference.extend_from_slice(id.as_bytes());
+        let frame =
+            json!({"t":"entries","entries":[{"seq":9,"doc":"note","data":B64.encode(reference)}]})
+                .to_string();
+        assert!(matches!(
+            session.frame(&frame).unwrap()[0],
+            Action::Download { .. }
+        ));
+        assert_eq!(session.cursor, 4);
+        session.blob(id, blob).unwrap();
+        let result = session.frame(&frame).unwrap();
+        let Action::Apply { entries, cursor } = &result[0] else {
+            panic!()
+        };
+        assert_eq!(*cursor, 9);
+        assert_eq!(entries[0]["bytes"], json!(b"remote"));
+        let wrong = crypto::encrypt_blob(&[8; 32], "note", b"wrong").unwrap();
+        let frame =
+            json!({"t":"entries","entries":[{"seq":10,"doc":"note","data":B64.encode(wrong)}]})
+                .to_string();
+        assert!(matches!(
+            session.frame(&frame).unwrap()[0],
+            Action::Close { code: 1008, .. }
+        ));
+        assert_eq!(session.cursor, 9);
+    }
     #[test]
     fn replay_reconnect_drops_and_ack_contract() {
         let c = contract();

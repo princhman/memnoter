@@ -34,7 +34,7 @@ struct SyncSettingsView: View {
                     TextField("Email", text: $email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("Send sign-in code") { run {
                         server = SyncConfiguration.server(server)
-                        let result = try await sync.api(server, "/v1/auth/start", method: "POST", body: ["email": email])
+                        let result = try await sync.api(server, SyncConfiguration.path("authStart"), method: "POST", body: ["email": email])
                         devCode = result["devCode"] as? String; step = 1
                     } }.disabled(email.isEmpty)
                 } else if step == 1 {

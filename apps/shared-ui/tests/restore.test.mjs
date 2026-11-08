@@ -13,9 +13,11 @@ for (const fails of [false, true]) {
     const engineDone = new Promise(r => { drainEngine = r; });
     const filesDone = new Promise(r => { drainFiles = r; });
     let epoch = 'old';
-    const account = JSON.stringify({ server: 'https://mock.local', key: [], token: 'token' });
+    const account = JSON.stringify({ server: 'https://mock.local', userId: 'user', key: [], token: 'token' });
     globalThis.syncFixture = {
       call: async command => {
+        if (command === 'sync_credentials_load') return JSON.parse(account);
+        if (command === 'sync_credentials_delete') return;
         if (command === 'sync_status') return { account, generation: epoch };
         if (command === 'sync_reconcile') return { updates: [], deleted: [] };
         if (command === 'sync_disable') return;
@@ -45,9 +47,11 @@ for (const failure of ['rejected', 'stalled']) {
   test(`restore restarts and releases serialized actions after a ${failure} drain`, async t => {
     const events = [];
     let stopped = false;
-    const account = JSON.stringify({ server: 'https://mock.local', key: [], token: 'token' });
+    const account = JSON.stringify({ server: 'https://mock.local', userId: 'user', key: [], token: 'token' });
     globalThis.syncFixture = {
       call: async command => {
+        if (command === 'sync_credentials_load') return JSON.parse(account);
+        if (command === 'sync_credentials_delete') return;
         if (command === 'sync_status') return { account, generation: 'epoch' };
         if (command === 'sync_reconcile') return { updates: [], deleted: [] };
         if (command === 'restore_backup') { events.push('restore'); return; }
@@ -102,9 +106,11 @@ for (const kind of ['upload', 'blob-body']) {
     let restored = false;
     let done = 0;
     let cursor = 0;
-    const account = JSON.stringify({ server: 'https://mock.local', key: btoa(String.fromCharCode(...new Uint8Array(32))), token: 'token' });
+    const account = JSON.stringify({ server: 'https://mock.local', userId: 'user', key: btoa(String.fromCharCode(...new Uint8Array(32))), token: 'token' });
     globalThis.syncFixture = { call: async (command, args) => {
       switch (command) {
+        case 'sync_credentials_load': return JSON.parse(account);
+        case 'sync_credentials_delete': return;
         case 'sync_status': return { account, generation: restored ? 'new' : 'old', cursor };
         case 'sync_reconcile': return { updates: [], deleted: [] };
         case 'sync_outbox': return [];

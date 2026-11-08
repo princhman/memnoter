@@ -2,7 +2,7 @@ import Foundation
 import Security
 import MemnoterCore
 
-enum SyncConfiguration {
+@MainActor enum SyncConfiguration {
     static let contract = (try! JSONSerialization.jsonObject(with: Data(syncContract().utf8))) as! [String: Any]
     static func integer(_ key: String) -> Int { contract[key] as! Int }
     static func text(_ key: String) -> String { contract[key] as! String }
@@ -166,7 +166,8 @@ struct SyncKeychain {
             account = try keychain.load()
             if let account {
                 let state = try await command("sync_status") as? [String: Any] ?? [:]
-                if let old = state["account"] as? String, old != account.userId && old != (try identity(account)) { _ = try await command("sync_disable") }
+                let storedIdentity = try identity(account)
+                if let old = state["account"] as? String, old != account.userId && old != storedIdentity { _ = try await command("sync_disable") }
                 _ = try await command("sync_enable", ["account": try identity(account)])
                 let current = try await command("sync_status") as? [String: Any] ?? [:]
                 let result = try await command("sync_reconcile", ["generation": current["generation"] ?? ""])
@@ -176,9 +177,9 @@ struct SyncKeychain {
         } catch { self.error = error.localizedDescription }
     }
     func signIn(server: String, email: String, code: String) async throws -> (String, String, Bool) {
-        let auth = try await api(server, "/v1/auth/verify", method: "POST", body: ["email": email, "code": code])
+        let auth = try await api(server, SyncConfiguration.path("authVerify"), method: "POST", body: ["email": email, "code": code])
         guard let token = auth["token"] as? String, let user = auth["userId"] as? String else { throw SyncFailure(message: "Invalid sign-in response") }
-        let info = try await api(server, "/v1/key", token: token)
+        let info = try await api(server, SyncConfiguration.path("key"), token: token)
         return (token, user, info["key"] is NSNull)
     }
     func unlock(server: String, email: String, token: String, user: String, passphrase: String) async throws {
@@ -189,7 +190,7 @@ struct SyncKeychain {
             let key = await Task.detached { nativeDeriveKey(passphrase: passphrase, salt: salt) }.value
             let check = try syncKeyCheck(key: Data(key), check: nil)
             freshKey = (Data(salt).base64EncodedString(), key)
-            info = try await api(server, "/v1/key", token: token, method: "PUT", body: ["salt": Data(salt).base64EncodedString(), "check": Data(check).base64EncodedString()])["key"] as? [String: String]
+            info = try await api(server, SyncConfiguration.path("key"), token: token, method: "PUT", body: ["salt": Data(salt).base64EncodedString(), "check": Data(check).base64EncodedString()])["key"] as? [String: String]
         }
         guard let info, let salt = Data(base64Encoded: info["salt"] ?? ""), let check = Data(base64Encoded: info["check"] ?? "") else { throw SyncFailure(message: "Invalid encryption parameters") }
         let key: [UInt8]
@@ -198,7 +199,7 @@ struct SyncKeychain {
         _ = try syncKeyCheck(key: Data(key), check: check)
         stop()
         // Switching accounts must reset the old cursor/outbox before seeding.
-        if let old = try keychain.load(), old.userId != user || old.server != server { _ = try await command("sync_disable") }
+        if let old = try keychain.load(), old.userId != user || SyncConfiguration.server(old.server) != SyncConfiguration.server(server) { _ = try await command("sync_disable") }
         let account = SyncAccount(server: SyncConfiguration.server(server), email: email, userId: user, token: token, key: key)
         try keychain.save(account)
         _ = try await command("sync_enable", ["account": try identity(account)])
@@ -231,7 +232,7 @@ struct SyncKeychain {
                     if !fatal {
                         do {
                             guard let current = account else { return }
-                            _ = try await api(current.server, "/v1/key", token: current.token)
+                            _ = try await api(current.server, SyncConfiguration.path("key"), token: current.token)
                         }
                         catch let auth as SyncHTTPFailure where auth.status == 401 { fatal = true }
                         catch { }
@@ -293,6 +294,7 @@ struct SyncKeychain {
             case "download":
                 guard let account, let id = action["id"] as? String, let frame else { throw SyncFailure(message: "Invalid download") }
                 let bytes = try await object("blobs", id, account: account)
+                guard owner == generation, !Task.isCancelled else { throw CancellationError() }
                 _ = try drive("blob", ["id": id, "bytes": Array(bytes)])
                 try await execute(drive("frame", frame), owner: owner, frame: frame)
             case "snapshot":
@@ -332,7 +334,7 @@ struct SyncKeychain {
         NotificationCenter.default.post(name: .syncDidApply, object: SyncApplyResult(json: json))
     }
     private func object(_ kind: String, _ id: String, account: SyncAccount, put: Data? = nil) async throws -> Data {
-        return try await request(server: account.server, path: "/v1/\(kind)/\(id)", token: account.token, method: put == nil ? "GET" : "PUT", body: put, binary: true)
+        return try await request(server: account.server, path: SyncConfiguration.path(kind) + id, token: account.token, method: put == nil ? "GET" : "PUT", body: put, binary: true)
     }
     private func push() async throws {
         let state = try await command("sync_status") as? [String: Any] ?? [:]; pending = state["pending"] as? Int ?? 0

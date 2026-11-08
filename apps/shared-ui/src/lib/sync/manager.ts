@@ -296,6 +296,12 @@ async function loadAndRun() {
 // Turns sync on, or signs in again with a fresh token.
 export function enableSync(account: SyncAccount) {
   return serially(async () => {
+    account = { ...account, server: account.server.replace(/\/+$/, "") };
+    const previous = await invoke<SyncStatusResponse>("sync_status");
+    if (previous.account) {
+      const identity = JSON.parse(previous.account) as Pick<SyncAccount, "server" | "userId">;
+      if (identity.server !== account.server || identity.userId !== account.userId) await invoke("sync_disable");
+    }
     await invoke("sync_credentials_save", { account });
     await invoke("sync_enable", { account: JSON.stringify({ server: account.server.replace(/\/+$/, ""), userId: account.userId }) });
     await run(account);

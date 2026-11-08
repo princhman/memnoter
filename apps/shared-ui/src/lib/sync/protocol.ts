@@ -62,8 +62,8 @@ export const CLOSE_SIGNED_OUT = contract.closeSignedOut;
 // one byte 2 and the 32 hex characters of its id, unencrypted, so the server
 // can delete the object when the entry is compacted or dropped. Encrypted
 // blobs always start with byte 1.
-const BLOB_REF_FORMAT = 2;
-const BLOB_REF_LENGTH = 33;
+const BLOB_REF_FORMAT = contract.blobRef.format;
+const BLOB_REF_LENGTH = contract.blobRef.length;
 
 export function makeBlobRef(id: string): Uint8Array {
   if (!isValidBlobId(id)) throw new Error("Invalid blob id");
