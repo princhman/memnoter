@@ -20,9 +20,11 @@ import Suggestion, {
   type Trigger,
 } from "@tiptap/suggestion";
 import katex from "katex";
+import { groupMathScripts } from "@/lib/latex-render";
 import { searchLatex, type LatexEntry } from "@/lib/latex-symbols";
 import { useActiveDescendant } from "@/hooks/use-active-descendant";
 import { cn } from "@/lib/utils";
+import { findInlineMathOpening } from "@/lib/inline-math";
 
 const MATH_NODES = new Set(["inlineMath", "mathBlock"]);
 const USAGE_KEY = "latex-usage";
@@ -83,15 +85,28 @@ function insertEntry(editor: Editor, range: Range, entry: LatexEntry) {
       .run();
     return;
   }
-  // In prose the command becomes a new inline formula.
+  const $from = editor.state.doc.resolve(range.from);
+  const opening = findInlineMathOpening($from);
+  const after = $from.parent.textBetween(
+    range.to - $from.start(), $from.parent.content.size, "\n", "\ufffc",
+  );
+  // Only reuse a single, unescaped closing dollar on this line.
+  const closing = opening ? /^(?:\\[^\n]|[^$\\\n\ufffc])*?(?<!\$)\$(?!\$)/.exec(after) : null;
+  const suffix = closing ? closing[0].slice(0, -1) : "";
+  const tex = (opening?.tex ?? "") + insert + suffix;
+  const replaceRange = {
+    from: opening?.from ?? range.from,
+    to: range.to + (closing?.[0].length ?? 0),
+  };
+  // In prose the command becomes a new inline formula, reusing typed dollars.
   editor
     .chain()
     .focus()
-    .deleteRange(range)
-    .insertInlineMath(insert)
+    .deleteRange(replaceRange)
+    .insertInlineMath(tex)
     .command(({ tr }) => {
       const end = tr.selection.from;
-      tr.setSelection(TextSelection.create(tr.doc, end - insert.length + caret));
+      tr.setSelection(TextSelection.create(tr.doc, end - suffix.length - insert.length + caret));
       return true;
     })
     .run();
@@ -172,8 +187,9 @@ export const LatexSuggest = Extension.create<
           }),
         command: ({ editor, range, props: entry }) => {
           recordUse(entry);
-          // From prose the source starts one step later, inside the new formula.
-          const from = inMath(editor.state, range.from) ? range.from : range.from + 1;
+          // A new formula adds a node boundary; an existing opening dollar already occupies it.
+          const from = inMath(editor.state, range.from) || findInlineMathOpening(editor.state.doc.resolve(range.from))
+            ? range.from : range.from + 1;
           storage.accepted = { from, text: entry.insert };
           insertEntry(editor, range, entry);
         },
@@ -212,7 +228,7 @@ function renderIcon(tex: string, displayMode = false) {
   const key = `${displayMode ? "D" : "T"}${tex}`;
   let html = iconCache.get(key);
   if (html === undefined) {
-    html = katex.renderToString(tex, { throwOnError: false, displayMode });
+    html = katex.renderToString(groupMathScripts(tex), { throwOnError: false, displayMode });
     iconCache.set(key, html);
   }
   return html;
