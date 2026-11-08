@@ -44,7 +44,7 @@ function EditorContextMenu({ editor, options, x, y, close }: ContextMenuProps) {
     editor.view.dom.ownerDocument.execCommand(command);
   };
   return (
-    <div ref={root} data-editor-context-menu="" className={`${surfaceClass} fixed z-50 w-56 py-1`}
+    <div ref={root} data-editor-context-menu="" className={`${surfaceClass} fixed z-50 flex w-56 flex-col py-1`}
       style={{ left: x, top: y, maxHeight: "100vh", overflowY: "auto" }}
       onKeyDown={event => {
         if (event.key === "Escape") {
@@ -55,7 +55,7 @@ function EditorContextMenu({ editor, options, x, y, close }: ContextMenuProps) {
         }
         event.stopPropagation();
       }}>
-      <div className="mx-2 mb-1 flex items-center gap-0.5">
+      <div className="mx-2 mb-1 flex shrink-0 items-center gap-0.5">
         <input ref={input} role="combobox" aria-autocomplete="list" aria-expanded={items.length > 0} aria-label="Filter insert commands" placeholder="Search actions…"
           className="min-w-0 flex-1 px-1 py-1 text-sm"
           value={query} onChange={event => setQuery(event.target.value)} />

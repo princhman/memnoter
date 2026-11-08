@@ -4,7 +4,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "node --experimental-strip-types --import ./tests/support/register.mjs --test --test-concurrency=2 tests/*.test.mjs",
+    "test": "node --experimental-strip-types --import ./tests/support/register.mjs --test --test-concurrency=2 tests/*.test.mjs && node --experimental-strip-types --import ./tests/support/register.mjs --test tests/copy-large-note.bench.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

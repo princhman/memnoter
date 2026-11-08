@@ -18,7 +18,10 @@ test("Mermaid source opens with arrows and clicks, previews edits, and recovers 
     await preview.locator("svg").waitFor();
     assert.equal(await source.isVisible(), false);
     assert.equal(await page.locator("pre code.language-js").textContent(), "const answer = 42;");
-    await page.evaluate(() => window.editor.commands.focus(7));
+    await page.evaluate(() => {
+      window.editor.commands.setTextSelection(7);
+      window.editor.view.focus();
+    });
     await page.keyboard.press("ArrowRight");
     assert.equal(await source.isVisible(), true);
     await page.keyboard.press("Escape");
