@@ -1,4 +1,5 @@
 import { browserHarness } from "./support/browser.mjs";
+import { installReviewHost } from "./support/review-host.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -12,32 +13,7 @@ test('WK review host scrolls long questions and revealed answers within its view
     await server.listen();
     browser = await webkit.launch();
     const page = await browser.newPage({ viewport: { width: 390, height: 600 } });
-    await page.addInitScript(() => {
-      window.__states = [];
-      window.__writes = [];
-      window.installTestBridge({ native: message => {
-        if (message.kind === 'event') {
-          if (message.event === 'reviewState') window.__states.push(message.payload);
-          return;
-        }
-        let value = null;
-        if (message.command === 'review_card' || message.command === 'undo_review') {
-          window.__writes.push(message.command);
-          Object.assign(window.__card, message.args.card ?? message.args.previous);
-        }
-        if (message.command === 'due_cards') value = window.__card ? [structuredClone(window.__card)] : [];
-        if (['unindexed_modules', 'unindexed_card_modules'].includes(message.command)) value = [];
-        queueMicrotask(() => window.__memnoterBridge.resolve(message.id, value));
-      } });
-      window.loadCard = async (card, revealed) => {
-        window.__card = { moduleId: card.id, moduleName: '', section: [],
-          dueAt: Date.now() - 60000, stability: 0, stabilityFast: 0, difficulty: 0,
-          scheduledDays: 0, learningStep: 0, state: 0, scheduleStatus: 'new',
-          lastReviewAt: null, lapses: 0, fsrsModel: null, ...card };
-        await window.memnoterReview.load(card.id + card.reps);
-        if (revealed) window.memnoterReview.reveal();
-      };
-    });
+    await page.addInitScript(installReviewHost);
     await page.goto(`http://localhost:${server.httpServer.address().port}/review-native.html`);
     await page.waitForFunction(() => window.memnoterReview);
     // The same mounted WK host must follow appearance changes without reloading.

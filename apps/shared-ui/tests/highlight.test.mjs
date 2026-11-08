@@ -1,4 +1,5 @@
 import { browserHarness } from "./support/browser.mjs";
+import { installReviewHost } from "./support/review-host.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -74,9 +75,10 @@ test("highlight picker, syntax, bridge and old-schema compatibility", async () =
     assert.equal(await page.locator('.tiptap mark[data-color="blue"] .inline-math-widget').count(), 1);
     assert.equal(await page.locator('.tiptap mark[data-color="green"] .cloze-text, .tiptap .cloze-text mark[data-color="green"], .tiptap mark.cloze-text[data-color="green"]').count(), 1);
     const review = await browser.newPage();
+    await review.addInitScript(installReviewHost);
     await review.goto(`http://localhost:${server.httpServer.address().port}/review-native.html`);
     await review.waitForFunction(() => window.memnoterReview);
-    await review.evaluate(card => window.memnoterReview.show({ ...card, reps: 0 }, true), card);
+    await review.evaluate(card => window.loadCard({ ...card, reps: 0 }, true), card);
     await review.locator('.card-face mark[data-color="green"]').waitFor();
     assert.equal(await review.locator('.card-face [data-color="blue"] .katex').count(), 1);
     const backgrounds = [];
