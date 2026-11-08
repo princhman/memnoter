@@ -14,7 +14,7 @@ import { getObject, isTokenValid, putObject, wipeCloudData, type SyncAccount } f
 import { importKey } from "./crypto";
 import { createFileSync, type FileSync } from "./files";
 import { setSyncedFileHandler } from "./file-requests";
-import { AUTH_PROTOCOL_PREFIX, SYNC_PROTOCOL } from "./protocol";
+import { AUTH_PROTOCOL_PREFIX, SYNC_PROTOCOL, SYNC_CONTRACT } from "./protocol";
 import {
   createSyncEngine,
   type BlobStore,
@@ -111,7 +111,7 @@ function blobStore(account: SyncAccount, signal: AbortSignal): BlobStore {
 }
 
 function socketUrl(server: string) {
-  return `${server.replace(/\/+$/, "").replace(/^http/, "ws")}/v1/sync`;
+  return `${server.replace(/\/+$/, "").replace(/^http/, "ws")}${SYNC_CONTRACT.paths.sync}`;
 }
 
 function browserSocket(account: SyncAccount, onUnauthorized: () => void, signal: AbortSignal) {
@@ -158,11 +158,10 @@ function publicAccount(account: SyncAccount): SyncUiStatus["account"] {
 async function readAccount(): Promise<SyncAccount | null> {
   const { account } = await invoke<SyncStatusResponse>("sync_status");
   if (!account) return null;
-  try {
-    return JSON.parse(account) as SyncAccount;
-  } catch {
-    return null;
-  }
+  const identity = JSON.parse(account) as Pick<SyncAccount, "server" | "userId">;
+  const secrets = await invoke<SyncAccount | null>("sync_credentials_load");
+  if (!secrets || secrets.server !== identity.server || secrets.userId !== identity.userId) return null;
+  return secrets;
 }
 
 async function run(account: SyncAccount) {
@@ -259,6 +258,7 @@ function stopEngine() {
 async function signedOut(message: string | null) {
   await stopEngine();
   await invoke("sync_disable");
+  await invoke("sync_credentials_delete");
   syncStatusStore.setState(() => ({
     account: null,
     loaded: true,
@@ -296,7 +296,14 @@ async function loadAndRun() {
 // Turns sync on, or signs in again with a fresh token.
 export function enableSync(account: SyncAccount) {
   return serially(async () => {
-    await invoke("sync_enable", { account: JSON.stringify(account) });
+    account = { ...account, server: account.server.replace(/\/+$/, "") };
+    const previous = await invoke<SyncStatusResponse>("sync_status");
+    if (previous.account) {
+      const identity = JSON.parse(previous.account) as Pick<SyncAccount, "server" | "userId">;
+      if (identity.server !== account.server || identity.userId !== account.userId) await invoke("sync_disable");
+    }
+    await invoke("sync_credentials_save", { account });
+    await invoke("sync_enable", { account: JSON.stringify({ server: account.server.replace(/\/+$/, ""), userId: account.userId }) });
     await run(account);
   });
 }

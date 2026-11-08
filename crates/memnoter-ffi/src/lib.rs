@@ -134,3 +134,98 @@ mod tests {
         assert_eq!(modules[0]["name"], "日本語 \"Notes\"");
     }
 }
+
+/// Ordered JSON actions keep the transport interface identical to dispatch.
+/// Hosts must serialize calls and discard this object after a failed action.
+#[derive(uniffi::Object)]
+pub struct SyncSession(std::sync::Mutex<memnoter_core::sync::session::Session>);
+#[uniffi::export]
+impl SyncSession {
+    #[uniffi::constructor]
+    pub fn new(key: Vec<u8>, cursor: i64) -> Result<Arc<Self>, MemnoterError> {
+        Ok(Arc::new(Self(std::sync::Mutex::new(
+            memnoter_core::sync::session::Session::new(&key, cursor)?,
+        ))))
+    }
+    pub fn drive(&self, event: String, payload: String) -> Result<String, MemnoterError> {
+        use memnoter_core::sync::session::Action;
+        let mut s = self.0.lock().map_err(|e| MemnoterError::Storage {
+            message: e.to_string(),
+        })?;
+        let v: serde_json::Value =
+            serde_json::from_str(&payload).map_err(|e| MemnoterError::Storage {
+                message: e.to_string(),
+            })?;
+        let actions: Vec<Action> = match event.as_str() {
+            "hello" => {
+                if let Some(cursor) = v["cursor"].as_i64() {
+                    s.reset_cursor(cursor);
+                }
+                s.hello()
+            }
+            "frame" => s.frame(v.as_str().ok_or_else(|| MemnoterError::Storage {
+                message: "Expected frame string".into(),
+            })?)?,
+            "push" => s.push(
+                serde_json::from_value(v).map_err(|e| MemnoterError::Storage {
+                    message: e.to_string(),
+                })?,
+            )?,
+            "blob" => {
+                s.blob(
+                    v["id"].as_str().unwrap_or_default().into(),
+                    serde_json::from_value(v["bytes"].clone()).map_err(|e| {
+                        MemnoterError::Storage {
+                            message: e.to_string(),
+                        }
+                    })?,
+                )?;
+                vec![]
+            }
+            "compact" => s.compact(
+                v["doc"].as_str().unwrap_or_default(),
+                v["cursor"].as_i64().unwrap_or_default(),
+                serde_json::from_value(v["bytes"].clone()).map_err(|e| MemnoterError::Storage {
+                    message: e.to_string(),
+                })?,
+            )?,
+            "tick" => s.tick(),
+            "closed" => s.closed(
+                v["code"].as_u64().unwrap_or_default() as u16,
+                v["reason"].as_str().unwrap_or_default().into(),
+            ),
+            _ => {
+                return Err(MemnoterError::Storage {
+                    message: "Unknown session event".into(),
+                })
+            }
+        };
+        serde_json::to_string(&actions).map_err(|e| MemnoterError::Storage {
+            message: e.to_string(),
+        })
+    }
+}
+#[uniffi::export]
+pub fn sync_contract() -> String {
+    memnoter_core::sync::session::contract().to_string()
+}
+#[uniffi::export]
+pub fn sync_new_salt() -> Vec<u8> {
+    memnoter_core::sync::crypto::new_salt().to_vec()
+}
+#[uniffi::export]
+pub fn sync_key_check(key: Vec<u8>, check: Option<Vec<u8>>) -> Result<Vec<u8>, MemnoterError> {
+    let key: [u8; 32] = key.try_into().map_err(|_| MemnoterError::Storage {
+        message: "Expected 256-bit key".into(),
+    })?;
+    if let Some(check) = check {
+        if !memnoter_core::sync::crypto::verify_key_check(&key, &check) {
+            return Err(MemnoterError::Storage {
+                message: "That passphrase doesn't match the one set for this account.".into(),
+            });
+        }
+        Ok(vec![])
+    } else {
+        memnoter_core::sync::crypto::make_key_check(&key).map_err(Into::into)
+    }
+}

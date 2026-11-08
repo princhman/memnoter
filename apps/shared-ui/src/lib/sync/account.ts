@@ -1,6 +1,7 @@
 // Talks to the sync server's HTTP API: email sign-in and the encryption
 // parameters. The passphrase and the derived key never leave the device.
 
+import { SYNC_CONTRACT } from "./protocol";
 import { syncRequest, transferTimeout, readTransfer } from "./http";
 import { deriveKey, exportKey, makeKeyCheck, newSalt, verifyKeyCheck } from "./crypto";
 
@@ -9,14 +10,14 @@ export type SyncAccount = {
   email: string;
   userId: string;
   token: string;
-  // The raw AES key, base64. Stored locally next to the plaintext notes.
+  // The raw AES key, base64. Persisted only in the OS credential store.
   key: string;
 };
 
 type KeyInfo = { salt: string; check: string };
 
 export const DEFAULT_SYNC_SERVER: string =
-  import.meta.env.VITE_SYNC_SERVER ?? (import.meta.env.DEV ? "http://localhost:8787" : "https://sync.memnoter.com");
+  import.meta.env.VITE_SYNC_SERVER ?? (import.meta.env.DEV ? "http://localhost:8787" : SYNC_CONTRACT.defaultServer);
 
 export class SyncApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -41,15 +42,15 @@ async function api<T>(server: string, path: string, init: { method?: string; bod
 
 // In development the server returns the code instead of emailing it.
 export function startSignIn(server: string, email: string) {
-  return api<{ ok: true; devCode?: string }>(server, "/v1/auth/start", { body: { email } });
+  return api<{ ok: true; devCode?: string }>(server, SYNC_CONTRACT.paths.authStart, { body: { email } });
 }
 
 export function verifySignIn(server: string, email: string, code: string) {
-  return api<{ token: string; userId: string; email: string }>(server, "/v1/auth/verify", { body: { email, code } });
+  return api<{ token: string; userId: string; email: string }>(server, SYNC_CONTRACT.paths.authVerify, { body: { email, code } });
 }
 
 export async function getKeyInfo(server: string, token: string, signal?: AbortSignal) {
-  return (await api<{ key: KeyInfo | null }>(server, "/v1/key", { token, signal })).key;
+  return (await api<{ key: KeyInfo | null }>(server, SYNC_CONTRACT.paths.key, { token, signal })).key;
 }
 
 // Whether the token still works; false only when the server says it doesn't.
@@ -64,7 +65,7 @@ export async function isTokenValid(server: string, token: string, signal?: Abort
 
 // Encrypted images ("files") and log blobs too large for the log ("blobs").
 export async function putObject(server: string, token: string, kind: "files" | "blobs", id: string, bytes: Uint8Array, signal?: AbortSignal) {
-  return syncRequest(`${server.replace(/\/+$/, "")}/v1/${kind}/${id}`, {
+  return syncRequest(`${server.replace(/\/+$/, "")}${SYNC_CONTRACT.paths[kind]}${id}`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream" },
     body: bytes,
@@ -77,7 +78,7 @@ export async function putObject(server: string, token: string, kind: "files" | "
 
 // null when the server has no such object (yet).
 export async function getObject(server: string, token: string, kind: "files" | "blobs", id: string, signal?: AbortSignal) {
-  return syncRequest(`${server.replace(/\/+$/, "")}/v1/${kind}/${id}`, {
+  return syncRequest(`${server.replace(/\/+$/, "")}${SYNC_CONTRACT.paths[kind]}${id}`, {
     headers: { Authorization: `Bearer ${token}` },
   }, async (response, progress, requestSignal) => {
     const bytes = await readTransfer(response, progress, requestSignal);
@@ -88,7 +89,7 @@ export async function getObject(server: string, token: string, kind: "files" | "
 }
 
 export function wipeCloudData(server: string, token: string, signal?: AbortSignal) {
-  return api(server, "/v1/vault", { method: "DELETE", token, signal });
+  return api(server, SYNC_CONTRACT.paths.vault, { method: "DELETE", token, signal });
 }
 
 // The first device creates the salt and check value; later devices must
@@ -99,7 +100,7 @@ export async function unlockKey(server: string, token: string, passphrase: strin
     const salt = newSalt();
     const key = await deriveKey(passphrase, salt);
     const proposed = { salt, check: await makeKeyCheck(key) };
-    info = (await api<{ key: KeyInfo }>(server, "/v1/key", { method: "PUT", body: proposed, token })).key;
+    info = (await api<{ key: KeyInfo }>(server, SYNC_CONTRACT.paths.key, { method: "PUT", body: proposed, token })).key;
     if (info.salt === salt) return exportKey(key);
   }
   const key = await deriveKey(passphrase, info.salt);

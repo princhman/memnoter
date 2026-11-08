@@ -309,3 +309,49 @@ fn dispatch_errors_have_stable_codes_and_user_visible_messages() {
         json!({"code":"storage","message":"Unknown command: absent"})
     );
 }
+
+#[test]
+fn sync_identity_scrubs_secrets_before_backup_and_preserves_outbox() {
+    let f = Fixture::new();
+    let account = json!({"server":"https://sync.example/","userId":"u", "key":"RAW_KEY_SENTINEL_93746", "token":"RAW_TOKEN_SENTINEL_93746"}).to_string();
+    f.call("sync_enable", json!({"account":account}));
+    let before = f.call("sync_status", json!({}));
+    f.call(
+        "sync_set_cursor",
+        json!({"cursor":42,"generation":before["generation"]}),
+    );
+    f.call(
+        "sync_enable",
+        json!({"account":json!({"server":"https://sync.example","userId":"u"}).to_string()}),
+    );
+    let after = f.call("sync_status", json!({}));
+    assert_eq!(after["cursor"], 42);
+    assert_eq!(after["pending"], before["pending"]);
+    let identity: Value = serde_json::from_str(after["account"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        identity,
+        json!({"server":"https://sync.example","userId":"u"})
+    );
+    f.call("backup_now", json!({}));
+    fn inspect(dir: &std::path::Path) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                inspect(&path);
+            } else {
+                let bytes = std::fs::read(&path).unwrap();
+                for secret in [
+                    b"RAW_KEY_SENTINEL_93746".as_slice(),
+                    b"RAW_TOKEN_SENTINEL_93746".as_slice(),
+                ] {
+                    assert!(
+                        !bytes.windows(secret.len()).any(|window| window == secret),
+                        "Secret in {}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+    inspect(&f.dir.join("backups"));
+}

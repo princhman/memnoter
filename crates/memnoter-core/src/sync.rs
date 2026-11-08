@@ -20,6 +20,7 @@
 //! Nothing is recorded while sync is off; turning it on seeds the outbox with
 //! everything stored locally.
 pub mod crypto;
+pub mod session;
 
 use crate::{db_err, delete_module_data, CommandResult, ContentUpdate, Db};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -705,10 +706,19 @@ pub(crate) fn status(conn: &Connection) -> CommandResult<SyncStatus> {
     })
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AccountIdentity { server: String, #[serde(rename = "userId")] user_id: String }
+fn account_identity(raw: &str) -> String {
+    match serde_json::from_str::<AccountIdentity>(raw) {
+        Ok(mut identity) => { identity.server = identity.server.trim_end_matches('/').to_owned(); serde_json::to_string(&identity).unwrap() }
+        Err(_) => raw.to_owned(), // pre-identity native rows migrate at host startup
+    }
+}
+
 fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     let was_enabled = is_enabled(&tx)?;
-    set_value(&tx, "account", account)?;
+    set_value(&tx, "account", account_identity(account))?;
     rotate_generation(&tx)?;
     if !was_enabled {
         set_value(&tx, "cursor", 0)?;
@@ -718,32 +728,19 @@ fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
 }
 
 /// A snapshot owns notes, but must not change the device's signed-in account.
-/// Desktop stores account JSON; iOS stores the Keychain user ID.
+/// Both hosts persist only the server and user ID.
 pub(crate) fn reconcile_restored_account(
     conn: &mut Connection,
     current: Option<&str>,
 ) -> CommandResult<()> {
     let restored = get_value::<String>(conn, "account")?;
-    let same = match (restored.as_deref(), current) {
-        (Some(a), Some(b)) if a == b => true,
-        (Some(a), Some(b)) => {
-            let identity = |raw: &str| {
-                let value: serde_json::Value = serde_json::from_str(raw).ok()?;
-                Some((
-                    value.get("server")?.as_str()?.to_owned(),
-                    value.get("userId")?.as_str()?.to_owned(),
-                ))
-            };
-            identity(a).is_some() && identity(a) == identity(b)
-        }
-        _ => false,
-    };
+    let same = restored.as_deref().map(account_identity) == current.map(account_identity) && current.is_some();
     let tx = conn.transaction().map_err(db_err)?;
     if !same {
         disable(&tx)?;
     }
     if let Some(account) = current {
-        set_value(&tx, "account", account)?;
+        set_value(&tx, "account", account_identity(account))?;
         if !same {
             set_value(&tx, "cursor", 0)?;
             seed(&tx)?;

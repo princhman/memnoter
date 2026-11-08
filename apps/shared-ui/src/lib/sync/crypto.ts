@@ -6,14 +6,14 @@
 // document id is authenticated data, so the server cannot move a blob from one
 // note into another without decryption failing.
 
-import { fromBase64, toBase64 } from "./protocol";
+import { fromBase64, toBase64, SYNC_CONTRACT } from "./protocol.ts";
 
 const FORMAT = 1;
 const IV_BYTES = 12;
 // OWASP's 2023+ recommendation for PBKDF2-HMAC-SHA256.
 const PBKDF2_ITERATIONS = 600_000;
-const CHECK_DOC = "key-check";
-const CHECK_TEXT = "memnoter-key-check";
+const CHECK_DOC = SYNC_CONTRACT.keyCheck.doc;
+const CHECK_TEXT = SYNC_CONTRACT.keyCheck.text;
 
 const encoder = new TextEncoder();
 

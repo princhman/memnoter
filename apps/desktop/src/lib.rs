@@ -6,6 +6,7 @@ mod import_folder;
 mod menu;
 #[cfg(target_os = "macos")]
 mod selection_limit;
+mod sync_credentials;
 #[derive(Default)]
 struct ExitGate(AtomicBool);
 #[tauri::command]
@@ -30,6 +31,18 @@ async fn core(
 ) -> Result<serde_json::Value, CoreError> {
     let core = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        match command.as_str() {
+            "sync_credentials_save" => {
+                sync_credentials::save(&core, &args["account"])?;
+                return Ok(serde_json::Value::Null);
+            }
+            "sync_credentials_load" => return sync_credentials::load(&core),
+            "sync_credentials_delete" => {
+                sync_credentials::delete(&core)?;
+                return Ok(serde_json::Value::Null);
+            }
+            _ => {}
+        }
         let result = memnoter_core::dispatch(&core, &command, &args.to_string())?;
         serde_json::from_str(&result).map_err(|e| CoreError::Storage(e.to_string()))
     })
@@ -76,6 +89,7 @@ pub fn run() {
                     selection_limit::limit_attributed_substrings(webview.inner())
                 })?;
             }
+            sync_credentials::migrate(&core)?;
             let handle = app.handle().clone();
             core.set_outbox_callback(std::sync::Arc::new(move || {
                 if let Err(error) = handle.emit(memnoter_core::sync::OUTBOX_EVENT, ()) {

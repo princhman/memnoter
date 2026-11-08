@@ -1,3 +1,4 @@
+import { PASSPHRASE_MIN_LENGTH as MIN_PASSPHRASE } from "@/lib/sync/protocol";
 import { useState, type FormEvent } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,7 @@ import {
   type SyncUiStatus,
 } from "@/lib/sync/manager";
 
-const MIN_PASSPHRASE = 10;
+
 
 type Step =
   | { kind: "email" }
