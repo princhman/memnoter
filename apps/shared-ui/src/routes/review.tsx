@@ -6,10 +6,9 @@ import { CardFace } from "@/components/card-face";
 import { flushCardSyncs } from "@/lib/card-sync";
 import { formatInterval, GRADES } from "@/lib/fsrs";
 import { cn } from "@/lib/utils";
-import { listen } from "../lib/backend.ts";
 import { blockIdOf } from "@/lib/cards";
 import { requestCardReveal } from "@/lib/card-reveal";
-import { setNativeEditorHistory } from "@/lib/native-history";
+import { useNativeHistory } from "@/lib/native-history";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { useReviewSession } from "@/lib/use-review-session";
 import { GRADE_STYLES } from "@/lib/review-palette";
@@ -73,25 +72,11 @@ function Review() {
   useEffect(() => () => reviewActionsStore.setState(() => null), []);
 
   // The app menu's Undo and Redo, and ⌘Z and ⌘⇧Z, act on grades here.
-  useEffect(() => {
-    const update = () => setNativeEditorHistory(!isTypingInField());
-    update();
-    document.addEventListener("focusin", update);
-    document.addEventListener("focusout", update);
-    let disposed = false;
-    const unlisten = listen<string>("menu", ({ payload }) => {
-      if (disposed || isTypingInField()) return;
-      if (payload === "editor-undo") void actions.current.undo();
-      if (payload === "editor-redo") void actions.current.redo();
-    });
-    return () => {
-      disposed = true;
-      document.removeEventListener("focusin", update);
-      document.removeEventListener("focusout", update);
-      setNativeEditorHistory(false);
-      void unlisten.then((stop) => stop()).catch(console.error);
-    };
-  }, []);
+  useNativeHistory({
+    enabled: () => !isTypingInField(),
+    undo: () => actions.current.undo(),
+    redo: () => actions.current.redo(),
+  }, true);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

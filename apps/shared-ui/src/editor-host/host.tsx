@@ -1,3 +1,6 @@
+import { editorHost } from "@/lib/editor-host";
+import { settled } from "@/lib/async-work";
+import { EditorHostProvider } from "@/lib/editor-host-context";
 import { BRIDGE_VERSION, EXEC_COMMANDS } from "./protocol";
 import { onRemote, onFileStored } from "@/lib/sync/apply-remote";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -72,17 +75,17 @@ export function Host() {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
           if (active.current?.moduleId === id && active.current.isReady) return;
           flushPersistedViews();
-          await flushAll({ timeoutMs: 3_000 });
+          await flushAll();
           await new Promise<void>((resolve, reject) => {
             opening.current = { moduleId: id, resolve, reject };
             setModuleId(id);
           });
         }).catch(error => { throw fail(error); });
-        queue = operation.catch(() => {});
+        queue = settled(operation);
         return operation;
       },
       async flush() {
-        try { flushPersistedViews(); await flushAll({ timeoutMs: 3_000 }); }
+        try { flushPersistedViews(); await flushAll(); }
         catch (error) { throw fail(error); }
       },
       exec(command, args) {
@@ -214,5 +217,5 @@ export function Host() {
     };
   }, [activeEditor]);
 
-  return <main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} hostOnly />}</main>;
+  return <EditorHostProvider value={editorHost}><main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} />}</main></EditorHostProvider>;
 }

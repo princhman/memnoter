@@ -124,7 +124,7 @@ export async function exclusiveWrite<T>(action: () => Promise<T>, work?: Exclusi
   let completed = false;
   try {
     await settleWork(discard, work?.kind === "exit" && work.unsaved === "retry");
-    if (!discard) await flushAll({ timeoutMs: 3_000, permit: drainPermit });
+    if (!discard) await flushAll({ permit: drainPermit });
     await saveQueue.suspend();
     suspended = true;
     await drainMutations(work?.kind === "restore" ? MUTATIONS.restoreBackup : work?.kind === "delete" ? MUTATIONS.deleteModule : undefined);
@@ -178,18 +178,10 @@ export function registerFlusher(name: string, fn: (permit?: WritePermit) => Prom
   return () => { if (flushers.get(name) === fn) flushers.delete(name); };
 }
 
-export async function flushAll({ timeoutMs = 3_000, permit }: { timeoutMs?: number; permit?: WritePermit } = {}) {
+export async function flushAll({ permit }: { permit?: WritePermit } = {}) {
   if (permit !== drainPermit) assertWritable();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      (async () => {
-        await settleWork();
-        for (const flush of flushers.values()) await flush(permit);
-        if (!await flushSaves(timeoutMs)) throw new Error("Pending edits could not be saved. Please retry saving first.");
-        await drainMutations(undefined, true);
-      })(),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Timed out saving pending writes.")), timeoutMs); }),
-    ]);
-  } finally { clearTimeout(timer); }
+  await settleWork();
+  for (const flush of flushers.values()) await flush(permit);
+  if (!await flushSaves()) throw new Error("Pending edits could not be saved. Please retry saving first.");
+  await drainMutations(undefined, true);
 }

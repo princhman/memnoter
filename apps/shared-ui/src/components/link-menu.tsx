@@ -1,7 +1,7 @@
 import { ToolButton } from "./ui/tool-button";
 import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { TextSelection } from "@tiptap/pm/state";
@@ -158,13 +158,9 @@ function LinkField({
   const input = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
 
-  // The menu is shown before it has its final position; wait a frame.
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.select();
-    });
-    return () => cancelAnimationFrame(frame);
+  useLayoutEffect(() => {
+    input.current?.focus({ preventScroll: true });
+    input.current?.select();
   }, []);
 
   return (

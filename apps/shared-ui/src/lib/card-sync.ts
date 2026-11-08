@@ -1,3 +1,4 @@
+import { settled } from "@/lib/async-work";
 import { writeCards } from "@/lib/card-writes";
 import { isWriteAdmitted, registerFlusher, type WritePermit } from "@/lib/write-lifecycle";
 import { createEditorWriteSync } from "@/lib/editor-write-sync";
@@ -73,7 +74,7 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
       });
     lastWrite = write;
     editorSync.track(write);
-    queue = write.catch(() => {});
+    queue = settled(write);
     return write;
   };
 
@@ -83,7 +84,7 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
   };
   const debounce = editorSync.attach(flush);
   const schedule = debounce.schedule;
-  void sync().catch(() => {});
+  void settled(sync());
   editor.on("update", schedule);
 
   const stop = () => {

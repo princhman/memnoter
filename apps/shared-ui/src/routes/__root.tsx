@@ -1,3 +1,4 @@
+import { isShowingModule } from "@/lib/open-module";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
@@ -66,9 +67,7 @@ const RootLayout = () => {
   useEffect(() => {
     const leave = (event: Event) => {
       const moduleId = (event as CustomEvent<string>).detail;
-      const showing = router.state.matches.some(
-        (match) => "moduleId" in match.params && match.params.moduleId === moduleId,
-      );
+      const showing = isShowingModule(router.state.matches, moduleId);
       if (showing) void router.navigate({ to: "/", replace: true });
     };
     window.addEventListener(MODULE_DELETED_REMOTELY_EVENT, leave);
@@ -102,7 +101,7 @@ const RootLayout = () => {
           }
         >
           <AppSidebar />
-          <CreateModule global />
+          <CreateModule />
 
           <SidebarInset className="min-h-0 overflow-hidden">
             {/* Tauri's deep region includes noninteractive breadcrumb wrappers,

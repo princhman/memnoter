@@ -1,3 +1,4 @@
+import { settled } from "@/lib/async-work";
 import type { WritePermit } from "@/lib/write-lifecycle";
 
 // Both derived indexes share debounce ownership and retain writes started by
@@ -8,7 +9,7 @@ export function createEditorWriteSync(delay: number) {
   return {
     track<T>(write: Promise<T>) {
       pending.add(write);
-      void write.finally(() => pending.delete(write)).catch(() => {});
+      void settled(write).then(() => pending.delete(write));
       return write;
     },
     async flush(permit?: WritePermit) {

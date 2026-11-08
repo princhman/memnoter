@@ -15,7 +15,7 @@ export function useBackupNow() {
       if (blocked() || queryClient.isMutating({ mutationKey: [MUTATIONS.backupNow] }) > 1) {
         throw new Error("A backup or restore is already in progress.");
       }
-      await flushAll({ timeoutMs: 3_000 });
+      await flushAll();
       if (blocked()) throw new Error("Restore is in progress.");
       return invoke<Backup>("backup_now");
     },

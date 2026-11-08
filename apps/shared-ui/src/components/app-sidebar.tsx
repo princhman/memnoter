@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
-import CreateModule from "./create-module";
+import { CreateModuleButton } from "./create-module";
 import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
@@ -160,7 +160,7 @@ const AppSidebar = () => {
         </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
-          <CreateModule />
+          <CreateModuleButton />
 
           {isPending && <div>Loading...</div>}
           {error && <div>Error: {error.message}</div>}

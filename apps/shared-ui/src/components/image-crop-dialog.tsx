@@ -1,3 +1,4 @@
+import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { HANDLES, moveBox, resizeBox, type Box, type Handle } from "@/lib/box";
 import { Button } from "./ui/button";
@@ -50,9 +51,9 @@ export function CropDialog({ image, onCancel, onSave }: {
   const uncropped = crop.x === 0 && crop.y === 0 && crop.width === 1 && crop.height === 1;
 
   return (
-    <div className="image-crop-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
-      <section className="image-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="image-crop-title">
-        <h2 id="image-crop-title">Crop image</h2>
+    <Dialog open onOpenChange={open => { if (!open) onCancel(); }}>
+      <DialogContent className="image-crop-dialog block sm:max-w-none" showCloseButton={false}>
+        <DialogTitle>Crop image</DialogTitle>
         <p>Drag any edge or corner to crop, or drag inside the area to reposition it.</p>
         <div className="image-crop-preview">
           <div ref={frame} className="image-crop-frame">
@@ -67,8 +68,8 @@ export function CropDialog({ image, onCancel, onSave }: {
         </div>
         {error && <p className="image-crop-error" role="alert">{error}</p>}
         <div className="image-crop-actions"><Button variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button><Button onClick={() => void save()} disabled={saving || uncropped}>{saving ? "Saving…" : "Apply crop"}</Button></div>
-      </section>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
