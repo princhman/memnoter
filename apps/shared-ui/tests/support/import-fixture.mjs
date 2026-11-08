@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { imageMime } from "../../src/lib/folder-import.ts";
-export const realPath = process.env.MEMNOTER_IMPORT_FOLDER ?? "/Users/vladyslavnalyvaiko/Downloads/COMP0002 - Principles of Programming";
+export const realPath = fileURLToPath(new URL("../fixtures/Vault/", import.meta.url));
 export function readFolder(root) {
   const entries = [];
   function walk(dir, prefix = "") {

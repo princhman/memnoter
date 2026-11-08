@@ -1,9 +1,10 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createServer } from 'vite';
-import { webkit } from 'playwright';
-import { mkdtemp, rm } from 'node:fs/promises';
+
 import * as Y from 'yjs';
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 function note(text) {
   const doc = new Y.Doc();
@@ -19,8 +20,7 @@ function note(text) {
 
 test('editor-only host backfills closed two-way notes and publishes synced card changes without replacing the open draft', async () => {
   const root = new URL('../', import.meta.url).pathname;
-  const cacheDir = await mkdtemp(`${root}node_modules/.memnoter-backfill-`);
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   try {
     await server.listen();
@@ -45,7 +45,7 @@ test('editor-only host backfills closed two-way notes and publishes synced card 
       void page.evaluate(({ id, result }) => window.__memnoterBridge.resolve(id, result), { id, result });
     });
     await page.addInitScript(() => {
-      window.webkit = { messageHandlers: { memnoter: { postMessage: message => { void window.nativeMessage(message); } } } };
+      window.installTestBridge({ native: message => { void window.nativeMessage(message); } });
     });
     await page.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
     await page.waitForFunction(() => !!window.memnoterEditor);
@@ -73,7 +73,7 @@ test('editor-only host backfills closed two-way notes and publishes synced card 
   } finally {
     await browser?.close();
     await server.close();
-    await rm(cacheDir, { recursive: true, force: true });
+
   }
 });
 

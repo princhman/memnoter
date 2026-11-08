@@ -1,20 +1,20 @@
+import { browserHarness } from "./support/browser.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 // Pixel evidence at the actual rendering boundary: DOM/CSS assertions alone
 // cannot detect WebKit's native newline and replaced-element selection paint.
 test("WebKit selection hugs text and keeps image actions exclusive", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const cacheDir = await mkdtemp(join(root, "node_modules/.selection-vite-"));
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: "error" });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
-  const artifacts = process.env.SELECTION_ARTIFACTS ?? "/tmp/memnoter-selection";
-  await mkdir(artifacts, { recursive: true });
+  const artifacts = process.env.SELECTION_ARTIFACTS;
+  if (artifacts) await mkdir(artifacts, { recursive: true });
   try {
     await server.listen();
     browser = await webkit.launch();
@@ -47,7 +47,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
       const prefix = `${artifacts}/${dark ? "dark" : "light"}`;
       // Baseline captures also let pixel assertions compare with the real
       // background of code, math and chips rather than guessing theme RGB.
-      const baseline = await page.screenshot({ caret: "initial", animations: "disabled", path: `${prefix}-baseline.png` });
+      const baseline = await page.screenshot({ caret: "initial", animations: "disabled", path: artifacts ? `${prefix}-baseline.png` : undefined });
       const widths = await page.evaluate(() => [...editor.view.dom.querySelectorAll("p,h2")].map(el => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().width; }));
       for (const action of ["select-all", "drag", "shift-click", "shift-down", "mid-line"]) {
         await page.evaluate(() => editor.commands.focus("start"));
@@ -71,7 +71,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         });
         await page.waitForTimeout(80);
         assert.equal(await page.evaluate(() => editor.state.selection.empty), false, action);
-        await page.screenshot({ caret: "initial", animations: "disabled", path: `${prefix}-${action}.png` });
+        await page.screenshot({ caret: "initial", animations: "disabled", path: artifacts ? `${prefix}-${action}.png` : undefined });
         const png = await page.screenshot({ caret: "initial", animations: "disabled", style: '[aria-label="Text formatting"], [aria-label="Text formatting"] * { visibility: hidden !important; }' });
         const evidence = await page.evaluate(async ({ before, after }) => {
           const decode = async base64 => { const img = new Image(); img.src = `data:image/png;base64,${base64}`; await img.decode(); const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0); return ctx.getImageData(0, 0, c.width, c.height); };
@@ -192,7 +192,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         return { highlighted: !!dom.closest(".text-range-selected"), unchanged: before === JSON.stringify(editor.getJSON()) };
       }, type);
       assert.deepEqual(result, { highlighted: true, unchanged: true });
-      await page.screenshot({ caret: "initial", animations: "disabled", path: `${artifacts}/dark-${type}-source.png`, style: '[aria-label="Text formatting"], [aria-label="Text formatting"] * { visibility: hidden !important; }' });
+      await page.screenshot({ caret: "initial", animations: "disabled", path: artifacts ? `${artifacts}/dark-${type}-source.png` : undefined, style: '[aria-label="Text formatting"], [aria-label="Text formatting"] * { visibility: hidden !important; }' });
     }
     await page.evaluate(() => {
       editor.commands.setContent("<p>AV office affinity tail</p>");
@@ -246,5 +246,5 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
       const background = await page.evaluate(() => getComputedStyle(document.querySelector(".text-range-selected")).backgroundColor);
       assert.notEqual(background, "rgba(0, 0, 0, 0)", "selection stays visible in forced colours");
     }
-  } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
+  } finally { await browser?.close(); await server.close(); }
 });

@@ -1,17 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { register } from 'node:module';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
 import { invoke } from '@tauri-apps/api/core';
 import { onlineManager } from '@tanstack/react-query';
 import * as Y from 'yjs';
-const src = new URL('../src/', import.meta.url).href;
-register(`data:text/javascript,${encodeURIComponent(`
-  export function resolve(specifier, context, next) {
-    if (specifier.startsWith('@/')) specifier = ${JSON.stringify(src)} + specifier.slice(2) + '.ts';
-    return next(specifier, context);
-  }
-`)}`, import.meta.url);
 const windowEvents = new EventTarget();
 globalThis.window = { setTimeout, clearTimeout, addEventListener: windowEvents.addEventListener.bind(windowEvents) };
 const { exclusiveWrite, imageOperation, imageFilesOperation, imageStatusStore, discardFailedImages, watchWriteAdmission } = await import('../src/lib/write-lifecycle.ts');

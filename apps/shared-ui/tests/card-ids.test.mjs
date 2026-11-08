@@ -1,3 +1,4 @@
+import { browserHarness } from "./support/browser.mjs";
 // Card text without an id gets one when its note loads, either opened or
 // checked in the background. That id must be saved into the note, or every
 // launch makes a new card and the old one loses its review history. Runs the
@@ -5,9 +6,9 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
 import * as Y from "yjs";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 let server, browser, url;
@@ -48,11 +49,7 @@ async function launch(route, updates) {
     let callbacks = 0;
     window.__saved = [];
     window.__synced = [];
-    window.__TAURI_INTERNALS__ = {
-      transformCallback: () => ++callbacks,
-      unregisterCallback() {},
-      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
-      invoke: async (command, args) => {
+    window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command.startsWith("plugin:")) return callbacks;
         if (command === "modules") return [{ id: "m1", name: "Demo" }];
         if (command === "get_content") return { state: [], updates, files: [] };
@@ -71,9 +68,8 @@ async function launch(route, updates) {
           return [];
         }
         return null;
-      },
-    };
-    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
+      } } });
+
   }, updates);
   await page.goto(`${url}${route}`);
   await page.waitForFunction(() => window.__synced.length > 0);

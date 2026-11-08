@@ -1,8 +1,9 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 test("card popup omits empty headings and new badges while retaining answers and other states", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));

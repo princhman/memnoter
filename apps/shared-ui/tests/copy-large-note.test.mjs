@@ -1,15 +1,15 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { browserHarness } from "./support/browser.mjs";
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
-import { webkit, chromium } from 'playwright';
+import { chromium } from 'playwright';
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 test('massive note select-all and copy remain responsive; TOC ignores in-section selections', { timeout: 120000 }, async () => {
   const root = process.env.COPY_BENCH_ROOT ?? fileURLToPath(new URL('..', import.meta.url));
-  const cacheDir = await mkdtemp(`${tmpdir()}/memnoter-copy-`);
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false, hmr: false, watch: null, fs: { allow: [root, fileURLToPath(new URL('../../..', import.meta.url))] } }, logLevel: 'error' });
+  const server = await createServer({ root, server: { port: 0, strictPort: false, hmr: false, watch: null, fs: { allow: [root, fileURLToPath(new URL('../../..', import.meta.url))] } }, logLevel: 'error' });
   let browser;
   try {
     server.middlewares.use('/course-asset', (_req, res) => {
@@ -63,5 +63,5 @@ test('massive note select-all and copy remain responsive; TOC ignores in-section
     assert.ok(samples.copy < 3000, `copy blocked for ${samples.copy}ms`);
     assert.ok(samples.selection < 3000, `select-all blocked for ${samples.selection}ms`);
     assert.equal(samples.inSectionCommits, 0, 'TOC must not commit for cursor moves within a root section');
-  } finally { await browser?.close(); await server.close(); await rm(cacheDir, {recursive:true, force:true}); }
+  } finally { await browser?.close(); await server.close(); }
 });

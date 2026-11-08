@@ -1,8 +1,9 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 // Exercise the actual React node views and modal in Tauri's browser engine.
 // Opening and dismissing a preview must preserve the note and keyboard focus.
@@ -101,7 +102,7 @@ test("block and inline images open full screen and close without changing the no
       assert.deepEqual(await page.evaluate(() => editor.getJSON()), adaptedNote);
     }
     const touch = await browser.newPage({ viewport: { width: 820, height: 1000 }, hasTouch: true });
-    await touch.addInitScript(() => { window.webkit = { messageHandlers: { memnoter: { postMessage() {} } } }; });
+    await touch.addInitScript(() => { window.installTestBridge({ native: function() {} }); });
     await touch.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/images.html`);
     await touch.waitForFunction(() => "editor" in window);
     await touch.evaluate(src => {
@@ -156,7 +157,7 @@ test("native previews accept every primary pointer in read-only notes and signal
     const page = await browser.newPage();
     await page.addInitScript(() => {
       window.messages = [];
-      window.webkit = { messageHandlers: { memnoter: { postMessage(message) { window.messages.push(message); } } } };
+      window.installTestBridge({ native: function(message) { window.messages.push(message); } });
     });
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/images.html`);
     await page.waitForFunction(() => "editor" in window);
