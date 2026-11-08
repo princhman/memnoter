@@ -1,6 +1,6 @@
 import { Host } from "./host";
 import { useEffect } from "react";
-import { backfillCards } from "@/lib/card-backfill";
+import { bootstrapNotes } from "@/lib/bootstrap";
 import { dueCountsKey } from "@/lib/card-sync";
 import { postNativeEvent } from "@/lib/backend";
 import ReactDOM from "react-dom/client";
@@ -30,7 +30,7 @@ function CardBackfill() {
       if (event.type === "updated" && event.action.type === "invalidate" &&
           dueCountsKey.every((key, index) => event.query.queryKey[index] === key)) notify();
     });
-    const start = window.setTimeout(() => { void backfillCards().then(notify); }, 0);
+    const start = window.setTimeout(() => { void bootstrapNotes().then(notify); }, 0);
     return () => { stop(); window.clearTimeout(start); window.clearTimeout(refresh); };
   }, []);
   return null;

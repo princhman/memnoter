@@ -1,5 +1,5 @@
 import { isTauri } from "@/lib/backend";
-import { exclusiveWrite, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
+import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { call as invoke } from "../lib/backend.ts";
@@ -20,7 +20,7 @@ import { queryClient } from "@/lib/query-client";
 import { saveQueue, saveStatusStore } from "@/lib/saves";
 import { RESTART_REQUEST_EVENT } from "@/lib/updater";
 
-const restorePending = () => queryClient.isMutating({ mutationKey: ["restore-backup"] }) > 0;
+const restorePending = isRestoring;
 
 // Restore owns the database until its mutation (including success/rollback)
 // settles. Neither ordinary Quit nor the discard-edits action may interrupt it.
@@ -40,7 +40,7 @@ let exitCommand: "confirm_exit" | "confirm_restart" = "confirm_exit";
 async function confirmExitAfterRestore(discard = false, retryImages = false) {
   await waitForRestore();
   if (restorePending()) throw new Error("Restore is in progress.");
-  await exclusiveWrite(() => invoke(exitCommand), { discard, retain: true, retryImages });
+  await exclusiveWrite(() => invoke(exitCommand), { kind: "exit", unsaved: discard ? "discard" : retryImages ? "retry" : undefined });
 }
 
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and

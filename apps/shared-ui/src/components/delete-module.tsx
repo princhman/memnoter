@@ -1,4 +1,4 @@
-import { exclusiveWrite } from "@/lib/write-lifecycle";
+import { exclusiveWrite, MUTATIONS } from "@/lib/write-lifecycle";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
@@ -31,7 +31,7 @@ const DeleteModule = ({
   const queryClient = useQueryClient();
   const router = useRouter();
   const mutation = useMutation({
-    mutationKey: ["delete-module"],
+    mutationKey: [MUTATIONS.deleteModule],
     mutationFn: () => exclusiveWrite(async () => {
       await invoke("delete_module", { moduleId });
       saveQueue.drop(moduleId);
@@ -51,7 +51,7 @@ const DeleteModule = ({
       queryClient.setQueryData<Module[]>(["modules"], (modules) =>
         modules?.filter((module) => module.id !== moduleId),
       );
-    }, { excludedMutation: "delete-module" }),
+    }, { kind: "delete" }),
   });
 
   return (

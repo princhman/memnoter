@@ -1,7 +1,6 @@
-import { flushCardSyncs } from "@/lib/card-sync";
+import { flushAll, isWriteAdmitted, isRestoring } from "./write-lifecycle";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "./backend.ts";
-import { flushSaves, saveQueue } from "@/lib/saves";
 
 export type Backup = { id: string; created_at: number };
 
@@ -11,15 +10,11 @@ export function useBackupNow() {
   return useMutation({
     mutationKey: ["backup-now"],
     mutationFn: async () => {
-      const blocked = () => saveQueue.isSuspended() ||
-        queryClient.isMutating({ mutationKey: ["restore-backup"] }) > 0;
+      const blocked = () => !isWriteAdmitted() || isRestoring();
       if (blocked() || queryClient.isMutating({ mutationKey: ["backup-now"] }) > 1) {
         throw new Error("A backup or restore is already in progress.");
       }
-      await flushCardSyncs();
-      if (!await flushSaves(3_000)) {
-        throw new Error("Save pending edits before backing up. Please retry saving first.");
-      }
+      await flushAll({ timeoutMs: 3_000 });
       if (blocked()) throw new Error("Restore is in progress.");
       return invoke<Backup>("backup_now");
     },

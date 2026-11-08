@@ -1,6 +1,7 @@
 import { writeCards } from "@/lib/card-writes";
-import { saveQueue } from "@/lib/saves";
-import { useBlocker } from "@tanstack/react-router";
+import { isWriteAdmitted, registerFlusher, type WritePermit } from "@/lib/write-lifecycle";
+import { createEditorWriteSync } from "@/lib/editor-write-sync";
+import { startOfDay, endOfDay, subscribeDay } from "@/lib/day-clock";
 import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import type { Editor } from "@tiptap/react";
 import { call as invoke } from "./backend.ts";
@@ -14,73 +15,14 @@ import { useSelector } from "@tanstack/react-store";
 const SYNC_DEBOUNCE_MS = 800;
 const DUE_REFRESH_MS = 60_000;
 
-const activeSyncs = new Set<() => Promise<unknown>>();
-const pendingSyncs = new Set<Promise<unknown>>();
-
-// Review must include edits still inside the editor's debounce window, even
-// when unmount cleanup has already started the final write.
-export async function flushCardSyncs() {
-  await Promise.all([...activeSyncs].map((sync) => sync()));
-  await Promise.all([...pendingSyncs]);
-}
-
-// Palette actions share the same flush/error behavior as blocked navigation.
-export async function openReview(navigate: () => Promise<unknown>) {
-  try {
-    await flushCardSyncs();
-    await navigate();
-  } catch (error) {
-    window.alert("Could not open review. Please retry saving flashcards first.");
-    console.error("Failed to open review:", error);
-  }
-}
+const editorSync = createEditorWriteSync(SYNC_DEBOUNCE_MS);
+export const flushCardSyncs = editorSync.flush;
+registerFlusher("cards", flushCardSyncs);
 
 export const dueCountsKey = ["cards", "due-counts"];
-export function startOfDay(now: number) {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  return start.getTime();
-}
-
-// All cutoff consumers share one clock, only while the setting is enabled.
-const dayListeners = new Set<() => void>();
-let stopDayClock: (() => void) | undefined;
 const currentDay = () => startOfDay(Date.now());
 const noDay = () => null;
 const subscribeNoDay = () => () => {};
-
-function subscribeDay(listener: () => void) {
-  dayListeners.add(listener);
-  if (!stopDayClock) {
-    const refresh = () => {
-      for (const notify of dayListeners) notify();
-    };
-    let midnight: number;
-    const scheduleMidnight = () => {
-      midnight = window.setTimeout(() => {
-        refresh();
-        scheduleMidnight();
-      }, endOfDay(Date.now()) - Date.now() + 50);
-    };
-    const timer = window.setInterval(refresh, DUE_REFRESH_MS);
-    scheduleMidnight();
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    stopDayClock = () => {
-      window.clearInterval(timer);
-      window.clearTimeout(midnight);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }
-  return () => {
-    dayListeners.delete(listener);
-    if (dayListeners.size === 0) {
-      stopDayClock?.();
-      stopDayClock = undefined;
-    }
-  };
-}
 
 export function useCreatedAtCutoff() {
   const enabled = useSelector(appStore, (state) => state.skipCardsCreatedToday);
@@ -93,8 +35,7 @@ const openModules = new Map<string, number>();
 // Keeps a module's cards in the database in step with an editor's text: now,
 // after edits settle, and when stopped. `flush` waits until the database has
 // the editor's current cards, including ids renewed after a conflict.
-export function startCardSync(editor: Editor, moduleId: string, onSynced: () => void) {
-  let timeout: number | undefined;
+export function startCardSync(editor: Editor, moduleId: string, onSynced: () => void, admittedPermit?: WritePermit) {
   let lastSent: string | undefined;
   let queue = Promise.resolve();
   let lastWrite = queue;
@@ -108,17 +49,16 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
       section,
     }));
 
-  const sync = (): Promise<void> => {
-    window.clearTimeout(timeout);
-    timeout = undefined;
-    if (saveQueue.isSuspended()) return Promise.resolve();
+  const sync = (permit: WritePermit | undefined = admittedPermit): Promise<void> => {
+    debounce.cancel();
+    if (!isWriteAdmitted(permit)) return Promise.resolve();
     const cards = snapshot();
     const payload = JSON.stringify(cards);
     if (payload === lastSent) return lastWrite;
     lastSent = payload;
     // Keep syncs in order so an older snapshot never lands last.
     const write = queue
-      .then(() => writeCards<string[]>("sync_cards", { moduleId, cards }))
+      .then(() => writeCards<string[]>("sync_cards", { moduleId, cards }, permit))
       .then((conflicts) => {
         // Blocks copied from another note get their own cards here.
         if (conflicts.length > 0 && !editor.isDestroyed) {
@@ -132,34 +72,23 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
         throw error;
       });
     lastWrite = write;
-    pendingSyncs.add(write);
-    queue = write.catch(() => {}).finally(() => {
-      pendingSyncs.delete(write);
-    });
+    editorSync.track(write);
+    queue = write.catch(() => {});
     return write;
   };
 
-  const schedule = () => {
-    window.clearTimeout(timeout);
-    timeout = window.setTimeout(() => {
-      void sync().catch(() => {});
-    }, SYNC_DEBOUNCE_MS);
+  const flush = async (permit?: WritePermit) => {
+    do { await sync(permit); }
+    while (isWriteAdmitted(permit) && !editor.isDestroyed && JSON.stringify(snapshot()) !== lastSent);
   };
-
-  const flush = async () => {
-    // Conflict repair changes the document; persist its fresh ids as well.
-    do {
-      await sync();
-    } while (!saveQueue.isSuspended() && !editor.isDestroyed && JSON.stringify(snapshot()) !== lastSent);
-  };
-  activeSyncs.add(flush);
+  const debounce = editorSync.attach(flush);
+  const schedule = debounce.schedule;
   void sync().catch(() => {});
   editor.on("update", schedule);
 
   const stop = () => {
     editor.off("update", schedule);
-    if (timeout !== undefined) void sync().catch(() => {});
-    activeSyncs.delete(flush);
+    debounce.stop();
   };
   return { flush, stop };
 }
@@ -222,13 +151,6 @@ const none = (): Required<CardCounts> => ({
   new: 0, learning: 0, review: 0, laterToday: { new: 0, learning: 0, review: 0 },
 });
 
-// The next local midnight.
-export function endOfDay(now: number) {
-  const end = new Date(now);
-  end.setHours(24, 0, 0, 0);
-  return end.getTime();
-}
-
 export function useDueCounts() {
   const cutoff = useCreatedAtCutoff();
   const { data } = useQuery({
@@ -269,22 +191,4 @@ export function useDueCounts() {
   };
 }
 
-// Desktop navigation waits for card ID repair before unmounting the editor.
-export function CardNavigationGuard({ editor, ready }: { editor: Editor | null; ready: boolean }) {
-  // Keep the editor alive until copied ids have been repaired and resynced.
-  useBlocker({
-    disabled: !editor || !ready,
-    enableBeforeUnload: false,
-    shouldBlockFn: async () => {
-      try {
-        await flushCardSyncs();
-        return false;
-      } catch {
-        window.alert("Could not save flashcards. Please try leaving the note again.");
-        return true;
-      }
-    },
-  });
-
-  return null;
-}
+export { CardNavigationGuard, openReview } from "@/components/card-navigation-guard";

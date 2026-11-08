@@ -20,12 +20,10 @@ import {
   useCommands,
   type Command,
 } from "@/lib/commands";
-import { queryClient } from "@/lib/query-client";
-import { saveQueue } from "@/lib/saves";
 import { FIND_EVENT, requestApp } from "@/lib/app-events";
 import { requestFind } from "@/lib/find-request";
 import { getRecentModuleIds } from "@/lib/recent-modules";
-import { backfillSearchIndex } from "@/lib/search-index";
+import { isWriteAdmitted, isRestoring } from "@/lib/write-lifecycle";
 import { findTermsFor, splitMarked } from "@/lib/search-marks";
 import type { Module } from "@/lib/types";
 
@@ -120,10 +118,6 @@ export function CommandPalette() {
 
   useBuiltinCommands();
 
-  useEffect(() => {
-    void backfillSearchIndex();
-  }, []);
-
   // Captured on window, so the editor's own key handling never sees it.
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -138,7 +132,7 @@ export function CommandPalette() {
       event.preventDefault();
       event.stopPropagation();
       // Keep the restore modal in control throughout its flush and DB swap.
-      if (saveQueue.isSuspended() || queryClient.isMutating({ mutationKey: ["restore-backup"] })) return;
+      if (!isWriteAdmitted() || isRestoring()) return;
       restoreFocus.current = true;
       setOpen((value) => !value);
     };
