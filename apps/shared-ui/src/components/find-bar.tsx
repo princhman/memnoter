@@ -3,6 +3,7 @@ import { surfaceClass } from "./ui/surface";
 import { action, formatKeys, bindsInJS, matchesShortcut } from "@/lib/shortcuts";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -89,6 +90,13 @@ export function FindBar() {
   const [replaceTerm, setReplaceTerm] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
+  const [focusRequest, setFocusRequest] = useState<{ withReplace: boolean } | null>(null);
+  useLayoutEffect(() => {
+    if (!focusRequest || !isOpen) return;
+    const input = focusRequest.withReplace ? replaceInput.current : searchInput.current;
+    input?.focus();
+    input?.select();
+  }, [focusRequest, isOpen]);
   const searchInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
 
@@ -96,14 +104,14 @@ export function FindBar() {
     editor,
     selector: ({ editor }) => {
       if (!editor || editor.isDestroyed) {
-        return { count: 0, current: null, applied: "" };
+        return { count: 0, current: null, applied: null };
       }
       const storage = editor.storage.findAndReplace;
       return {
         count: storage.results.length,
         current: storage.currentIndex,
         // The search term is debounced; this changes once its results are in.
-        applied: `${storage.caseSensitive}:${storage.useRegex}:${storage.searchTerm}`,
+        applied: { caseSensitive: storage.caseSensitive, useRegex: storage.useRegex, term: storage.searchTerm },
       };
     },
   });
@@ -142,7 +150,7 @@ export function FindBar() {
     }
     if (pending) {
       // Wait for the requested term's results, then fall back to the next term.
-      if (search?.applied !== `false:false:${pending.terms[0]}`) return;
+      if (!search?.applied || search.applied.caseSensitive || search.applied.useRegex || search.applied.term !== pending.terms[0]) return;
       if (search.current == null) {
         const [, ...rest] = pending.terms;
         pendingFind.current = rest.length ? { ...pending, terms: rest } : null;
@@ -173,7 +181,7 @@ export function FindBar() {
 
     if (search?.current == null) return;
     revealCurrentResult(editor);
-  }, [editor, isReady, search?.applied, requestCount]);
+  }, [editor, isReady, search?.applied?.term, search?.applied?.caseSensitive, search?.applied?.useRegex, requestCount]);
 
   const goToNext = () => {
     if (!editor || editor.isDestroyed) return;
@@ -198,11 +206,7 @@ export function FindBar() {
 
     if (withReplace) setShowReplace(true);
     setIsOpen(true);
-    requestAnimationFrame(() => {
-      const input = withReplace ? replaceInput.current : searchInput.current;
-      input?.focus();
-      input?.select();
-    });
+    setFocusRequest({ withReplace });
   };
 
   // Rebound every render, so the handlers see the current state.

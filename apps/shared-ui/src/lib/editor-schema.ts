@@ -1,4 +1,3 @@
-import { headingId } from "./outline";
 import { MarkdownPaste } from "./markdown-paste-plugin";
 import type { Editor, AnyExtension } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
@@ -29,37 +28,11 @@ import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
 import { Flashcards } from "@/lib/flashcards";
 
-// Outline layout reads force WebKit to lay out the whole note. Keep saved
-// heading IDs synchronous (the upstream plugin), but coalesce visual refreshes.
-const tocRefreshes = new WeakMap<Editor, ReturnType<typeof setTimeout>>();
-const DeferredTableOfContents = TableOfContents.extend({
-  onTransaction({ transaction }) {
-    if (!transaction.docChanged || transaction.getMeta("toc")) return;
-    // Navigation must use current positions even while visual work is pending.
-    this.storage.content = this.storage.content.flatMap(item => {
-      const pos = transaction.mapping.map(item.pos);
-      const node = this.editor.state.doc.nodeAt(pos);
-      if (!node || headingId(node) !== item.id) return [];
-      return [{ ...item, pos, node }];
-    });
-    this.options.onUpdate?.(this.storage.content, false);
-    clearTimeout(tocRefreshes.get(this.editor));
-    tocRefreshes.set(this.editor, setTimeout(() => {
-      tocRefreshes.delete(this.editor);
-      if (!this.editor.isDestroyed) this.editor.commands.updateTableOfContents();
-    }, 100));
-  },
-  onDestroy() {
-    clearTimeout(tocRefreshes.get(this.editor));
-    tocRefreshes.delete(this.editor);
-    this.parent?.();
-  },
-});
-
 type NoteExtensionOptions = {
   document: Y.Doc;
   ui?: { inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
   insertImages?: (editor: Editor, files: File[], position: number) => void;
+  scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;
   onFirstRender?: () => void;
 };
@@ -70,6 +43,7 @@ export function noteExtensions({
   document,
   ui = {},
   insertImages = () => {},
+  scrollContainer,
   onTocUpdate,
   onFirstRender,
 }: NoteExtensionOptions) {
@@ -98,10 +72,8 @@ export function noteExtensions({
     HeadingFold,
     HeadingNumbering,
     ...(ui.menus ?? []),
-    DeferredTableOfContents.configure({
-      scrollParent: () =>
-        window.document.querySelector<HTMLElement>(".app-scroll-container") ??
-        window,
+    TableOfContents.configure({
+      scrollParent: () => scrollContainer?.() ?? window,
       onUpdate: onTocUpdate,
     }),
     FindHighlights.configure({

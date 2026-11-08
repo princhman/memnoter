@@ -33,7 +33,6 @@ const SEARCH_LIMIT = 20;
 const MAX_LISTED_NOTES = 50;
 // Commands run once the palette has closed and returned focus; this is the
 // fallback should the close animation never report finishing.
-const AFTER_CLOSE_FALLBACK_MS = 300;
 
 type SearchResult = {
   module_id: string;
@@ -223,7 +222,6 @@ export function CommandPalette() {
       };
       restoreFocus.current = true;
       setOpen(false);
-      window.setTimeout(runAfterClose, AFTER_CLOSE_FALLBACK_MS);
       return;
     }
 

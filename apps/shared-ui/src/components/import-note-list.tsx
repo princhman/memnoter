@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { GripVertical } from "lucide-react";
 
 const noteName = (path: string) => path.split("/").pop()!.replace(/\.md$/i, "");
@@ -64,6 +64,13 @@ export function ImportNoteList({ order, excluded, disabled, onReorder, onInclude
     }
     drag.current = null; setPreview(null);
   }
+  const scrollAfterReorder = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!scrollAfterReorder.current) return;
+    const index = order.indexOf(scrollAfterReorder.current);
+    scrollAfterReorder.current = null;
+    list.current?.querySelector<HTMLButtonElement>(`[data-handle-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [order]);
   function keyboard(event: KeyboardEvent<HTMLButtonElement>, path: string, index: number) {
     if (event.key === "Escape" && (picked || drag.current)) {
       event.preventDefault(); event.stopPropagation();
@@ -79,7 +86,7 @@ export function ImportNoteList({ order, excluded, disabled, onReorder, onInclude
       const to = Math.max(0, Math.min(order.length - 1, index + (event.key === "ArrowUp" ? -1 : 1)));
       const next = [...order]; next.splice(index, 1); next.splice(to, 0, path); onReorder(next);
       announce(path, to, "Moved");
-      requestAnimationFrame(() => list.current?.querySelector<HTMLButtonElement>(`[data-handle-index="${to}"]`)?.scrollIntoView({ block: "nearest" }));
+      scrollAfterReorder.current = path;
     }
   }
   return <>

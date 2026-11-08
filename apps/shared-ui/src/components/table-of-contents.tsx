@@ -1,12 +1,13 @@
+import { useEditorHost } from "@/lib/editor-host-context";
+import { editorHost } from "@/lib/editor-host";
 import { TOC_ID_ATTRIBUTE } from "../lib/outline.ts";
 import { pointInTriangle, type Point } from "@/lib/menu-aim";
-import { isNativeHost } from "@/lib/backend";
 import { headingNumbers } from "@/lib/heading-numbering";
 import {
   type CSSProperties,
   useEffect,
-  useId,
   useLayoutEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -142,6 +143,12 @@ function DesktopTableOfContents({
   const relatedIds = new Set([hovered?.id, ...descendants.map(item => item.id)]);
   const [pinned, setPinned] = useState(false);
   const navRef = useRef<HTMLElement>(null);
+  const [focusRequest, setFocusRequest] = useState(0);
+  useLayoutEffect(() => {
+    if (focusRequest && popupRef.current) {
+      popupRef.current.querySelector<HTMLButtonElement>(".toc-item")?.focus();
+    }
+  }, [focusRequest]);
   const popupRef = useRef<HTMLDivElement>(null);
   const dashRefs = useRef(new Map<string, HTMLButtonElement>());
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -222,7 +229,7 @@ function DesktopTableOfContents({
       if (!popup || !nav || !dash) return;
       const bounds = nav.getBoundingClientRect();
       const anchor = dash.getBoundingClientRect();
-      const contentTop = editor?.view.dom.closest(".app-scroll-container")?.getBoundingClientRect().top ?? 0;
+      const contentTop = (editor ? editorHost.scrollContainer(editor.view.dom) : null)?.getBoundingClientRect().top ?? 0;
       const minTop = Math.max(VIEWPORT_MARGIN, contentTop + VIEWPORT_MARGIN);
       popup.style.maxHeight = `${Math.max(0, window.innerHeight - minTop - VIEWPORT_MARGIN)}px`;
       popup.style.top = `${Math.max(minTop, Math.min(anchor.top + anchor.height / 2 - popup.offsetHeight / 2,
@@ -310,8 +317,7 @@ function DesktopTableOfContents({
               : Math.max(0, Math.min(railItems.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
             dashRefs.current.get(railItems[target].id)?.focus();
           } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-            event.preventDefault(); openPopup(item.id);
-            requestAnimationFrame(() => popupRef.current?.querySelector<HTMLButtonElement>(".toc-item")?.focus());
+            event.preventDefault(); setFocusRequest(request => request + 1); openPopup(item.id);
           }
         }}
         onClick={() => {
@@ -327,5 +333,6 @@ function DesktopTableOfContents({
 }
 
 export function TableOfContents(props: { editor: Editor | null; store: TocStore; numbered?: boolean }) {
-  return isNativeHost() ? null : <DesktopTableOfContents {...props} />;
+  const host = useEditorHost();
+  return host.isNative ? null : <DesktopTableOfContents {...props} />;
 }

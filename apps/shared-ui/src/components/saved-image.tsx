@@ -1,3 +1,5 @@
+import { TAP_DURATION_MS, TAP_MOVEMENT_PX, DOUBLE_TAP_MS, DOUBLE_TAP_DISTANCE_PX } from "@/lib/pointer-gestures";
+import { useEditorHost } from "@/lib/editor-host-context";
 import { ToolButton } from "./ui/tool-button";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { SavedImage as ImageSchema, InlineImage as InlineImageSchema } from "@/lib/editor-schema/images";
@@ -13,7 +15,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
-import { call as invoke, fileUrl as convertFileSrc, isNativeHost, postNativeEvent } from "../lib/backend.ts";
+import { call as invoke, fileUrl as convertFileSrc, postNativeEvent } from "../lib/backend.ts";
 import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -40,6 +42,7 @@ export const FilesContext = createContext<FilesContextValue>({
 const visiblePreviews = new Set<HTMLElement>();
 
 export function SavedImageView(props: NodeViewProps) {
+  const environment = useEditorHost();
   const { node, editor, updateAttributes, deleteNode } = props;
   const selected = useEditorState({
     editor,
@@ -94,10 +97,10 @@ export function SavedImageView(props: NodeViewProps) {
     const down = imagePress.current;
     imagePress.current = null;
     if (!down || down.id !== event.pointerId) return;
-    if (cancelled || event.timeStamp - down.time > 280 || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) { lastTap.current = null; return; }
+    if (cancelled || event.timeStamp - down.time > TAP_DURATION_MS || Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { lastTap.current = null; return; }
     const previous = lastTap.current;
     lastTap.current = { time: event.timeStamp, x: event.clientX, y: event.clientY };
-    if (!previous || event.timeStamp - previous.time > 320 || Math.hypot(event.clientX - previous.x, event.clientY - previous.y) > 32 || !src || failed) return;
+    if (!previous || event.timeStamp - previous.time > DOUBLE_TAP_MS || Math.hypot(event.clientX - previous.x, event.clientY - previous.y) > DOUBLE_TAP_DISTANCE_PX || !src || failed) return;
     event.preventDefault();
     cancelMove.current?.();
     lastTap.current = null;
@@ -275,13 +278,13 @@ export function SavedImageView(props: NodeViewProps) {
     const position = latest.current.getPos();
     if (position !== undefined && position >= 0 && position < editor.state.doc.content.size) {
       editor.commands.setNodeSelection(position);
-      if (!editor.view.dom.hasAttribute("data-native-editor")) editor.view.focus();
+      if (!environment.isNative) editor.view.focus();
     }
   };
   // Pressing and dragging the image moves it; a press without moving is a click.
   const pressImage = (event: ReactPointerEvent) => {
     if (event.button !== 0 || (event.target as Element).closest("[data-resize-handle]")) return;
-    if (isNativeHost()) {
+    if (environment.isNative) {
       if (!event.isPrimary) { imagePress.current = null; lastTap.current = null; return; }
       imagePress.current = { id: event.pointerId, time: event.timeStamp, x: event.clientX, y: event.clientY };
     }
@@ -290,7 +293,7 @@ export function SavedImageView(props: NodeViewProps) {
     event.preventDefault();
     // Select before tracking a touch drag so the native host suppresses its
     // keyboard even when the preceding selection was a text caret.
-    if (editor.view.dom.hasAttribute("data-native-editor")) selectImage();
+    if (environment.isNative) selectImage();
     cancelMove.current?.();
     cancelMove.current = startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent);
   };
@@ -338,7 +341,8 @@ export function SavedImageView(props: NodeViewProps) {
     }
     try {
       tr.setSelection(NodeSelection.create(tr.doc, selectAt));
-    } catch {
+    } catch (error) {
+      console.error("Failed to select image:", error);
       // The schema fitted the image elsewhere; keep the mapped selection.
     }
     editor.view.dispatch(tr);
@@ -387,8 +391,8 @@ export function SavedImageView(props: NodeViewProps) {
     <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
       <span ref={infoHost} className="contents" />
       {isInline
-        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!isNativeHost() && src && !failed) { setPreviewOpen(true); } }} />
-        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!isNativeHost() && src && !failed) { setPreviewOpen(true); } }} />}
+        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && src && !failed) { setPreviewOpen(true); } }} />
+        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && src && !failed) { setPreviewOpen(true); } }} />}
       {(!src || failed) && <span className="text-sm text-muted-foreground">Image unavailable</span>}
       {selected && editor.isEditable && (
         <div className="note-image-controls" aria-label="Image controls" contentEditable={false}>
@@ -440,7 +444,7 @@ export function SavedImageView(props: NodeViewProps) {
             // Focusing the native contenteditable materializes the image's node
             // range as iOS text-selection handles, including its control toolbar.
             // Keep the node outline without requesting text input on return.
-            finalFocus={isNativeHost() ? false : () => editor.isDestroyed ? null : editor.view.dom}
+            finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}
           >
             <DialogTitle className="sr-only">Image preview</DialogTitle>
             <ImagePreview

@@ -1,3 +1,4 @@
+import { IS_MAC, IS_IOS } from "./platform.ts";
 import { FILE_SCHEME, type NativeEvent, type NativeEvents } from "../editor-host/protocol.ts";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
@@ -67,7 +68,7 @@ export function call<T>(command: string, args?: object): Promise<T> {
 }
 
 export async function listen<T>(event: string, handler: (event: { event: string; id: number; payload: T }) => void): Promise<() => void> {
-  if (!isNativeHost()) return tauriListen<T>(event, handler);
+  if (!isNativeHost()) return isTauri() ? tauriListen<T>(event, handler) : Promise.resolve(() => {});
   const handlers = listeners.get(event) ?? new Set<Handler>();
   listeners.set(event, handlers);
   const wrapped: Handler = value => handler({ ...value, payload: value.payload as T });
@@ -93,4 +94,22 @@ export function fileUrl(path: string): string {
     throw new Error("Expected an app data files/<id> path");
   }
   return `${FILE_SCHEME}://localhost/${parts.map(encodeURIComponent).join("/")}`;
+}
+
+export const capabilities = {
+  get nativeViewState() { return isNativeHost(); },
+  get nativeMenu() { return isTauri() && IS_MAC; },
+  get nativeHistory() { return isTauri(); },
+  get updates() { return isTauri(); },
+  get folderImport() { return isTauri(); },
+  get windowControls() { return isTauri(); },
+  get fullscreenLayout() { return IS_IOS; },
+  get appVersion() { return isTauri(); },
+  get appExit() { return isTauri(); },
+};
+
+export function openExternalLink(href: string) {
+  if (!isTauri()) { window.open(href, "_blank", "noopener,noreferrer"); return; }
+  void import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(href))
+    .catch(error => console.error("Failed to open external link:", error));
 }

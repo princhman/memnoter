@@ -1,3 +1,4 @@
+import { settled } from "@/lib/async-work";
 import { onRemote as applyRemote, onFileStored, cancelRemoteReindex, drainRemoteReindex, type ApplyResult } from "./apply-remote.ts";
 // Runs cloud sync for the app: owns the engine, adapts it to the Tauri
 // commands in apps/desktop/src/sync.rs and folds remote changes into the caches
@@ -53,7 +54,7 @@ let draining: Promise<unknown> = Promise.resolve();
 
 function serially<T>(task: () => Promise<T>): Promise<T> {
   const next = transitions.then(task, task);
-  transitions = next.catch(() => {});
+  transitions = settled(next);
   return next;
 }
 
@@ -240,16 +241,7 @@ function stopEngine() {
   setSyncedFileHandler(null);
   activeAccount = null;
   cancelRemoteReindex();
-  // Database generation checks reject any late completion after this bound.
-  // Never retain a rejected/unbounded drain as the next transition's barrier.
-  draining = new Promise<void>((resolve) => {
-    let ended = false;
-    const timer = setTimeout(() => { ended = true; resolve(); }, 5_000);
-    void Promise.allSettled(workers).then(async () => {
-      if (ended) return;
-      await drainRemoteReindex();
-    }).finally(() => { ended = true; clearTimeout(timer); resolve(); });
-  });
+  draining = Promise.allSettled(workers).then(() => drainRemoteReindex());
   return draining;
 }
 
