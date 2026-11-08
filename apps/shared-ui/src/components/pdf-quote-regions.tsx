@@ -59,8 +59,8 @@ export const PdfQuoteRegions = memo(function PdfQuoteRegions({ regions, onNaviga
     {regions.map(region => {
       const key = regionKey(region);
       const label = `Show quote in note${region.uses.length > 1 ? ` (${region.uses.length} uses)` : ""}`;
-      const control = "pointer-events-auto absolute right-0 top-0 flex size-6 items-center justify-center rounded-sm floating-surface text-primary shadow-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary";
-      return <div key={key} className="pointer-events-none absolute border border-primary/40 bg-primary/5"
+      const control = "pointer-events-auto absolute right-0 top-0 flex size-6 items-center justify-center rounded-sm bg-violet-600 text-white shadow-sm hover:bg-violet-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700";
+      return <div key={key} className="pointer-events-none absolute border border-violet-500/80 bg-violet-500/5"
         style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%` }}>
         {!disabled && onNavigate && region.uses.length > 0 && (region.uses.length === 1
           ? <button type="button" className={control} aria-label={label} title={label} onClick={() => activate(region)}><ArrowUpRight aria-hidden="true" className="size-4" /></button>
