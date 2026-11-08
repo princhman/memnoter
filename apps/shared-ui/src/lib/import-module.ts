@@ -2,21 +2,20 @@ import { Editor, type JSONContent } from "@tiptap/core";
 import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap";
 import * as Y from "yjs";
 import { call } from "./backend.ts";
-import { noteExtensions } from "./note-extensions";
+import { noteExtensions } from "./editor-schema";
 import { imageMime, prepareFolderImport, type ImportOptions, type ImportFolder } from "./folder-import.ts";
-import { writeOperation } from "./write-lifecycle";
-import { reindexStoredCards } from "./card-backfill";
-import { indexStoredNote } from "./search-index";
+import { writeOperation, type WritePermit } from "./write-lifecycle";
+import { refreshDerived } from "./note-index";
 
 let importing = false;
 export async function importFolder(folder: ImportFolder, progress: (message: string) => void, options: Partial<ImportOptions> = {}) {
   if (importing) throw new Error("A folder import is already in progress.");
   importing = true;
-  try { return await writeOperation(() => runImport(folder, progress, options)); }
+  try { return await writeOperation(permit => runImport(folder, progress, options, permit)); }
   finally { importing = false; }
 }
 
-async function runImport(folder: ImportFolder, progress: (message: string) => void, options: Partial<ImportOptions>) {
+async function runImport(folder: ImportFolder, progress: (message: string) => void, options: Partial<ImportOptions>, permit: WritePermit) {
   progress("Scan: checking selected files…");
   const plan = await prepareFolderImport(folder, progress, options);
   const doc = new Y.Doc();
@@ -26,7 +25,6 @@ async function runImport(folder: ImportFolder, progress: (message: string) => vo
     // The real editor assigns card identities and normalizes headings before
     // storage exists. Opening the imported document uses precisely this schema.
     editor.commands.setContent(plan.document);
-    await new Promise(resolve => setTimeout(resolve, 0));
     editor.state.doc.check();
     // Export the normalized tree into a fresh history. A first persisted update
     // must contain insertions only: the image lease validator rejects deletions
@@ -63,12 +61,10 @@ async function runImport(folder: ImportFolder, progress: (message: string) => vo
     let indexingWarning: string | undefined;
     try {
       progress("Indexing notes and cards…");
-      await indexStoredNote(moduleId, true);
-      await reindexStoredCards(moduleId);
-    } catch {
-      indexingWarning = "Imported; search indexing will retry";
-      const retry = () => { void Promise.all([indexStoredNote(moduleId!, true), reindexStoredCards(moduleId!)]).catch(() => window.setTimeout(retry, 10_000)); };
-      window.setTimeout(retry, 10_000);
+      await refreshDerived(moduleId, permit);
+    } catch (error) {
+      console.error("Imported note could not be indexed after retries:", error);
+      indexingWarning = "Imported; search and card indexing failed. Reopen the note to retry.";
     }
     return { moduleId, name, ...plan, indexingWarning };
   } finally { editor.destroy(); doc.destroy(); }

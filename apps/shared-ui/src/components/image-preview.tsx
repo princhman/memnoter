@@ -1,3 +1,4 @@
+import { DOUBLE_TAP_MS, DOUBLE_TAP_DISTANCE_PX } from "@/lib/pointer-gestures";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { clampZoom, FIT, zoomAround, type Point, type ImageBounds } from "@/lib/image-zoom";
 
@@ -32,7 +33,7 @@ export function ImagePreview({ src, alt }: { src?: string; alt: string }) {
     pointers.current.delete(event.pointerId);
     if (!cancelled && !moved.current && pointers.current.size === 0) {
       const previous = tap.current;
-      if (previous && event.timeStamp - previous.time < 320 && Math.hypot(previous.point.x - at.x, previous.point.y - at.y) < 32) {
+      if (previous && event.timeStamp - previous.time < DOUBLE_TAP_MS && Math.hypot(previous.point.x - at.x, previous.point.y - at.y) < DOUBLE_TAP_DISTANCE_PX) {
         update(transform.current.scale > 1 ? FIT : zoomAround(FIT, at, at, 2.5, bounds()));
         tap.current = null;
       } else tap.current = { time: event.timeStamp, point: at };

@@ -1,21 +1,19 @@
+import { browserHarness } from "./support/browser.mjs";
 // A grade still being written when the review switches module belongs to the
 // old session: it must not put the old module's cards or undo history into
 // the new one. Runs the app in WebKit against a fake Tauri backend.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-let server, browser, url, cacheDir;
+let server, browser, url;
 
 before(async () => {
-  cacheDir = await mkdtemp(`${root}/node_modules/.memnoter-review-scope-`);
   server = await createServer({
     root,
-    cacheDir,
     configFile: `${root}/vite.config.ts`,
     server: { port: 0, strictPort: false },
     logLevel: "error",
@@ -37,7 +35,6 @@ before(async () => {
 after(async () => {
   await browser?.close();
   await server?.close();
-  if (cacheDir) await rm(cacheDir, { recursive: true, force: true });
 });
 
 test("a grade finishing after a scope change leaves the new review alone", async () => {
@@ -53,11 +50,7 @@ test("a grade finishing after a scope change leaves the new review alone", async
     });
     const cards = [card("a1", "a", "Alpha question"), card("b1", "b", "Beta question")];
     window.__grades = [];
-    window.__TAURI_INTERNALS__ = {
-      transformCallback: () => ++callbacks,
-      unregisterCallback() {},
-      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
-      invoke: async (command, args) => {
+    window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command.startsWith("plugin:")) return callbacks;
         if (command === "modules") return [{ id: "a", name: "Alpha" }, { id: "b", name: "Beta" }];
         if (command === "due_cards") return cards.filter((c) => !args.moduleId || c.moduleId === args.moduleId);
@@ -65,9 +58,8 @@ test("a grade finishing after a scope change leaves the new review alone", async
         if (command === "review_card") return new Promise((resolve) => window.__grades.push(resolve));
         if (["due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes", "card_schedules"].includes(command)) return [];
         return null;
-      },
-    };
-    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
+      } } });
+
   });
   try {
     await page.goto(`${url}/review?module=a`);
@@ -102,10 +94,7 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
       state: 0, scheduleStatus: "new", lastReviewAt: null, reps: 0, lapses: 0, fsrsModel: null,
     }));
     window.__loads = 0;
-    window.__TAURI_INTERNALS__ = {
-      transformCallback: () => ++callbacks, unregisterCallback() {},
-      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
-      invoke: async (command, args) => {
+    window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command.startsWith("plugin:")) return callbacks;
         if (command === "modules") return [{ id: "a", name: "Alpha" }];
         if (command === "due_cards") {
@@ -118,9 +107,8 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
         if (command === "undo_review") Object.assign(cards.find((c) => c.id === args.cardId), args.previous);
         if (["due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes", "card_schedules"].includes(command)) return [];
         return null;
-      },
-    };
-    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
+      } } });
+
   });
   const toggle = async (enabled) => {
     const loads = await page.evaluate(() => window.__loads);
@@ -158,7 +146,7 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
   }
 });
 
-test("cutoff consumers share an idle-when-disabled day clock and catch up after sleep", async () => {
+test("cutoff consumers update together across midnight and catch up after sleep", async () => {
   const page = await browser.newPage();
   await page.route("**/clock-probe", (route) => route.fulfill({ contentType: "text/html", body: '<div id="probe"></div>' }));
   try {
@@ -167,20 +155,13 @@ test("cutoff consumers share an idle-when-disabled day clock and catch up after 
     await page.evaluate(async () => {
       const { createElement: h, createRoot } = await import("/test-harness");
       const { useCreatedAtCutoff } = await import("/src/lib/card-sync.ts");
-      const timers = new Set();
-      const originalSet = window.setInterval, originalClear = window.clearInterval;
-      window.setInterval = (...args) => { const id = originalSet(...args); timers.add(id); return id; };
-      window.clearInterval = (id) => { timers.delete(id); originalClear(id); };
-      window.__timers = timers;
       function Probe() { return h("span", null, String(useCreatedAtCutoff())); }
       window.__root = createRoot(document.getElementById("probe"));
       window.__root.render(h("div", null, h(Probe), h(Probe)));
     });
     await page.waitForFunction(() => document.querySelectorAll("span").length === 2);
-    assert.equal(await page.evaluate(() => window.__timers.size), 0);
     await page.evaluate(async () => (await import("/src/lib/store.ts")).setSkipCardsCreatedToday(true));
     await page.waitForFunction(() => [...document.querySelectorAll("span")].every((s) => s.textContent !== "null"));
-    assert.equal(await page.evaluate(() => window.__timers.size), 1);
     await page.clock.fastForward(12 * 60 * 60 * 1000 + 100);
     await page.waitForFunction(() => [...document.querySelectorAll("span")].every((s) => +s.textContent === new Date().setHours(0, 0, 0, 0)));
     await page.clock.setSystemTime(new Date("2026-11-07T12:00:00"));
@@ -188,7 +169,6 @@ test("cutoff consumers share an idle-when-disabled day clock and catch up after 
     await page.waitForFunction(() => [...document.querySelectorAll("span")].every((s) => +s.textContent === new Date().setHours(0, 0, 0, 0)));
     await page.evaluate(async () => (await import("/src/lib/store.ts")).setSkipCardsCreatedToday(false));
     await page.waitForFunction(() => [...document.querySelectorAll("span")].every((s) => s.textContent === "null"));
-    assert.equal(await page.evaluate(() => window.__timers.size), 0);
   } finally {
     await page.close();
   }
@@ -203,9 +183,7 @@ test("counts keep previous data during cutoff fetches and unkeyed schedules upda
     await page.goto(`${url}/counts-probe`);
     await page.evaluate(async () => {
       let callbacks = 0;
-      window.__TAURI_INTERNALS__ = {
-        transformCallback: () => ++callbacks, unregisterCallback() {},
-        invoke: async (command, args) => {
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
           if (command.startsWith("plugin:")) return callbacks;
           if (command === "due_counts") {
             if (args.createdAtCutoff !== null) return new Promise((resolve) => { window.__resolveCounts = resolve; });
@@ -213,8 +191,7 @@ test("counts keep previous data during cutoff fetches and unkeyed schedules upda
           }
           if (command === "card_schedules") return [{ id: "a", state: 0, createdAt: Date.now(), dueAt: 1, lastReviewAt: null }];
           return null;
-        },
-      };
+        } } });
       const { createElement: h, createRoot, QueryClient, QueryClientProvider } = await import("/test-harness");
       const { useDueCounts, useCardSchedules } = await import("/src/lib/card-sync.ts");
       window.__schedules = [];

@@ -1,3 +1,5 @@
+import { IMPORT_FOLDER_EVENT } from "@/lib/app-events";
+import { Toast } from "./ui/toast";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { call } from "@/lib/backend";
@@ -35,8 +37,8 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
       } catch (e) { setSummary({ text: "Could not scan folder", details: [String(e)] }); }
       finally { picking = false; }
     };
-    window.addEventListener("memnoter-import-folder", pick);
-    return () => window.removeEventListener("memnoter-import-folder", pick);
+    window.addEventListener(IMPORT_FOLDER_EVENT, pick);
+    return () => window.removeEventListener(IMPORT_FOLDER_EVENT, pick);
   }, []);
   useEffect(() => {
     if (!folder) return;
@@ -111,6 +113,6 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
         </div>
       </DialogContent>
     </Dialog>
-    {summary && <aside role="status" className="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl floating-surface bg-popover text-popover-foreground p-4 shadow-lg text-sm"><p>{summary.text}</p>{summary.details.length > 0 && <details className="mt-2 max-h-52 overflow-auto"><summary>{summary.details.length} warnings and skipped files</summary><ul className="mt-2 space-y-1">{summary.details.map((line,i) => <li key={i}>{line}</li>)}</ul></details>}<Button className="mt-2" size="sm" variant="ghost" onClick={() => setSummary(undefined)}>Dismiss</Button></aside>}
+    {summary && <Toast role="status" className="max-w-sm rounded-xl p-4 shadow-lg text-sm"><p>{summary.text}</p>{summary.details.length > 0 && <details className="mt-2 max-h-52 overflow-auto"><summary>{summary.details.length} warnings and skipped files</summary><ul className="mt-2 space-y-1">{summary.details.map((line,i) => <li key={i}>{line}</li>)}</ul></details>}<Button className="mt-2" size="sm" variant="ghost" onClick={() => setSummary(undefined)}>Dismiss</Button></Toast>}
   </>;
 }

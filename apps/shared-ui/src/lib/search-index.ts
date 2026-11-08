@@ -1,178 +1,63 @@
+import { settled } from "@/lib/async-work";
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/core";
-import type { Node } from "@tiptap/pm/model";
 import { call as invoke } from "./backend.ts";
-import * as Y from "yjs";
-import { applySavedContent, reconcileContent, type GetContentResponse } from "@/lib/content";
-import {
-  EXTRACTOR_VERSION,
-  extractFromDoc,
-  extractFromYDoc,
-  type SearchText,
-} from "@/lib/search-text";
-
+import { EXTRACTOR_VERSION, extractFromDoc, extractFromYDoc, type SearchText } from "@/lib/search-text";
 import { queryClient } from "@/lib/query-client";
-import { saveQueue } from "@/lib/saves";
+import { assertWritable, MUTATIONS, registerFlusher, type WritePermit } from "@/lib/write-lifecycle";
+import { createEditorWriteSync } from "@/lib/editor-write-sync";
+import { refreshDerived, loadStoredNote } from "@/lib/note-index";
 
-const INDEX_DEBOUNCE_MS = 1_000;
-const RETRY_MS = 5_000;
+const editors = createEditorWriteSync(1_000);
+export const flushSearchIndexing = editors.flush;
+registerFlusher("search", flushSearchIndexing);
 
-// Each open editor's "index now"; quitting runs them and waits for the writes,
-// since a note indexed by the current extractor is not backfilled on launch.
-const activeFlushes = new Set<() => void>();
-const indexing = () => queryClient.isMutating({ mutationKey: ["search-index"] }) > 0;
-
-export async function flushSearchIndexing(timeoutMs: number) {
-  for (const flush of activeFlushes) flush();
-  retryFailedIndexing();
-  if (!indexing()) return;
-  await new Promise<void>((resolve) => {
-    const timer = window.setTimeout(done, timeoutMs);
-    const stop = queryClient.getMutationCache().subscribe(() => {
-      if (!indexing()) done();
-    });
-    function done() {
-      window.clearTimeout(timer);
-      stop();
-      resolve();
-    }
-  });
+async function indexNote(moduleId: string, text: SearchText, backfill = false, permit?: WritePermit) {
+  assertWritable(permit);
+  await queryClient.getMutationCache().build(queryClient, {
+    mutationKey: [MUTATIONS.searchIndex, moduleId],
+    gcTime: 0,
+    mutationFn: () => invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill }),
+  }).execute(undefined);
+  void queryClient.invalidateQueries({ queryKey: ["search-notes"] });
 }
 
-// A write that failed keeps its text, to be tried again shortly and when the
-// app quits: the note still carries the current extractor's version, so the
-// next launch would not index it again. Only the latest text for a note is
-// kept, so a retry never replaces newer text.
-const failed = new Map<string, { text: SearchText; backfill: boolean }>();
-const latestWrite = new Map<string, number>();
-let retryTimer: number | undefined;
-
-function retryFailedIndexing() {
-  window.clearTimeout(retryTimer);
-  retryTimer = undefined;
-  for (const [moduleId, { text, backfill }] of failed) void indexNote(moduleId, text, backfill);
+export async function indexStoredNote(moduleId: string, doc?: import("yjs").Doc, permit?: WritePermit) {
+  const loaded = doc ?? await loadStoredNote(moduleId);
+  try { await indexNote(moduleId, extractFromYDoc(loaded), true, permit); }
+  finally { if (!doc) loaded.destroy(); }
 }
 
-async function indexNote(moduleId: string, text: SearchText, backfill = false, reportFailure = false) {
-  const write = (latestWrite.get(moduleId) ?? 0) + 1;
-  latestWrite.set(moduleId, write);
-  failed.delete(moduleId);
-  try {
-    // A restore replaces the database; what it had to index is moot.
-    if (saveQueue.isSuspended()) return;
-    // Restore drains this mutation before replacing the database.
-    await queryClient.getMutationCache().build(queryClient, {
-      mutationKey: ["search-index", moduleId],
-      gcTime: 0,
-      mutationFn: () => invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill }),
-    }).execute(undefined);
-    // An open palette keeps its results; let it see the new text.
-    void queryClient.invalidateQueries({ queryKey: ["search-notes"] });
-  } catch (error) {
-    console.error("Failed to index note for search:", error);
-    if (latestWrite.get(moduleId) !== write || saveQueue.isSuspended()) return;
-    failed.set(moduleId, { text, backfill });
-    retryTimer ??= window.setTimeout(retryFailedIndexing, RETRY_MS);
-    if (reportFailure) throw error;
-  }
-}
-
-// Keeps the open note's search text current: once after it loads, then about a
-// second after edits stop, and immediately when the note closes or the app
-// quits. Nothing is indexed before loading, so a failed load cannot erase it.
-export function useSearchIndexing(
-  editor: Editor | null,
-  moduleId: string,
-  isReady: boolean,
-) {
+export function useSearchIndexing(editor: Editor | null, moduleId: string, isReady: boolean) {
   useEffect(() => {
     if (!editor || !isReady) return;
-
-    // Documents are immutable, so keeping the latest one is enough.
-    let pending: Node | null = editor.state.doc;
-    let timeout: number | undefined;
-
-    const flush = () => {
-      window.clearTimeout(timeout);
-      timeout = undefined;
-      if (!pending) return;
-      const text = extractFromDoc(pending);
+    let pending: typeof editor.state.doc | null = editor.state.doc;
+    let queue = Promise.resolve();
+    const flush = (permit?: WritePermit) => {
+      debounce.cancel();
+      if (!pending) return queue;
+      const snapshot = pending;
       pending = null;
-      void indexNote(moduleId, text);
+      const write = queue.then(() => indexNote(moduleId, extractFromDoc(snapshot), false, permit)).catch(async error => {
+        console.error(`Failed to index open note ${moduleId}; retrying stored text:`, error);
+        await refreshDerived(moduleId, permit);
+      });
+      queue = settled(write);
+      return editors.track(write);
     };
-    const schedule = () => {
-      window.clearTimeout(timeout);
-      timeout = window.setTimeout(flush, INDEX_DEBOUNCE_MS);
-    };
-    const handleTransaction = ({
-      transaction,
-    }: {
-      transaction: import("@tiptap/pm/state").Transaction;
-    }) => {
+    const debounce = editors.attach(flush);
+    const changed = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => {
       if (!transaction.docChanged) return;
       pending = transaction.doc;
-      schedule();
+      debounce.schedule();
     };
-
-    schedule();
-    activeFlushes.add(flush);
-    editor.on("transaction", handleTransaction);
-    window.addEventListener("pagehide", flush);
+    debounce.schedule();
+    editor.on("transaction", changed);
     return () => {
-      activeFlushes.delete(flush);
-      editor.off("transaction", handleTransaction);
-      window.removeEventListener("pagehide", flush);
-      flush();
+      editor.off("transaction", changed);
+      // Always include the last snapshot, even if its timer has already fired.
+      void flush().catch(console.error);
+      debounce.stop();
     };
   }, [editor, moduleId, isReady]);
-}
-
-function whenIdle() {
-  return new Promise<void>((resolve) => {
-    if ("requestIdleCallback" in window) {
-      window.requestIdleCallback(() => resolve(), { timeout: 2_000 });
-    } else {
-      setTimeout(resolve, 50);
-    }
-  });
-}
-
-// Builds a note's search text from its saved Yjs state, without an editor.
-export async function indexStoredNote(moduleId: string, reportFailure = false) {
-  const content = await invoke<GetContentResponse>("get_content", { moduleId });
-  const doc = new Y.Doc();
-  try {
-    applySavedContent(doc, reconcileContent(moduleId, content));
-    await indexNote(moduleId, extractFromYDoc(doc), true, reportFailure);
-  } finally {
-    doc.destroy();
-  }
-}
-
-let backfillStarted = false;
-
-// Indexes, one at a time in idle time, every note that was never indexed or
-// was indexed by an older extractor. Runs once per app session.
-export async function backfillSearchIndex() {
-  if (backfillStarted) return;
-  backfillStarted = true;
-
-  let moduleIds: string[];
-  try {
-    moduleIds = await invoke<string[]>("unindexed_modules", {
-      version: EXTRACTOR_VERSION,
-    });
-  } catch (error) {
-    console.error("Failed to list notes to index:", error);
-    return;
-  }
-  for (const moduleId of moduleIds) {
-    await whenIdle();
-    try {
-      await indexStoredNote(moduleId);
-    } catch (error) {
-      // Usually a note deleted since the list was read; the rest still run.
-      console.error(`Failed to index note ${moduleId}:`, error);
-    }
-  }
 }

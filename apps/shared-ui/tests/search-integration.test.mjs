@@ -1,17 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { register } from 'node:module';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
 import * as Y from 'yjs';
 
-// Resolve the application's Vite aliases while exercising its real IPC owners.
-const src = new URL('../src/', import.meta.url).href;
-register(`data:text/javascript,${encodeURIComponent(`
-  export function resolve(specifier, context, next) {
-    if (specifier.startsWith('@/')) specifier = ${JSON.stringify(src)} + specifier.slice(2) + '.ts';
-    return next(specifier, context);
-  }
-`)}`, import.meta.url);
 globalThis.window = { setTimeout, clearTimeout };
 const { indexStoredNote, flushSearchIndexing } = await import('../src/lib/search-index.ts');
 const { acknowledgeContent, acknowledgeCompaction } = await import('../src/lib/content.ts');
@@ -30,6 +21,7 @@ test('stored search indexing reconciles late reads and joins the restore mutatio
   let finishIndex;
   const writes = [];
   mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     if (command === 'get_content') return new Promise(resolve => { finishRead = resolve; });
     assert.equal(command, 'index_note');
     writes.push(args);
@@ -56,7 +48,7 @@ test('stored search indexing reconciles late reads and joins the restore mutatio
     finishIndex();
     await afterCompaction;
 
-    const delayed = indexStoredNote('search-receipt');
+    const delayed = assert.rejects(indexStoredNote('search-receipt'), /suspended/);
     await saveQueue.suspend();
     finishRead({ state: [], updates: [], files: [] });
     await new Promise(resolve => setImmediate(resolve));
@@ -72,7 +64,7 @@ test('stored search indexing reconciles late reads and joins the restore mutatio
   }
 });
 
-test('a failed index write is kept and written again, unless newer text replaced it', async () => {
+test('failed stored indexing reports failure and a later request writes the stored text', async () => {
   const doc = new Y.Doc();
   const paragraph = new Y.XmlElement('paragraph');
   const text = new Y.XmlText();
@@ -83,6 +75,7 @@ test('a failed index write is kept and written again, unless newer text replaced
   const writes = [];
   let failing = true;
   mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     if (command === 'get_content') return content;
     writes.push(args);
     if (failing) throw new Error('database is locked');
@@ -90,23 +83,14 @@ test('a failed index write is kept and written again, unless newer text replaced
   const errors = console.error;
   console.error = () => {};
   try {
-    await indexStoredNote('retry-note');
+    await assert.rejects(indexStoredNote('retry-note'), /locked/);
     assert.equal(writes.length, 1);
     failing = false;
-    // Quitting writes it again.
-    await flushSearchIndexing(1_000);
-    await new Promise(resolve => setImmediate(resolve));
+    await indexStoredNote('retry-note');
     assert.equal(writes.length, 2);
     assert.equal(writes[1].body, 'Text that failed to index');
-    await flushSearchIndexing(1_000);
-    assert.equal(writes.length, 2, 'a written note is not retried');
-
-    failing = true;
-    await indexStoredNote('retry-note');
-    failing = false;
-    await indexStoredNote('retry-note');
-    await flushSearchIndexing(1_000);
-    assert.equal(writes.length, 4, 'newer text replaced the failed write');
+    await flushSearchIndexing();
+    assert.equal(writes.length, 2, 'a completed refresh is not replayed by flush');
   } finally {
     console.error = errors;
     queryClient.clear();

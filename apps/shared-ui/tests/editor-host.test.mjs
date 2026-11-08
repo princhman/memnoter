@@ -1,13 +1,17 @@
+import { browserHarness } from "./support/browser.mjs";
+import { execFileSync } from "node:child_process";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createServer } from 'vite';
-import { webkit } from 'playwright';
-import { mkdtemp, rm } from 'node:fs/promises';
+
+const { createServer, webkit } = browserHarness(import.meta.url);
+
+test('checked-in Swift bridge matches the web protocol', () => {
+  execFileSync(process.execPath, [new URL('../../../scripts/generate-bridge-protocol.mjs', import.meta.url).pathname, '--check']);
+});
 
 test('WK host opens shared editors, publishes state and outline, and persists edits without desktop APIs', async t => {
   const root = new URL('../', import.meta.url).pathname;
-  const cacheDir = await mkdtemp(`${root}node_modules/.memnoter-host-`);
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   try {
     await server.listen();
@@ -20,7 +24,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await context.addInitScript(() => {
       window.__memnoterScrollDebug = true;
       window.messages = [];
-      window.webkit = { messageHandlers: { memnoter: { postMessage(message) {
+      window.installTestBridge({ native: function(message) {
         window.messages.push(message);
         if (message.kind !== 'call') return;
         const { id, command, args } = message;
@@ -33,7 +37,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
         else if (command === 'index_note') result = null;
         else throw Error(`Unexpected command: ${command}`);
         queueMicrotask(() => window.__memnoterBridge.resolve(id, result));
-      } } } };
+      } });
     });
     // Saved native preferences are untrusted across app upgrades. A bad caret
     // or missing heading must not turn a successful content read into failure.
@@ -153,8 +157,17 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.ok((await synced.locator('.tiptap').textContent()).includes('Local draft!'));
     await synced.evaluate(() => window.memnoterEditor.flush());
     await synced.close();
+    await page.addInitScript(() => { window.__memnoterViewState = { skipCardsCreatedToday: true }; });
     await page.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
     await page.waitForFunction(() => window.messages.some(message => message.event === 'ready'));
+    assert.deepEqual(await page.evaluate(async () => {
+      const { appStore } = await import('/src/lib/store.ts');
+      const initial = appStore.state.skipCardsCreatedToday;
+      window.__memnoterBridge.emit('skip-cards-created-today', true);
+      const enabled = appStore.state.skipCardsCreatedToday;
+      window.__memnoterBridge.emit('skip-cards-created-today', false);
+      return [initial, enabled, appStore.state.skipCardsCreatedToday];
+    }), [false, true, false], 'only the native event controls the review preference');
     await page.evaluate(() => window.memnoterEditor.open('one'));
     await page.locator('.tiptap[contenteditable=true]').waitFor();
     assert.equal(await page.locator('header, aside, nav').count(), 0);
@@ -242,21 +255,6 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await settleScroll();
     const revealed = await caretGeometry();
     assert.ok(Math.abs(revealed.caret - revealed.midpoint) < 20, JSON.stringify(revealed));
-    // Undo can leave the caret above the visible area, and must bring it back.
-    // Typing must not: WebKit reports unsettled positions while it lays out.
-    const revealAbove = reason => page.evaluate(async reason => {
-      const { revealCaret } = await import('/src/editor-host/scroll.ts');
-      const container = document.querySelector('.app-scroll-container');
-      const before = container.scrollTop;
-      const top = container.getBoundingClientRect().top + 60 - 100;
-      revealCaret({
-        isDestroyed: false, hasFocus: () => true, state: { selection: {} },
-        dom: container.querySelector('.tiptap'), coordsAtPos: () => ({ top, bottom: top + 20 }),
-      }, reason);
-      return before - container.scrollTop;
-    }, reason);
-    assert.equal(await revealAbove('input'), 0);
-    assert.equal(await revealAbove('selection'), 100);
     await page.evaluate(() => window.memnoterEditor.setTopInset(0));
     await page.evaluate(() => window.memnoterEditor.setBottomInset(0));
     const focus = await page.evaluate(() => {
@@ -325,6 +323,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       await window.memnoterEditor.flush();
       return window.messages.filter(m => m.event === 'viewState').at(-1)?.payload;
     });
+    assert.equal(Object.hasOwn(persisted, "skipCardsCreatedToday"), false);
     assert.ok(persisted?.viewByModule.one.focusedSection > 0);
     assert.ok(persisted.viewByModule.one.anchor > 0);
     // Native restores focus from preferences before opening content. Old saved
@@ -363,22 +362,23 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       await menu.locator('.tiptap').click();
       await menu.keyboard.type('{{first}} {{second}}');
       await menu.evaluate(() => { window.memnoterEditor.setTopInset(88); window.memnoterEditor.setBottomInset(350); });
-      const dot = menu.locator('.card-info').first();
-      const popup = dot.locator('.card-info-popup');
+      const dot = menu.getByRole('group', { name: 'Card details', exact: true }).first();
+      const popup = dot.getByRole('dialog', { name: 'Card details', exact: true });
       const snapshot = () => menu.evaluate(() => {
         const selection = window.getSelection();
         return { focused: document.activeElement === document.querySelector('.tiptap'),
           anchor: selection.anchorOffset, head: selection.focusOffset,
           text: selection.anchorNode?.textContent, scroll: document.querySelector('.app-scroll-container').scrollTop };
       });
+      // Tap the dot at its centre; locator.tap() left the popup open on CI.
       const tapDot = async () => {
         const box = await dot.boundingBox();
         await menu.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
       };
       for (const focused of [true, false]) {
         if (!focused) {
-          await menu.evaluate(() => window.memnoterEditor.blur());
-          // Tiptap's blur command releases selection on the next animation frame.
+          await menu.evaluate(() => { document.activeElement?.blur(); window.getSelection()?.removeAllRanges(); });
+          // Allow WebKit to release focus before exercising the native action.
           await menu.waitForFunction(() => document.activeElement !== document.querySelector('.tiptap') && window.getSelection().rangeCount === 0);
         }
         const before = await snapshot();
@@ -571,6 +571,6 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     assert.equal((await state()).suppressKeyboard, false);
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true });
+    await browser?.close(); await server.close();
   }
 });

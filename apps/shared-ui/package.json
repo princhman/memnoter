@@ -4,10 +4,11 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test": "node --experimental-strip-types --import ./tests/support/register.mjs --test --test-concurrency=2 tests/*.test.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bench:large-note": "node --experimental-strip-types --import ./tests/support/register.mjs --test tests/large-note.bench.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -43,7 +44,6 @@
     "@tiptap/y-tiptap": "^3.0.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "cn": "^0.4.0",
     "katex": "^0.19.0",
     "lucide-react": "^1.23.0",
     "markdown-it": "^15.0.3",

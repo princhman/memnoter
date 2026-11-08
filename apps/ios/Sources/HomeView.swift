@@ -6,16 +6,7 @@ struct HomeView: View {
     let newModule: () -> Void
     let openModule: (String) -> Void
 
-    // Native host shortcuts plus the shared editor's supported commands.
-    private let shortcuts: [(keys: String, action: String)] = [
-        ("/", "Insert a block"),
-        ("⌘N", "New module"),
-        ("⌘F", "Find in the note"),
-        ("⌘K", "Search notes"),
-        ("⌘⌥S", "New section"),
-        ("⌘⌥[ / ⌘⌥]", "Fold and unfold a section"),
-        ("⌘⇧M", "Inline math"),
-    ]
+    private let shortcuts = BridgeProtocol.homeShortcuts
 
     var body: some View {
         ScrollView {

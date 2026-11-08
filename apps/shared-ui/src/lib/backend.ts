@@ -1,8 +1,10 @@
+import { IS_MAC, IS_IOS } from "./platform.ts";
+import { FILE_SCHEME, type NativeEvent, type NativeEvents } from "../editor-host/protocol.ts";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
 type NativeMessage = { kind: "call"; id: string; command: string; args: object } |
-  { kind: "event"; event: string; payload: unknown };
+  NativeEvent;
 type Handler = (event: { event: string; id: number; payload: unknown }) => void;
 
 declare global {
@@ -46,7 +48,13 @@ function installBridge() {
 if (typeof window !== "undefined") installBridge();
 
 export function call<T>(command: string, args?: object): Promise<T> {
-  if (!isNativeHost()) return invoke<T>(command, args as Record<string, unknown> | undefined);
+  if (!isNativeHost()) {
+    const shell = command.startsWith("plugin:") || ["confirm_exit", "confirm_restart", "set_editor_history", "pick_import_folder", "pick_import_image_folder", "read_import_images"].includes(command);
+    return (shell ? invoke<T>(command, args as Record<string, unknown> | undefined)
+      : invoke<T>("core", { command, args: args ?? {} })).catch(error => {
+        throw new Error(typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error));
+      });
+  }
   return new Promise<T>((resolve, reject) => {
     const id = String(++sequence);
     pending.set(id, { resolve: value => resolve(value as T), reject });
@@ -60,7 +68,7 @@ export function call<T>(command: string, args?: object): Promise<T> {
 }
 
 export async function listen<T>(event: string, handler: (event: { event: string; id: number; payload: T }) => void): Promise<() => void> {
-  if (!isNativeHost()) return tauriListen<T>(event, handler);
+  if (!isNativeHost()) return isTauri() ? tauriListen<T>(event, handler) : Promise.resolve(() => {});
   const handlers = listeners.get(event) ?? new Set<Handler>();
   listeners.set(event, handlers);
   const wrapped: Handler = value => handler({ ...value, payload: value.payload as T });
@@ -71,8 +79,8 @@ export async function listen<T>(event: string, handler: (event: { event: string;
   };
 }
 
-export function postNativeEvent(event: string, payload: unknown = null) {
-  if (isNativeHost()) window.webkit!.messageHandlers!.memnoter!.postMessage({ kind: "event", event, payload });
+export function postNativeEvent<K extends keyof NativeEvents>(event: K, ...args: null extends NativeEvents[K] ? [payload?: NativeEvents[K]] : [payload: NativeEvents[K]]) {
+  if (isNativeHost()) window.webkit!.messageHandlers!.memnoter!.postMessage({ kind: "event", event, payload: args[0] ?? null } as NativeEvent);
 }
 
 export function fileUrl(path: string): string {
@@ -85,5 +93,23 @@ export function fileUrl(path: string): string {
   if (parts.length !== 2 || parts[0] !== "files" || !parts[1] || parts.some(part => part === "." || part === "..")) {
     throw new Error("Expected an app data files/<id> path");
   }
-  return `memnoter-file://localhost/${parts.map(encodeURIComponent).join("/")}`;
+  return `${FILE_SCHEME}://localhost/${parts.map(encodeURIComponent).join("/")}`;
+}
+
+export const capabilities = {
+  get nativeViewState() { return isNativeHost(); },
+  get nativeMenu() { return isTauri() && IS_MAC; },
+  get nativeHistory() { return isTauri(); },
+  get updates() { return isTauri(); },
+  get folderImport() { return isTauri(); },
+  get windowControls() { return isTauri(); },
+  get fullscreenLayout() { return IS_IOS; },
+  get appVersion() { return isTauri(); },
+  get appExit() { return isTauri(); },
+};
+
+export function openExternalLink(href: string) {
+  if (!isTauri()) { window.open(href, "_blank", "noopener,noreferrer"); return; }
+  void import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(href))
+    .catch(error => console.error("Failed to open external link:", error));
 }

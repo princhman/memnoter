@@ -36,8 +36,8 @@ final class SectionFocusUITests: XCTestCase {
         editor.typeText("Inside sentinel\n")
         let outside = app.webViews.staticTexts["Outside sentinel"].firstMatch
         let inside = app.webViews.staticTexts["Inside sentinel"].firstMatch
-        XCTAssertTrue(outside.exists)
-        XCTAssertTrue(inside.exists)
+        XCTAssertTrue(outside.waitForExistence(timeout: 10))
+        XCTAssertTrue(inside.waitForExistence(timeout: 10))
         let title = app.staticTexts["module.title"]
         XCTAssertTrue(title.exists && title.isHittable, "Module title must survive toolbar crowding")
         let enter = app.buttons["sectionFocus.enter"]

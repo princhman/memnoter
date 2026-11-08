@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  CLOSE_SIGNED_OUT,
+  CLOSE_SIGNED_OUT, CLOSE_POLICY,
   COMPACT_HINT_AFTER,
   MAX_BLOB_BYTES,
   MAX_FRAME_BYTES,
@@ -18,9 +18,7 @@ import {
 import type { Env } from "./env";
 import { blobKey, userPrefix } from "./storage";
 
-// Catch-up frames are split at about this many payload bytes.
 const FRAME_TARGET_BYTES = 512 * 1024;
-// How many stored entries between checks for documents worth compacting.
 const HINT_CHECK_EVERY = 64;
 
 type Attachment = { ready: boolean };
@@ -305,7 +303,7 @@ export class Vault extends DurableObject<Env> {
 
   private fail(ws: WebSocket, message: string, fatal = false) {
     this.send(ws, { t: "error", message, fatal });
-    if (fatal) ws.close(1008, message.slice(0, 100));
+    if (fatal) ws.close(CLOSE_POLICY, message.slice(0, 100));
   }
 
   // Checks a token for the HTTP routes; false once it has been revoked.

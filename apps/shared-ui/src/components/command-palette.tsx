@@ -1,3 +1,5 @@
+import { action, matchesShortcut } from "@/lib/shortcuts";
+import { useModules } from "@/lib/modules";
 import {
   useEffect,
   useId,
@@ -20,21 +22,17 @@ import {
   useCommands,
   type Command,
 } from "@/lib/commands";
-import { queryClient } from "@/lib/query-client";
-import { saveQueue } from "@/lib/saves";
 import { FIND_EVENT, requestApp } from "@/lib/app-events";
 import { requestFind } from "@/lib/find-request";
 import { getRecentModuleIds } from "@/lib/recent-modules";
-import { backfillSearchIndex } from "@/lib/search-index";
+import { isWriteAdmitted, isRestoring } from "@/lib/write-lifecycle";
 import { findTermsFor, splitMarked } from "@/lib/search-marks";
-import type { Module } from "@/lib/types";
 
 const SEARCH_DEBOUNCE_MS = 120;
 const SEARCH_LIMIT = 20;
 const MAX_LISTED_NOTES = 50;
 // Commands run once the palette has closed and returned focus; this is the
 // fallback should the close animation never report finishing.
-const AFTER_CLOSE_FALLBACK_MS = 300;
 
 type SearchResult = {
   module_id: string;
@@ -86,9 +84,7 @@ function useBuiltinCommands() {
   const hasEditor = !!activeEditor;
 
   useCommand({
-    id: "sidebar.toggle",
-    title: "Toggle sidebar",
-    shortcut: "⌘D",
+    ...action("sidebar.toggle"),
     run: toggleSidebar,
   });
 
@@ -96,9 +92,7 @@ function useBuiltinCommands() {
   useEffect(() => {
     if (!hasEditor) return;
     return registerCommand({
-      id: "find.open",
-      title: "Find in note",
-      shortcut: "⌘F",
+      ...action("find.open"),
       keywords: ["search"],
       run: () => requestApp(FIND_EVENT),
     });
@@ -120,25 +114,14 @@ export function CommandPalette() {
 
   useBuiltinCommands();
 
-  useEffect(() => {
-    void backfillSearchIndex();
-  }, []);
-
   // Captured on window, so the editor's own key handling never sees it.
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (
-        !(event.metaKey || event.ctrlKey) ||
-        event.altKey ||
-        event.shiftKey ||
-        event.code !== "KeyK"
-      ) {
-        return;
-      }
+      if (!matchesShortcut(event, action("palette.open").keys)) return;
       event.preventDefault();
       event.stopPropagation();
       // Keep the restore modal in control throughout its flush and DB swap.
-      if (saveQueue.isSuspended() || queryClient.isMutating({ mutationKey: ["restore-backup"] })) return;
+      if (!isWriteAdmitted() || isRestoring()) return;
       restoreFocus.current = true;
       setOpen((value) => !value);
     };
@@ -149,11 +132,7 @@ export function CommandPalette() {
   const trimmed = query.trim();
   const debouncedQuery = useDebounced(trimmed, SEARCH_DEBOUNCE_MS);
 
-  const modules = useQuery({
-    queryKey: ["modules"],
-    queryFn: async () => await invoke<Module[]>("modules"),
-    enabled: open,
-  });
+  const modules = useModules({ enabled: open, });
 
   const search = useQuery({
     queryKey: ["search-notes", debouncedQuery],
@@ -243,7 +222,6 @@ export function CommandPalette() {
       };
       restoreFocus.current = true;
       setOpen(false);
-      window.setTimeout(runAfterClose, AFTER_CLOSE_FALLBACK_MS);
       return;
     }
 

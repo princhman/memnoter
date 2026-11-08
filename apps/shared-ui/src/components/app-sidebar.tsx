@@ -1,5 +1,6 @@
-import { MOD_KEY } from "@/lib/utils";
-import { openReview } from "@/lib/card-sync";
+import { action, formatKeys } from "@/lib/shortcuts";
+import { useModules } from "@/lib/modules";
+import { openReview } from "@/components/card-navigation-guard";
 import {
   Sidebar,
   SidebarContent,
@@ -15,11 +16,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
-import { Module } from "@/lib/types";
-import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
-import { call as invoke } from "../lib/backend.ts";
-import CreateModule from "./create-module";
+import { CreateModuleButton } from "./create-module";
 import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
@@ -120,10 +118,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
 };
 
 const AppSidebar = () => {
-  const { isPending, error, data } = useQuery({
-    queryKey: ["modules"],
-    queryFn: async () => await invoke<Module[]>("modules"),
-  });
+  const { isPending, error, data } = useModules();
   const matchRoute = useMatchRoute();
   const { total } = useDueCounts();
 
@@ -165,7 +160,7 @@ const AppSidebar = () => {
         </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>Modules</SidebarGroupLabel>
-          <CreateModule />
+          <CreateModuleButton />
 
           {isPending && <div>Loading...</div>}
           {error && <div>Error: {error.message}</div>}
@@ -203,7 +198,7 @@ const AppSidebar = () => {
 
       <SidebarFooter>
         <UpdateStatus>
-          <IconTooltip label="Settings" hint={`${MOD_KEY},`} side="top">
+          <IconTooltip label="Settings" hint={formatKeys(action("settings.open").keys)} side="top">
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
           </IconTooltip>
         </UpdateStatus>

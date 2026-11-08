@@ -1,14 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { modulesCache } from "@/lib/modules";
+import { useModules } from "@/lib/modules";
+import { useMutation } from "@tanstack/react-query";
 import { call as invoke } from "@/lib/backend";
 import { Switch } from "@/components/ui/switch";
 import type { Module } from "@/lib/types";
 
 const ModuleNumbering = ({ module }: { module: Module }) => {
-  const client = useQueryClient();
   const numbering = useMutation({
     mutationFn: (enabled: boolean) =>
       invoke("set_module_numbering", { moduleId: module.id, enabled }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["modules"] }),
+    onSuccess: () => modulesCache.invalidate(),
   });
   return (
     <li className="flex flex-col gap-1">
@@ -28,10 +29,7 @@ const ModuleNumbering = ({ module }: { module: Module }) => {
 };
 
 export default function NumberingSection() {
-  const { data: modules } = useQuery({
-    queryKey: ["modules"],
-    queryFn: () => invoke<Module[]>("modules"),
-  });
+  const { data: modules } = useModules();
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">

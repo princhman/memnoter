@@ -1,8 +1,9 @@
-import { exclusiveWrite } from "@/lib/write-lifecycle";
+import { modulesCache } from "@/lib/modules";
+import { contentKey } from "@/lib/content";
+import { exclusiveWrite, MUTATIONS } from "@/lib/write-lifecycle";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
-import { Module } from "@/lib/types";
 import { dueCountsKey } from "@/lib/card-sync";
 import { forgetModule } from "@/lib/store";
 import { saveQueue } from "@/lib/saves";
@@ -31,7 +32,7 @@ const DeleteModule = ({
   const queryClient = useQueryClient();
   const router = useRouter();
   const mutation = useMutation({
-    mutationKey: ["delete-module"],
+    mutationKey: [MUTATIONS.deleteModule],
     mutationFn: () => exclusiveWrite(async () => {
       await invoke("delete_module", { moduleId });
       saveQueue.drop(moduleId);
@@ -45,13 +46,11 @@ const DeleteModule = ({
       ) {
         await router.navigate({ to: "/", replace: true });
       }
-      await queryClient.cancelQueries({ queryKey: ["content", moduleId] });
-      queryClient.removeQueries({ queryKey: ["content", moduleId] });
+      await queryClient.cancelQueries({ queryKey: contentKey(moduleId) });
+      queryClient.removeQueries({ queryKey: contentKey(moduleId) });
       onOpenChange(false);
-      queryClient.setQueryData<Module[]>(["modules"], (modules) =>
-        modules?.filter((module) => module.id !== moduleId),
-      );
-    }, { excludedMutation: "delete-module" }),
+      modulesCache.remove(moduleId);
+    }, { kind: "delete" }),
   });
 
   return (

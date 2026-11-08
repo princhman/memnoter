@@ -1,3 +1,5 @@
+import { outline, headingId, UNTITLED_SECTION } from "../lib/outline.ts";
+import type { ExecCommand, EditorState } from "./protocol";
 import { sectionOffset, sectionToTop } from "./scroll.ts";
 import { suppressesTextInput } from "../lib/editor-input.ts";
 import type { Editor } from "@tiptap/core";
@@ -8,21 +10,17 @@ import { headingFoldKey, getFoldedRanges } from "../lib/heading-fold.ts";
 // TOC deliberately skips empty headings. Native focus still needs an opaque,
 // resolvable ID for every section, including empty ancestors. Position IDs are
 // refreshed with state/outline on each transaction and never persisted.
-function sectionId(node: { attrs: Record<string, unknown> }, pos: number): string {
-  const id = node.attrs["data-toc-id"];
+function sectionId(node: Parameters<typeof headingId>[0], pos: number): string {
+  const id = headingId(node);
   return typeof id === "string" && id ? id : `native-section:${pos}`;
 }
 
 function allHeadings(editor: Editor) {
   const folded = headingFoldKey.getState(editor.state)?.folded ?? [];
-  const headings: { id: string; level: number; text: string; pos: number; folded: boolean }[] = [];
-  editor.state.doc.descendants((node, pos) => {
-    if (node.type.name === "heading") {
-      const id = sectionId(node, pos);
-      headings.push({ id, level: Number(node.attrs.level), text: node.textContent, pos, folded: folded.includes(id) });
-    }
+  return outline(editor.state.doc).map(heading => {
+    const id = heading.id ?? `native-section:${heading.pos}`;
+    return { id, level: heading.level, text: heading.title, pos: heading.pos, folded: folded.includes(id) };
   });
-  return headings;
 }
 
 // Use document positions from the same state as the visibility plugins.
@@ -34,7 +32,7 @@ export function editorOutline(editor: Editor) {
     !folded.some(range => item.pos >= range.from && item.pos < range.to));
 }
 
-export function editorState(editor: Editor) {
+export function editorState(editor: Editor): EditorState {
   const marks = ["bold", "italic", "underline", "strike", "code", "link", "highlight"].filter(mark => editor.isActive(mark));
   const focusedPos = sectionFocusKey.getState(editor.state);
   const focusedHeading = focusedPos == null ? null : editor.state.doc.nodeAt(focusedPos);
@@ -44,7 +42,7 @@ export function editorState(editor: Editor) {
   return {
     focusableSection: heading && sectionNode ? {
       pos: heading.pos, id: sectionId(sectionNode, heading.pos),
-      title: sectionNode.textContent || "Untitled section", level: heading.level,
+      title: sectionNode.textContent.trim() || UNTITLED_SECTION, level: heading.level,
     } : null,
     focusedSectionPath: getFocusedSectionPath(editor).map(crumb => ({
       id: sectionId(editor.state.doc.nodeAt(crumb.pos)!, crumb.pos),
@@ -72,7 +70,7 @@ export function editorState(editor: Editor) {
 }
 
 // Keep the protocol explicit: never dispatch an arbitrary name into editor.commands.
-export function execEditor(editor: Editor, command: string, args: Record<string, unknown> = {}): boolean {
+export function execEditor(editor: Editor, command: ExecCommand, args: Record<string, unknown> = {}): boolean {
   const commands = editor.commands;
   switch (command) {
     case "insertTable": return editor.isActive("table") ? false : commands.insertTable({ rows: 3, cols: 3, withHeaderRow: true });
@@ -166,6 +164,9 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "find":
       if (typeof args.text !== "string") throw new Error("find requires text");
       return commands.setSearchTerm(args.text);
-    default: throw new Error(`Unknown editor command: ${command}`);
+    default: {
+      const unknown: never = command;
+      throw new Error(`Unknown editor command: ${unknown}`);
+    }
   }
 }

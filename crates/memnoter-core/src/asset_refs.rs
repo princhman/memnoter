@@ -2,9 +2,7 @@
 //! note is deleted, including after undo, image removal and Yjs compaction.
 use crate::{db_err, CommandResult};
 use rusqlite::{params, Connection};
-use yrs::{
-    updates::decoder::Decode, Any, Doc, Out, ReadTxn, Transact, Update, Xml, XmlFragment, XmlOut,
-};
+use yrs::{updates::decoder::Decode, Doc, ReadTxn, Transact, Update};
 
 pub fn migrate(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(
@@ -64,17 +62,13 @@ pub fn retain_module(conn: &Connection, module_id: &str) -> CommandResult<()> {
                 "Out-of-order persisted image history in module {module_id}"
             ));
         }
-        for node in root.successors(&txn) {
-            if let XmlOut::Element(element) = node {
-                if let Some(Out::Any(Any::String(id))) = element.get_attribute(&txn, "fileId") {
-                    conn.execute(
-                        "insert or ignore into shared_image_refs (module_id, file_id)
-                         select ?1, id from files where id = ?2 and module_id <> ?1",
-                        params![module_id, id.as_ref()],
-                    )
-                    .map_err(db_err)?;
-                }
-            }
+        for id in crate::files::assets::note_images(&root, &txn) {
+            conn.execute(
+                "insert or ignore into shared_image_refs (module_id, file_id)
+                 select ?1, id from files where id = ?2 and module_id <> ?1",
+                params![module_id, id],
+            )
+            .map_err(db_err)?;
         }
     }
     if doc.transact().has_missing_updates() {

@@ -1,16 +1,15 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
-import { existsSync, mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { createServer } from "vite";
-import { webkit } from "playwright";
 import { realPath, readFolder, synthetic } from "./support/import-fixture.mjs";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 let server, browser, page, child;
-const cacheDir = mkdtempSync(join(tmpdir(), "memnoter-import-vite-"));
 const pending = [];
 before(async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
@@ -18,15 +17,15 @@ before(async () => {
   execFileSync("cargo", ["build", "-p", "memnoter-core", "--example", "command-harness"], { cwd: workspace, stdio: "pipe" });
   child = spawn(`${workspace}/target/debug/examples/command-harness`, [], { stdio: ["pipe", "pipe", "inherit"] });
   createInterface({ input: child.stdout }).on("line", line => pending.shift()(JSON.parse(line)));
-  server = await createServer({ root, cacheDir, configFile: `${root}/vite.config.ts`, server: {port:0, strictPort:false}, logLevel:"error" });
+  server = await createServer({ root, configFile: `${root}/vite.config.ts`, server: {port:0, strictPort:false}, logLevel:"error" });
   await server.listen();
   browser = await webkit.launch(); page = await browser.newPage({ viewport: { width: 1150, height: 850 } });
   await page.exposeFunction("rustCall", async (command, args = {}) => {
     const response = await new Promise(resolve => { pending.push(resolve); child.stdin.write(JSON.stringify({command,args})+"\n"); });
-    if (response.error) throw new Error(response.error);
+    if (response.error) throw new Error(response.error.message ?? response.error);
     return response.value;
   });
-  await page.addInitScript(() => { window.__TAURI_INTERNALS__ = { invoke: (command, args) => window.rustCall(command,args), convertFileSrc: path => path }; });
+  await page.addInitScript(() => { window.installTestBridge({ tauri: { invoke: (command, args) => window.rustCall(command,args) } }); });
   page.on("pageerror", error => console.error("Browser:", error));
   await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/tables.html`);
   await page.waitForFunction(()=>!!window.editor);
@@ -34,7 +33,6 @@ before(async () => {
 after(async () => {
   await browser?.close(); await server?.close();
   if(child) { child.stdin.end(); await new Promise(resolve=>child.on("exit",resolve)); }
-  rmSync(cacheDir, {recursive:true,force:true});
 });
 async function paste(source) {
   await page.evaluate(source => {
@@ -65,25 +63,20 @@ test("Markdown tables and yellow highlights survive collaboration, one paste und
   const boxes=await page.getByRole("toolbar",{name:"Text formatting"}).evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,width:innerWidth};});
   assert.ok(boxes.left>=0 && boxes.right<=boxes.width);
 });
-test("real import uses Rust storage, renders with the editor schema and opening is lossless", {skip:!existsSync(realPath)}, async()=>{
+test("real import uses Rust storage, renders with the editor schema and opening is lossless", async()=>{
   const folder=readFolder(realPath);
   const result=await page.evaluate(async folder=>{
     const result=await importFolder(folder,()=>{});
     return {moduleId:result.moduleId, notes:result.notes.length};
   },folder);
-  assert.equal(result.notes,22);
+  assert.equal(result.notes,3);
   const rendered=await page.evaluate(async ({moduleId})=>{
     const saved=await call("get_content",{moduleId});
     return await loadImported(saved);
   },result);
-  assert.equal(rendered.highlights,31);assert.equal(rendered.images,7);assert.equal(rendered.codeBlocks,213);assert.equal(rendered.changed,false);
-  const scratch="/private/tmp/claude-501/-Users-vladyslavnalyvaiko-Projects-notes/69f196ab-6613-4071-9e30-88a843fe3ef0/scratchpad";
-  mkdirSync(scratch,{recursive:true});
-  await page.evaluate(() => { editor.view.dom.closest("#root").firstElementChild.style.display = "none"; document.querySelectorAll('[role="toolbar"]').forEach(el=>el.style.display="none"); window.scrollTo(0,0); });
-  await page.screenshot({path:`${scratch}/imported-module.png`});
-  writeFileSync(`${scratch}/import-report.json`,JSON.stringify({...result,...rendered,skipped:folder.entries.filter(e=>!e.text && !e.bytes).map(e=>e.path)},null,2));
+  assert.equal(rendered.highlights,3);assert.equal(rendered.images,1);assert.equal(rendered.codeBlocks,2);assert.equal(rendered.changed,false);
   const stored=await page.evaluate(async ({moduleId})=>{const content=await call("get_content",{moduleId});return {files:content.files.length,updates:content.updates.length};},result);
-  assert.equal(stored.files,7);assert.equal(stored.updates,0);
+  assert.equal(stored.files,1);assert.equal(stored.updates,0);
 });
 test("failed import removes its partial module and uploaded files; names get numeric suffixes", async()=>{
   const result=await page.evaluate(async folder=>{
@@ -105,6 +98,7 @@ for (const discard of [false, true]) {
       const gate = new Promise(resolve => { release = resolve; });
       const started = new Promise(resolve => { entered = resolve; });
       window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command === 'modules') { entered(); await gate; }
         return original(command, args);
       };
@@ -145,6 +139,7 @@ for (const stage of ['modules', 'import_module']) {
     const result = await page.evaluate(async ({ folder, stage }) => {
       const original = window.__TAURI_INTERNALS__.invoke;
       window.__TAURI_INTERNALS__.invoke = (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command === stage) throw new Error('injected failure');
         return original(command, args);
       };
@@ -166,6 +161,7 @@ for (const stage of ['get_content', 'index_note']) {
     const result = await page.evaluate(async ({ folder, stage }) => {
       const original = window.__TAURI_INTERNALS__.invoke;
       window.__TAURI_INTERNALS__.invoke = (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command === stage) throw new Error('injected index failure');
         return original(command, args);
       };
@@ -174,7 +170,7 @@ for (const stage of ['get_content', 'index_note']) {
         return { warning: result.indexingWarning, retained: (await call('modules')).some(m => m.id === result.moduleId) };
       } finally { window.__TAURI_INTERNALS__.invoke = original; }
     }, { folder: { ...synthetic, name: `Index retry ${stage}` }, stage });
-    assert.deepEqual(result, { warning: 'Imported; search indexing will retry', retained: true });
+    assert.deepEqual(result, { warning: 'Imported; search and card indexing failed. Reopen the note to retry.', retained: true });
   });
 }
 
@@ -191,19 +187,19 @@ test("sidebar dropdown leads to a configurable import dialog and commits only on
     // Slow enough to observe the dialog while the folder is scanned.
     if (command === 'pick_import_image_folder') return new Promise(resolve => setTimeout(resolve, 600)).then(() => ({ name: 'Images', entries: [{path:'pic.png',sourceId:'extra'}, {path:'unused.png',sourceId:'extra'}] }));
     const response = await new Promise(resolve => { pending.push(resolve); child.stdin.write(JSON.stringify({command,args})+'\n'); });
-    if (response.error) throw new Error(response.error);
+    if (response.error) throw new Error(response.error.message ?? response.error);
     return response.value;
   });
-  await ui.addInitScript(() => { window.__TAURI_INTERNALS__ = { invoke: (command,args) => window.rustCall(command,args), convertFileSrc: path => path }; });
+  await ui.addInitScript(() => { window.installTestBridge({ tauri: { invoke: (command,args) => window.rustCall(command,args) } }); });
   try {
     await ui.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/import-dialog.html`);
-    await ui.locator('.group').first().hover();
+    await ui.getByRole('region', { name: 'Module actions' }).hover();
     await ui.getByRole('button', { name: 'Add module', exact: true }).click();
     await ui.getByRole('menuitem', {name:'New module',exact:true}).click();
     await ui.getByRole('heading',{name:'Create new module'}).waitFor();
     assert.equal(await ui.getByRole('button',{name:'Import folder…',exact:true}).count(),0);
     await ui.getByRole('button',{name:'Cancel',exact:true}).click();
-    await ui.locator('.group').first().hover();
+    await ui.getByRole('region', { name: 'Module actions' }).hover();
     await ui.getByRole('button',{name:'Add module',exact:true}).click();
     await ui.getByRole('menuitem',{name:'Import folder…',exact:true}).click();
     await ui.getByLabel('Module name', {exact:false}).fill('Planned module');

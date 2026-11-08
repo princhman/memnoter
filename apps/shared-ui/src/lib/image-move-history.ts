@@ -1,3 +1,4 @@
+import { isImageNode } from "./cards.ts";
 import { Extension } from "@tiptap/core";
 import { Plugin, NodeSelection, Selection } from "@tiptap/pm/state";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
@@ -24,7 +25,7 @@ export const ImageMoveHistory = Extension.create({
         return false;
       },
       drop(view) {
-        if (view.dragging?.slice.content.firstChild?.type.name.match(/^(image|inlineImage)$/)) {
+        if (isImageNode(view.dragging?.slice.content.firstChild)) {
           yUndoPluginKey.getState(view.state)?.undoManager.stopCapturing();
           queueMicrotask(() => {
             if (!view.isDestroyed) yUndoPluginKey.getState(view.state)?.undoManager.stopCapturing();

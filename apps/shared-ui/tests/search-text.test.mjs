@@ -1,27 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Schema } from "@tiptap/pm/model";
+import { schema } from "./support/editor.mjs";
 import { prosemirrorToYXmlFragment } from "@tiptap/y-tiptap";
 import * as Y from "yjs";
 import { extractFromDoc, extractFromYDoc } from "../src/lib/search-text.ts";
 
 // Same node names as the editor's extensions.
-const schema = new Schema({
-  nodes: {
-    doc: { content: "block+" },
-    paragraph: { group: "block", content: "inline*" },
-    heading: { group: "block", content: "inline*", attrs: { level: { default: 1 } } },
-    bulletList: { group: "block", content: "listItem+" },
-    listItem: { content: "paragraph block*" },
-    codeBlock: { group: "block", content: "text*", marks: "", code: true },
-    mathBlock: { group: "block", content: "text*", marks: "", code: true },
-    image: { group: "block", attrs: { fileId: { default: null } } },
-    inlineMath: { group: "inline", inline: true, content: "text*", marks: "" },
-    hardBreak: { group: "inline", inline: true },
-    text: { group: "inline" },
-  },
-  marks: { bold: {}, italic: {}, highlight: { attrs: { color: { default: "purple" } } } },
-});
+
 
 const n = schema.nodes;
 const text = (value, ...marks) =>

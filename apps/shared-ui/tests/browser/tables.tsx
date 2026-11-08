@@ -1,3 +1,4 @@
+import { visibleNoteExtensions } from "../support/editor-ui";
 import { importFolder } from "@/lib/import-module";
 import { markdownToJSON } from "@/lib/markdown-paste";
 import { call } from "@/lib/backend";
@@ -7,7 +8,7 @@ import { Editor } from "@tiptap/core";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
 import { createRoot } from "react-dom/client";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { noteExtensions } from "@/lib/note-extensions";
+import { noteExtensions } from "@/lib/editor-schema";
 import { extractCards } from "@/lib/cards";
 import { extractFromDoc, extractFromYDoc } from "@/lib/search-text";
 import { execEditor, editorState } from "@/editor-host/commands";
@@ -20,7 +21,7 @@ Object.assign(window, { pickedImages: [] });
 function TablesEditor() {
   // Records /image picks; uploads belong to the app shell.
   const insertImages = (_editor: unknown, files: File[]) => { (window as unknown as { pickedImages: string[] }).pickedImages.push(...files.map(file => file.name)); };
-  const editor = useEditor({ extensions: noteExtensions({ document, insertImages }), onCreate: ({ editor }) => {
+  const editor = useEditor({ extensions: visibleNoteExtensions({ document }, { insertImages }), onCreate: ({ editor }) => {
     Object.assign(window, {
       loadImported: async (saved: Parameters<typeof applySavedContent>[1]) => {
         const doc = new Y.Doc(); applySavedContent(doc, saved);

@@ -1,3 +1,4 @@
+import { editorHost } from "@/lib/editor-host";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -6,7 +7,8 @@ import {
   useState,
 } from "react";
 import { isCoarsePointer } from "@/lib/platform";
-import { HeadingAction, type HeadingActionPosition } from "./heading-action";
+import { ToolButton } from "./ui/tool-button";
+import { Maximize2, Minimize2 } from "lucide-react";
 import type { Editor } from "@tiptap/core";
 import { sectionFocusKey } from "@/lib/section-focus";
 
@@ -48,7 +50,8 @@ export const HeadingActionOverlay = ({
       let dom: Node | null = null;
       try {
         dom = editor.view.nodeDOM($from.before(depth));
-      } catch {
+      } catch (error) {
+      console.error("Failed to update heading action selection:", error);
         // The view isn't mounted yet.
       }
       return dom instanceof HTMLElement
@@ -90,7 +93,8 @@ export const HeadingActionOverlay = ({
           return resolved.before(depth);
         }
       }
-    } catch {
+    } catch (error) {
+      console.error("Failed to update heading action selection:", error);
       // The heading can be replaced by an editor transaction between hover and click.
     }
     return null;
@@ -153,7 +157,7 @@ export const HeadingActionOverlay = ({
     const heading = hoveredHeadingRef.current;
     if (!editor || headingPosition === null || !heading) return;
 
-    const container = heading.closest<HTMLElement>(".app-scroll-container");
+    const container = editorHost.scrollContainer(heading);
     if (isCurrentlyInFocus()) {
       // Revealing the rest of the note pushes the heading down; scroll by the
       // same amount so it stays where it was on screen.
@@ -206,3 +210,45 @@ export const HeadingActionOverlay = ({
     </main>
   );
 };
+
+type HeadingActionPosition = {
+  left: number;
+  top: number;
+};
+
+type HeadingActionProps = {
+  position: HeadingActionPosition;
+  level: string;
+  onClick: () => void;
+  inFocus: () => boolean;
+};
+
+function HeadingAction({
+  position,
+  level,
+  onClick,
+  inFocus,
+}: HeadingActionProps) {
+  const focused = inFocus();
+  const label = focused ? "Show the whole note" : "Focus on this section";
+  return (
+    <div
+      data-heading-action=""
+      className="absolute z-10 flex items-center gap-2"
+      style={{
+        ...position,
+        transform: `translateX(calc(${HEADING_ACTION_SIZE}px - 100%))`,
+      }}
+    >
+      <span className="text-xs text-muted-foreground">{level}</span>
+      <ToolButton label={label}
+          data-heading-action=""
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onClick}
+        >
+          {focused ? <Minimize2 /> : <Maximize2 />}
+        </ToolButton>
+    </div>
+  );
+}

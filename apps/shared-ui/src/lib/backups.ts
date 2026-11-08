@@ -1,7 +1,7 @@
-import { flushCardSyncs } from "@/lib/card-sync";
+import { MUTATIONS } from "@/lib/write-lifecycle";
+import { flushAll, isWriteAdmitted, isRestoring } from "./write-lifecycle";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "./backend.ts";
-import { flushSaves, saveQueue } from "@/lib/saves";
 
 export type Backup = { id: string; created_at: number };
 
@@ -9,17 +9,13 @@ export type Backup = { id: string; created_at: number };
 export function useBackupNow() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationKey: ["backup-now"],
+    mutationKey: [MUTATIONS.backupNow],
     mutationFn: async () => {
-      const blocked = () => saveQueue.isSuspended() ||
-        queryClient.isMutating({ mutationKey: ["restore-backup"] }) > 0;
-      if (blocked() || queryClient.isMutating({ mutationKey: ["backup-now"] }) > 1) {
+      const blocked = () => !isWriteAdmitted() || isRestoring();
+      if (blocked() || queryClient.isMutating({ mutationKey: [MUTATIONS.backupNow] }) > 1) {
         throw new Error("A backup or restore is already in progress.");
       }
-      await flushCardSyncs();
-      if (!await flushSaves(3_000)) {
-        throw new Error("Save pending edits before backing up. Please retry saving first.");
-      }
+      await flushAll();
       if (blocked()) throw new Error("Restore is in progress.");
       return invoke<Backup>("backup_now");
     },

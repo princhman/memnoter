@@ -2,6 +2,19 @@ import Foundation
 import Security
 import MemnoterCore
 
+@MainActor enum SyncConfiguration {
+    static let contract = (try! JSONSerialization.jsonObject(with: Data(syncContract().utf8))) as! [String: Any]
+    static func integer(_ key: String) -> Int { contract[key] as! Int }
+    static func text(_ key: String) -> String { contract[key] as! String }
+    static func path(_ key: String) -> String { (contract["paths"] as! [String: String])[key]! }
+    static func server(_ value: String) -> String {
+        var value = value
+        while value.hasSuffix("/") { value.removeLast() }
+        return value
+    }
+    static var defaultServer: String { Bundle.main.object(forInfoDictionaryKey: "SyncServerURL") as? String ?? text("defaultServer") }
+}
+
 struct SyncAccount: Codable, Sendable {
     let server: String
     let email: String
@@ -42,12 +55,11 @@ struct SyncKeychain {
     }
 }
 
-/// Debouncing never owns a transfer. Wakes during a pass coalesce into one
+/// Wakes during a pass coalesce into one
 /// follow-up pass; only lifecycle cancellation interrupts active work.
 @MainActor final class SyncTransferWorker {
     private let pass: @MainActor () async throws -> Void
     private let onError: @MainActor (Error) -> Void
-    private var debounce: Task<Void, Never>?
     private var worker: Task<Void, Never>?
     private var again = false
     private var generation = UUID()
@@ -58,25 +70,18 @@ struct SyncKeychain {
     }
     func nudge() {
         if worker != nil { again = true; return }
-        debounce?.cancel()
-        debounce = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
-            guard let self else { return }
-            debounce = nil
-            let owner = generation
-            worker = Task {
-                repeat {
-                    again = false
-                    do { try await pass() }
-                    catch { if !Task.isCancelled, owner == generation { onError(error) } }
-                } while again && !Task.isCancelled && owner == generation
-                if owner == generation { worker = nil }
-            }
+        let owner = generation
+        worker = Task {
+            repeat {
+                again = false
+                do { try await pass() }
+                catch { if !Task.isCancelled, owner == generation { onError(error) } }
+            } while again && !Task.isCancelled && owner == generation
+            if owner == generation { worker = nil }
         }
     }
     func cancel() {
         generation = UUID()
-        debounce?.cancel(); debounce = nil
         worker?.cancel(); worker = nil; again = false
     }
 }
@@ -92,17 +97,18 @@ struct SyncKeychain {
     var error: String?
     var pending = 0
     var lastSynced: Date?
-    var onRemote: ((String) async throws -> Void)?
     var onFile: ((String, String) async throws -> Void)?
     private var connection: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
+    private var fileRetryTask: Task<Void, Never>?
+    private var pushWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     @ObservationIgnored private var transfers: SyncTransferWorker!
     @ObservationIgnored private var fileTransfers: SyncFileTransfers!
     private var socket: URLSessionWebSocketTask?
     private var ready = false
-    private var inflight: (id: Int, max: Int)?
+    private var engine: SyncSession?
+    private var databaseGeneration = ""
     private var pushing = false
-    private var nextId = 0
     private var generation = UUID()
     private var suspended = false
     private var fatal = false
@@ -112,7 +118,8 @@ struct SyncKeychain {
             guard let self else { return }
             try await push()
             guard ready, let account else { return }
-            do { try await fileTransfers.run(account: account, owner: generation) }
+            do { try await fileTransfers.run(account: account, owner: generation)
+                scheduleFileRetry() }
             catch let failure as SyncHTTPFailure where failure.status == 401 {
                 fatal = true; self.error = failure.localizedDescription; stop(); status = "Sync stopped."
                 throw failure
@@ -131,28 +138,35 @@ struct SyncKeychain {
         return try JSONSerialization.jsonObject(with: Data(try await core.raw(name, json: json).utf8), options: .fragmentsAllowed)
     }
     func request(server: String, path: String, token: String? = nil, method: String = "GET", body: Data? = nil, binary: Bool = false) async throws -> Data {
-        guard let url = URL(string: server + path), ["https", "http"].contains(url.scheme) else { throw SyncFailure(message: "Invalid sync server") }
+        guard let url = URL(string: SyncConfiguration.server(server) + path), ["https", "http"].contains(url.scheme) else { throw SyncFailure(message: "Invalid sync server") }
         var req = URLRequest(url: url); req.httpMethod = method; req.httpBody = body; req.timeoutInterval = 20
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if body != nil { req.setValue(binary ? "application/octet-stream" : "application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await session.data(for: req)
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-            let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+            var message: String?
+            do { message = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String }
+            catch { NSLog("Sync HTTP error response was not JSON: %@", error.localizedDescription) }
             throw SyncHTTPFailure(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: message ?? "Sync server refused the request. Sign in again if your session expired.")
         }
         return data
     }
     func api(_ server: String, _ path: String, token: String? = nil, method: String = "GET", body: [String: Any]? = nil) async throws -> [String: Any] {
         let data = try await request(server: server, path: path, token: token, method: method, body: try body.map { try JSONSerialization.data(withJSONObject: $0) })
-        return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw SyncFailure(message: "Invalid sync server response") }
+        return result
+    }
+    private func identity(_ account: SyncAccount) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: ["server": SyncConfiguration.server(account.server), "userId": account.userId], options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
     }
     func start() async {
         do {
             account = try keychain.load()
             if let account {
                 let state = try await command("sync_status") as? [String: Any] ?? [:]
-                if let old = state["account"] as? String, old != account.userId { _ = try await command("sync_disable") }
-                _ = try await command("sync_enable", ["account": account.userId])
+                let storedIdentity = try identity(account)
+                if let old = state["account"] as? String, old != account.userId && old != storedIdentity { _ = try await command("sync_disable") }
+                _ = try await command("sync_enable", ["account": try identity(account)])
                 let current = try await command("sync_status") as? [String: Any] ?? [:]
                 let result = try await command("sync_reconcile", ["generation": current["generation"] ?? ""])
                 try await deliver(result)
@@ -161,29 +175,32 @@ struct SyncKeychain {
         } catch { self.error = error.localizedDescription }
     }
     func signIn(server: String, email: String, code: String) async throws -> (String, String, Bool) {
-        let auth = try await api(server, "/v1/auth/verify", method: "POST", body: ["email": email, "code": code])
+        let auth = try await api(server, SyncConfiguration.path("authVerify"), method: "POST", body: ["email": email, "code": code])
         guard let token = auth["token"] as? String, let user = auth["userId"] as? String else { throw SyncFailure(message: "Invalid sign-in response") }
-        let info = try await api(server, "/v1/key", token: token)
+        let info = try await api(server, SyncConfiguration.path("key"), token: token)
         return (token, user, info["key"] is NSNull)
     }
     func unlock(server: String, email: String, token: String, user: String, passphrase: String) async throws {
-        var info = try await api(server, "/v1/key", token: token)["key"] as? [String: String]
+        var info = try await api(server, SyncConfiguration.path("key"), token: token)["key"] as? [String: String]
+        var freshKey: (salt: String, key: [UInt8])?
         if info == nil {
-            var salt = [UInt8](repeating: 0, count: 16)
-            guard SecRandomCopyBytes(kSecRandomDefault, salt.count, &salt) == errSecSuccess else { throw SyncFailure(message: "Could not generate encryption salt") }
+            let salt = Array(syncNewSalt())
             let key = await Task.detached { nativeDeriveKey(passphrase: passphrase, salt: salt) }.value
-            let check = try nativeCrypt(key: key, doc: "key-check", bytes: Array("memnoter-key-check".utf8), decrypt: false)
-            info = try await api(server, "/v1/key", token: token, method: "PUT", body: ["salt": Data(salt).base64EncodedString(), "check": Data(check).base64EncodedString()])["key"] as? [String: String]
+            let check = try syncKeyCheck(key: Data(key), check: nil)
+            freshKey = (Data(salt).base64EncodedString(), key)
+            info = try await api(server, SyncConfiguration.path("key"), token: token, method: "PUT", body: ["salt": Data(salt).base64EncodedString(), "check": Data(check).base64EncodedString()])["key"] as? [String: String]
         }
         guard let info, let salt = Data(base64Encoded: info["salt"] ?? ""), let check = Data(base64Encoded: info["check"] ?? "") else { throw SyncFailure(message: "Invalid encryption parameters") }
-        let key = await Task.detached { nativeDeriveKey(passphrase: passphrase, salt: Array(salt)) }.value
-        guard (try? nativeCrypt(key: key, doc: "key-check", bytes: Array(check), decrypt: true)) == Array("memnoter-key-check".utf8) else { throw SyncFailure(message: "That passphrase doesn't match the one set for this account.") }
+        let key: [UInt8]
+        if let freshKey, freshKey.salt == info["salt"] { key = freshKey.key }
+        else { key = await Task.detached { nativeDeriveKey(passphrase: passphrase, salt: Array(salt)) }.value }
+        _ = try syncKeyCheck(key: Data(key), check: check)
         stop()
         // Switching accounts must reset the old cursor/outbox before seeding.
-        if let old = try keychain.load(), old.userId != user || old.server != server { _ = try await command("sync_disable") }
-        let account = SyncAccount(server: server, email: email, userId: user, token: token, key: key)
+        if let old = try keychain.load(), old.userId != user || SyncConfiguration.server(old.server) != SyncConfiguration.server(server) { _ = try await command("sync_disable") }
+        let account = SyncAccount(server: SyncConfiguration.server(server), email: email, userId: user, token: token, key: key)
         try keychain.save(account)
-        _ = try await command("sync_enable", ["account": user])
+        _ = try await command("sync_enable", ["account": try identity(account)])
         self.account = account; fatal = false; resume()
     }
     func signOut() async throws {
@@ -191,9 +208,10 @@ struct SyncKeychain {
         _ = try await command("sync_disable"); pending = 0; lastSynced = nil; status = "Not running."
     }
     func stop() {
-        generation = UUID(); connection?.cancel(); ticker?.cancel(); transfers.cancel()
+        generation = UUID(); connection?.cancel(); ticker?.cancel(); fileRetryTask?.cancel(); transfers.cancel()
+        finishPushWaiters(false)
         connection = nil; ticker = nil; socket?.cancel(with: .goingAway, reason: nil); socket = nil
-        ready = false; inflight = nil; fileTransfers.reset()
+        ready = false; engine = nil; fileTransfers.reset()
     }
     func pause() { suspended = true; stop() }
     func resume() {
@@ -203,43 +221,47 @@ struct SyncKeychain {
         let owner = generation
         connection = Task { [weak self] in
             guard let self else { return }
-            var attempts = 0
             while !Task.isCancelled && owner == generation {
-                do { try await connect(owner); attempts = 0 }
+                do { try await connect(owner) }
                 catch {
                     guard !Task.isCancelled, owner == generation else { return }
-                    if socket?.closeCode.rawValue == 4003 {
-                        try? await signOut(); self.error = "Signed out because the cloud data was deleted."; return
+                    if socket?.closeCode.rawValue == SyncConfiguration.integer("closeSignedOut") {
+                        do { try await signOut(); self.error = "Signed out because the cloud data was deleted." }
+                        catch { self.error = "Cloud data was deleted, but local sign-out failed: \(error.localizedDescription)" }
+                        return
                     }
                     if !fatal {
                         do {
                             guard let current = account else { return }
-                            _ = try await api(current.server, "/v1/key", token: current.token)
+                            _ = try await api(current.server, SyncConfiguration.path("key"), token: current.token)
                         }
                         catch let auth as SyncHTTPFailure where auth.status == 401 { fatal = true }
-                        catch { }
+                        catch { NSLog("Sync authentication probe failed: %@", error.localizedDescription) }
                     }
                     if fatal || socket?.closeCode == .policyViolation {
                         stop(); self.error = error.localizedDescription; status = "Sync stopped."; return
                     }
                     self.error = error.localizedDescription
                     status = "Offline. Changes are kept on this device and sync when you're back online."
-                    ready = false; inflight = nil; socket?.cancel(with: .goingAway, reason: nil)
-                    attempts = min(attempts + 1, 5)
-                    try? await Task.sleep(for: .seconds(min(30, pow(2, Double(attempts)))))
+                    ready = false; socket?.cancel(with: .goingAway, reason: nil)
+                    do {
+                        let actions = try drive("closed", ["code": socket?.closeCode.rawValue ?? 1006, "reason": error.localizedDescription])
+                        if let delay = actions.first?["delay_ms"] as? Int {
+                            try await Task.sleep(for: .milliseconds(delay))
+                        } else { try await execute(actions, owner: owner) }
+                    } catch is CancellationError { return }
+                    catch { self.error = error.localizedDescription; stop(); return }
                 }
             }
         }
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(15))
+                do { try await Task.sleep(for: .milliseconds(SyncConfiguration.integer("PING_EVERY_MS"))) } catch { return }
                 guard !Task.isCancelled, let self else { return }
-                if let ws = socket, ready {
-                    ws.sendPing { error in
-                        if error != nil { ws.cancel(with: .goingAway, reason: nil) }
-                    }
+                if socket != nil {
+                    do { try await execute(drive("tick", [:]), owner: generation) }
+                    catch { self.error = error.localizedDescription; socket?.cancel(with: .goingAway, reason: nil) }
                 }
-                nudge()
             }
         }
     }
@@ -252,106 +274,123 @@ struct SyncKeychain {
         transfers.nudge()
     }
 
-    private func send(_ value: [String: Any]) async throws {
-        guard let socket else { throw URLError(.networkConnectionLost) }
-        try await socket.send(.string(String(decoding: JSONSerialization.data(withJSONObject: value), as: UTF8.self)))
+    private func scheduleFileRetry() {
+        fileRetryTask?.cancel()
+        guard let delay = fileTransfers.nextDelay else { return }
+        fileRetryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(Int64(delay))) } catch { return }
+            self?.nudge()
+        }
     }
-    private func connect(_ owner: UUID) async throws {
-        guard let account, var url = URLComponents(string: account.server + "/v1/sync") else { return }
-        url.scheme = url.scheme == "https" ? "wss" : "ws"
-        let ws = session.webSocketTask(with: url.url!, protocols: ["memnoter.v1", "auth." + account.token])
-        ws.maximumMessageSize = 16 * 1024 * 1024; socket = ws; ws.resume()
-        status = "Syncing…"; error = nil
+    private func finishPushWaiters(_ acknowledged: Bool) {
+        let waiters = pushWaiters.values
+        pushWaiters.removeAll()
+        for waiter in waiters { waiter.resume(returning: acknowledged) }
+    }
+    private func checkPushWaiters() async throws {
         let state = try await command("sync_status") as? [String: Any] ?? [:]
-        let databaseGeneration = state["generation"] as? String ?? ""
-        try await send(["t": "hello", "cursor": state["cursor"] ?? 0, "v": 1])
-        while !Task.isCancelled && owner == generation {
-            let frame = try await ws.receive()
-            guard owner == generation else { return }
-            let data: Data
-            switch frame { case .string(let s): data = Data(s.utf8); case .data(let d): data = d; @unknown default: continue }
-            if data == Data("pong".utf8) { continue }
-            guard let msg = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            switch msg["t"] as? String {
-            case "entries":
-                var entries: [[String: Any]] = []
-                for entry in msg["entries"] as? [[String: Any]] ?? [] {
-                    guard let doc = entry["doc"] as? String, let encoded = entry["data"] as? String, var blob = Data(base64Encoded: encoded) else { throw SyncFailure(message: "Invalid sync entry") }
-                    if blob.count == 33 && blob.first == 2 { blob = try await object("blobs", String(decoding: blob.dropFirst(), as: UTF8.self), account: account) }
-                    let bytes: [UInt8]
-                    do { bytes = try nativeCrypt(key: account.key, doc: doc, bytes: Array(blob), decrypt: true) }
-                    catch { fatal = true; throw SyncFailure(message: "Synced data could not be decrypted. Check your sync passphrase.") }
-                    entries.append(["seq": entry["seq"] ?? 0, "doc": doc, "bytes": bytes])
-                }
-                let cursor = (entries.compactMap { $0["seq"] as? Int }).max() ?? 0
-                guard owner == generation else { return }
-                if !entries.isEmpty { let result = try await command("sync_apply", ["entries": entries, "cursor": cursor, "generation": databaseGeneration]); try await deliver(result) }
-            case "ready":
-                _ = try await command("sync_set_cursor", ["cursor": msg["head"] ?? 0, "generation": databaseGeneration])
-                guard owner == generation else { return }
-                ready = true
-                lastSynced = Date(); status = "Up to date"; nudge()
+        pending = state["pending"] as? Int ?? 0
+        if pending == 0 { finishPushWaiters(true) }
+    }
+    func pushAndWait() async throws -> Bool {
+        guard account != nil else { return true }
+        try await checkPushWaiters()
+        if pending == 0 { return true }
+        let id = UUID()
+        return await withCheckedContinuation { continuation in
+            pushWaiters[id] = continuation
+            nudge()
+            Task {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                pushWaiters.removeValue(forKey: id)?.resume(returning: false)
+            }
+        }
+    }
+
+    private func drive(_ event: String, _ payload: Any) throws -> [[String: Any]] {
+        guard let engine else { throw SyncFailure(message: "Sync session is unavailable") }
+        let data = try JSONSerialization.data(withJSONObject: payload, options: .fragmentsAllowed)
+        let result = try engine.drive(event: event, payload: String(decoding: data, as: UTF8.self))
+        guard let actions = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [[String: Any]] else { throw SyncFailure(message: "Invalid core sync actions") }
+        return actions
+    }
+    private func execute(_ actions: [[String: Any]], owner: UUID, frame: String? = nil) async throws {
+        for action in actions {
+            guard owner == generation, !Task.isCancelled else { throw CancellationError() }
+            switch action["action"] as? String {
+            case "send":
+                guard let socket, let text = action["text"] as? String else { throw URLError(.networkConnectionLost) }
+                try await socket.send(.string(text))
+            case "apply":
+                let result = try await command("sync_apply", ["entries": action["entries"] ?? [], "cursor": action["cursor"] ?? 0, "generation": databaseGeneration])
+                try await deliver(result)
             case "ack":
-                if let inflight, msg["id"] as? Int == inflight.id {
-                    _ = try await command("sync_ack", ["maxId": inflight.max, "generation": databaseGeneration])
-                    guard owner == generation else { return }
-                    _ = try await command("sync_set_cursor", ["cursor": msg["seq"] ?? 0, "generation": databaseGeneration])
-                    self.inflight = nil; lastSynced = Date(); status = "Up to date"; nudge()
-                }
-            case "compact-hint":
-                if let doc = msg["doc"] as? String, let upTo = msg["upTo"] as? Int {
-                    let state = try await command("sync_status") as? [String: Any] ?? [:]
-                    if let cursor = state["cursor"] as? Int, cursor >= upTo {
-                        if let bytes = try await command("sync_snapshot", ["doc": doc, "generation": databaseGeneration]) as? [UInt8] {
-                            let data = try await storable(Data(nativeCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)), account: account)
-                            guard owner == generation else { return }
-                            try await send(["t": "compact", "doc": doc, "upTo": cursor, "data": data.base64EncodedString()])
-                        } else { try await send(["t": "drop", "doc": doc]) }
-                    }
-                }
-            case "error": fatal = msg["fatal"] as? Bool ?? false; throw SyncFailure(message: msg["message"] as? String ?? "Sync stopped.")
+                _ = try await command("sync_ack", ["maxId": action["max_id"] ?? 0, "generation": databaseGeneration])
+                try await checkPushWaiters()
+            case "cursor": _ = try await command("sync_set_cursor", ["cursor": action["cursor"] ?? 0, "generation": databaseGeneration])
+            case "upload":
+                guard let account, let id = action["id"] as? String, let bytes = action["bytes"] as? [UInt8] else { throw SyncFailure(message: "Invalid upload") }
+                _ = try await object("blobs", id, account: account, put: Data(bytes))
+            case "download":
+                guard let account, let id = action["id"] as? String, let frame else { throw SyncFailure(message: "Invalid download") }
+                let bytes = try await object("blobs", id, account: account)
+                guard owner == generation, !Task.isCancelled else { throw CancellationError() }
+                _ = try drive("blob", ["id": id, "bytes": Array(bytes)])
+                try await execute(drive("frame", frame), owner: owner, frame: frame)
+            case "snapshot":
+                guard let doc = action["doc"] as? String else { continue }
+                let bytes = try await command("sync_snapshot", ["doc": doc, "generation": databaseGeneration])
+                try await execute(drive("compact", ["doc": doc, "cursor": action["cursor"] ?? 0, "bytes": bytes]), owner: owner)
+            case "ready": ready = true; lastSynced = Date(); status = "Up to date"; nudge()
+            case "close":
+                if action["code"] as? Int == SyncConfiguration.integer("closePolicy") { fatal = true }
+                socket?.cancel(with: .init(rawValue: action["code"] as? Int ?? 4000) ?? .goingAway, reason: nil)
+                throw SyncFailure(message: action["reason"] as? String ?? "Sync stopped")
+            case "signedOut": try await signOut()
             default: break
             }
         }
     }
+    private func connect(_ owner: UUID) async throws {
+        guard let account, var url = URLComponents(string: SyncConfiguration.server(account.server) + SyncConfiguration.path("sync")) else { throw SyncFailure(message: "Invalid sync connection URL") }
+        url.scheme = url.scheme == "https" ? "wss" : "ws"
+        let ws = session.webSocketTask(with: url.url!, protocols: [SyncConfiguration.text("protocol"), SyncConfiguration.text("authPrefix") + account.token])
+        ws.maximumMessageSize = SyncConfiguration.integer("MAX_FRAME_BYTES"); socket = ws; ws.resume()
+        status = "Syncing…"; error = nil
+        let state = try await command("sync_status") as? [String: Any] ?? [:]
+        databaseGeneration = state["generation"] as? String ?? ""
+        if engine == nil { engine = try SyncSession(key: Data(account.key), cursor: Int64(state["cursor"] as? Int ?? 0)) }
+        try await execute(drive("hello", ["cursor": state["cursor"] ?? 0]), owner: owner)
+        while !Task.isCancelled && owner == generation {
+            let frame = try await ws.receive()
+            guard owner == generation else { return }
+            let text: String
+            switch frame { case .string(let s): text = s; case .data(let d): text = String(decoding: d, as: UTF8.self); @unknown default: continue }
+            try await execute(drive("frame", text), owner: owner, frame: text)
+        }
+    }
     private func deliver(_ result: Any) async throws {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: result), as: UTF8.self)
-        try await onRemote?(json)
-        NotificationCenter.default.post(name: .syncDidApply, object: nil)
+        NotificationCenter.default.post(name: .syncDidApply, object: SyncApplyResult(json: json))
+        // Remote changes can announce images this device has yet to download.
+        if (result as? [String: Any])?["filesChanged"] as? Bool == true { transfers.nudge() }
     }
     private func object(_ kind: String, _ id: String, account: SyncAccount, put: Data? = nil) async throws -> Data {
-        return try await request(server: account.server, path: "/v1/\(kind)/\(id)", token: account.token, method: put == nil ? "GET" : "PUT", body: put, binary: true)
-    }
-    private func storable(_ blob: Data, account: SyncAccount) async throws -> Data {
-        if blob.count <= 1_900_000 { return blob }
-        let id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        _ = try await object("blobs", id, account: account, put: blob)
-        return Data([2]) + Data(id.utf8)
+        return try await request(server: account.server, path: SyncConfiguration.path(kind) + id, token: account.token, method: put == nil ? "GET" : "PUT", body: put, binary: true)
     }
     private func push() async throws {
         let state = try await command("sync_status") as? [String: Any] ?? [:]; pending = state["pending"] as? Int ?? 0
-        guard ready, inflight == nil, !pushing, let account else { return }
+        guard ready, !pushing, engine != nil else { return }
         pushing = true; defer { pushing = false }
         let owner = generation
-        let rows = try await command("sync_outbox", ["limitBytes": 1_048_576, "generation": state["generation"] ?? ""]) as? [[String: Any]] ?? []
-        guard let max = rows.last?["id"] as? Int else { return }
-        guard owner == generation else { return }
-        let dropped = Set(rows.filter { ($0["bytes"] as? [UInt8])?.isEmpty == true }.compactMap { $0["doc"] as? String })
-        var entries: [[String: Any]] = []
-        for row in rows {
-            guard owner == generation else { return }
-            guard let doc = row["doc"] as? String, let bytes = row["bytes"] as? [UInt8] else { continue }
-            if dropped.contains(doc) { entries.append(["doc": doc, "drop": true]); continue }
-            let blob = try await storable(Data(nativeCrypt(key: account.key, doc: doc, bytes: bytes, decrypt: false)), account: account)
-            entries.append(["doc": doc, "data": blob.base64EncodedString()])
-        }
-        guard owner == generation, ready else { return }
-        nextId += 1; inflight = (nextId, max); status = "Syncing…"
-        do { try await send(["t": "push", "id": nextId, "entries": entries]) }
-        catch { inflight = nil; socket?.cancel(with: .goingAway, reason: nil); throw error }
+        let rows = try await command("sync_outbox", ["limitBytes": SyncConfiguration.integer("PUSH_BATCH_BYTES"), "generation": databaseGeneration])
+        do { try await execute(drive("push", rows), owner: owner) }
+        catch { socket?.cancel(with: .goingAway, reason: nil); throw error }
     }
 
 }
+
+struct SyncApplyResult: Sendable { let json: String }
 
 extension Notification.Name { static let syncDidApply = Notification.Name("memnoter.syncDidApply") }
 
@@ -370,7 +409,9 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
     private let isCurrent: @MainActor (UUID) -> Bool
     private let onFile: @MainActor (String, String) async throws -> Void
     private let onError: @MainActor (Error) -> Void
-    private var retryAfter: [String: Date] = [:]
+    private var policy = SyncFilePolicy()
+    private var now: UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
+    var nextDelay: UInt64? { policy.nextDelay(nowMs: now) }
     init(command: @escaping @MainActor (String, [String: Any]) async throws -> Any,
          object: @escaping @MainActor (String, SyncAccount, Data?) async throws -> Data,
          isCurrent: @escaping @MainActor (UUID) -> Bool,
@@ -379,16 +420,16 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         self.command = command; self.object = object; self.isCurrent = isCurrent
         self.onFile = onFile; self.onError = onError
     }
-    func reset() { retryAfter.removeAll() }
+    func reset() { policy = SyncFilePolicy() }
     private func attempt(_ id: String, transfer: () async throws -> Void) async throws {
-        if let deadline = retryAfter[id], deadline > Date() { return }
+        guard policy.ready(id: id, nowMs: now) else { return }
         do {
             try await transfer()
-            retryAfter[id] = nil
+            policy.completed(id: id)
         } catch {
             try Task.checkCancellation()
             if let failure = error as? SyncHTTPFailure, failure.status == 401 { throw failure }
-            retryAfter[id] = Date().addingTimeInterval(30)
+            policy.failed(id: id, nowMs: now)
             // A 404 means the announcing device has not uploaded the image yet.
             if (error as? SyncHTTPFailure)?.status != 404 { onError(error) }
         }
@@ -402,22 +443,23 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         let pending = Set(uploads.map { "upload:" + $0 } + downloads.compactMap { file in
             file["fileId"].map { "download:" + $0 }
         })
-        retryAfter = retryAfter.filter { pending.contains($0.key) }
+        policy.retain(pending: Array(pending))
         for id in uploads {
             guard isCurrent(owner) && !Task.isCancelled else { return }
             try await attempt("upload:" + id) {
                 let file = try await command("read_file", ["moduleId": "", "fileId": id]) as? [String: Any] ?? [:]
-                guard let bytes = file["bytes"] as? [UInt8] else { return }
-                _ = try await object(id, account, Data(nativeCrypt(key: account.key, doc: "file:" + id, bytes: bytes, decrypt: false)))
+                guard let bytes = file["bytes"] as? [UInt8] else { throw SyncFailure(message: "Core returned no bytes for image \(id)") }
+                _ = try await object(id, account, Data(nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: bytes, decrypt: false)))
                 guard isCurrent(owner) && !Task.isCancelled else { return }
                 _ = try await command("sync_upload_done", ["fileId": id, "generation": databaseGeneration])
             }
         }
         for file in downloads {
-            guard isCurrent(owner) && !Task.isCancelled, let id = file["fileId"], let module = file["moduleId"] else { return }
+            guard isCurrent(owner) && !Task.isCancelled else { return }
+            guard let id = file["fileId"], let module = file["moduleId"] else { throw SyncFailure(message: "Invalid missing-image record from core") }
             try await attempt("download:" + id) {
                 let blob = try await object(id, account, nil)
-                let bytes = try nativeCrypt(key: account.key, doc: "file:" + id, bytes: Array(blob), decrypt: true)
+                let bytes = try nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: Array(blob), decrypt: true)
                 guard isCurrent(owner) && !Task.isCancelled else { return }
                 let stored = try await command("sync_store_file", ["generation": databaseGeneration, "fileId": id, "moduleId": module, "fileType": file["fileType"] ?? "", "bytes": bytes])
                 let json = String(decoding: try JSONSerialization.data(withJSONObject: stored), as: UTF8.self)

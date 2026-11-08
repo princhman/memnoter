@@ -47,23 +47,6 @@ import ImageIO
         pending.removeValue(forKey: ObjectIdentifier(task))?.cancel()
     }
 }
-struct Heading: Decodable, Identifiable { let id: String; let level: Int; let text: String; let folded: Bool; let number: String? }
-struct SectionCrumb: Decodable, Identifiable { let id: String; let level: Int; let title: String }
-struct FocusableSection: Decodable { let pos: Int; let id: String?; let title: String; let level: Int }
-struct EditorState: Decodable {
-    var suppressKeyboard: Bool?
-    var focusableSection: FocusableSection?
-    var focusedSectionPath: [SectionCrumb] = []
-    var focusedSectionId: String?; var headingId: String?
-    var blockType = "paragraph"; var headingLevel: Int?
-    var inTable = false; var canMergeCells = false; var canSplitCell = false
-    var canIndent = false; var canOutdent = false
-    var canMakeCard = false; var inCloze = false; var canJoinClozes = false
-    var folded = false; var canFold = false
-    var bulletList = false; var orderedList = false; var blockquote = false
-    var highlightColor: String? = nil
-    var marks: [String] = []; var canUndo = false; var canRedo = false; var editable = false
-}
 // Report navigation/safe-area occlusion after UIKit has laid out the web view.
 @MainActor final class EditorWebView: WKWebView {
     var viewportChanged: (() -> Void)?
@@ -88,15 +71,16 @@ struct EditorState: Decodable {
         insetReport?.cancel()
         insetReport = Task { @MainActor in
             do {
-                try await Task.sleep(for: .milliseconds(40))
                 guard !Task.isCancelled, ready else { return }
                 reportedViewport = viewport
-                _ = try await run("window.memnoterEditor?.setTopInset(top * window.innerHeight / height); window.memnoterEditor?.setBottomInset(inset * window.innerHeight / height)",
-                                  ["inset": bottomInset, "top": web.safeAreaInsets.top, "height": max(1, web.bounds.height)])
+                _ = try await run("window.memnoterEditor?.[topMethod](top * window.innerHeight / height); window.memnoterEditor?.[bottomMethod](inset * window.innerHeight / height)",
+                                  ["topMethod": EditorApiMethod.setTopInset.rawValue, "bottomMethod": EditorApiMethod.setBottomInset.rawValue,
+                                   "inset": bottomInset, "top": web.safeAreaInsets.top, "height": max(1, web.bounds.height)])
             } catch is CancellationError { }
             catch { self.error = String(describing: error) }
         }
     }
+    var reviewState = ReviewState()
     var imagePreviewOpen = false
     var ready = false
     var headings: [Heading] = []
@@ -107,7 +91,7 @@ struct EditorState: Decodable {
         guard ready else { return }
         Task {
             guard ready else { return }
-            do { _ = try await run("window.memnoterEditor?.setOutlineTracking(enabled)", ["enabled": outlineTracking]) }
+            do { _ = try await run("window.memnoterEditor?.[method](enabled)", ["method": EditorApiMethod.setOutlineTracking.rawValue, "enabled": outlineTracking]) }
             catch { self.error = String(describing: error) }
         }
     }
@@ -120,7 +104,7 @@ struct EditorState: Decodable {
     private var moduleId: String?
     private var generation = UUID()
     private var barrier: Task<Void, Error>?
-    init(client: CoreClient, directory: URL, entry: String = "editor.html", preferences: UserDefaults = .standard) {
+    init(client: CoreClient, directory: URL, entry: String = BridgeProtocol.editorEntry, preferences: UserDefaults = .standard) {
         self.client = client
         self.preferences = preferences
         super.init()
@@ -130,10 +114,10 @@ struct EditorState: Decodable {
         // Web Storage support for our custom scheme origin.
         let savedView = preferences.string(forKey: "editorViewState") ?? "{}"
         config.userContentController.addUserScript(WKUserScript(
-            source: "window.__memnoterViewState = \(savedView); window.__memnoterViewState.skipCardsCreatedToday = \(preferences.bool(forKey: "skipCardsCreatedToday"));",
+            source: "window.__memnoterViewState = \(savedView);",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        config.setURLSchemeHandler(ResourceHandler(root: directory, images: true), forURLScheme: "memnoter-file")
-        config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: "memnoter-app")
+        config.setURLSchemeHandler(ResourceHandler(root: directory, images: true), forURLScheme: BridgeProtocol.fileScheme)
+        config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: BridgeProtocol.appScheme)
         let editorWeb = EditorWebView(frame: .zero, configuration: config)
         web = editorWeb
         // The HTML inner container owns scrolling; UIKit must not pan the page
@@ -170,7 +154,7 @@ struct EditorState: Decodable {
         #if DEBUG
         web.isInspectable = true
         #endif
-        web.load(URLRequest(url: URL(string: "memnoter-app://localhost/\(entry)")!))
+        web.load(URLRequest(url: URL(string: "\(BridgeProtocol.appScheme)://localhost/\(entry)")!))
     }
     // WKWebView delegates text input to a content subview. Use only public
     // UIView / UIResponder APIs, without private selectors or runtime changes.
@@ -214,7 +198,7 @@ struct EditorState: Decodable {
     func run(_ script: String, _ arguments: [String: Any] = [:]) async throws -> Any? {
         try await web.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .page)
     }
-    func exec(_ command: String, _ args: [String: Any] = [:]) {
+    func exec(_ command: ExecCommand, _ args: [String: Any] = [:], focusAfter: Bool = false) {
         let target = moduleId
         Task {
             guard target == moduleId else { return }
@@ -222,31 +206,41 @@ struct EditorState: Decodable {
                 #if DEBUG
                 print("[editor exec] \(command) \(args)")
                 #endif
-                let reply = try await run("return window.memnoterEditor.exec(command, args)", ["command": command, "args": args])
-                #if DEBUG
-                print("[editor reply] \(command): \(String(describing: reply))")
-                #endif
-                if reply as? Bool == false { self.error = "Editor could not perform \(command)." }
+                // Tiptap also returns false for harmless no-ops, such as setting
+                // an existing paragraph. Failures arrive through the error event
+                // or the JavaScript exception handled below.
+                _ = try await execute(command, args)
+                if focusAfter { _ = try await callEditor(.focus) }
             } catch { self.error = String(describing: error) }
         }
     }
-    private func serialized(_ script: String, _ arguments: [String: Any] = [:]) async throws {
+    func callEditor(_ method: EditorApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws -> Any? {
+        try await run("return await window.memnoterEditor.\(method.rawValue)(\(parameters.joined(separator: ",")))", arguments)
+    }
+    func callReview(_ method: ReviewApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws -> Any? {
+        try await run("return await window.memnoterReview.\(method.rawValue)(\(parameters.joined(separator: ",")))", arguments)
+    }
+    func execute(_ command: ExecCommand, _ args: [String: Any] = [:]) async throws -> Any? {
+        try await callEditor(.exec, ["command": command.rawValue, "args": args], parameters: ["command", "args"])
+    }
+    private func serialized(_ method: EditorApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws {
         let previous = barrier
         let next = Task { @MainActor in
             // A failed flush can be retried; open itself also drains pending writes.
-            _ = try? await previous?.value
-            _ = try await run(script, arguments)
+            do { _ = try await previous?.value }
+            catch { NSLog("Previous editor operation failed; retrying: %@", String(describing: error)) }
+            _ = try await callEditor(method, arguments, parameters: parameters)
         }
         barrier = next
         try await next.value
     }
-    func flush() async throws { guard ready else { return }; try await serialized("await window.memnoterEditor.flush()") }
+    func flush() async throws { guard ready else { return }; try await serialized(.flush) }
     func open(_ id: String) async throws {
         if moduleId != id {
             moduleId = id
             state = EditorState(); headings = []; currentHeadingId = nil
         }
-        try await serialized("await window.memnoterEditor.open(id)", ["id": id])
+        try await serialized(.open, ["id": id], parameters: ["id"])
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         hideEditorInputAssistant()
@@ -256,7 +250,7 @@ struct EditorState: Decodable {
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
-        if url.scheme == "memnoter-app" { return .allow }
+        if url.scheme == BridgeProtocol.appScheme { return .allow }
         if ["https", "http", "mailto"].contains(url.scheme ?? "") { await UIApplication.shared.open(url) }
         return .cancel
     }
@@ -279,54 +273,64 @@ struct EditorState: Decodable {
             }
         } else if body["kind"] as? String == "event", let event = body["event"] as? String {
             let payload = body["payload"] as? [String: Any] ?? [:]
-            switch event {
-            #if DEBUG
-            case "scrollDebug": NSLog("[scroll JS] \(payload)")
-            #endif
-            case "viewState":
-                if let data = try? JSONSerialization.data(withJSONObject: payload),
-                   let json = String(data: data, encoding: .utf8) {
-                    preferences.set(json, forKey: "editorViewState")
-                }
-            case "ready":
-                ready = true
-                trackOutline(outlineTracking)
-                Task { await updateCardPreference() }
-                reportBottomInset()
-                let callback = onReady
-                onReady = nil
-                callback?()
-            case "cardsChanged":
-                NotificationCenter.default.post(name: .cardsDidChange, object: client)
-            case "imagePreview":
-                imagePreviewOpen = payload["open"] as? Bool == true
-            case "outlineCurrent":
-                guard payload["moduleId"] as? String == moduleId else { return }
-                currentHeadingId = payload["currentHeadingId"] as? String
-            case "outline":
-                guard payload["moduleId"] as? String == moduleId else { return }
-                if let data = try? JSONSerialization.data(withJSONObject: payload["headings"] ?? []) { headings = (try? JSONDecoder().decode([Heading].self, from: data)) ?? [] }
-            case "state":
+            do {
+                guard let event = NativeEventName(rawValue: event) else { throw CocoaError(.coderReadCorrupt) }
+                switch event {
                 #if DEBUG
-                print("[editor state] \(payload)")
+                case .scrollDebug: NSLog("[scroll JS] \(payload)")
                 #endif
-                guard payload["moduleId"] as? String == moduleId else {
+                case .viewState:
+                    let data = try JSONSerialization.data(withJSONObject: payload)
+                    preferences.set(String(decoding: data, as: UTF8.self), forKey: "editorViewState")
+                case .ready:
+                    guard payload["protocolVersion"] as? Int == BridgeProtocol.version else {
+                        throw NSError(domain: "BridgeProtocol", code: 1, userInfo: [NSLocalizedDescriptionKey: "Incompatible web bridge protocol version"])
+                    }
+                    ready = true
+                    trackOutline(outlineTracking)
+                    reportBottomInset()
+                    let token = generation
+                    Task {
+                        await updateCardPreference()
+                        guard token == generation else { return }
+                        let callback = onReady
+                        onReady = nil
+                        callback?()
+                    }
+                case .reviewState:
+                    let data = try JSONSerialization.data(withJSONObject: payload)
+                    reviewState = try JSONDecoder().decode(ReviewState.self, from: data)
+                case .cardsChanged:
+                    NotificationCenter.default.post(name: .cardsDidChange, object: client)
+                case .imagePreview:
+                    imagePreviewOpen = payload["open"] as? Bool == true
+                case .outlineCurrent:
+                    guard payload["moduleId"] as? String == moduleId else { return }
+                    currentHeadingId = payload["currentHeadingId"] as? String
+                case .outline:
+                    guard payload["moduleId"] as? String == moduleId else { return }
+                    guard let value = payload["headings"] else { throw CocoaError(.coderValueNotFound) }
+                    let data = try JSONSerialization.data(withJSONObject: value)
+                    headings = try JSONDecoder().decode([Heading].self, from: data)
+                case .state:
                     #if DEBUG
-                    print("[editor state ignored] expected module \(String(describing: moduleId))")
+                    print("[editor state] \(payload)")
                     #endif
-                    return
-                }
-                do {
+                    guard payload["moduleId"] as? String == moduleId else {
+                        #if DEBUG
+                        print("[editor state ignored] expected module \(String(describing: moduleId))")
+                        #endif
+                        return
+                    }
                     let data = try JSONSerialization.data(withJSONObject: payload)
                     state = try JSONDecoder().decode(EditorState.self, from: data)
-                } catch {
-                    #if DEBUG
-                    print("[editor state decode failed] \(error)")
-                    #endif
+                case .error: error = payload["message"] as? String
+                case .saveStatus: saveStatus = payload["failing"] as? Bool == true ? "Save failed" : (payload["pending"] as? Int ?? 0) > 0 ? "Saving…" : ""
+                default: break
                 }
-            case "error": error = payload["message"] as? String
-            case "saveStatus": saveStatus = payload["failing"] as? Bool == true ? "Save failed" : (payload["pending"] as? Int ?? 0) > 0 ? "Saving…" : ""
-            default: break
+            } catch {
+                self.error = "Native bridge event \(event) failed: \(error)"
+                NSLog("%@", self.error!)
             }
         }
     }
@@ -338,7 +342,7 @@ struct EditorState: Decodable {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { error = "The editor process stopped. Reopen the app to recover saved notes." }
     func updateCardPreference() async {
         guard ready else { return }
-        do { _ = try await run("window.__memnoterBridge.emit('skip-cards-created-today', enabled)", ["enabled": preferences.bool(forKey: "skipCardsCreatedToday")]) }
+        do { _ = try await run("window.__memnoterBridge.emit(event, enabled)", ["event": NativeEventName.skipCardsCreatedToday.rawValue, "enabled": preferences.bool(forKey: "skipCardsCreatedToday")]) }
         catch { self.error = String(describing: error) }
     }
     func dispose() { onReady = nil; insetReport?.cancel(); insetReport = nil; NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }

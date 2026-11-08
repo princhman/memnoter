@@ -90,20 +90,14 @@ pub fn limit_attributed_substrings(webview: *mut c_void) {
         }
         let sel = sel!(attributedSubstringForProposedRange:completionHandler:);
         if ASYNC_ORIGINAL.get().is_none() {
-            if let Some(original) = override_method(
-                class,
-                sel,
-                std::mem::transmute::<AsyncFn, Imp>(clamped_async),
-            ) {
-                let _ = ASYNC_ORIGINAL.set(std::mem::transmute::<Imp, AsyncFn>(original));
+            if let Some(original) = override_method(class, sel, std::mem::transmute::<AsyncFn, Imp>(clamped_async)) {
+                assert!(ASYNC_ORIGINAL.set(std::mem::transmute::<Imp, AsyncFn>(original)).is_ok(), "Async selection hook installed twice");
             }
         }
         let sel = sel!(attributedSubstringForProposedRange:actualRange:);
         if SYNC_ORIGINAL.get().is_none() {
-            if let Some(original) =
-                override_method(class, sel, std::mem::transmute::<SyncFn, Imp>(clamped_sync))
-            {
-                let _ = SYNC_ORIGINAL.set(std::mem::transmute::<Imp, SyncFn>(original));
+            if let Some(original) = override_method(class, sel, std::mem::transmute::<SyncFn, Imp>(clamped_sync)) {
+                assert!(SYNC_ORIGINAL.set(std::mem::transmute::<Imp, SyncFn>(original)).is_ok(), "Sync selection hook installed twice");
             }
         }
     }

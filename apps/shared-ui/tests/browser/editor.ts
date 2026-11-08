@@ -2,8 +2,8 @@
 // tests/math-caret.test.mjs through a real browser engine.
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import { InlineMath } from "@/lib/inline-math";
-import { MathBlock } from "@/lib/math-block";
+import { InlineMathView as InlineMath } from "@/components/inline-math-view";
+import { MathBlockView as MathBlock } from "@/lib/editor-schema/math-block-view";
 import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
 import { ItalicCaret } from "@/lib/italic-caret";

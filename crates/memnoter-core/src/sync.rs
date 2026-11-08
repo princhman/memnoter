@@ -20,10 +20,11 @@
 //! Nothing is recorded while sync is off; turning it on seeds the outbox with
 //! everything stored locally.
 pub mod crypto;
+pub mod session;
 
 use crate::{db_err, delete_module_data, CommandResult, ContentUpdate, Db};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use yrs::{updates::decoder::Decode, Any, Doc, Map, Out, ReadTxn, StateVector, Transact, Update};
 
@@ -31,22 +32,38 @@ pub const VAULT_DOC: &str = "vault";
 const MODULES_MAP: &str = "modules";
 const FILES_MAP: &str = "files";
 const REVIEW_PREFIX: &str = "r-";
+const REVIEW_CARDS_MAP: &str = "cards";
+const REVIEW_LOG_MAP: &str = "log";
 
 pub fn review_doc_id(module_id: &str) -> String {
     format!("{REVIEW_PREFIX}{module_id}")
 }
 
 // Card state and review log rows as JSON, for the review documents.
-const CARD_STATE_JSON: &str = "json_object('due_at', due_at, 'stability', stability,
-    'stability_fast', stability_fast, 'difficulty', difficulty, 'scheduled_days', scheduled_days,
-    'learning_step', learning_step, 'reps', reps, 'lapses', lapses, 'state', state,
-    'schedule_status', schedule_status, 'last_review_at', last_review_at, 'fsrs_model', fsrs_model)";
-const LOG_JSON: &str =
-    "json_object('card_id', card_id, 'rating', rating, 'review_time', review_time,
-    'duration_ms', duration_ms, 'fsrs_model', fsrs_model, 'state', state,
-    'schedule_status', schedule_status, 'due_at', due_at, 'last_review_at', last_review_at,
-    'stability', stability, 'stability_fast', stability_fast, 'difficulty', difficulty,
-    'scheduled_days', scheduled_days, 'learning_step', learning_step)";
+fn json_object_sql(fields: &[&str]) -> String {
+    format!(
+        "json_object({})",
+        fields
+            .iter()
+            .map(|field| format!("'{field}', {field}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+fn card_state_json() -> String {
+    json_object_sql(crate::cards::CARD_STATE_FIELDS)
+}
+fn log_json() -> String {
+    let mut fields = vec![
+        "card_id",
+        "rating",
+        "review_time",
+        "duration_ms",
+        "fsrs_model",
+    ];
+    fields.extend_from_slice(&crate::cards::CARD_STATE_FIELDS[..9]);
+    json_object_sql(&fields)
+}
 pub const OUTBOX_EVENT: &str = "sync-outbox";
 
 pub fn migrate(conn: &Connection) -> CommandResult<()> {
@@ -69,14 +86,7 @@ pub fn migrate(conn: &Connection) -> CommandResult<()> {
         );",
     )
     .map_err(db_err)?;
-    let has_sync_id = conn
-        .prepare("select 1 from pragma_table_info('review_log') where name = 'sync_id'")
-        .and_then(|mut stmt| stmt.exists([]))
-        .map_err(db_err)?;
-    if !has_sync_id {
-        conn.execute_batch("alter table review_log add column sync_id TEXT;")
-            .map_err(db_err)?;
-    }
+    crate::db::ensure_column(conn, "review_log", "sync_id", "TEXT")?;
     conn.execute_batch(
         "create unique index if not exists review_log_sync_id on review_log(sync_id) where sync_id is not null;",
     )
@@ -122,16 +132,11 @@ pub fn is_enabled(conn: &Connection) -> CommandResult<bool> {
     .map_err(db_err)
 }
 
-// Records a local note change for upload, when sync is on.
 pub fn record_update(conn: &Connection, module_id: &str, bytes: &[u8]) -> CommandResult<bool> {
     if !is_enabled(conn)? {
         return Ok(false);
     }
-    conn.execute(
-        "insert into sync_outbox (doc, bytes) values (?1, ?2)",
-        params![module_id, bytes],
-    )
-    .map_err(db_err)?;
+    push_outbox(conn, module_id, bytes)?;
     Ok(true)
 }
 
@@ -140,7 +145,6 @@ pub enum VaultChange<'a> {
     Deleted,
 }
 
-// Records a local module change in the vault, when sync is on.
 pub fn record_module(
     conn: &Connection,
     module_id: &str,
@@ -181,7 +185,6 @@ fn forget_module_docs(conn: &Connection, module_id: &str) -> CommandResult<()> {
     push_outbox(conn, &reviews, &[])
 }
 
-// Records a new image for upload and tells other devices about it.
 pub fn record_file(
     conn: &Connection,
     file_id: &str,
@@ -269,7 +272,10 @@ pub fn record_review(
     }
     let (module_id, state): (String, String) = conn
         .query_row(
-            &format!("select module_id, {CARD_STATE_JSON} from cards where id = ?1"),
+            &format!(
+                "select module_id, {} from cards where id = ?1",
+                card_state_json()
+            ),
             [card_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -277,7 +283,10 @@ pub fn record_review(
     let added = match added_log {
         Some(rowid) => Some(
             conn.query_row(
-                &format!("select sync_id, {LOG_JSON} from review_log where id = ?1"),
+                &format!(
+                    "select sync_id, {} from review_log where id = ?1",
+                    log_json()
+                ),
                 [rowid],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
@@ -287,8 +296,8 @@ pub fn record_review(
     };
     let doc_id = review_doc_id(&module_id);
     let doc = load_doc(conn, &doc_id)?;
-    let cards = doc.get_or_insert_map("cards");
-    let log = doc.get_or_insert_map("log");
+    let cards = doc.get_or_insert_map(REVIEW_CARDS_MAP);
+    let log = doc.get_or_insert_map(REVIEW_LOG_MAP);
     let update = {
         let mut txn = doc.transact_mut();
         cards.insert(&mut txn, card_id, state);
@@ -341,7 +350,12 @@ fn string_entries(doc: &Doc, map_name: &str) -> Vec<(String, String)> {
     map.iter(&txn)
         .filter_map(|(key, value)| match value {
             Out::Any(Any::String(text)) => Some((key.to_string(), text.to_string())),
-            _ => None,
+            _ => {
+                eprintln!(
+                    "Invalid sync map value {map_name}/{key} (1 skipped row): expected string"
+                );
+                None
+            }
         })
         .collect()
 }
@@ -351,32 +365,22 @@ fn string_entries(doc: &Doc, map_name: &str) -> Vec<(String, String)> {
 // the note's cards are indexed.
 fn apply_review_doc(conn: &Connection, doc: &Doc) -> CommandResult<bool> {
     let mut changed = false;
-    for (card_id, state) in string_entries(doc, "cards") {
+    for (card_id, state) in string_entries(doc, REVIEW_CARDS_MAP) {
         changed |= conn
             .execute(
-                "update cards set
-                     due_at = json_extract(?2, '$.due_at'),
-                     stability = json_extract(?2, '$.stability'),
-                     stability_fast = json_extract(?2, '$.stability_fast'),
-                     difficulty = json_extract(?2, '$.difficulty'),
-                     scheduled_days = json_extract(?2, '$.scheduled_days'),
-                     learning_step = json_extract(?2, '$.learning_step'),
-                     reps = json_extract(?2, '$.reps'),
-                     lapses = json_extract(?2, '$.lapses'),
-                     state = json_extract(?2, '$.state'),
-                     schedule_status = json_extract(?2, '$.schedule_status'),
-                     last_review_at = json_extract(?2, '$.last_review_at'),
-                     fsrs_model = json_extract(?2, '$.fsrs_model')
+                &format!("update cards set {}
                  where id = ?1 and not (
                      reps = json_extract(?2, '$.reps')
                      and coalesce(last_review_at, -1) = coalesce(json_extract(?2, '$.last_review_at'), -1)
-                 )",
+                 )", crate::cards::CARD_STATE_FIELDS.iter()
+                    .map(|field| format!("{field} = json_extract(?2, '$.{field}')"))
+                    .collect::<Vec<_>>().join(", ")),
                 params![card_id, state],
             )
             .map_err(db_err)?
             > 0;
     }
-    for (sync_id, row) in string_entries(doc, "log") {
+    for (sync_id, row) in string_entries(doc, REVIEW_LOG_MAP) {
         if row.is_empty() {
             conn.execute("delete from review_log where sync_id = ?1", [&sync_id])
                 .map_err(db_err)?;
@@ -497,25 +501,6 @@ fn module_exists(conn: &Connection, module_id: &str) -> CommandResult<bool> {
     .map_err(db_err)
 }
 
-fn insert_module(conn: &Connection, module_id: &str, name: &str) -> CommandResult<()> {
-    conn.execute(
-        "insert into modules (id, name) values (?1, ?2)",
-        params![module_id, name],
-    )
-    .map_err(db_err)?;
-    conn.execute(
-        "insert into contents (module_id, state) values (?1, ?2)",
-        params![module_id, Vec::<u8>::new()],
-    )
-    .map_err(db_err)?;
-    conn.execute(
-        "insert into search_index (module_id, title, body, math) values (?1, ?2, '', '')",
-        params![module_id, name],
-    )
-    .map_err(db_err)?;
-    Ok(())
-}
-
 // Brings the local module rows in line with the vault: creates and renames.
 // Returns the modules the vault deleted that still exist here; deleting them
 // removes files, so the caller does it after committing.
@@ -538,20 +523,11 @@ fn reconcile(tx: &Transaction, doc: &Doc) -> CommandResult<(bool, Vec<String>)> 
         let Some(name) = module.name else { continue };
         match local {
             None => {
-                insert_module(tx, &id, &name)?;
+                crate::content::module_rows::insert(tx, &id, &name, &[])?;
                 changed = true;
             }
             Some(current) if current != name => {
-                tx.execute(
-                    "update modules set name = ?2 where id = ?1",
-                    params![id, name],
-                )
-                .map_err(db_err)?;
-                tx.execute(
-                    "update search_index set title = ?2 where module_id = ?1",
-                    params![id, name],
-                )
-                .map_err(db_err)?;
+                crate::content::module_rows::rename(tx, &id, &name)?;
                 changed = true;
             }
             Some(_) => {}
@@ -624,19 +600,23 @@ fn seed(conn: &Connection) -> CommandResult<()> {
     seed_reviews(conn, &modules)
 }
 
-// One review document per module that has reviewed cards or review history.
 fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResult<()> {
+    conn.execute(
+        "delete from sync_docs where doc like ?1",
+        [format!("{REVIEW_PREFIX}%")],
+    )
+    .map_err(db_err)?;
     conn.execute_batch(
-        "delete from sync_docs where doc like 'r-%';
-         update review_log set sync_id = lower(hex(randomblob(16))) where sync_id is null;",
+        "update review_log set sync_id = lower(hex(randomblob(16))) where sync_id is null;",
     )
     .map_err(db_err)?;
     for (module_id, _) in modules {
         let states: Vec<(String, String)> = {
             let mut stmt = conn
                 .prepare(&format!(
-                    "select id, {CARD_STATE_JSON} from cards
-                     where module_id = ?1 and (reps > 0 or last_review_at is not null)"
+                    "select id, {} from cards
+                     where module_id = ?1 and (reps > 0 or last_review_at is not null)",
+                    card_state_json()
                 ))
                 .map_err(db_err)?;
             let rows = stmt
@@ -647,8 +627,9 @@ fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResul
         let logs: Vec<(String, String)> = {
             let mut stmt = conn
                 .prepare(&format!(
-                    "select sync_id, {LOG_JSON} from review_log
-                     where card_id in (select id from cards where module_id = ?1) order by id"
+                    "select sync_id, {} from review_log
+                     where card_id in (select id from cards where module_id = ?1) order by id",
+                    log_json()
                 ))
                 .map_err(db_err)?;
             let rows = stmt
@@ -661,8 +642,8 @@ fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResul
         }
         let doc_id = review_doc_id(module_id);
         let doc = Doc::new();
-        let cards = doc.get_or_insert_map("cards");
-        let log = doc.get_or_insert_map("log");
+        let cards = doc.get_or_insert_map(REVIEW_CARDS_MAP);
+        let log = doc.get_or_insert_map(REVIEW_LOG_MAP);
         {
             let mut txn = doc.transact_mut();
             for (card_id, state) in states {
@@ -681,14 +662,9 @@ fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResul
     Ok(())
 }
 
-fn delete_modules(
-    conn: &mut Connection,
-    files_dir: Option<&Path>,
-    ids: &[String],
-) -> CommandResult<()> {
-    let Some(dir) = files_dir else { return Ok(()) };
+fn delete_modules(conn: &mut Connection, files_dir: &Path, ids: &[String]) -> CommandResult<()> {
     for id in ids {
-        delete_module_data(conn, dir, id)?;
+        delete_module_data(conn, files_dir, id)?;
         conn.execute("delete from sync_docs where doc = ?1", [review_doc_id(id)])
             .map_err(db_err)?;
     }
@@ -714,7 +690,6 @@ pub struct OutboxEntry {
 #[derive(Debug, serde::Deserialize)]
 pub struct RemoteEntry {
     // Sent by the frontend; the cursor is passed separately.
-    #[allow(dead_code)]
     seq: i64,
     doc: String,
     bytes: Vec<u8>,
@@ -734,7 +709,6 @@ pub struct ApplyResult {
     modules_changed: bool,
     pub deleted: Vec<String>,
     reviews_changed: bool,
-    // Images this device does not have yet are known.
     files_changed: bool,
 }
 
@@ -749,10 +723,26 @@ pub(crate) fn status(conn: &Connection) -> CommandResult<SyncStatus> {
     })
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AccountIdentity {
+    server: String,
+    #[serde(rename = "userId")]
+    user_id: String,
+}
+fn account_identity(raw: &str) -> String {
+    match serde_json::from_str::<AccountIdentity>(raw) {
+        Ok(mut identity) => {
+            identity.server = identity.server.trim_end_matches('/').to_owned();
+            serde_json::to_string(&identity).unwrap()
+        }
+        Err(_) => raw.to_owned(), // pre-identity native rows migrate at host startup
+    }
+}
+
 fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     let was_enabled = is_enabled(&tx)?;
-    set_value(&tx, "account", account)?;
+    set_value(&tx, "account", account_identity(account))?;
     rotate_generation(&tx)?;
     if !was_enabled {
         set_value(&tx, "cursor", 0)?;
@@ -762,32 +752,20 @@ fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
 }
 
 /// A snapshot owns notes, but must not change the device's signed-in account.
-/// Desktop stores account JSON; iOS stores the Keychain user ID.
+/// Both hosts persist only the server and user ID.
 pub(crate) fn reconcile_restored_account(
     conn: &mut Connection,
     current: Option<&str>,
 ) -> CommandResult<()> {
     let restored = get_value::<String>(conn, "account")?;
-    let same = match (restored.as_deref(), current) {
-        (Some(a), Some(b)) if a == b => true,
-        (Some(a), Some(b)) => {
-            let identity = |raw: &str| {
-                let value: serde_json::Value = serde_json::from_str(raw).ok()?;
-                Some((
-                    value.get("server")?.as_str()?.to_owned(),
-                    value.get("userId")?.as_str()?.to_owned(),
-                ))
-            };
-            identity(a).is_some() && identity(a) == identity(b)
-        }
-        _ => false,
-    };
+    let same = restored.as_deref().map(account_identity) == current.map(account_identity)
+        && current.is_some();
     let tx = conn.transaction().map_err(db_err)?;
     if !same {
         disable(&tx)?;
     }
     if let Some(account) = current {
-        set_value(&tx, "account", account)?;
+        set_value(&tx, "account", account_identity(account))?;
         if !same {
             set_value(&tx, "cursor", 0)?;
             seed(&tx)?;
@@ -830,7 +808,7 @@ fn outbox(conn: &Connection, limit_bytes: i64) -> CommandResult<Vec<OutboxEntry>
 
 fn apply_remote(
     conn: &mut Connection,
-    files_dir: Option<&Path>,
+    files_dir: &Path,
     entries: Vec<RemoteEntry>,
     new_cursor: i64,
 ) -> CommandResult<ApplyResult> {
@@ -839,6 +817,14 @@ fn apply_remote(
         return Err("Sync is off".into());
     }
     let mut result = ApplyResult::default();
+    for entry in &entries {
+        if entry.seq > new_cursor {
+            eprintln!(
+                "Sync entry {} sequence {} exceeds batch cursor {new_cursor}",
+                entry.doc, entry.seq
+            );
+        }
+    }
 
     // The vault first, so modules exist before their content is stored.
     let (vault_entries, rest): (Vec<_>, Vec<_>) = entries
@@ -864,7 +850,7 @@ fn apply_remote(
     let vault = vault_modules(&doc);
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut touched: HashMap<String, ()> = HashMap::new();
+    let mut touched = HashSet::new();
     for entry in content_entries {
         if vault.get(&entry.doc).is_some_and(|module| module.deleted) {
             continue;
@@ -872,7 +858,7 @@ fn apply_remote(
         if !module_exists(&tx, &entry.doc)? {
             // Content can arrive before the vault entry that names it, for
             // example after the vault was compacted. The name follows later.
-            insert_module(&tx, &entry.doc, "Untitled")?;
+            crate::content::module_rows::insert(&tx, &entry.doc, "Untitled", &[])?;
             result.modules_changed = true;
         }
         tx.execute(
@@ -887,7 +873,7 @@ fn apply_remote(
                 bytes: entry.bytes,
             },
         });
-        touched.insert(entry.doc, ());
+        touched.insert(entry.doc);
     }
     let mut reviews: BTreeMap<String, Vec<RemoteEntry>> = BTreeMap::new();
     for entry in review_entries {
@@ -911,18 +897,8 @@ fn apply_remote(
     }
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
-    // The search and card indexes are rebuilt from the note text.
-    for module_id in touched.keys() {
-        tx.execute(
-            "delete from search_index_state where module_id = ?1",
-            [module_id],
-        )
-        .map_err(db_err)?;
-        tx.execute(
-            "delete from card_indexed_modules where module_id = ?1",
-            [module_id],
-        )
-        .map_err(db_err)?;
+    for module_id in &touched {
+        crate::search::invalidate_indexes(&tx, module_id)?;
     }
     let previous = cursor(&tx)?;
     set_value(&tx, "cursor", previous.max(new_cursor))?;
@@ -1000,12 +976,17 @@ fn missing_files(conn: &Connection) -> CommandResult<Vec<MissingFile>> {
     let doc = load_vault(conn)?;
     let mut missing = Vec::new();
     for (file_id, record) in string_entries(&doc, FILES_MAP) {
-        let Ok(record) = serde_json::from_str::<serde_json::Value>(&record) else {
-            continue;
+        let record = match serde_json::from_str::<serde_json::Value>(&record) {
+            Ok(record) => record,
+            Err(error) => {
+                eprintln!("Malformed sync file record {file_id} (1 skipped row): {error}");
+                continue;
+            }
         };
         let (Some(module_id), Some(file_type)) =
             (record["module"].as_str(), record["type"].as_str())
         else {
+            eprintln!("Invalid sync file record {file_id} (1 skipped row): missing module/type");
             continue;
         };
         let have = conn
@@ -1046,23 +1027,18 @@ fn store_file(
     file_type: &str,
     bytes: &[u8],
 ) -> CommandResult<crate::FileType> {
-    if uuid::Uuid::parse_str(file_id).is_err() {
-        return Err("Invalid file ID".into());
-    }
     if !module_exists(conn, module_id)? {
         return Err("The image's note no longer exists".into());
     }
-    std::fs::create_dir_all(files_dir).map_err(db_err)?;
-    let path = files_dir.join(file_id);
+    let data_dir = files_dir.parent().ok_or("Invalid files directory")?;
+    let path = crate::files::assets::path(data_dir, file_id)?;
+    if !path.is_file() {
+        crate::files::assets::write(data_dir, file_id, bytes)?;
+    }
     let path_str = path
         .to_str()
         .ok_or("File path is not valid UTF-8")?
-        .to_string();
-    // Written under a temporary name first, so a crash never leaves half a
-    // file under the real one.
-    let partial = files_dir.join(format!("{file_id}.partial"));
-    std::fs::write(&partial, bytes).map_err(db_err)?;
-    std::fs::rename(&partial, &path).map_err(db_err)?;
+        .to_owned();
     conn.execute(
         "insert or ignore into files (id, module_id, path, file_type) values (?1, ?2, ?3, ?4)",
         params![file_id, module_id, path_str, file_type],
@@ -1127,7 +1103,7 @@ pub fn sync_apply(
 ) -> CommandResult<ApplyResult> {
     let mut conn = db.lock()?;
     check_generation(&conn, &generation)?;
-    let result = apply_remote(&mut conn, Some(&data_dir.join("files")), entries, cursor)?;
+    let result = apply_remote(&mut conn, &data_dir.join("files"), entries, cursor)?;
     Ok(result)
 }
 
@@ -1187,13 +1163,11 @@ pub fn sync_reconcile(data_dir: &Path, db: &Db, generation: String) -> CommandRe
     let doc = load_vault(&tx)?;
     let (modules_changed, deleted) = reconcile(&tx, &doc)?;
     tx.commit().map_err(db_err)?;
-    delete_modules(&mut conn, Some(&data_dir.join("files")), &deleted)?;
+    delete_modules(&mut conn, &data_dir.join("files"), &deleted)?;
     Ok(ApplyResult {
-        updates: Vec::new(),
         modules_changed,
         deleted,
-        reviews_changed: false,
-        files_changed: false,
+        ..ApplyResult::default()
     })
 }
 
@@ -1335,7 +1309,11 @@ mod tests {
                 bytes: vault_update(&[("m.name", "From iPad".into())]),
             },
         ];
-        let result = apply_remote(&mut conn, None, entries, 3).unwrap();
+        let files_dir = Path::new(conn.path().unwrap())
+            .parent()
+            .unwrap()
+            .join("files");
+        let result = apply_remote(&mut conn, &files_dir, entries, 3).unwrap();
         assert!(result.modules_changed);
         assert_eq!(result.updates.len(), 1);
         let name: String = conn
@@ -1351,7 +1329,7 @@ mod tests {
         assert!(outbox_docs(&conn).iter().all(|doc| doc == VAULT_DOC));
 
         // The cursor never moves back.
-        apply_remote(&mut conn, None, vec![], 1).unwrap();
+        apply_remote(&mut conn, &files_dir, vec![], 1).unwrap();
         assert_eq!(cursor(&conn).unwrap(), 3);
     }
 
@@ -1361,10 +1339,14 @@ mod tests {
         conn.execute_batch("insert into modules (id, name) values ('m', 'Old'); insert into contents values ('m', X'');")
             .unwrap();
         enable(&mut conn, "{}").unwrap();
+        let files_dir = Path::new(conn.path().unwrap())
+            .parent()
+            .unwrap()
+            .join("files");
         let rename = vault_update_after(&conn, &[("m.name", "New".into())]);
         apply_remote(
             &mut conn,
-            None,
+            &files_dir,
             vec![RemoteEntry {
                 seq: 1,
                 doc: VAULT_DOC.into(),
@@ -1379,9 +1361,13 @@ mod tests {
         assert_eq!(name, "New");
 
         let delete = vault_update(&[("m.deleted", true.into())]);
+        let files_dir = Path::new(conn.path().unwrap())
+            .parent()
+            .unwrap()
+            .join("files");
         let result = apply_remote(
             &mut conn,
-            None,
+            &files_dir,
             vec![
                 RemoteEntry {
                     seq: 2,
@@ -1406,9 +1392,13 @@ mod tests {
     fn content_before_its_vault_entry_creates_a_placeholder() {
         let (_dir, mut conn) = db();
         enable(&mut conn, "{}").unwrap();
+        let files_dir = Path::new(conn.path().unwrap())
+            .parent()
+            .unwrap()
+            .join("files");
         apply_remote(
             &mut conn,
-            None,
+            &files_dir,
             vec![RemoteEntry {
                 seq: 1,
                 doc: "n".into(),
@@ -1424,7 +1414,7 @@ mod tests {
         let named = vault_update(&[("n.name", "Biology".into())]);
         apply_remote(
             &mut conn,
-            None,
+            &files_dir,
             vec![RemoteEntry {
                 seq: 2,
                 doc: VAULT_DOC.into(),
@@ -1484,7 +1474,16 @@ mod tests {
             })
             .collect();
         from.execute("delete from sync_outbox", []).unwrap();
-        apply_remote(to, None, entries, *seq).unwrap()
+        apply_remote(
+            to,
+            &Path::new(to.path().unwrap())
+                .parent()
+                .unwrap()
+                .join("files"),
+            entries,
+            *seq,
+        )
+        .unwrap()
     }
 
     fn add_card(conn: &Connection, module: &str, card: &str) {
@@ -1567,58 +1566,28 @@ mod tests {
     }
 
     #[test]
-    fn images_are_queued_and_announced() {
-        let (_a_dir, mut a) = db();
-        let (b_dir, mut b) = db();
-        let file = uuid::Uuid::new_v4().to_string();
-        a.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');")
-            .unwrap();
-        a.execute(
-            "insert into files values (?1, 'm', '/x', 'image/png')",
-            [&file],
-        )
-        .unwrap();
-        enable(&mut a, "{}").unwrap();
-        assert_eq!(pending_uploads(&a).unwrap(), vec![file.clone()]);
-
-        let later = uuid::Uuid::new_v4().to_string();
-        a.execute(
-            "insert into files values (?1, 'm', '/y', 'image/jpeg')",
-            [&later],
-        )
-        .unwrap();
-        assert!(record_file(&a, &later, "m", "image/jpeg").unwrap());
-        assert_eq!(pending_uploads(&a).unwrap().len(), 2);
-
-        enable(&mut b, "{}").unwrap();
-        let mut seq = 0;
-        let result = transfer(&a, &mut b, &mut seq);
-        assert!(result.files_changed);
-        let missing = missing_files(&b).unwrap();
-        assert_eq!(missing.len(), 2);
-        let stored =
-            store_file(&b, &b_dir.join("files"), &later, "m", "image/jpeg", b"jpeg").unwrap();
-        assert_eq!(std::fs::read(&stored.path).unwrap(), b"jpeg");
-        assert_eq!(missing_files(&b).unwrap().len(), 1);
-        // Downloaded images are not uploaded again.
-        assert!(pending_uploads(&b).unwrap().is_empty());
-    }
-
-    #[test]
     fn a_shared_image_stays_downloadable_after_its_owner_is_deleted() {
         let (a_dir, mut a) = db();
         let (_b_dir, mut b) = db();
-        let file = uuid::Uuid::new_v4().to_string();
         a.execute_batch(
             "insert into modules (id, name) values ('owner', 'Owner'), ('other', 'Other');
              insert into contents values ('owner', X''), ('other', X'');",
         )
         .unwrap();
-        a.execute(
-            "insert into files values (?1, 'owner', ?2, 'image/png')",
-            params![file, "/x"],
+        let core = crate::Core::open(&a_dir).unwrap();
+        let raw = crate::dispatch(
+            &core,
+            "save_file",
+            &serde_json::json!({
+                "moduleId":"owner", "bytes":[1,2,3], "mimeType":"image/png",
+            })
+            .to_string(),
         )
         .unwrap();
+        let file = serde_json::from_str::<serde_json::Value>(&raw).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         // The other note references the image, as an occlusion card does.
         a.execute(
             "insert into shared_image_refs values ('other', ?1)",

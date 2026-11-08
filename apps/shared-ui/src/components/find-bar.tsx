@@ -1,5 +1,9 @@
+import { ToolButton } from "./ui/tool-button";
+import { surfaceClass } from "./ui/surface";
+import { action, formatKeys, bindsInJS, matchesShortcut } from "@/lib/shortcuts";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -29,10 +33,7 @@ import { stopScrollRestore } from "@/lib/view-persistence";
 import { FIND_EVENT, usesNativeMenuShortcuts } from "@/lib/app-events";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { cn, MOD_KEY } from "@/lib/utils";
 
-const ALT_KEY = MOD_KEY === "⌘" ? "⌥" : "Alt+";
-const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
 
 const inputClassName =
   "h-7 min-w-0 flex-1 rounded-md bg-muted px-2 text-sm outline-none placeholder:text-muted-foreground dark:bg-muted";
@@ -89,6 +90,13 @@ export function FindBar() {
   const [replaceTerm, setReplaceTerm] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
+  const [focusRequest, setFocusRequest] = useState<{ withReplace: boolean } | null>(null);
+  useLayoutEffect(() => {
+    if (!focusRequest || !isOpen) return;
+    const input = focusRequest.withReplace ? replaceInput.current : searchInput.current;
+    input?.focus();
+    input?.select();
+  }, [focusRequest, isOpen]);
   const searchInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
 
@@ -96,14 +104,14 @@ export function FindBar() {
     editor,
     selector: ({ editor }) => {
       if (!editor || editor.isDestroyed) {
-        return { count: 0, current: null, applied: "" };
+        return { count: 0, current: null, applied: null };
       }
       const storage = editor.storage.findAndReplace;
       return {
         count: storage.results.length,
         current: storage.currentIndex,
         // The search term is debounced; this changes once its results are in.
-        applied: `${storage.caseSensitive}:${storage.useRegex}:${storage.searchTerm}`,
+        applied: { caseSensitive: storage.caseSensitive, useRegex: storage.useRegex, term: storage.searchTerm },
       };
     },
   });
@@ -142,7 +150,7 @@ export function FindBar() {
     }
     if (pending) {
       // Wait for the requested term's results, then fall back to the next term.
-      if (search?.applied !== `false:false:${pending.terms[0]}`) return;
+      if (!search?.applied || search.applied.caseSensitive || search.applied.useRegex || search.applied.term !== pending.terms[0]) return;
       if (search.current == null) {
         const [, ...rest] = pending.terms;
         pendingFind.current = rest.length ? { ...pending, terms: rest } : null;
@@ -173,7 +181,7 @@ export function FindBar() {
 
     if (search?.current == null) return;
     revealCurrentResult(editor);
-  }, [editor, isReady, search?.applied, requestCount]);
+  }, [editor, isReady, search?.applied?.term, search?.applied?.caseSensitive, search?.applied?.useRegex, requestCount]);
 
   const goToNext = () => {
     if (!editor || editor.isDestroyed) return;
@@ -198,11 +206,7 @@ export function FindBar() {
 
     if (withReplace) setShowReplace(true);
     setIsOpen(true);
-    requestAnimationFrame(() => {
-      const input = withReplace ? replaceInput.current : searchInput.current;
-      input?.focus();
-      input?.select();
-    });
+    setFocusRequest({ withReplace });
   };
 
   // Rebound every render, so the handlers see the current state.
@@ -212,19 +216,17 @@ export function FindBar() {
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.code === "KeyF") {
-        if (!event.altKey && usesNativeMenuShortcuts()) return;
+      const find = action("find.open");
+      const replace = action("find.replace");
+      if ((bindsInJS(find, usesNativeMenuShortcuts()) && matchesShortcut(event, find.keys)) || matchesShortcut(event, replace.keys)) {
         event.preventDefault();
-        handlers.current.open(event.altKey);
-      } else if (event.code === "KeyG" && canStep) {
-        // Steps through matches from the editor, without going to the bar.
+        handlers.current.open(matchesShortcut(event, replace.keys));
+      } else if (canStep && (matchesShortcut(event, action("find.next").keys) || matchesShortcut(event, action("find.previous").keys))) {
         event.preventDefault();
-        if (event.shiftKey) handlers.current.goToPrevious();
+        if (matchesShortcut(event, action("find.previous").keys)) handlers.current.goToPrevious();
         else handlers.current.goToNext();
       }
     };
-    // The Find item of the app menu.
     const handleFind = () => handlers.current.open(false);
 
     window.addEventListener("keydown", handleKeyDown);
@@ -245,7 +247,6 @@ export function FindBar() {
 
     const terms = findRequest.terms.filter(Boolean);
     if (terms.length) {
-      // The terms are plain text from the search index.
       setCaseSensitive(false);
       setUseRegex(false);
       setSearchTerm(terms[0]);
@@ -281,18 +282,17 @@ export function FindBar() {
     }
   };
 
-  // Replace moves on to the next match, which may be hidden.
   const replace = () => {
     editor.commands.replace();
     revealCurrentResult(editor);
   };
 
   return (
-    <div className="absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md">
+    <div className={`${surfaceClass} absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 p-1`}>
       <div className="flex items-center gap-1">
         <IconTooltip
           label="Toggle replace"
-          hint={`${MOD_KEY}${ALT_KEY}F`}
+          hint={formatKeys(action("find.replace").keys)}
           side="bottom"
         >
           <Button
@@ -353,7 +353,7 @@ export function FindBar() {
         </ToggleButton>
         <IconTooltip
           label="Previous match"
-          hint={`${MOD_KEY}${SHIFT_KEY}G`}
+          hint={formatKeys(action("find.previous").keys)}
           side="bottom"
         >
           <Button
@@ -366,7 +366,7 @@ export function FindBar() {
             <ChevronUp />
           </Button>
         </IconTooltip>
-        <IconTooltip label="Next match" hint={`${MOD_KEY}G`} side="bottom">
+        <IconTooltip label="Next match" hint={formatKeys(action("find.next").keys)} side="bottom">
           <Button
             size="icon-xs"
             variant="ghost"
@@ -438,18 +438,5 @@ function ToggleButton({
   onToggle: () => void;
   children: ReactNode;
 }) {
-  return (
-    <IconTooltip label={label} side="bottom">
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        aria-label={label}
-        aria-pressed={pressed}
-        className={cn(pressed && "bg-primary/15 text-link hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground")}
-        onClick={onToggle}
-      >
-        {children}
-      </Button>
-    </IconTooltip>
-  );
+  return (<ToolButton label={label} side="bottom" size="icon-xs" pressed={pressed} onClick={onToggle}>{children}</ToolButton>);
 }

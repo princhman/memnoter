@@ -2,13 +2,21 @@ use super::*;
 
 struct Fixture {
     dir: std::path::PathBuf,
-    db: Db,
+    core: Core,
+}
+
+impl std::ops::Deref for Fixture {
+    type Target = Core;
+    fn deref(&self) -> &Core {
+        &self.core
+    }
 }
 
 impl Fixture {
     fn new() -> Self {
         let dir = std::env::temp_dir().join(format!("notes-cleanup-{}", Uuid::new_v4()));
-        let db = open_db(&dir).unwrap();
+        let core = Core::open(&dir).unwrap();
+        let db = &core.db;
         {
             let conn = db.conn.lock().unwrap();
             conn.execute_batch(
@@ -18,51 +26,86 @@ impl Fixture {
             )
             .unwrap();
         }
-        Self { dir, db }
+        Self { dir, core }
+    }
+
+    fn index(
+        &self,
+        module: &str,
+        body: &str,
+        math: &str,
+        version: i64,
+        backfill: bool,
+    ) -> CommandResult<()> {
+        index_note(
+            &self.db,
+            module.into(),
+            body.into(),
+            math.into(),
+            version,
+            backfill,
+        )
     }
 
     fn file(&self, module: &str) -> String {
-        self.file_with_id(module, Uuid::new_v4().to_string())
+        save_file(
+            &self.dir,
+            &self.db,
+            module.into(),
+            b"image bytes".to_vec(),
+            "image/png".into(),
+        )
+        .unwrap()
+        .id
     }
 
     fn file_with_id(&self, module: &str, id: String) -> String {
-        let path = self.dir.join("files").join(&id);
-        std::fs::write(&path, b"image bytes").unwrap();
-        self.db
-            .conn
-            .lock()
-            .unwrap()
-            .execute(
-                "insert into files values (?1, ?2, ?3, 'image/png')",
-                params![id, module, path.to_str().unwrap()],
-            )
-            .unwrap();
+        let status: serde_json::Value =
+            serde_json::from_str(&dispatch(&self.core, "sync_status", "{}").unwrap()).unwrap();
+        dispatch(
+            &self.core,
+            "sync_store_file",
+            &serde_json::json!({
+                "fileId": id, "moduleId": module, "fileType": "image/png",
+                "bytes": b"image bytes".to_vec(), "generation": status["generation"],
+            })
+            .to_string(),
+        )
+        .unwrap();
         id
     }
 
     fn cleanup(&self, ids: &[String], state: &[u8], update_id: i64) -> Vec<String> {
-        cleanup_unused_files(
-            &self.db.conn.lock().unwrap(),
-            &self.dir.join("files"),
-            "note",
-            ids,
-            state,
+        cleanup_files(
+            &self.dir,
+            &self.db,
+            "note".into(),
+            ids.to_vec(),
+            state.to_vec(),
             update_id,
         )
         .unwrap()
     }
 
     fn row_exists(&self, id: &str) -> bool {
-        self.db
-            .conn
-            .lock()
-            .unwrap()
-            .query_one(
-                "select exists(select 1 from files where id = ?1)",
-                [id],
-                |row| row.get(0),
-            )
-            .unwrap()
+        ["note", "other"]
+            .iter()
+            .filter_map(|module| {
+                dispatch(
+                    &self.core,
+                    "get_content",
+                    &serde_json::json!({"moduleId":module}).to_string(),
+                )
+                .ok()
+            })
+            .any(|raw| {
+                let content: serde_json::Value = serde_json::from_str(&raw).unwrap();
+                content["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|file| file["id"] == id)
+            })
     }
 }
 
@@ -112,7 +155,7 @@ fn deleting_module_removes_its_data_and_images_but_preserves_other_modules() {
     let files_dir = f.dir.join("files");
     std::fs::remove_file(files_dir.join(&missing_image)).unwrap();
 
-    let mut conn = f.db.conn.lock().unwrap();
+    let mut conn = f.db.lock().unwrap();
     delete_module_data(&mut conn, &files_dir, "note").unwrap();
     for table in ["contents", "contents_updates", "files"] {
         let count: i64 = conn
@@ -159,7 +202,7 @@ fn deleting_corrupt_note_skips_its_history_and_preserves_surviving_image_referen
         let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("image"));
         image.insert_attribute(&mut txn, "fileId", shared.clone());
         let state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
-        let mut conn = f.db.conn.lock().unwrap();
+        let mut conn = f.db.lock().unwrap();
         conn.execute(
             "update contents set state = ?1 where module_id = 'other'",
             [state],
@@ -291,12 +334,12 @@ fn unopened_plain_copy_survives_owner_cleanup_after_restart() {
     }
     // Reopen storage: no React document or card face has ever indexed B.
     let restarted = open_db(&f.dir).unwrap();
-    assert!(cleanup_unused_files(
-        &restarted.conn.lock().unwrap(),
-        &f.dir.join("files"),
-        "note",
-        std::slice::from_ref(&id),
-        &[0, 0],
+    assert!(cleanup_files(
+        &f.dir,
+        &restarted,
+        "note".into(),
+        vec![id.clone()],
+        vec![0, 0],
         7
     )
     .unwrap()
@@ -338,7 +381,7 @@ fn copied_image_lease_survives_removal_compaction_and_restart() {
         .transact()
         .encode_state_as_update_v1(&yrs::StateVector::default());
     {
-        let mut conn = f.db.conn.lock().unwrap();
+        let mut conn = f.db.lock().unwrap();
         conn.execute(
             "insert into contents_updates values (8, 'other', ?1, 0)",
             [&inserted],
@@ -349,7 +392,13 @@ fn copied_image_lease_survives_removal_compaction_and_restart() {
             [&removed],
         )
         .unwrap();
-        compact_content(&mut conn, "other", &removed, 9).unwrap();
+        {
+            drop(conn);
+            let result = save_compaction(&f.db, "other".into(), removed.clone(), 9);
+            conn = f.db.lock().unwrap();
+            result
+        }
+        .unwrap();
         let pending: i64 = conn
             .query_row(
                 "select count(*) from contents_updates where module_id='other'",
@@ -360,12 +409,12 @@ fn copied_image_lease_survives_removal_compaction_and_restart() {
         assert_eq!(pending, 0);
     }
     let restarted = open_db(&f.dir).unwrap();
-    assert!(cleanup_unused_files(
-        &restarted.conn.lock().unwrap(),
-        &f.dir.join("files"),
-        "note",
-        std::slice::from_ref(&id),
-        &[0, 0],
+    assert!(cleanup_files(
+        &f.dir,
+        &restarted,
+        "note".into(),
+        vec![id.clone()],
+        vec![0, 0],
         7
     )
     .unwrap()
@@ -407,7 +456,7 @@ fn reversed_image_updates_cannot_authorize_cleanup_or_compaction() {
     let removal = txn.encode_update_v1();
     let final_state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
     drop(txn);
-    let mut conn = f.db.conn.lock().unwrap();
+    let mut conn = f.db.lock().unwrap();
     conn.execute(
         "insert into contents_updates values (8, 'other', ?1, 0)",
         [&removal],
@@ -418,16 +467,27 @@ fn reversed_image_updates_cannot_authorize_cleanup_or_compaction() {
         [&inserted],
     )
     .unwrap();
-    assert!(cleanup_unused_files(
-        &conn,
-        &f.dir.join("files"),
-        "note",
-        std::slice::from_ref(&id),
-        &[0, 0],
-        7
-    )
+    assert!({
+        drop(conn);
+        let result = cleanup_files(
+            &f.dir,
+            &f.db,
+            "note".into(),
+            vec![id.clone()],
+            vec![0, 0],
+            7,
+        );
+        conn = f.db.lock().unwrap();
+        result
+    }
     .is_err());
-    assert!(compact_content(&mut conn, "other", &final_state, 9).is_err());
+    assert!({
+        drop(conn);
+        let result = save_compaction(&f.db, "other".into(), final_state.clone(), 9);
+        conn = f.db.lock().unwrap();
+        result
+    }
+    .is_err());
     assert!(delete_module_data(&mut conn, &f.dir.join("files"), "note").is_err());
     assert!(f.dir.join("files").join(&id).is_file());
 }
@@ -445,20 +505,25 @@ fn invalid_or_incomplete_foreign_notes_cannot_authorize_destruction() {
     image.insert_attribute(&mut txn, "fileId", id.clone());
     let partial = txn.encode_state_as_update_v1(&before);
     for bytes in [vec![255], partial] {
-        let mut conn = f.db.conn.lock().unwrap();
+        let mut conn = f.db.lock().unwrap();
         conn.execute(
             "update contents set state = ?1 where module_id='other'",
             [bytes],
         )
         .unwrap();
-        assert!(cleanup_unused_files(
-            &conn,
-            &f.dir.join("files"),
-            "note",
-            std::slice::from_ref(&id),
-            &[0, 0],
-            7
-        )
+        assert!({
+            drop(conn);
+            let result = cleanup_files(
+                &f.dir,
+                &f.db,
+                "note".into(),
+                vec![id.clone()],
+                vec![0, 0],
+                7,
+            );
+            conn = f.db.lock().unwrap();
+            result
+        }
         .is_err());
         assert!(delete_module_data(&mut conn, &f.dir.join("files"), "note").is_err());
         assert!(f.dir.join("files").join(&id).is_file());
@@ -497,8 +562,8 @@ fn failed_removals_remain_retryable_and_missing_files_are_cleaned_up() {
     assert!(!f.row_exists(&id));
 }
 
-fn search_ids(conn: &Connection, query: &str) -> Vec<String> {
-    search(conn, query, 20)
+fn search_ids(db: &Db, query: &str) -> Vec<String> {
+    search_notes(db, query.into(), 20)
         .unwrap()
         .into_iter()
         .map(|result| result.module_id)
@@ -506,65 +571,40 @@ fn search_ids(conn: &Connection, query: &str) -> Vec<String> {
 }
 
 #[test]
-fn search_query_quotes_terms_and_prefixes_the_last() {
-    assert_eq!(fts_query("foo bar").as_deref(), Some("\"foo\" \"bar\"*"));
-    assert_eq!(
-        fts_query(r#"say "hi""#).as_deref(),
-        Some(r#""say" """hi"""*"#)
-    );
-    assert_eq!(fts_query("  \t\n "), None);
-    assert_eq!(fts_query(r#"" - ( ) * ^ :"#), None);
-}
-
-#[test]
 fn search_ranks_titles_first_and_marks_matches() {
     let f = Fixture::new();
-    let mut conn = f.db.conn.lock().unwrap();
-    index_note_text(&mut conn, "note", "about the integral sign", "", 1, false).unwrap();
-    index_note_text(
-        &mut conn,
-        "other",
-        "nothing here",
-        r"\int_0^1 f(x)\,dx",
-        1,
-        false,
-    )
-    .unwrap();
-    conn.execute(
-        "update search_index set title = 'Integrals' where module_id = 'other'",
-        [],
+    f.index("note", "about the integral sign", "", 1, false)
+        .unwrap();
+    f.index("other", "nothing here", r"\int_0^1 f(x)\,dx", 1, false)
+        .unwrap();
+    dispatch(
+        &f.core,
+        "rename_module",
+        &serde_json::json!({"moduleId":"other","name":"Integrals"}).to_string(),
     )
     .unwrap();
 
-    let results = search(&conn, "integ", 10).unwrap();
+    let results = search_notes(&f.db, "integ".into(), 10).unwrap();
     let ids: Vec<_> = results.iter().map(|r| r.module_id.as_str()).collect();
     assert_eq!(ids, ["other", "note"]);
     assert_eq!(results[0].name_marked, "\u{2}Integrals\u{3}");
     assert!(results[1].snippet.contains("\u{2}integral\u{3}"));
 
     // LaTeX source is searchable, and the snippet comes from the math column.
-    let results = search(&conn, r"\int_0", 10).unwrap();
+    let results = search_notes(&f.db, r"\int_0".into(), 10).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].snippet, "\\\u{2}int_0\u{3}^1 f(x)\\,dx");
     // Every term must match.
-    assert_eq!(search_ids(&conn, "integral nothing"), Vec::<String>::new());
+    assert_eq!(search_ids(&f.db, "integral nothing"), Vec::<String>::new());
     // Diacritics and case are folded.
-    assert_eq!(search_ids(&conn, "ÍNTEGRAL SÍGN"), ["note"]);
+    assert_eq!(search_ids(&f.db, "ÍNTEGRAL SÍGN"), ["note"]);
 }
 
 #[test]
 fn search_never_fails_on_fts_syntax() {
     let f = Fixture::new();
-    let mut conn = f.db.conn.lock().unwrap();
-    index_note_text(
-        &mut conn,
-        "note",
-        "and or not near title body",
-        "",
-        1,
-        false,
-    )
-    .unwrap();
+    f.index("note", "and or not near title body", "", 1, false)
+        .unwrap();
     for query in [
         "\"",
         "\"\"",
@@ -594,57 +634,63 @@ fn search_never_fails_on_fts_syntax() {
         "x OR",
         "",
     ] {
-        assert!(search(&conn, query, 10).is_ok(), "query {query:?} failed");
+        assert!(
+            search_notes(&f.db, query.into(), 10).is_ok(),
+            "query {query:?} failed"
+        );
     }
-    assert_eq!(search_ids(&conn, "AND"), ["note"]);
-    assert_eq!(search_ids(&conn, "near"), ["note"]);
+    assert_eq!(search_ids(&f.db, "AND"), ["note"]);
+    assert_eq!(search_ids(&f.db, "near"), ["note"]);
     // A column filter is literal text, not a filter.
-    assert_eq!(search_ids(&conn, "title:"), ["note"]);
+    assert_eq!(search_ids(&f.db, "title:"), ["note"]);
 }
 
 #[test]
 fn search_index_follows_module_lifecycle() {
     let f = Fixture::new();
-    let mut conn = f.db.conn.lock().unwrap();
     // Modules that existed before the index are searchable by title once
     // the app restarts.
-    assert_eq!(search_ids(&conn, "Note"), Vec::<String>::new());
-    migrate_search(&conn).unwrap();
-    migrate_search(&conn).unwrap();
-    assert_eq!(search_ids(&conn, "Note"), ["note"]);
+    assert_eq!(search_ids(&f.db, "Note"), Vec::<String>::new());
+    migrate_search(&f.db.lock().unwrap()).unwrap();
+    migrate_search(&f.db.lock().unwrap()).unwrap();
+    assert_eq!(search_ids(&f.db, "Note"), ["note"]);
 
-    index_note_text(&mut conn, "note", "first", "", 1, false).unwrap();
-    index_note_text(&mut conn, "note", "second", "", 2, false).unwrap();
-    assert_eq!(search_ids(&conn, "first"), Vec::<String>::new());
-    assert_eq!(search_ids(&conn, "second"), ["note"]);
+    f.index("note", "first", "", 1, false).unwrap();
+    f.index("note", "second", "", 2, false).unwrap();
+    assert_eq!(search_ids(&f.db, "first"), Vec::<String>::new());
+    assert_eq!(search_ids(&f.db, "second"), ["note"]);
     // A delayed backfill read must not replace a newer live index write.
-    index_note_text(&mut conn, "note", "stale", "", 2, true).unwrap();
-    assert_eq!(search_ids(&conn, "second"), ["note"]);
-    assert!(search_ids(&conn, "stale").is_empty());
+    f.index("note", "stale", "", 2, true).unwrap();
+    assert_eq!(search_ids(&f.db, "second"), ["note"]);
+    assert!(search_ids(&f.db, "stale").is_empty());
     // An extractor upgrade can still backfill an older index.
-    index_note_text(&mut conn, "note", "second upgraded", "", 3, true).unwrap();
-    assert_eq!(search_ids(&conn, "upgraded"), ["note"]);
-    let rows: i64 = conn
-        .query_one(
-            "select count(*) from search_index where module_id = 'note'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
+    f.index("note", "second upgraded", "", 3, true).unwrap();
+    assert_eq!(search_ids(&f.db, "upgraded"), ["note"]);
+    let rows: i64 =
+        f.db.lock()
+            .unwrap()
+            .query_one(
+                "select count(*) from search_index where module_id = 'note'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
     assert_eq!(rows, 1);
 
-    delete_module_data(&mut conn, &f.dir.join("files"), "note").unwrap();
-    assert_eq!(search_ids(&conn, "second"), Vec::<String>::new());
-    let states: i64 = conn
-        .query_one("select count(*) from search_index_state", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
+    delete_module(&f.dir, &f.db, "note".into()).unwrap();
+    assert_eq!(search_ids(&f.db, "second"), Vec::<String>::new());
+    let states: i64 =
+        f.db.lock()
+            .unwrap()
+            .query_one("select count(*) from search_index_state", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
     assert_eq!(states, 0);
 
     // A late save for a deleted module must not bring it back.
-    index_note_text(&mut conn, "note", "revived", "", 1, false).unwrap();
-    assert_eq!(search_ids(&conn, "revived"), Vec::<String>::new());
+    f.index("note", "revived", "", 1, false).unwrap();
+    assert_eq!(search_ids(&f.db, "revived"), Vec::<String>::new());
 }
 
 fn compacted_test_state() -> Vec<u8> {
@@ -661,12 +707,10 @@ fn compacted_test_state() -> Vec<u8> {
 #[test]
 fn compaction_writes_state_and_drops_updates_together() {
     let f = Fixture::new();
-    let mut conn = f.db.conn.lock().unwrap();
-    conn.execute_batch("insert into contents_updates values (8, 'note', X'0000', 0);")
-        .unwrap();
+    let update = add_update(&f.db, "note".into(), vec![0, 0]).unwrap();
     let snapshot = compacted_test_state();
-    compact_content(&mut conn, "note", &snapshot, 7).unwrap();
-    let content = read_content(&conn, "note").unwrap();
+    save_compaction(&f.db, "note".into(), snapshot.clone(), 7).unwrap();
+    let content = get_content(&f.db, "note".into()).unwrap();
     assert_eq!(content.state, snapshot);
     assert_eq!(
         content
@@ -674,7 +718,7 @@ fn compaction_writes_state_and_drops_updates_together() {
             .iter()
             .map(|update| update.id)
             .collect::<Vec<_>>(),
-        vec![8]
+        vec![update.id]
     );
 }
 
@@ -721,16 +765,10 @@ fn legacy_update_id_migration_preserves_rows_and_their_high_watermark() {
 #[test]
 fn stale_compaction_watermark_cannot_delete_a_later_update() {
     let f = Fixture::new();
-    let mut conn = f.db.conn.lock().unwrap();
-    // A stale read can retain the old watermark after its rows are folded.
-    compact_content(&mut conn, "note", &compacted_test_state(), 7).unwrap();
-    conn.execute(
-        "insert into contents_updates (module_id, bytes, created_at) values ('note', X'0000', 0)",
-        [],
-    )
-    .unwrap();
-    compact_content(&mut conn, "note", &compacted_test_state(), 7).unwrap();
-    let content = read_content(&conn, "note").unwrap();
+    save_compaction(&f.db, "note".into(), compacted_test_state(), 7).unwrap();
+    add_update(&f.db, "note".into(), vec![0, 0]).unwrap();
+    save_compaction(&f.db, "note".into(), compacted_test_state(), 7).unwrap();
+    let content = get_content(&f.db, "note".into()).unwrap();
     assert_eq!(content.updates.len(), 1);
     assert_eq!(content.updates[0].bytes, vec![0, 0]);
     assert!(content.updates[0].id > 7);
@@ -739,21 +777,24 @@ fn stale_compaction_watermark_cannot_delete_a_later_update() {
 #[test]
 fn failed_compaction_leaves_content_unchanged() {
     let f = Fixture::new();
-    let mut conn = f.db.conn.lock().unwrap();
-    let before = serde_json::to_value(read_content(&conn, "note").unwrap()).unwrap();
-    // Fail the second statement, after the state has already been written.
-    conn.execute_batch(
-        "create temp trigger fail_delete before delete on contents_updates
+    let before = serde_json::to_value(get_content(&f.db, "note".into()).unwrap()).unwrap();
+    f.db.lock()
+        .unwrap()
+        .execute_batch(
+            "create temp trigger fail_delete before delete on contents_updates
              begin select raise(abort, 'disk full'); end;",
-    )
-    .unwrap();
+        )
+        .unwrap();
     assert!(
-        compact_content(&mut conn, "note", &compacted_test_state(), 7)
+        save_compaction(&f.db, "note".into(), compacted_test_state(), 7)
             .unwrap_err()
             .contains("disk full")
     );
-    conn.execute_batch("drop trigger fail_delete;").unwrap();
-    let after = serde_json::to_value(read_content(&conn, "note").unwrap()).unwrap();
+    f.db.lock()
+        .unwrap()
+        .execute_batch("drop trigger fail_delete;")
+        .unwrap();
+    let after = serde_json::to_value(get_content(&f.db, "note".into()).unwrap()).unwrap();
     assert_eq!(after, before);
     assert_eq!(after["state"], serde_json::json!([0, 0]));
 }
@@ -763,7 +804,7 @@ fn legacy_data_is_copied_with_rewritten_paths_and_left_intact() {
     let root = std::env::temp_dir().join(format!("notes-migrate-{}", Uuid::new_v4()));
     let legacy = Fixture {
         dir: root.join(LEGACY_IDENTIFIER),
-        db: open_db(&root.join(LEGACY_IDENTIFIER)).unwrap(),
+        core: Core::open(root.join(LEGACY_IDENTIFIER)).unwrap(),
     };
     legacy
         .db
@@ -814,21 +855,27 @@ fn legacy_data_is_copied_with_rewritten_paths_and_left_intact() {
 fn images_survive_moving_the_data_directory() {
     let dir = std::env::temp_dir().join(format!("notes-move-{}", Uuid::new_v4()));
     let moved = dir.with_extension("moved");
-    let db = open_db(&dir).unwrap();
-    let module = create_module(&db, "Images".into()).unwrap();
+    let core = Core::open(&dir).unwrap();
+    let db = &core.db;
+    let module = create_module(db, "Images".into()).unwrap();
     let image = save_file(
         &dir,
-        &db,
+        db,
         module.clone(),
         b"image bytes".to_vec(),
         "image/png".into(),
     )
     .unwrap();
-    drop(db);
+    drop(core);
     std::fs::rename(&dir, &moved).unwrap();
     // Reopen twice to exercise idempotence as well as old absolute receipts.
     drop(open_db(&moved).unwrap());
     let db = open_db(&moved).unwrap();
+    // Reads derive managed paths even when an older host's receipt is stale.
+    db.lock()
+        .unwrap()
+        .execute("update files set path = '/obsolete/receipt'", [])
+        .unwrap();
     let contents =
         serde_json::to_value(read_file(&moved, &db, module.clone(), image.id.clone()).unwrap())
             .unwrap();
@@ -842,8 +889,10 @@ fn images_survive_moving_the_data_directory() {
     );
     let content = serde_json::to_value(get_content(&db, module.clone()).unwrap()).unwrap();
     assert_eq!(
-        content["files"][0]["path"],
-        moved.join("files").join(&image.id).to_str().unwrap()
+        Path::new(content["files"][0]["path"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        moved.join("files").join(&image.id).canonicalize().unwrap()
     );
     delete_module(&moved, &db, module).unwrap();
     assert!(!moved.join("files").join(image.id).exists());
@@ -874,4 +923,117 @@ fn image_path_traversal_cannot_escape_managed_storage() {
             .unwrap();
     }
     assert_eq!(std::fs::read(outside).unwrap(), b"private");
+}
+
+#[test]
+fn unversioned_databases_open_migrate_and_reopen_without_losing_content() {
+    // These are schemas shipped before versioned migrations, including hosts
+    // that had already installed some of the optional historical columns.
+    for upgraded in [false, true] {
+        let dir = std::env::temp_dir().join(format!("memnoter-legacy-schema-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = Connection::open(dir.join("main.db")).unwrap();
+        conn.execute_batch("create table modules(id TEXT PRIMARY KEY, name TEXT NOT NULL);
+            create table contents(module_id TEXT PRIMARY KEY REFERENCES modules(id) ON DELETE CASCADE, state BLOB NOT NULL);
+            create table contents_updates(id INTEGER PRIMARY KEY, module_id TEXT NOT NULL REFERENCES modules(id) ON DELETE CASCADE, bytes BLOB NOT NULL, created_at INTEGER NOT NULL);
+            create table files(id TEXT PRIMARY KEY, module_id TEXT NOT NULL, path TEXT NOT NULL, file_type TEXT NOT NULL);
+            insert into modules values ('old', 'Legacy note');
+            insert into contents values ('old', X'0000');
+            insert into contents_updates values (300, 'old', X'0000', 42);").unwrap();
+        if upgraded {
+            conn.execute_batch(
+                "alter table modules add column heading_numbering INTEGER NOT NULL DEFAULT 0;
+                update modules set heading_numbering = 1;",
+            )
+            .unwrap();
+            conn.execute_batch("alter table contents_updates rename to old_updates;
+                create table contents_updates(id INTEGER PRIMARY KEY AUTOINCREMENT, module_id TEXT NOT NULL REFERENCES modules(id) ON DELETE CASCADE, bytes BLOB NOT NULL, created_at INTEGER NOT NULL);
+                insert into contents_updates select * from old_updates;
+                drop table old_updates;
+                insert into contents_updates values (500, 'old', X'0000', 43);
+                delete from contents_updates where id = 500;").unwrap();
+            // Independently shipped pre-change tables, including the dead
+            // syntax column, must remain readable by both host generations.
+            conn.execute_batch(
+                "
+        -- front and back are JSON whose shape depends on kind (basic, cloze,
+        -- later occlusion); only the review renderer interprets them.
+        -- The FSRS columns mirror a ts-fsrs v6 card. A new card is due at once.
+        create table if not exists cards (
+            id TEXT PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            front TEXT NOT NULL,
+            back TEXT NOT NULL,
+            -- JSON array of the heading titles above the card, outermost first.
+            section TEXT NOT NULL DEFAULT '[]',
+            due_at INTEGER NOT NULL,
+            stability REAL NOT NULL DEFAULT 0,
+            stability_fast REAL NOT NULL DEFAULT 0,
+            difficulty REAL NOT NULL DEFAULT 0,
+            scheduled_days REAL NOT NULL DEFAULT 0,
+            learning_step INTEGER NOT NULL DEFAULT 0,
+            reps INTEGER NOT NULL DEFAULT 0,
+            lapses INTEGER NOT NULL DEFAULT 0,
+            state INTEGER NOT NULL DEFAULT 0,
+            schedule_status TEXT NOT NULL DEFAULT 'new',
+            last_review_at INTEGER,
+            fsrs_model TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            deleted_at INTEGER,
+            FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
+        );
+
+        create table if not exists card_indexed_modules (
+            module_id TEXT PRIMARY KEY REFERENCES modules(id) ON DELETE CASCADE
+        );
+
+        create index if not exists cards_module on cards(module_id);
+        create index if not exists cards_due on cards(due_at) where deleted_at is null;
+
+        -- One row per rating. The card fields are the state before the review,
+        -- as in a ts-fsrs revlog, so parameters can be optimised later.
+        create table if not exists review_log (
+            id INTEGER PRIMARY KEY,
+            card_id TEXT NOT NULL,
+            rating INTEGER NOT NULL,
+            review_time INTEGER NOT NULL,
+            duration_ms INTEGER,
+            fsrs_model TEXT NOT NULL,
+            state INTEGER NOT NULL,
+            schedule_status TEXT NOT NULL,
+            due_at INTEGER NOT NULL,
+            last_review_at INTEGER,
+            stability REAL NOT NULL,
+            stability_fast REAL NOT NULL,
+            difficulty REAL NOT NULL,
+            scheduled_days REAL NOT NULL,
+            learning_step INTEGER NOT NULL,
+            FOREIGN KEY(card_id) REFERENCES cards(id) ON DELETE CASCADE
+        );
+
+        create index if not exists review_log_card on review_log(card_id, review_time);",
+            )
+            .unwrap();
+            conn.execute_batch("alter table card_indexed_modules add column syntax_version INTEGER NOT NULL DEFAULT 1; alter table review_log add column sync_id TEXT;").unwrap();
+        }
+        drop(conn);
+        let core = Core::open(&dir).unwrap();
+        assert_eq!(modules(&core.db).unwrap()[0].heading_numbering, upgraded);
+        let content = get_content(&core.db, "old".into()).unwrap();
+        assert_eq!(content.state, [0, 0]);
+        assert_eq!(content.updates[0].id, 300);
+        save_compaction(&core.db, "old".into(), vec![0, 0], 300).unwrap();
+        drop(core);
+        let core = Core::open(&dir).unwrap();
+        let update = add_update(&core.db, "old".into(), vec![0, 0]).unwrap();
+        assert!(update.id > if upgraded { 500 } else { 300 });
+        assert_eq!(
+            get_content(&core.db, "old".into()).unwrap().updates.len(),
+            1
+        );
+        drop(core);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

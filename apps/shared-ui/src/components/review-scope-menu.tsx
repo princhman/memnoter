@@ -1,9 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useModules } from "@/lib/modules";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { call as invoke } from "../lib/backend.ts";
 import { ChevronDown } from "lucide-react";
-import { openReview } from "@/lib/card-sync";
-import { Module } from "@/lib/types";
+import { openReview } from "@/components/card-navigation-guard";
 import { Button } from "./ui/button";
 import {
   DropdownMenu,
@@ -15,10 +13,7 @@ import {
 
 // Picks which module's cards the review shows, or all of them.
 export function ReviewScopeMenu() {
-  const { data: modules = [] } = useQuery({
-    queryKey: ["modules"],
-    queryFn: async () => await invoke<Module[]>("modules"),
-  });
+  const { data: modules = [] } = useModules();
   const search = useSearch({ strict: false });
   const navigate = useNavigate();
 

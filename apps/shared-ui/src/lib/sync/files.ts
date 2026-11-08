@@ -6,6 +6,7 @@
 import { call as invoke } from "@/lib/backend";
 import type { FileType } from "@/lib/content";
 import { getObject, putObject, SyncApiError } from "./account";
+import { SYNC_CONTRACT } from "./protocol";
 import { decryptBlob, encryptBlob } from "./crypto";
 
 type MissingFile = { fileId: string; moduleId: string; fileType: string };
@@ -14,7 +15,7 @@ const RETRY_MS = 30_000;
 const KICK_DELAY_MS = 1_000;
 
 // Authenticated data for an image, so a blob cannot pass for another one.
-const fileDoc = (fileId: string) => `file:${fileId}`;
+const fileDoc = (fileId: string) => `${SYNC_CONTRACT.fileAadPrefix}${fileId}`;
 
 export type FileSyncOptions = {
   generation: string;

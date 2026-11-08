@@ -1,14 +1,12 @@
-use memnoter_core::*;
+use memnoter_core::{Core, CoreError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
-mod backups;
-mod cards;
 mod import_folder;
 #[cfg(target_os = "macos")]
 mod menu;
 #[cfg(target_os = "macos")]
 mod selection_limit;
-mod sync;
+mod sync_credentials;
 #[derive(Default)]
 struct ExitGate(AtomicBool);
 #[tauri::command]
@@ -26,159 +24,32 @@ fn confirm_restart(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn set_module_numbering(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-    enabled: bool,
-) -> CommandResult<()> {
-    memnoter_core::set_module_numbering(&core.db, module_id, enabled)
-}
-#[tauri::command]
-fn create_module(
-    app: tauri::AppHandle,
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    name: String,
-) -> CommandResult<String> {
-    let result = memnoter_core::create_module(&core.db, name)?;
-    let _ = app.emit("sync-outbox", ());
-    Ok(result)
-}
-#[tauri::command(async)]
-fn import_module(
-    app: tauri::AppHandle,
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    name: String,
-    bytes: Vec<u8>,
-    images: Vec<ImportImage>,
-) -> CommandResult<String> {
-    let result = memnoter_core::import_module(core.data_dir(), &core.db, name, bytes, images)?;
-    let _ = app.emit("sync-outbox", ());
-    Ok(result)
-}
-#[tauri::command]
-fn modules(core: tauri::State<'_, std::sync::Arc<Core>>) -> CommandResult<Vec<Module>> {
-    memnoter_core::modules(&core.db)
-}
-#[tauri::command]
-fn rename_module(
-    app: tauri::AppHandle,
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-    name: String,
-) -> CommandResult<()> {
-    memnoter_core::rename_module(&core.db, module_id, name)?;
-    let _ = app.emit("sync-outbox", ());
-    Ok(())
-}
-#[tauri::command(async)]
-fn delete_module(
-    app: tauri::AppHandle,
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-) -> CommandResult<()> {
-    memnoter_core::delete_module(core.data_dir(), &core.db, module_id)?;
-    let _ = app.emit("sync-outbox", ());
-    Ok(())
-}
-#[tauri::command(async)]
-fn get_content(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-) -> CommandResult<GetContentResponse> {
-    memnoter_core::get_content(&core.db, module_id)
-}
-#[tauri::command(async)]
-fn add_update(
-    app: tauri::AppHandle,
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-    bytes: Vec<u8>,
-) -> CommandResult<ContentUpdate> {
-    let result = memnoter_core::add_update(&core.db, module_id, bytes)?;
-    let _ = app.emit("sync-outbox", ());
-    Ok(result)
-}
-#[tauri::command(async)]
-fn save_compaction(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-    new_state: Vec<u8>,
-    update_id: i64,
-) -> CommandResult<()> {
-    memnoter_core::save_compaction(&core.db, module_id, new_state, update_id)
-}
-#[tauri::command(async)]
-fn save_file(
-    app: tauri::AppHandle,
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-    bytes: Vec<u8>,
-    mime_type: String,
-) -> CommandResult<FileType> {
-    let result = memnoter_core::save_file(core.data_dir(), &core.db, module_id, bytes, mime_type)?;
-    let _ = app.emit("sync-outbox", ());
-    Ok(result)
-}
-#[tauri::command(async)]
-fn read_file(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-    file_id: String,
-) -> CommandResult<FileContents> {
-    memnoter_core::read_file(core.data_dir(), &core.db, module_id, file_id)
-}
-#[tauri::command]
-fn resolve_card_image(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    file_id: String,
-) -> CommandResult<String> {
-    memnoter_core::resolve_card_image(core.data_dir(), &core.db, file_id)
-}
-#[tauri::command(async)]
-fn cleanup_files(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-    file_ids: Vec<String>,
-    expected_state: Vec<u8>,
-    expected_update_id: i64,
-) -> CommandResult<Vec<String>> {
-    memnoter_core::cleanup_files(
-        core.data_dir(),
-        &core.db,
-        module_id,
-        file_ids,
-        expected_state,
-        expected_update_id,
-    )
-}
-#[tauri::command(async)]
-fn index_note(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    module_id: String,
-    body: String,
-    math: String,
-    version: i64,
-    backfill: bool,
-) -> CommandResult<()> {
-    memnoter_core::index_note(&core.db, module_id, body, math, version, backfill)
-}
-#[tauri::command(async)]
-fn unindexed_modules(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    version: i64,
-) -> CommandResult<Vec<String>> {
-    memnoter_core::unindexed_modules(&core.db, version)
-}
-#[tauri::command(async)]
-fn search_notes(
-    core: tauri::State<'_, std::sync::Arc<Core>>,
-    query: String,
-    limit: i64,
-) -> CommandResult<Vec<SearchResult>> {
-    memnoter_core::search_notes(&core.db, query, limit)
+async fn core(
+    state: tauri::State<'_, std::sync::Arc<Core>>,
+    command: String,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, CoreError> {
+    let core = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        match command.as_str() {
+            "sync_credentials_save" => {
+                sync_credentials::save(&core, &args["account"])?;
+                return Ok(serde_json::Value::Null);
+            }
+            "sync_credentials_load" => return sync_credentials::load(&core),
+            "sync_credentials_delete" => {
+                sync_credentials::delete(&core)?;
+                return Ok(serde_json::Value::Null);
+            }
+            _ => {}
+        }
+        let result = memnoter_core::dispatch(&core, &command, &args.to_string())?;
+        serde_json::from_str(&result).map_err(|e| CoreError::Storage(e.to_string()))
+    })
+    .await
+    .map_err(|e| CoreError::Storage(e.to_string()))?
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
@@ -217,6 +88,13 @@ pub fn run() {
                     selection_limit::limit_attributed_substrings(webview.inner())
                 })?;
             }
+            sync_credentials::migrate(&core)?;
+            let handle = app.handle().clone();
+            core.set_outbox_callback(std::sync::Arc::new(move || {
+                if let Err(error) = handle.emit(memnoter_core::sync::OUTBOX_EVENT, ()) {
+                    eprintln!("Unable to announce sync outbox: {error}");
+                }
+            }));
             app.manage(core.clone());
             app.manage(ExitGate::default());
             memnoter_core::backups::spawn_daily_backup(core);
@@ -227,48 +105,10 @@ pub fn run() {
             menu::set_editor_history,
             confirm_exit,
             confirm_restart,
-            create_module,
-            import_module,
+            core,
             import_folder::pick_import_folder,
             import_folder::pick_import_image_folder,
-            import_folder::read_import_images,
-            modules,
-            get_content,
-            add_update,
-            rename_module,
-            set_module_numbering,
-            delete_module,
-            save_compaction,
-            save_file,
-            read_file,
-            cleanup_files,
-            resolve_card_image,
-            cards::sync_cards,
-            cards::unindexed_card_modules,
-            cards::due_cards,
-            cards::due_counts,
-            cards::review_card,
-            cards::undo_review,
-            cards::card_schedules,
-            index_note,
-            unindexed_modules,
-            search_notes,
-            backups::list_backups,
-            backups::backup_now,
-            backups::restore_backup,
-            sync::sync_status,
-            sync::sync_enable,
-            sync::sync_disable,
-            sync::sync_outbox,
-            sync::sync_ack,
-            sync::sync_set_cursor,
-            sync::sync_apply,
-            sync::sync_snapshot,
-            sync::sync_missing_files,
-            sync::sync_pending_uploads,
-            sync::sync_upload_done,
-            sync::sync_store_file,
-            sync::sync_reconcile
+            import_folder::read_import_images
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,17 +1,16 @@
+import { browserHarness } from "./support/browser.mjs";
+import { installReviewHost } from "./support/review-host.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 // Real pointer and keyboard interactions protect selection across the portaled
 // picker, as well as the official extension's input rule and collaborative schema.
-test("highlight picker, syntax, bridge and old-schema compatibility", async () => {
+test("highlight picker, syntax and old-schema compatibility", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const cacheDir = await mkdtemp(join(root, "node_modules/.highlight-vite-"));
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: "error" });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
     await server.listen();
@@ -46,21 +45,17 @@ test("highlight picker, syntax, bridge and old-schema compatibility", async () =
     await toolbar.waitFor({ state: "visible" });
     assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "yellow");
     await page.evaluate(async () => {
-      const { execEditor, editorState } = await import("/src/editor-host/commands.ts");
-      execEditor(editor, "setHighlight", { color: "purple" });
-      if (editorState(editor).highlightColor !== "purple") throw Error("Missing native colour state");
-      execEditor(editor, "removeHighlight");
       editor.commands.setContent("<p></p>"); editor.commands.focus("start");
     });
     await page.keyboard.type("==gentle==");
     assert.equal(await page.locator(".tiptap mark").textContent(), "gentle");
-    assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "purple");
+    assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "yellow");
     assert.equal(await page.locator(".tiptap mark").getAttribute("style"), null);
     await page.evaluate(() => editor.chain().focus().setTextSelection({ from: 1, to: 7 }).run());
     await page.keyboard.press("Meta+Shift+h");
     assert.equal(await page.locator(".tiptap mark").count(), 0);
     await page.keyboard.press("Meta+Shift+h");
-    assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "purple");
+    assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "yellow");
     // Highlighted inline math and cloze text use the same semantic colour in
     // the editor and the shared face mounted by native review.
     const card = await page.evaluate(async () => {
@@ -76,9 +71,10 @@ test("highlight picker, syntax, bridge and old-schema compatibility", async () =
     assert.equal(await page.locator('.tiptap mark[data-color="blue"] .inline-math-widget').count(), 1);
     assert.equal(await page.locator('.tiptap mark[data-color="green"] .cloze-text, .tiptap .cloze-text mark[data-color="green"], .tiptap mark.cloze-text[data-color="green"]').count(), 1);
     const review = await browser.newPage();
+    await review.addInitScript(installReviewHost);
     await review.goto(`http://localhost:${server.httpServer.address().port}/review-native.html`);
     await review.waitForFunction(() => window.memnoterReview);
-    await review.evaluate(card => window.memnoterReview.show({ ...card, reps: 0 }, true), card);
+    await review.evaluate(card => window.loadCard({ ...card, reps: 0 }, true), card);
     await review.locator('.card-face mark[data-color="green"]').waitFor();
     assert.equal(await review.locator('.card-face [data-color="blue"] .katex').count(), 1);
     const backgrounds = [];
@@ -98,6 +94,6 @@ test("highlight picker, syntax, bridge and old-schema compatibility", async () =
     assert.equal(compatibility.editorText, "");
     assert.equal(compatibility.storedText.includes("gentle"), false);
   } finally {
-    await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true });
+    await browser?.close(); await server.close();
   }
 });

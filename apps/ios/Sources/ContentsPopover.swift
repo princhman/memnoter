@@ -27,7 +27,7 @@ struct ContentsPopover: View {
                                         if let number = heading.number {
                                             Text(number).monospacedDigit().foregroundStyle(.secondary)
                                         }
-                                        Text(heading.text.isEmpty ? "Untitled section" : heading.text)
+                                        Text(heading.text)
                                             .fontWeight(heading.level == 1 ? .medium : .regular)
                                             .foregroundStyle(current ? Color.accentColor : heading.level == 1 ? Color.primary : Color.secondary)
                                             .lineLimit(1).truncationMode(.tail)

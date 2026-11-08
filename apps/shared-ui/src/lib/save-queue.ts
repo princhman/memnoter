@@ -221,7 +221,3 @@ export function createSaveQueue<Update, Saved>({
     },
   };
 }
-
-export type SaveQueue<Update, Saved> = ReturnType<
-  typeof createSaveQueue<Update, Saved>
->;

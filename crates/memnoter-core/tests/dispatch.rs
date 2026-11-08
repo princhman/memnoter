@@ -1,6 +1,5 @@
-use memnoter_core::{dispatch, Core, DATA_COMMANDS};
+use memnoter_core::{dispatch, Core, CoreError};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
 
 struct Fixture {
     core: Core,
@@ -22,55 +21,6 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
-}
-
-// Independent desktop registration is the public transport inventory. This
-// fails if a command is added to either transport alone; module qualifiers and
-// whitespace do not affect the contract.
-#[test]
-fn dispatch_and_desktop_register_the_same_data_commands() {
-    let source = include_str!("../../../apps/desktop/src/lib.rs");
-    let handler = source
-        .split("tauri::generate_handler![")
-        .nth(1)
-        .unwrap()
-        .split("])")
-        .next()
-        .unwrap()
-        .lines()
-        .filter(|line| !line.trim().starts_with("#["))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let registered: BTreeSet<_> = handler
-        .split(',')
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(|name| name.rsplit("::").next().unwrap())
-        .filter(|name| {
-            !matches!(
-                *name,
-                // Native folder selection belongs to the desktop shell, like menus.
-                "set_editor_history"
-                    | "confirm_exit"
-                    | "confirm_restart"
-                    | "pick_import_folder"
-                    | "pick_import_image_folder"
-                    | "read_import_images"
-            )
-        })
-        .collect();
-    let accepted: BTreeSet<_> = DATA_COMMANDS.iter().copied().collect();
-    assert_eq!(registered, accepted);
-    let fixture = Fixture::new();
-    for command in DATA_COMMANDS {
-        assert!(!dispatch(&fixture.core, command, "{}")
-            .unwrap_or_else(|e| e)
-            .starts_with("Unknown command:"));
-    }
-    assert_eq!(
-        dispatch(&fixture.core, "absent", "invalid JSON"),
-        Err("Unknown command: absent".into())
-    );
 }
 
 #[test]
@@ -130,6 +80,7 @@ fn frontend_payloads_keep_camel_case_bytes_null_and_storage_errors() {
             "invalid".into()
         )
         .map(|_| unreachable!())
+        .map_err(CoreError::from)
     );
     assert_eq!(f.call("due_cards", json!({"now":0})), json!([])); // omitted Option follows Tauri
     f.call(
@@ -178,7 +129,7 @@ fn sync_dispatch_upgrades_existing_database_and_applies_to_fresh_device() {
         .execute_batch(
             "drop table sync_outbox; drop table sync_state; drop table sync_docs;
          drop table sync_file_uploads; drop index review_log_sync_id;
-         alter table review_log drop column sync_id;",
+         alter table review_log drop column sync_id; PRAGMA user_version = 0;",
         )
         .unwrap();
     let upgraded = Core::open(&a.dir).unwrap();
@@ -272,4 +223,196 @@ fn restore_rejects_old_ack_and_cursor_without_losing_seeded_uploads() {
     let signed_in = f.call("sync_status", json!({}))["generation"].clone();
     f.call("sync_disable", json!({}));
     assert_ne!(f.call("sync_status", json!({}))["generation"], signed_in);
+}
+
+#[test]
+fn committed_outbox_writes_notify_once_without_holding_the_database_lock() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let f = Fixture::new();
+    let core = Arc::new(Core::open(&f.dir).unwrap());
+    let weak = Arc::downgrade(&core);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let received = notifications.clone();
+    core.set_outbox_callback(Arc::new(move || {
+        // A host may synchronously read status when receiving the signal.
+        dispatch(&weak.upgrade().unwrap(), "sync_status", "{}").unwrap();
+        received.fetch_add(1, Ordering::SeqCst);
+    }));
+    dispatch(&core, "create_module", r#"{"name":"Offline"}"#).unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst), 0);
+    dispatch(&core, "sync_enable", r#"{"account":"account"}"#).unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst), 1);
+    let id: Value = serde_json::from_str(
+        &dispatch(
+            &core,
+            "import_module",
+            r#"{"name":"Imported","bytes":[0,0],"images":[]}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        notifications.load(Ordering::SeqCst),
+        2,
+        "multiple outbox rows produce one signal"
+    );
+    dispatch(
+        &core,
+        "set_module_numbering",
+        &json!({"moduleId":id,"enabled":true}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst), 2);
+    {
+        let mut conn = core.db.lock().unwrap();
+        let tx = conn.transaction().unwrap();
+        memnoter_core::sync::record_update(&tx, id.as_str().unwrap(), &[0, 0]).unwrap();
+        tx.rollback().unwrap();
+    }
+    assert_eq!(
+        notifications.load(Ordering::SeqCst),
+        2,
+        "rollback must not nudge sync"
+    );
+    dispatch(&core, "delete_module", &json!({"moduleId":id}).to_string()).unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst), 3);
+    let backup: Value =
+        serde_json::from_str(&dispatch(&core, "backup_now", "{}").unwrap()).unwrap();
+    dispatch(
+        &core,
+        "restore_backup",
+        &json!({"id":backup["id"]}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        notifications.load(Ordering::SeqCst),
+        4,
+        "restored outbox must be sent"
+    );
+}
+
+#[test]
+fn dispatch_errors_have_stable_codes_and_user_visible_messages() {
+    let f = Fixture::new();
+    let error = dispatch(&f.core, "sync_ack", r#"{"maxId":1,"generation":"expired"}"#).unwrap_err();
+    assert_eq!(error, CoreError::StaleGeneration);
+    assert_eq!(
+        serde_json::to_value(error).unwrap(),
+        json!({"code":"stale_generation","message":"SYNC_STALE_GENERATION"})
+    );
+    let error = dispatch(&f.core, "absent", "{}").unwrap_err();
+    assert_eq!(
+        serde_json::to_value(error).unwrap(),
+        json!({"code":"storage","message":"Unknown command: absent"})
+    );
+}
+
+#[test]
+fn sync_identity_scrubs_secrets_before_backup_and_preserves_outbox() {
+    let f = Fixture::new();
+    let account = json!({"server":"https://sync.example/","userId":"u", "key":"RAW_KEY_SENTINEL_93746", "token":"RAW_TOKEN_SENTINEL_93746"}).to_string();
+    f.call("sync_enable", json!({"account":account}));
+    let before = f.call("sync_status", json!({}));
+    f.call(
+        "sync_set_cursor",
+        json!({"cursor":42,"generation":before["generation"]}),
+    );
+    f.call(
+        "sync_enable",
+        json!({"account":json!({"server":"https://sync.example","userId":"u"}).to_string()}),
+    );
+    let after = f.call("sync_status", json!({}));
+    assert_eq!(after["cursor"], 42);
+    assert_eq!(after["pending"], before["pending"]);
+    let identity: Value = serde_json::from_str(after["account"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        identity,
+        json!({"server":"https://sync.example","userId":"u"})
+    );
+    f.call("backup_now", json!({}));
+    fn inspect(dir: &std::path::Path) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                inspect(&path);
+            } else {
+                let bytes = std::fs::read(&path).unwrap();
+                for secret in [
+                    b"RAW_KEY_SENTINEL_93746".as_slice(),
+                    b"RAW_TOKEN_SENTINEL_93746".as_slice(),
+                ] {
+                    assert!(
+                        !bytes.windows(secret.len()).any(|window| window == secret),
+                        "Secret in {}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+    inspect(&f.dir.join("backups"));
+}
+
+#[test]
+fn saved_images_are_announced_downloaded_and_not_echoed_as_uploads() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"Images"}));
+    let first = a.call(
+        "save_file",
+        json!({"moduleId":module,"bytes":[1,2,3],"mimeType":"image/png"}),
+    );
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    let ga = a.call("sync_status", json!({}))["generation"].clone();
+    let gb = b.call("sync_status", json!({}))["generation"].clone();
+    assert_eq!(
+        a.call("sync_pending_uploads", json!({"generation":ga})),
+        json!([first["id"]])
+    );
+    let later = a.call(
+        "save_file",
+        json!({"moduleId":module,"bytes":[4,5,6],"mimeType":"image/jpeg"}),
+    );
+    let uploads = a.call("sync_pending_uploads", json!({"generation":ga}));
+    assert_eq!(uploads.as_array().unwrap().len(), 2);
+    assert!(uploads.as_array().unwrap().contains(&later["id"]));
+    let entries = a.call("sync_outbox", json!({"limitBytes":1048576,"generation":ga}));
+    let remote: Vec<_> = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, e)| json!({"seq":i+1,"doc":e["doc"],"bytes":e["bytes"]}))
+        .collect();
+    b.call(
+        "sync_apply",
+        json!({"entries":remote,"cursor":remote.len(),"generation":gb}),
+    );
+    let missing = b.call("sync_missing_files", json!({"generation":gb}));
+    assert_eq!(missing.as_array().unwrap().len(), 2);
+    assert!(missing
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| file["fileId"] == later["id"]));
+    b.call("sync_store_file", json!({"fileId":later["id"],"moduleId":module,"fileType":"image/jpeg","bytes":[4,5,6],"generation":gb}));
+    assert_eq!(
+        b.call("read_file", json!({"fileId":later["id"],"moduleId":module}))["bytes"],
+        json!([4, 5, 6])
+    );
+    assert_eq!(
+        b.call("sync_missing_files", json!({"generation":gb}))
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        b.call("sync_pending_uploads", json!({"generation":gb})),
+        json!([])
+    );
 }

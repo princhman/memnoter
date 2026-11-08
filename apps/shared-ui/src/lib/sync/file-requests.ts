@@ -1,6 +1,5 @@
-// Lets image views ask for a synced image that has not been downloaded yet,
-// and hear when one arrives. Kept apart from the sync manager so editor
-// code does not import it (the manager imports the editor's extensions).
+// Lightweight download requests and arrival notifications shared by image views
+// and the sync manager, without loading the sync engine into each image viewer.
 
 import { createStore } from "@tanstack/react-store";
 

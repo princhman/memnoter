@@ -1,3 +1,4 @@
+import { editorHost } from "@/lib/editor-host";
 import {
   FindAndReplace,
   FindAndReplacePluginKey,
@@ -11,7 +12,6 @@ import type { EditorView } from "@tiptap/pm/view";
 // Highlight API avoids spans too, but WebKit does not repaint when highlights
 // are removed, so cleared matches stayed on screen.
 
-const SCROLL_CONTAINER = ".app-scroll-container";
 // Only matches near the viewport are drawn, as measuring each one costs time in
 // long notes. Positions this far beyond the screen's edges count.
 const SLACK = 3000;
@@ -34,7 +34,7 @@ function domRange(view: EditorView, { from, to }: Match): Range | null {
 // The document positions shown in the scroll container, widened by SLACK.
 function visibleSpan(view: EditorView): Match {
   const size = view.state.doc.content.size;
-  const container = view.dom.closest<HTMLElement>(SCROLL_CONTAINER);
+  const container = editorHost.scrollContainer(view.dom);
   if (!container) return { from: 0, to: size };
 
   const box = container.getBoundingClientRect();
@@ -95,7 +95,7 @@ export function scrollCurrentResultIntoView(view: EditorView) {
   const current = currentMatch(view);
   if (!current) return;
   const range = domRange(view, current);
-  const container = view.dom.closest<HTMLElement>(SCROLL_CONTAINER);
+  const container = editorHost.scrollContainer(view.dom);
   if (!range || !container) return;
 
   const rect = range.getBoundingClientRect();

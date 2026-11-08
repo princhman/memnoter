@@ -1,18 +1,17 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { browserHarness } from "./support/browser.mjs";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 // The fold toggle is absolutely positioned in the heading's left gutter. A
 // stylesheet change once dropped its horizontal anchor, so it drew over the
 // heading number instead. Check the real rendered layout, not the CSS text.
 test("heading fold toggles sit left of numbered heading text", { timeout: 60_000 }, async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const cacheDir = await mkdtemp(`${tmpdir()}/memnoter-fold-layout-`);
-  const server = await createServer({ root, cacheDir, logLevel: "error", server: { port: 0, strictPort: false, hmr: false, watch: null } });
+  const server = await createServer({ root, logLevel: "error", server: { port: 0, strictPort: false, hmr: false, watch: null } });
   let browser;
   try {
     await server.listen();
@@ -37,6 +36,6 @@ test("heading fold toggles sit left of numbered heading text", { timeout: 60_000
   } finally {
     await browser?.close();
     await server.close();
-    await rm(cacheDir, { recursive: true, force: true });
+
   }
 });

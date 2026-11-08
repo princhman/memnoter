@@ -1,3 +1,4 @@
+import { editorHost } from "@/lib/editor-host";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { dropPoint } from "@tiptap/pm/transform";
@@ -11,7 +12,7 @@ import { yUndoPluginKey } from "@tiptap/y-tiptap";
 const THRESHOLD = 4;
 
 // Where the node at `from` would land if dropped at document position `target`.
-export function imageDropPosition(state: EditorState, from: number, target: number) {
+function imageDropPosition(state: EditorState, from: number, target: number) {
   const node = state.doc.nodeAt(from);
   if (!node) return null;
   const insert = dropPoint(state.doc, target, new Slice(Fragment.from(node), 0, 0));
@@ -22,7 +23,7 @@ export function imageDropPosition(state: EditorState, from: number, target: numb
 
 // The node keeps its attributes (asset, caption, masks) because the same node
 // is reinserted; nothing passes through HTML.
-export function moveImage(state: EditorState, from: number, target: number): Transaction | null {
+function moveImage(state: EditorState, from: number, target: number): Transaction | null {
   const node = state.doc.nodeAt(from);
   const insert = imageDropPosition(state, from, target);
   if (!node || insert === null) return null;
@@ -52,7 +53,7 @@ function indicatorRect(view: EditorView, insert: number, inline: boolean) {
 }
 
 function autoScroll(view: EditorView, y: number) {
-  const container = view.dom.closest<HTMLElement>(".app-scroll-container");
+  const container = editorHost.scrollContainer(view.dom);
   if (!container) return;
   const { top, bottom } = container.getBoundingClientRect();
   if (y < top + 40) container.scrollTop -= 12;
@@ -110,7 +111,7 @@ export function startImagePointerMove(view: EditorView, getPos: () => number | u
     stopCapturing(view);
     view.dispatch(tr);
     stopCapturing(view);
-    if (!view.dom.hasAttribute("data-native-editor")) view.focus();
+    if (editorHost.restoreFocus) view.focus();
   };
   const up = () => finish(true);
   const cancel = () => finish(false);

@@ -1,3 +1,4 @@
+import { outline } from "./outline.ts";
 import { Extension } from "@tiptap/core";
 import { EditorState, PluginKey, Plugin } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -9,13 +10,7 @@ function isHeadingPosition(
   doc: EditorState["doc"],
   position: unknown,
 ): position is number {
-  return (
-    typeof position === "number" &&
-    Number.isInteger(position) &&
-    position >= 0 &&
-    position < doc.content.size &&
-    doc.nodeAt(position)?.type.name === "heading"
-  );
+  return typeof position === "number" && outline(doc).some(item => item.pos === position);
 }
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -40,28 +35,8 @@ export function getFocusedSectionPath(editor: Editor): SectionCrumb[] {
     focusedPos >= editor.state.doc.content.size
   ) return [];
 
-  const focusedNode = editor.state.doc.nodeAt(focusedPos);
-  if (focusedNode?.type.name !== "heading") return [];
-
-  const path: SectionCrumb[] = [];
-
-  editor.state.doc.forEach((node, pos) => {
-    if (pos > focusedPos || node.type.name !== "heading") return;
-
-    const level = Number(node.attrs.level);
-
-    while (path.length && path[path.length - 1].level >= level) {
-      path.pop();
-    }
-
-    path.push({
-      pos,
-      level,
-      title: node.textContent || "Untitled section",
-    });
-  });
-
-  return path;
+  const heading = outline(editor.state.doc).find(item => item.pos === focusedPos);
+  return heading ? [...heading.ancestors, heading] : [];
 }
 
 // The focused heading and everything up to the next heading at its level or higher.
@@ -76,31 +51,8 @@ export function getSectionRange(
   doc: EditorState["doc"],
   headingPos: unknown,
 ): { from: number; to: number } | null {
-  if (!isHeadingPosition(doc, headingPos)) return null;
-
-  const heading = doc.nodeAt(headingPos);
-  if (heading?.type.name !== "heading") return null;
-
-  const level = heading.attrs.level;
-  let sectionEnd = doc.content.size;
-
-  doc.nodesBetween(
-    headingPos + heading.nodeSize,
-    doc.content.size,
-    (node, pos) => {
-      if (
-        sectionEnd === doc.content.size &&
-        node.type.name === "heading" &&
-        node.attrs.level <= level
-      ) {
-        sectionEnd = pos;
-      }
-
-      return false;
-    },
-  );
-
-  return { from: headingPos, to: sectionEnd };
+  const heading = outline(doc).find(item => item.pos === headingPos);
+  return heading ? { from: heading.pos, to: heading.end } : null;
 }
 
 const sectionMarksKey = new PluginKey<DecorationSet>("section-focus-marks");

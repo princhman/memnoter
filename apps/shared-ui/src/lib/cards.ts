@@ -1,7 +1,15 @@
+import { outline } from "./outline.ts";
+import { basicCardId, clozeCardId, occlusionCardId, parseCardId } from "./card-id.ts";
+export { blockIdOf } from "./card-id.ts";
+
 import { highlightColor } from "./highlight.ts";
 import { maskCards, validMasks, type OcclusionFace } from "./occlusion.ts";
 import type { Node } from "@tiptap/pm/model";
 import type { StepMap } from "@tiptap/pm/transform";
+
+export function isImageNode(node: Node | null | undefined): boolean {
+  return node?.type.name === "image" || node?.type.name === "inlineImage";
+}
 
 // Flashcards written in note text. A paragraph or heading is a card block:
 //   - Basic: `Question :: Answer`. The first `::` with no text character
@@ -210,7 +218,7 @@ function mergeText(segments: Segment[]): Segment[] {
 }
 
 // Blocks that can carry a card id: textblocks of a type with the attribute.
-function isCardBlock(node: Node) {
+export function isCardBlock(node: Node) {
   return node.isTextblock && !node.type.spec.code && "cardId" in node.attrs;
 }
 
@@ -271,13 +279,13 @@ function blockCardIds(node: Node, blockId: string, syntax: BlockSyntax) {
   const clozeIds = clozeIdsOf(node, syntax);
   return syntax.cards.map((card, index) => {
     if (card.kind !== "cloze") return {
-      id: index === 0 ? blockId : `${blockId}:reverse`,
+      id: basicCardId(blockId, index !== 0),
       answer: syntax.cards.length === 2 ? (index === 0 ? "Forward" : "Reverse") : null,
     };
     const inner = syntax.clozes[index]?.inner;
     const entry = inner && clozeIds.find((entry) =>
       entry.from >= 0 && entry.from === inner.from && entry.to === inner.to);
-    return entry ? { id: `${blockId}:${entry.id}`, answer: entry.answer } : null;
+    return entry ? { id: clozeCardId(blockId, entry.id), answer: entry.answer } : null;
   });
 }
 
@@ -289,12 +297,13 @@ function cardsOfBlock(node: Node, blockId: string) {
   return syntax.cards.flatMap((card, index) => {
     const entry = ids[index];
     if (!entry || consumed.has(index)) return [];
-    const localId = entry.id.slice(blockId.length + 1);
-    const group = card.kind === "cloze" ? groups.find((members) => members.includes(localId)) : undefined;
-    const targets = group ? ids.flatMap((member, i) => member && group.includes(member.id.slice(blockId.length + 1)) ? [i] : []) : [index];
+    const parsed = parseCardId(entry.id);
+    const localId = parsed.kind === "cloze" ? parsed.clozeId : null;
+    const group = card.kind === "cloze" ? groups.find((members) => localId !== null && members.includes(localId)) : undefined;
+    const targets = group ? ids.flatMap((member, i) => member && group.some(id => member.id === clozeCardId(blockId, id)) ? [i] : []) : [index];
     targets.forEach((i) => consumed.add(i));
     // The first member selected for joining owns the combined schedule.
-    const owner = group ? targets.find((i) => ids[i]?.id === `${blockId}:${group[0]}`) : undefined;
+    const owner = group ? targets.find((i) => ids[i]?.id === clozeCardId(blockId, group[0])) : undefined;
     const identity = ids[typeof owner === "number" ? owner : index]!;
     return [{
       ...card, id: identity.id, blockId,
@@ -317,23 +326,24 @@ export function cardIdsOf(node: Node): { id: string; answer: string | null }[] {
 export function extractCards(doc: Node): ExtractedCard[] {
   const cards: ExtractedCard[] = [];
   const seen = new Set<string>();
-  // The open headings above the current block, as in the section breadcrumb.
-  const headings: { level: number; title: string }[] = [];
-  doc.descendants((node, _pos, parent) => {
-    const isHeading = parent === doc && node.type.name === "heading";
-    const level = Number(node.attrs.level);
-    if (isHeading) {
-      while (headings.length && headings[headings.length - 1].level >= level) headings.pop();
-    }
-    const section = headings.map(({ title }) => title);
-    if (["image", "inlineImage"].includes(node.type.name)) {
+  const headings = outline(doc);
+  let headingIndex = -1;
+  doc.descendants((node, pos) => {
+    while (headings[headingIndex + 1]?.pos <= pos) headingIndex++;
+    // A heading card belongs to its ancestors; inline content belongs to the
+    // heading itself, just like subsequent blocks in its section.
+    const heading = headings[headingIndex];
+    const containing = !heading ? [] : heading.pos === pos
+      ? heading.ancestors : [...heading.ancestors, heading];
+    const section = containing.map(({ title }) => title);
+    if (isImageNode(node)) {
       const { imageId, fileId } = node.attrs;
       if (typeof imageId === "string" && typeof fileId === "string" && !seen.has(imageId)) {
         seen.add(imageId);
         const masks = validMasks(node.attrs.masks);
         for (const { owner, members } of maskCards(masks)) {
           const front: OcclusionFace = { version: 1, fileId, imageId, targetMaskId: owner.id, targetMaskIds: members.map(m => m.id), revealed: false, masks };
-          cards.push({ id: `${imageId}:o:${owner.id}`, blockId: imageId, kind: "occlusion", front, back: { ...front, revealed: true }, section });
+          cards.push({ id: occlusionCardId(imageId, owner.id), blockId: imageId, kind: "occlusion", front, back: { ...front, revealed: true }, section });
         }
       }
       return false;
@@ -341,18 +351,12 @@ export function extractCards(doc: Node): ExtractedCard[] {
     // Inline images can live inside a text card block.
     if (!node.isTextblock) return true;
     const blockId = node.attrs.cardId;
-    // A heading that is itself a card belongs to the headings above it.
-    if (isHeading) headings.push({ level, title: node.textContent.trim() || "Untitled section" });
     if (!isCardBlock(node) || typeof blockId !== "string" || seen.has(blockId)) return true;
     seen.add(blockId);
     cards.push(...cardsOfBlock(node, blockId).map((card) => ({ ...card, section })));
     return true;
   });
   return cards;
-}
-
-export function blockIdOf(cardId: string) {
-  return cardId.replace(/:o:.*$|:reverse$|:c[^:]+$/, "");
 }
 
 // The ranges of the final document touched by a series of step maps.

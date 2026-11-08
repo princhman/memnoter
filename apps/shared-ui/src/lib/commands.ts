@@ -1,15 +1,8 @@
+import { SHORTCUTS, formatKeys } from "./shortcuts.ts";
 import { useEffect, useSyncExternalStore } from "react";
 
-/**
- * Commands listed in the ⌘K palette.
- *
- *   registerCommand({ id: "settings.open", title: "Settings", shortcut: "⌘,", run })
- *
- * Returns a function that removes the command. Registering an id again
- * replaces the earlier command. `shortcut` is only shown, not bound; bind the
- * key where the action lives. `keywords` are extra words the palette matches.
- * From a component, use `useCommand`, which re-registers when `run` changes.
- */
+// Runtime availability and handlers for palette actions. Known shortcut metadata
+// comes from the shared action table; context-specific commands can add their own.
 export type Command = {
   id: string;
   title: string;
@@ -26,6 +19,8 @@ function emit() {
 }
 
 export function registerCommand(command: Command) {
+  const entry = SHORTCUTS.find((entry) => entry.id === command.id);
+  if (entry) command = { ...command, title: entry.title, shortcut: entry.keys ? formatKeys(entry.keys) : undefined };
   commands = [...commands.filter((other) => other.id !== command.id), command];
   emit();
   return () => {
@@ -35,7 +30,7 @@ export function registerCommand(command: Command) {
   };
 }
 
-export function getCommands() {
+function getCommands() {
   return commands;
 }
 
@@ -56,7 +51,6 @@ export function useCommand(command: Command) {
   );
 }
 
-// Every word of the query must start a word of the title or keywords.
 export function matchesCommand(command: Command, query: string) {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const haystack = [command.title, ...(command.keywords ?? [])]

@@ -1,3 +1,7 @@
+import { ToolButton } from "./ui/tool-button";
+import { surfaceClass } from "./ui/surface";
+import { action, formatKeys } from "@/lib/shortcuts";
+import { isImageNode } from "../lib/cards.ts";
 import { useRef, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -24,7 +28,6 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
-import { cn, MOD_KEY } from "@/lib/utils";
 
 // Marks make no sense inside these; the menu stays hidden there. Inline
 // math has its own actions on its preview.
@@ -88,7 +91,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
 
         let containsImage = false;
         state.doc.nodesBetween(from, to, (node) => {
-          if (node.type.name === "image" || node.type.name === "inlineImage") containsImage = true;
+          if (isImageNode(node)) containsImage = true;
           return !containsImage;
         });
         if (containsImage) return false;
@@ -100,14 +103,14 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         }
         return true;
       }}
-      className="z-40 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-0.5 rounded-lg floating-surface bg-popover p-1 text-popover-foreground shadow-md"
+      className={`${surfaceClass} z-40 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-0.5 p-1`}
       // Keep the editor selection while clicking menu buttons.
       onMouseDown={(event) => event.preventDefault()}
     >
       {active.cells ? <TableBubbleActions editor={editor} /> : <>
       <MarkButton
         label="Bold"
-        hint={`${MOD_KEY}B`}
+        hint={formatKeys(action("text.bold").keys)}
         pressed={active.bold}
         onToggle={() => editor.chain().focus().toggleBold().run()}
       >
@@ -115,7 +118,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Italic"
-        hint={`${MOD_KEY}I`}
+        hint={formatKeys(action("text.italic").keys)}
         pressed={active.italic}
         onToggle={() => editor.chain().focus().toggleItalic().run()}
       >
@@ -123,7 +126,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Underline"
-        hint={`${MOD_KEY}U`}
+        hint={formatKeys(action("text.underline").keys)}
         pressed={active.underline}
         onToggle={() => editor.chain().focus().toggleUnderline().run()}
       >
@@ -131,7 +134,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Strikethrough"
-        hint={`${MOD_KEY}Shift+S`}
+        hint={formatKeys(action("text.strike").keys)}
         pressed={active.strike}
         onToggle={() => editor.chain().focus().toggleStrike().run()}
       >
@@ -139,14 +142,14 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Inline code"
-        hint={`${MOD_KEY}E`}
+        hint={formatKeys(action("text.code").keys)}
         pressed={active.code}
         onToggle={() => editor.chain().focus().toggleCode().run()}
       >
         <Code />
       </MarkButton>
       <div className="flex items-center">
-        <IconTooltip label="Highlight" hint={`${MOD_KEY}Shift+H`}>
+        <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}>
           <Button size="icon-sm" variant="ghost" aria-label="Highlight" aria-pressed={active.highlight}
             className={active.highlight ? "note-highlight" : undefined}
             data-color={active.highlight ? active.highlightColor : undefined}
@@ -169,7 +172,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </div>
       <MarkButton
         label="Link"
-        hint={`${MOD_KEY}L`}
+        hint={formatKeys(action("link.edit").keys)}
         pressed={active.link}
         onToggle={() => editor.commands.openLinkEditor()}
       >
@@ -177,7 +180,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Inline math"
-        hint={`${MOD_KEY}Shift+M`}
+        hint={formatKeys(action("math.inline").keys)}
         pressed={active.inlineMath}
         onToggle={() => editor.chain().focus().toggleInlineMath().run()}
       >
@@ -185,7 +188,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label="Math block"
-        hint={`${MOD_KEY}Alt+M`}
+        hint={formatKeys(action("math.block").keys)}
         pressed={false}
         disabled={!active.canMathBlock}
         onToggle={() => editor.chain().focus().toggleMathBlock().run()}
@@ -194,7 +197,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       </MarkButton>
       <MarkButton
         label={active.inCloze ? "Remove cloze" : "Cloze"}
-        hint={`${MOD_KEY}${MOD_KEY === "⌘" ? "⇧" : "Shift+"}C`}
+        hint={formatKeys(action("card.cloze").keys)}
         pressed={active.inCloze}
         disabled={!active.canMakeCard && !active.inCloze}
         onToggle={() =>
@@ -237,21 +240,5 @@ function MarkButton({
   onToggle: () => void;
   children: ReactNode;
 }) {
-  return (
-    <IconTooltip label={label} hint={hint}>
-<Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={label}
-            aria-pressed={pressed}
-            disabled={disabled}
-            className={cn(
-              pressed && "bg-primary/15 text-link hover:bg-primary/20 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/80 dark:hover:text-primary-foreground",
-            )}
-            onClick={onToggle}
-          >
-{children}
-</Button>
-</IconTooltip>
-  );
+  return (<ToolButton label={label} hint={hint} pressed={pressed} disabled={disabled} onClick={onToggle}>{children}</ToolButton>);
 }

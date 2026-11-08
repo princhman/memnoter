@@ -1,13 +1,14 @@
+import { browserHarness } from "./support/browser.mjs";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
-import { createServer } from "vite";
-import { webkit } from "playwright";
-import MarkdownIt from "markdown-it";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 let server, browser, page;
 const errors = [];
-const realNote = "/Users/vladyslavnalyvaiko/Downloads/COMP0002 - Principles of Programming/03 Topics/C Memory, Pointers, Scope & Lifetime.md";
+const realNote = fileURLToPath(new URL("./fixtures/Vault/Topics/Memory.md", import.meta.url));
 before(async () => {
   const root = new URL("../", import.meta.url).pathname;
   server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: "error" });
@@ -28,11 +29,11 @@ async function paste(data) {
   }, data);
   assert.deepEqual(errors.splice(0), [], "paste must not throw in the DOM handler");
 }
-test("whole Obsidian source note detects Markdown after leading prose", { skip: !existsSync(realNote) }, async () => {
+test("whole Obsidian source note detects Markdown after leading prose", async () => {
   await page.evaluate(() => editor.commands.setContent("<p></p>"));
   await paste({ "text/plain": readFileSync(realNote, "utf8") });
   assert.equal(await page.locator("h1").first().textContent(), "Memory in C");
-  assert.ok(await page.locator("li").count() > 10);
+  assert.equal(await page.locator("li").count(), 2);
   assert.ok((await page.evaluate(() => editor.getText())).includes("[image:"));
 });
 test("reading view uses HTML when plain text has lost Markdown markers", async () => {
@@ -42,16 +43,14 @@ test("reading view uses HTML when plain text has lost Markdown markers", async (
   assert.equal(await page.locator("li").count(), 2);
   assert.equal(await page.locator("strong").textContent(), "Lifetime");
 });
-test("whole real note in reading-view clipboard shape retains HTML structure", { skip: !existsSync(realNote) }, async () => {
-  const source = readFileSync(realNote, "utf8");
-  const html = new MarkdownIt().render(source.replace(/!\[\[[^\]]+\]\]/g, "[image]").replace(/\[\[([^\]]+)\]\]/g, "$1"));
-  const plain = await page.evaluate(html => {
-    const div = document.createElement("div"); div.innerHTML = html; return div.textContent;
-  }, html);
+test("whole real note in reading-view clipboard shape retains HTML structure", async () => {
+  // Literal clipboard pair from the fixture's reading view, independent of the Markdown renderer.
+  const html = '<p>Module: Vault</p><h1>Memory in C</h1><p>Stack and heap have different lifetimes.</p><ul><li>Automatic storage</li><li>Dynamic storage</li></ul><pre><code>int value = 42;</code></pre><pre><code>==literal== [[raw]]</code></pre><table><tr><th>Storage</th><th>Lifetime</th></tr><tr><td>Stack</td><td>Scope</td></tr><tr><td>Heap</td><td>Explicit</td></tr></table><p>[image]</p>';
+  const plain = 'Module: Vault\nMemory in C\nStack and heap have different lifetimes.\nAutomatic storage\nDynamic storage\nint value = 42;\n==literal== [[raw]]\nStorage Lifetime Stack Scope Heap Explicit [image]';
   await page.evaluate(() => editor.commands.setContent("<p></p>"));
   await paste({ "text/html": html, "text/plain": plain });
   assert.equal(await page.locator("h1").first().textContent(), "Memory in C");
-  assert.equal(await page.locator("pre").count(), new MarkdownIt().parse(source, {}).filter(t => ["fence", "code_block"].includes(t.type)).length);
+  assert.equal(await page.locator("pre").count(), 2);
 });
 test("whole internal note clipboard preserves blocks, images, formulas and distinct cards at heading and select-all targets", async () => {
   const data = await page.evaluate(() => {

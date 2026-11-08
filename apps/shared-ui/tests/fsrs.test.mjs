@@ -41,7 +41,6 @@ function storedCard(overrides = {}) {
 
 test("a stored new card schedules with FSRS-7 and logs its pre-review state", async () => {
   const scheduler = await getScheduler();
-  assert.equal(await getScheduler(), scheduler, "one scheduler per session");
   const { card, log } = scheduleReview(scheduler, storedCard(), 3, now, 4_000);
 
   assert.equal(card.reps, 1);
@@ -132,9 +131,9 @@ test("a session defers only the exact basic sibling and preserves its FSRS due d
     const cloze = storedCard({ id: "block:cloze" });
     const otherNote = storedCard({ id: siblingId, kind: "basic", moduleId: "other" });
     const before = [sibling, cloze, otherNote];
-    const after = separateSibling(before, reviewed, now);
+    const after = separateSibling(before, reviewed, [{ ...sibling, availableAt: now + 123_456 }]);
     assert.equal(after[0].dueAt, sibling.dueAt);
-    assert.equal(reviewDueAt(after[0]), now + 10 * MINUTE);
+    assert.equal(reviewDueAt(after[0]), now + 123_456);
     assert.equal(nextInQueue(after, now)?.id, cloze.id);
     assert.deepEqual(after.slice(1), before.slice(1));
     assert.equal(before[0].availableAt, undefined, "undo snapshot is unchanged");

@@ -1,5 +1,8 @@
-import { onRemote, onFileStored, type ApplyResult } from "@/lib/sync/manager";
-import type { FileType } from "@/lib/content";
+import { editorHost } from "@/lib/editor-host";
+import { settled } from "@/lib/async-work";
+import { EditorHostProvider } from "@/lib/editor-host-context";
+import { BRIDGE_VERSION, EXEC_COMMANDS } from "./protocol";
+import { onRemote, onFileStored } from "@/lib/sync/apply-remote";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { requestCardReveal } from "@/lib/card-reveal";
 import { blockIdOf } from "@/lib/cards";
@@ -11,30 +14,11 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
 import { queryClient } from "@/lib/query-client";
 import { saveStatusStore } from "@/lib/saves";
-import { imageStatusStore, exclusiveWrite } from "@/lib/write-lifecycle";
+import { imageStatusStore, flushAll } from "@/lib/write-lifecycle";
 import { flushPersistedViews } from "@/lib/view-persistence";
 import { headingMathLabel } from "@/lib/heading-label";
 import { headingNumbers, headingNumberingKey } from "@/lib/heading-numbering";
 import { editorOutline, editorState, execEditor } from "./commands";
-
-declare global {
-  interface Window {
-    memnoterEditor: {
-      applyRemote(result: ApplyResult): void;
-      fileStored(moduleId: string, file: FileType): void;
-      setBottomInset(px: number): void;
-      setTopInset(px: number): void;
-      revealCard(moduleId: string, cardId: string): void;
-      open(moduleId: string): Promise<void>;
-      flush(): Promise<void>;
-      refreshModules(): Promise<void>;
-      exec(command: string, args?: Record<string, unknown>): boolean;
-      setOutlineTracking(enabled: boolean): void;
-      focus(): boolean;
-      blur(): boolean;
-    };
-  }
-}
 
 // How long after typing the caret may not be revealed upward.
 const TYPING_SETTLE_MS = 300;
@@ -91,30 +75,26 @@ export function Host() {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
           if (active.current?.moduleId === id && active.current.isReady) return;
           flushPersistedViews();
-          await exclusiveWrite(async () => {});
+          await flushAll();
           await new Promise<void>((resolve, reject) => {
             opening.current = { moduleId: id, resolve, reject };
             setModuleId(id);
           });
         }).catch(error => { throw fail(error); });
-        queue = operation.catch(() => {});
+        queue = settled(operation);
         return operation;
       },
       async flush() {
-        try { flushPersistedViews(); await exclusiveWrite(async () => {}); }
+        try { flushPersistedViews(); await flushAll(); }
         catch (error) { throw fail(error); }
       },
       exec(command, args) {
-        try { return execEditor(getEditor(["scrollToHeading", "focusSection", "focusCurrentSection", "showDocument", "find"].includes(command)), command, args); }
+        try { return execEditor(getEditor(EXEC_COMMANDS[command] === true), command, args); }
         catch (error) { fail(error); return false; }
       },
       revealCard(moduleId, cardId) { requestCardReveal({ moduleId, blockId: blockIdOf(cardId) }); },
       focus() {
         try { return getEditor().commands.focus(); }
-        catch (error) { fail(error); return false; }
-      },
-      blur() {
-        try { return getEditor().commands.blur(); }
         catch (error) { fail(error); return false; }
       },
     };
@@ -135,7 +115,7 @@ export function Host() {
     const stopSaves = saveStatusStore.subscribe(saveStatus);
     const stopImages = imageStatusStore.subscribe(saveStatus);
     saveStatus();
-    postNativeEvent("ready", { protocolVersion: 1 });
+    postNativeEvent("ready", { protocolVersion: BRIDGE_VERSION });
     return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
   }, []);
 
@@ -237,5 +217,5 @@ export function Host() {
     };
   }, [activeEditor]);
 
-  return <main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} hostOnly />}</main>;
+  return <EditorHostProvider value={editorHost}><main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} />}</main></EditorHostProvider>;
 }

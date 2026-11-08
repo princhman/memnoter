@@ -1,9 +1,12 @@
+import { isShowingModule } from "@/lib/open-module";
+import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
-import { openReview } from "@/lib/card-sync";
-import { backfillCards } from "@/lib/card-backfill";
+import { openReview } from "@/components/card-navigation-guard";
+import { bootstrapNotes } from "@/lib/bootstrap";
 import { createRootRoute, Outlet, useNavigate, useRouter } from "@tanstack/react-router";
-import { MODULE_DELETED_REMOTELY_EVENT, startSync } from "@/lib/sync/manager";
+import { startSync } from "@/lib/sync/manager";
+import { MODULE_DELETED_REMOTELY_EVENT } from "@/lib/sync/apply-remote";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
 import CreateModule from "@/components/create-module";
@@ -20,13 +23,12 @@ import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
 import { CommandPalette } from "@/components/command-palette";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { MOD_KEY } from "@/lib/utils";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
 import SaveStatus from "@/components/save-status";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useCommand } from "@/lib/commands";
-import { OPEN_SETTINGS_EVENT, requestApp } from "@/lib/app-events";
+import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/app-events";
 
 const RootLayout = () => {
   const isFullScrean = useIsFullscreen();
@@ -40,9 +42,7 @@ const RootLayout = () => {
     run: () => openReview(() => navigate({ to: "/review", search: {} })),
   });
   useCommand({
-    id: "settings.open",
-    title: "Settings",
-    shortcut: `${MOD_KEY},`,
+    ...action("settings.open"),
     run: () => requestApp(OPEN_SETTINGS_EVENT),
   });
 
@@ -56,7 +56,7 @@ const RootLayout = () => {
 
   // Due counts and review include notes not opened since cards existed.
   useEffect(() => {
-    void backfillCards();
+    void bootstrapNotes();
   }, []);
 
   useEffect(() => {
@@ -67,9 +67,7 @@ const RootLayout = () => {
   useEffect(() => {
     const leave = (event: Event) => {
       const moduleId = (event as CustomEvent<string>).detail;
-      const showing = router.state.matches.some(
-        (match) => "moduleId" in match.params && match.params.moduleId === moduleId,
-      );
+      const showing = isShowingModule(router.state.matches, moduleId);
       if (showing) void router.navigate({ to: "/", replace: true });
     };
     window.addEventListener(MODULE_DELETED_REMOTELY_EVENT, leave);
@@ -91,7 +89,7 @@ const RootLayout = () => {
   return (
     <>
       <ActiveEditorProvider>
-        <SidebarProvider
+        <SidebarProvider usesNativeMenuShortcuts={usesNativeMenuShortcuts}
           open={sidebarOpen}
           onOpenChange={setSidebarOpen}
           // Fills the body, which keeps clear of the iPad's status bar.
@@ -103,7 +101,7 @@ const RootLayout = () => {
           }
         >
           <AppSidebar />
-          <CreateModule global />
+          <CreateModule />
 
           <SidebarInset className="min-h-0 overflow-hidden">
             {/* Tauri's deep region includes noninteractive breadcrumb wrappers,
@@ -126,7 +124,7 @@ const RootLayout = () => {
           <div ref={toolbar} data-tauri-drag-region="deep" className="absolute left-0 top-0 z-50 flex h-8 items-center">
             {!isFullScrean && <div className="h-full w-18" />}
             <div className="flex items-center pl-2 gap-1.5">
-              <IconTooltip label="Toggle sidebar" hint={`${MOD_KEY}D`} side="bottom">
+              <IconTooltip label="Toggle sidebar" hint={formatKeys(action("sidebar.toggle").keys)} side="bottom">
                 <SidebarTrigger aria-label="Toggle sidebar" />
               </IconTooltip>
               <UndoRedo />

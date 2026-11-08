@@ -1,8 +1,9 @@
+import { browserHarness } from "./support/browser.mjs";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 let server, browser, page;
 before(async () => {

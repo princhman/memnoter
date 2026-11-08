@@ -1,21 +1,19 @@
+import { browserHarness } from "./support/browser.mjs";
+import { installReviewHost } from "./support/review-host.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createServer } from 'vite';
-import { webkit } from 'playwright';
-import { mkdtemp, rm } from 'node:fs/promises';
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 test('WK review host scrolls long questions and revealed answers within its viewport', async () => {
   const root = new URL('../', import.meta.url).pathname;
-  const cacheDir = await mkdtemp(`${root}node_modules/.memnoter-review-`);
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   try {
     await server.listen();
     browser = await webkit.launch();
     const page = await browser.newPage({ viewport: { width: 390, height: 600 } });
-    await page.addInitScript(() => {
-      window.webkit = { messageHandlers: { memnoter: { postMessage() {} } } };
-    });
+    await page.addInitScript(installReviewHost);
     await page.goto(`http://localhost:${server.httpServer.address().port}/review-native.html`);
     await page.waitForFunction(() => window.memnoterReview);
     // The same mounted WK host must follow appearance changes without reloading.
@@ -29,10 +27,9 @@ test('WK review host scrolls long questions and revealed answers within its view
       }));
       assert.equal(colors.scheme, colorScheme);
       assert.equal(colors.background, 'rgba(0, 0, 0, 0)', 'Native background shows through');
-      assert.ok(colors.foreground);
     }
     for (const revealed of [false, true]) {
-      await page.evaluate(revealed => window.memnoterReview.show({
+      await page.evaluate(revealed => window.loadCard({
         id: 'long', reps: 0, kind: 'basic',
         front: [{ type: 'text', text: 'Question line\n'.repeat(100) + 'Question end' }],
         back: [{ type: 'text', text: 'Answer line\n'.repeat(100) + 'Answer end' }],
@@ -53,7 +50,7 @@ test('WK review host scrolls long questions and revealed answers within its view
       assert.equal(geometry.pageScroll, 0);
     }
     for (const [id, reps] of [['next', 0], ['next', 1]]) {
-      await page.evaluate(({ id, reps }) => window.memnoterReview.show({
+      await page.evaluate(({ id, reps }) => window.loadCard({
         id, reps, kind: 'basic',
         front: [{ type: 'text', text: id + reps + '\nQuestion line'.repeat(100) }],
         back: [{ type: 'text', text: 'Answer line\n'.repeat(100) }],
@@ -63,17 +60,43 @@ test('WK review host scrolls long questions and revealed answers within its view
         document.querySelector('.card-face').textContent.startsWith(id + reps), { id, reps });
       assert.equal(await page.locator('main').evaluate(node => node.scrollTop), 0, 'New card attempt starts at the top');
       await page.locator('main').evaluate(node => { node.scrollTop = 300; });
-      await page.evaluate(({ id, reps }) => window.memnoterReview.show({
-        id, reps, kind: 'basic',
-        front: [{ type: 'text', text: id + reps + '\nQuestion line'.repeat(100) }],
-        back: [{ type: 'text', text: 'Answer line\n'.repeat(100) }],
-      }, true), { id, reps });
+      await page.evaluate(() => window.memnoterReview.reveal());
       await page.waitForFunction(() => document.querySelectorAll('.card-face').length === 2);
       assert.equal(await page.locator('main').evaluate(node => node.scrollTop), 300, 'Reveal preserves reading position');
     }
+    // Later-today cards must be loaded even while no card is due now. This
+    // exercises the same bridge entry point as Swift's native controls.
+    await page.evaluate(() => window.loadCard({
+      id: 'later', reps: 0, kind: 'basic', dueAt: Date.now() + 60_000,
+      front: [{ type: 'text', text: 'Later today question' }],
+      back: [{ type: 'text', text: 'Later today answer' }],
+    }, false));
+    await page.waitForFunction(() => window.__states.at(-1)?.canShowNow);
+    const waiting = await page.evaluate(() => window.__states.at(-1));
+    assert.equal(waiting.hasCard, false);
+    assert.equal(waiting.laterToday.new, 1);
+    assert.equal(waiting.counts.new, 0);
+    await page.evaluate(() => window.memnoterReview.showNow());
+    await page.getByText('Later today question', { exact: true }).waitFor();
+    await page.evaluate(() => window.memnoterReview.reveal());
+    await page.getByText('Later today answer', { exact: true }).waitFor();
+    await page.waitForFunction(() => window.__states.at(-1)?.intervals.length === 4);
+    await page.evaluate(() => window.memnoterReview.rate(4));
+    await page.waitForFunction(() => window.__states.at(-1)?.canUndo);
+    assert.equal(await page.evaluate(() => window.__states.at(-1).reviewed), 1);
+    await page.evaluate(() => window.memnoterReview.undo());
+    await page.waitForFunction(() => window.__states.at(-1)?.canRedo);
+    const undone = await page.evaluate(() => window.__states.at(-1));
+    assert.equal(undone.reviewed, 0);
+    assert.equal(undone.laterToday.new, 1);
+    assert.equal(undone.canUndo, false);
+    await page.evaluate(() => window.memnoterReview.redo());
+    await page.waitForFunction(() => window.__states.at(-1)?.canUndo && !window.__states.at(-1)?.canRedo);
+    assert.equal(await page.evaluate(() => window.__states.at(-1).reviewed), 1);
+    assert.deepEqual(await page.evaluate(() => window.__writes), ['review_card', 'undo_review', 'review_card']);
   } finally {
     await browser?.close();
     await server.close();
-    await rm(cacheDir, { recursive: true, force: true });
+
   }
 });

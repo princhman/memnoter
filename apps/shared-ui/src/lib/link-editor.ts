@@ -1,7 +1,7 @@
-import { isTauri } from "./backend.ts";
+import { action } from "./shortcuts.ts";
+import { openExternalLink } from "./backend.ts";
 import { Extension } from "@tiptap/core";
 import { type EditorState, Plugin, PluginKey } from "@tiptap/pm/state";
-import { openUrl } from "@tauri-apps/plugin-opener";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -16,7 +16,7 @@ declare module "@tiptap/core" {
 // The selection the URL field was opened for; moving it closes the field.
 type LinkEditorState = { from: number; to: number } | null;
 
-export const linkEditorKey = new PluginKey<LinkEditorState>("link-editor");
+const linkEditorKey = new PluginKey<LinkEditorState>("link-editor");
 
 // Bubble menu plugin keys; a meta of "show" or "hide" sets their visibility.
 export const LINK_MENU_KEY = "linkMenu";
@@ -37,8 +37,7 @@ export function normalizeHref(input: string) {
 }
 
 export function openLink(href: string) {
-  if (!isTauri()) { window.open(href, "_blank", "noopener,noreferrer"); return; }
-  openUrl(href).catch((error) => console.error("Failed to open link:", error));
+  openExternalLink(href);
 }
 
 export const LinkEditor = Extension.create({
@@ -70,7 +69,7 @@ export const LinkEditor = Extension.create({
 
   addKeyboardShortcuts() {
     return {
-      "Mod-l": () => this.editor.commands.openLinkEditor(),
+      [action("link.edit").keys]: () => this.editor.commands.openLinkEditor(),
     };
   },
 

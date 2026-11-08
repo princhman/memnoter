@@ -100,3 +100,19 @@ mod tests {
         assert!(verify_key_check(&key, &make_key_check(&key).unwrap()));
     }
 }
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    #[test]
+    fn shared_key_check_vector() {
+        let contract: serde_json::Value = serde_json::from_str(include_str!("../../../../apps/sync/test/fixtures/protocol.json")).unwrap();
+        let v = &contract["keyCheck"]["vector"];
+        let key = derive_key(v["passphrase"].as_str().unwrap(), &STANDARD.decode(v["salt"].as_str().unwrap()).unwrap());
+        assert_eq!(STANDARD.encode(key), v["key"]);
+        let check = STANDARD.decode(v["check"].as_str().unwrap()).unwrap();
+        assert!(verify_key_check(&key, &check));
+        assert!(decrypt_blob(&key, "wrong-doc", &check).is_err());
+    }
+}

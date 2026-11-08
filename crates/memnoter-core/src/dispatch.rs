@@ -1,25 +1,24 @@
 //! The same command payloads used by Tauri invoke, without a Tauri runtime.
-use crate::cards::*;
+use crate::cards::{CardContent, ReviewLog, ReviewedCard};
 use crate::sync::RemoteEntry;
-use crate::*;
+use crate::{Core, CoreError, ImportImage};
 
-// Derive the accepted command inventory and dispatcher from the same entries.
 macro_rules! commands {
     ($core:ident; $( $name:ident ( $( $arg:ident : $ty:ty ),* ) => $call:expr; )*) => {
         pub const DATA_COMMANDS: &[&str] = &[$(stringify!($name)),*];
         /// Accept frontend invoke arguments (camelCase), return serialized command output.
         /// Storage errors are forwarded verbatim. Unit results serialize as `null`.
-        pub fn dispatch($core: &Core, command: &str, args_json: &str) -> CommandResult<String> {
+        pub fn dispatch($core: &Core, command: &str, args_json: &str) -> std::result::Result<String, CoreError> {
             match command {
                 $(stringify!($name) => {
                     #[derive(serde::Deserialize)]
                     #[serde(rename_all = "camelCase")]
                     struct Args { $( $arg: $ty ),* }
-                    let Args { $( $arg ),* } = serde_json::from_str::<Args>(args_json).map_err(db_err)?;
+                    let Args { $( $arg ),* } = serde_json::from_str::<Args>(args_json).map_err(|e| CoreError::Storage(e.to_string()))?;
                     let result = $call?;
-                    serde_json::to_string(&result).map_err(db_err)
+                    serde_json::to_string(&result).map_err(|e| CoreError::Storage(e.to_string()))
                 },)*
-                _ => Err(format!("Unknown command: {command}")),
+                _ => Err(CoreError::Storage(format!("Unknown command: {command}"))),
             }
         }
     }

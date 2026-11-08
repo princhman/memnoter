@@ -1,11 +1,12 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFile, readdir, mkdtemp, rm } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 // Exercise the actual drag listener shipped by our locked Tauri Rust runtime,
 // not a test copy of its clickable-element and double-click rules.
@@ -21,8 +22,7 @@ test("the entire top bar drags while controls and overlays remain interactive", 
     }
   } catch {}
   if (!dragScript) { t.skip("Run cargo fetch to install the locked Tauri drag listener"); return; }
-  const cacheDir = await mkdtemp(join(root, "node_modules/.memnoter-drag-"));
-  const server = await createServer({ root, cacheDir, server: { port: 0, strictPort: false }, logLevel: "error" });
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
     await server.listen(); browser = await webkit.launch();
@@ -31,10 +31,7 @@ test("the entire top bar drags while controls and overlays remain interactive", 
       await page.addInitScript(fullscreen => {
         window.__windowCalls = [];
         let callback = 0;
-        window.__TAURI_INTERNALS__ = {
-          transformCallback: () => ++callback, unregisterCallback() {},
-          metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
-          invoke: async (command, args) => {
+        window.installTestBridge({ tauri: { invoke: async (command, args) => {
             window.__windowCalls.push(command);
             if (command === "plugin:window|is_fullscreen") return fullscreen;
             if (command.startsWith("plugin:")) return callback;
@@ -42,9 +39,8 @@ test("the entire top bar drags while controls and overlays remain interactive", 
             if (command === "get_content") return { state: [], updates: [], files: [] };
             if (command === "add_update") return { id: 1, bytes: args.bytes };
             return [];
-          },
-        };
-        window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
+          } } });
+
       }, fullscreen);
       await page.goto(`http://localhost:${server.httpServer.address().port}/m1`);
       await page.locator(".tiptap[contenteditable=true]").waitFor();
@@ -75,7 +71,11 @@ test("the entire top bar drags while controls and overlays remain interactive", 
       assert.equal(await page.evaluate(() => __windowCalls.includes("plugin:window|internal_toggle_maximize")), true);
       // There is no positioned drag overlay to intercept the editor's find UI.
       await page.locator(".tiptap").click();
-      await page.keyboard.press("Meta+f");
+      // AppKit routes Find through the menu event on this Tauri host.
+      await page.evaluate(async () => {
+        const { requestApp, FIND_EVENT } = await import("/src/lib/app-events.ts");
+        requestApp(FIND_EVENT);
+      });
       const find = page.getByRole("textbox", { name: "Find", exact: true });
       await find.fill("Hello");
       assert.equal(await find.inputValue(), "Hello");
@@ -104,5 +104,5 @@ test("the entire top bar drags while controls and overlays remain interactive", 
       assert.equal(await page.evaluate(() => __windowCalls.includes("plugin:window|start_dragging")), false);
       await page.close();
     }
-  } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
+  } finally { await browser?.close(); await server.close(); }
 });

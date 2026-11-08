@@ -89,10 +89,10 @@ struct RootView: View {
         } detail: {
             VStack(spacing: 0) {
                 if selected == "review", let client = store.client {
-                    ReviewView(client: client, directory: store.directory, moduleId: reviewModule, editCard: editReviewCard)
+                    ReviewView(client: client, directory: store.directory, moduleId: reviewModule, preferences: store.preferences, editCard: editReviewCard)
                         .id(reviewModule ?? "all")
                 } else if module != nil, let session {
-                    if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
+                    if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec(.find, ["text": value]) } }
                     WebSurface(session: session)
                         .background(Color(uiColor: .systemBackground))
                         .overlay {
@@ -126,7 +126,6 @@ struct RootView: View {
             .navigationTitle(selected == "review" && detailWidth < 500 ? "" : (module?.name ?? (selected == "review" ? "Review" : "Home")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Reserve narrow-window space for review history and counts.
                 if selected != "review" || detailWidth >= 500 {
                     ToolbarItem(placement: .principal) {
                         Text(module?.name ?? (selected == "review" ? "Review" : "Home"))
@@ -144,8 +143,8 @@ struct RootView: View {
                 }
                 if let session, module != nil {
                     ToolbarItemGroup(placement: .topBarLeading) {
-                        Button { session.exec("undo") } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
-                        Button { session.exec("redo") } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                        Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
+                        Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
                     }
                     if session.state.focusedSectionId != nil || session.state.focusableSection != nil {
                         if #available(iOS 26.0, *) {
@@ -161,7 +160,7 @@ struct RootView: View {
                             .accessibilityLabel("Contents")
                             .popover(isPresented: $showingContents) {
                                 ContentsPopover(session: session) { heading in
-                                    session.exec("scrollToHeading", ["id": heading.id])
+                                    session.exec(.scrollToHeading, ["id": heading.id])
                                     showingContents = false
                                 }
                             }
@@ -179,22 +178,27 @@ struct RootView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { notification in
+            guard let result = notification.object as? SyncApplyResult else { return }
+            Task {
+                do {
+                    if let session, session.ready {
+                        _ = try await session.callEditor(.applyRemote, ["result": try JSONSerialization.jsonObject(with: Data(result.json.utf8))], parameters: ["result"])
+                    }
+                    await store.refresh()
+                    if let selected, selected != "home", selected != "review", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
+                } catch { store.error = error.localizedDescription }
+            }
+        }
         .task(id: store.sync != nil) {
             if let client = store.client, session == nil {
                 await store.refresh()
                 columnVisibility = sidebarVisible ? .all : .detailOnly
                 let restored = WebSession(client: client, directory: store.directory, preferences: store.preferences)
                 session = restored
-                store.sync?.onRemote = { json in
-                    if let session, session.ready {
-                        _ = try await session.run("window.memnoterEditor.applyRemote(JSON.parse(json))", ["json": json])
-                    }
-                    await store.refresh()
-                    if let selected, selected != "home", selected != "review", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
-                }
                 store.sync?.onFile = { module, json in
                     if let session, session.ready {
-                        _ = try await session.run("window.memnoterEditor.fileStored(module, JSON.parse(json))", ["module": module, "json": json])
+                        _ = try await session.callEditor(.fileStored, ["module": module, "file": try JSONSerialization.jsonObject(with: Data(json.utf8))], parameters: ["module", "file"])
                     }
                     await store.refresh()
                 }
@@ -252,7 +256,7 @@ struct RootView: View {
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else { throw URLError(.cannotDecodeContentData) }
                     let file: SavedFile = try await client.call("save_file", FileArgs(moduleId: id, bytes: Array(data), mimeType: item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"))
-                    let inserted = try await session?.run("return window.memnoterEditor.exec('insertImage', {fileId: id, alt: 'Photo'})", ["id": file.id]) as? Bool
+                    let inserted = try await session?.execute(.insertImage, ["fileId": file.id, "alt": "Photo"]) as? Bool
                     if inserted != true { throw URLError(.cannotCreateFile) }
                     try await session?.flush()
                 } catch { store.error = String(describing: error) }
@@ -277,8 +281,7 @@ struct RootView: View {
                     }
                     do {
                         try await session?.flush()
-                        store.sync?.nudge()
-                        try await Task.sleep(for: .seconds(3))
+                        _ = try await store.sync?.pushAndWait()
                     } catch is CancellationError { }
                     catch { store.error = String(describing: error) }
                 }
@@ -326,15 +329,15 @@ struct RootView: View {
         do {
             try await client.write("set_module_numbering", NumberingArgs(moduleId: moduleId, enabled: enabled))
             store.modules = try await client.call("modules", Empty())
-            // Refresh the displayed editor and its live Contents without replacing the web view.
-            _ = try await session?.run("await window.memnoterEditor.refreshModules()")
+            _ = try await session?.callEditor(.refreshModules)
         } catch {
             // A write may have succeeded before a refresh failed; show persisted state on retry.
-            if let modules: [NoteModule] = try? await client.call("modules", Empty()) { store.modules = modules }
+            do { store.modules = try await client.call("modules", Empty()) }
+            catch { NSLog("Reloading modules after numbering failure: %@", String(describing: error)) }
             throw error
         }
     }
-    func editReviewCard(_ card: StoredCard) {
+    func editReviewCard(_ moduleId: String, _ cardId: String) {
         guard !busy, let session else { return }
         busy = true
         Task {
@@ -342,10 +345,10 @@ struct RootView: View {
             do {
                 try await session.flush()
                 // Queue the shared reveal before opening, so it waits for note restoration.
-                _ = try await session.run("window.memnoterEditor.revealCard(moduleId, cardId)", ["moduleId": card.moduleId, "cardId": card.id])
-                try await session.open(card.moduleId)
-                store.recordOpenedModule(card.moduleId)
-                selected = card.moduleId
+                _ = try await session.callEditor(.revealCard, ["moduleId": moduleId, "cardId": cardId], parameters: ["moduleId", "cardId"])
+                try await session.open(moduleId)
+                store.recordOpenedModule(moduleId)
+                selected = moduleId
             } catch { store.error = String(describing: error) }
         }
     }

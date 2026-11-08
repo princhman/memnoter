@@ -1,30 +1,16 @@
+import { action, formatKeys, HOME_ACTION_IDS } from "@/lib/shortcuts";
+import { useModules } from "@/lib/modules";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
-import { useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { FileText, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NEW_MODULE_EVENT, requestApp } from "@/lib/app-events";
 import { appStore, setOpenedModule } from "@/lib/store";
 import type { Module } from "@/lib/types";
-import { MOD_KEY } from "@/lib/utils";
 import appIcon from "../../../../brand/icon-purple-256.png";
 
-const IS_MAC = MOD_KEY === "⌘";
-const ALT = IS_MAC ? "⌥" : "Alt+";
-const SHIFT = IS_MAC ? "⇧" : "Shift+";
-
-const SHORTCUTS: [keys: string, action: string][] = [
-  ["/", "Insert a block"],
-  [`${MOD_KEY}N`, "New module"],
-  [`${MOD_KEY}F`, "Find in the note"],
-  [`${MOD_KEY}K`, "Search modules and commands"],
-  [`${MOD_KEY}L`, "Add a link"],
-  [`${MOD_KEY}${ALT}S`, "New section"],
-  [`${MOD_KEY}${ALT}[ / ${MOD_KEY}${ALT}]`, "Fold and unfold a section"],
-  [`${MOD_KEY}${SHIFT}M`, "Inline math"],
-  [`${MOD_KEY}D`, "Show or hide the sidebar"],
-];
+const HOME_ACTIONS = HOME_ACTION_IDS.map(action);
 
 const RECENT_SHOWN = 5;
 
@@ -51,10 +37,7 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  const { data: modules } = useQuery({
-    queryKey: ["modules"],
-    queryFn: async () => await invoke<Module[]>("modules"),
-  });
+  const { data: modules } = useModules();
   const recentIds = useSelector(appStore, (state) => state.recentModuleIds);
 
   // Recently opened ones first, then the rest in the sidebar's order.
@@ -115,14 +98,14 @@ function Index() {
           Shortcuts
         </h2>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 px-2 text-sm">
-          {SHORTCUTS.map(([keys, action]) => (
-            <div key={action} className="contents">
+          {HOME_ACTIONS.map(({ keys, title }) => (
+            <div key={title} className="contents">
               <dt>
                 <kbd className="font-sans text-xs text-muted-foreground">
-                  {keys}
+                  {formatKeys(keys)}
                 </kbd>
               </dt>
-              <dd>{action}</dd>
+              <dd>{title}</dd>
             </div>
           ))}
         </dl>

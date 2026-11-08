@@ -1,23 +1,33 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Schema } from "@tiptap/pm/model";
-import { EditorState } from "@tiptap/pm/state";
-import { HeadingNumbering, headingNumberingKey, headingNumbers } from "../src/lib/heading-numbering.ts";
-const schema = new Schema({ nodes: {
-  doc: { content: "heading+" }, heading: { content: "text*", attrs: { level: { default: 1 } } }, text: {},
-} });
-test("chapter decorations share hierarchical numbering and never change persisted note text", () => {
-  const doc = schema.node("doc", null, [1, 3, 3, 2, 1].map(level => schema.node("heading", { level }, schema.text("Title"))));
-  let state = EditorState.create({ doc, plugins: HeadingNumbering.config.addProseMirrorPlugins() });
-  const plugin = state.plugins[0];
-  assert.equal(plugin.props.decorations(state), null);
-  state = state.apply(state.tr.setMeta(headingNumberingKey, true));
-  assert.deepEqual([...headingNumbers(state.doc).values()], ["1", "1.1", "1.2", "1.3", "2"]);
-  const decorations = plugin.props.decorations(state).find();
-  // Read the rendered labels without needing a global browser document.
-  const view = { dom: { ownerDocument: { createElement: () => ({ setAttribute() {} }) } } };
-  assert.deepEqual(decorations.map(d => d.type.toDOM(view).textContent), ["1\u00a0", "1.1\u00a0", "1.2\u00a0", "1.3\u00a0", "2\u00a0"]);
-  assert.deepEqual(state.doc.toJSON(), doc.toJSON());
-  state = state.apply(state.tr.setMeta(headingNumberingKey, false));
-  assert.equal(plugin.props.decorations(state), null);
+import { fileURLToPath } from "node:url";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
+
+test("numbering renders hierarchical chapter labels without changing persisted text", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen(); browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/selection.html`);
+    await page.waitForFunction(() => !!window.editor);
+    const before = await page.evaluate(() => {
+      editor.commands.setContent([1, 3, 3, 2, 1].map(level => `<h${level}>Title</h${level}>`).join(""));
+      return editor.getJSON();
+    });
+    assert.equal(await page.locator(".heading-number").count(), 0);
+    await page.evaluate(async () => {
+      const { headingNumberingKey } = await import("/src/lib/heading-numbering.ts");
+      editor.view.dispatch(editor.state.tr.setMeta(headingNumberingKey, true));
+    });
+    assert.deepEqual(await page.locator(".heading-number").allTextContents(), ["1\u00a0", "1.1\u00a0", "1.1.1\u00a0", "1.2\u00a0", "2\u00a0"]);
+    assert.deepEqual(await page.evaluate(() => editor.getJSON()), before);
+    await page.evaluate(async () => {
+      const { headingNumberingKey } = await import("/src/lib/heading-numbering.ts");
+      editor.view.dispatch(editor.state.tr.setMeta(headingNumberingKey, false));
+    });
+    assert.equal(await page.locator(".heading-number").count(), 0);
+  } finally { await browser?.close(); await server.close(); }
 });

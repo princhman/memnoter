@@ -1,13 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { browserHarness } from "./support/browser.mjs";
+
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
-import { webkit } from "playwright";
+
+const { createServer, webkit } = browserHarness(import.meta.url);
 test("module actions open from right-click and keyboard, reuse dialogs and review the selected module", async () => {
-  const cacheDir = await mkdtemp(join(fileURLToPath(new URL("../node_modules/", import.meta.url)), ".memnoter-vite-"));
-  const server = await createServer({ cacheDir, root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
     await server.listen(); browser = await webkit.launch();
@@ -48,8 +47,8 @@ test("module actions open from right-click and keyboard, reuse dialogs and revie
     const tooltip = page.getByRole("tooltip", { name: "Rectangle R", exact: true });
     await tooltip.waitFor();
     assert.match(await tooltip.textContent(), /Rectangle.*R/s);
-    assert.equal(await tooltip.evaluate(element => !!element.closest("dialog")), true);
+    assert.equal(await tooltip.evaluate(element => !!element.closest("dialog, [role=dialog]")), true);
     await page.keyboard.press("Escape");
     await page.getByRole("dialog").waitFor({ state: "hidden" });
-  } finally { await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }); }
+  } finally { await browser?.close(); await server.close(); }
 });

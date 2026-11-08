@@ -1,10 +1,12 @@
+import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
+import { action, formatKeys } from "@/lib/shortcuts";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Circle, Combine, MousePointer2, PenLine, Split, Square, Trash2, Undo2 } from "lucide-react";
 import { drawMask, maskBounds, maskCards, normalizedPoint, validMasks, withBounds, type Mask, type Point } from "@/lib/occlusion";
 import { HANDLES, moveBox, resizeBox, type Handle } from "@/lib/box";
 import { Button } from "@/components/ui/button";
-import { MOD_KEY, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export function MaskShape({ mask, ...props }: { mask: Mask } & Omit<React.SVGProps<SVGElement>, "mask">) {
   if (mask.shape === "rectangle") return <rect x={mask.x} y={mask.y} width={mask.width} height={mask.height} {...props as React.SVGProps<SVGRectElement>} />;
@@ -30,7 +32,7 @@ type Gesture =
   | { kind: "edit"; pointerId: number; ids: string[]; start: Point; before: Mask[]; mode: "move" | Handle; toggle?: { id: string; selection: string[] } };
 
 export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src: string; masks: Mask[]; onCancel: () => void; onSave: (masks: Mask[]) => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const [masks, setMasks] = useState(initial);
   const [history, setHistory] = useState<Mask[][]>([]);
@@ -39,7 +41,6 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
   const [tool, setTool] = useState<Tool>("rectangle");
   const [draft, setDraft] = useState<Mask>();
   const gesture = useRef<Gesture | null>(null);
-  useEffect(() => { dialog.current?.showModal(); }, []);
 
   // Each change is one undo step; a drag is one change, made when it ends.
   const commit = (next: Mask[], before = masks) => { setHistory(h => [...h, before]); setMasks(next); };
@@ -165,7 +166,7 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
     if (g?.kind === "edit") setMasks(g.before);
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLDialogElement>) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest("input, textarea")) return;
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
@@ -184,15 +185,16 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
   const box = target && maskBounds(target);
   const area = box && { left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%` };
 
-  return <dialog
-    ref={dialog}
-    className="occlusion-dialog"
-    aria-labelledby="occlusion-title"
-    onKeyDown={onKeyDown}
-    // Escape first lets go of the selected mask, then closes.
-    onCancel={e => { e.preventDefault(); if (selected.length) setSelected([]); else onCancel(); }}
-  >
-    <h2 id="occlusion-title">Image occlusion</h2>
+  return <Dialog open onOpenChange={(open, details) => {
+    if (open) return;
+    if (details.reason === "outside-press") { details.cancel(); return; }
+    if (details.reason === "escape-key" && selected.length) {
+      details.cancel();
+      setSelected([]);
+    } else onCancel();
+  }}>
+    <DialogContent ref={dialog} className="occlusion-dialog block sm:max-w-none" showCloseButton={false} onKeyDown={onKeyDown}>
+    <DialogTitle>Image occlusion</DialogTitle>
     <p>Drag over the parts to hide. Each number is one card: Shift-click masks (or tap them with the Select tool) and join them to ask them together. Drag a mask to move it, or its handles to resize it.</p>
     <div className="occlusion-toolbar">
       <div className="flex items-center gap-0.5" role="toolbar" aria-label="Mask tools">
@@ -206,7 +208,7 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
         <span className="mr-2 text-xs text-muted-foreground tabular-nums">{cards.length} {cards.length === 1 ? "card" : "cards"}</span>
           <Button size="sm" variant="ghost" title="Ask the selected masks as one card" disabled={!canJoin} onClick={join}><Combine />Join</Button>
           <Button size="sm" variant="ghost" title="Make each selected mask its own card" disabled={!canSeparate} onClick={separate}><Split />Separate</Button>
-          <IconTooltip label="Undo" hint={`${MOD_KEY}Z`} container={dialog}><Button size="icon-sm" variant="ghost" aria-label="Undo" disabled={!history.length} onClick={undo}><Undo2 /></Button></IconTooltip>
+          <IconTooltip label="Undo" hint={formatKeys(action("history.undo").keys)} container={dialog}><Button size="icon-sm" variant="ghost" aria-label="Undo" disabled={!history.length} onClick={undo}><Undo2 /></Button></IconTooltip>
 
           <IconTooltip label="Delete mask" hint="Backspace / Delete" container={dialog}><Button size="icon-sm" variant="ghost" aria-label="Delete mask" disabled={!selected.length} onClick={remove}><Trash2 /></Button></IconTooltip>
 
@@ -255,5 +257,6 @@ export function OcclusionEditor({ src, masks: initial, onCancel, onSave }: { src
       <Button variant="ghost" onClick={onCancel}>Cancel</Button>
       <Button onClick={() => onSave(masks)}>Save masks</Button>
     </div>
-  </dialog>;
+    </DialogContent>
+  </Dialog>;
 }

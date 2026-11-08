@@ -1,3 +1,4 @@
+import { outline } from "./outline.ts";
 import { Extension } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
@@ -7,15 +8,13 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 export function headingNumbers(doc: Node) {
   const result = new Map<number, string>();
   const stack: { level: number; number: number }[] = [];
-  doc.descendants((node, pos) => {
-    if (node.type.name !== "heading") return;
-    const level = Number(node.attrs.level);
+  for (const { pos, level } of outline(doc)) {
     let previous = 0;
     while (stack.length && stack[stack.length - 1].level > level) previous = stack.pop()!.number;
     if (stack[stack.length - 1]?.level === level) stack[stack.length - 1].number++;
     else stack.push({ level, number: previous + 1 });
     result.set(pos, stack.map(entry => entry.number).join("."));
-  });
+  }
   return result;
 }
 export const headingNumberingKey = new PluginKey<boolean>("headingNumbering");
