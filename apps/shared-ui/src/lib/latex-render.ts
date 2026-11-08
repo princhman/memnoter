@@ -41,8 +41,8 @@ export function groupMathScripts(source: string): string {
     if (source[index] === "{") continue;
 
     // A script runs over letters, digits, commands (with their arguments) and
-    // brace groups. Anything else — whitespace, operators, relations,
-    // punctuation, `\\` — ends it, so `x^2+y^2` keeps its usual meaning.
+    // brace groups. Anything else (whitespace, operators, relations,
+    // punctuation, `\\`) ends it, so `x^2+y^2` keeps its usual meaning.
     const start = index;
     while (index < source.length) {
       const c = source[index];
