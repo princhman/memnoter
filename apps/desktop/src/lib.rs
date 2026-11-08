@@ -7,6 +7,8 @@ mod import_folder;
 #[cfg(target_os = "macos")]
 mod menu;
 mod sync;
+#[cfg(target_os = "macos")]
+mod selection_limit;
 #[derive(Default)]
 struct ExitGate(AtomicBool);
 #[tauri::command]
@@ -208,6 +210,10 @@ pub fn run() {
             if std::env::var_os("MEMNOTER_DATA_DIR").is_some() {
                 app.asset_protocol_scope()
                     .allow_directory(core.data_dir().join("files"), true)?;
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                window.with_webview(|webview| selection_limit::limit_attributed_substrings(webview.inner()))?;
             }
             app.manage(core.clone());
             app.manage(ExitGate::default());
