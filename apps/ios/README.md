@@ -1,7 +1,7 @@
 # Memnoter for iPad
 
 Native SwiftUI iPadOS 17+ host, bundle ID `com.vladyslavnalyvaiko.memnoter.ipad`.
-The desktop/Tauri project (including `apps/desktop/gen/apple`) is independent.
+The desktop/Tauri project is independent; iOS uses the native project in this directory.
 Data lives in Application Support/Memnoter: main.db, files/, backups/.
 
 ## Build
