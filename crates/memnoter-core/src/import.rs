@@ -72,12 +72,11 @@ pub fn import_module(
         tx.commit().map_err(db_err)?;
         Ok(id)
     })();
-    if result.is_err() {
+    if let Err(import_error) = &result {
         for path in written {
             if let Err(error) = std::fs::remove_file(&path) {
                 return Err(format!(
-                    "Import failed: {}. Image cleanup failed: {error}",
-                    result.unwrap_err()
+                    "Import failed: {import_error}. Image cleanup failed: {error}"
                 ));
             }
         }
