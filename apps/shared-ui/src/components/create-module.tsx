@@ -44,7 +44,7 @@ const ImportModuleCommand = ({ run }: { run: () => void }) => {
 // The sidebar's copy has the + button. In narrow windows the sidebar is a sheet
 // that unmounts when closed, so the copy answering the app menu and the welcome
 // screen lives outside it and has no button.
-const CreateModule = ({ global = false }: { global?: boolean }) => {
+const CreateModule = ({ global = false, onNewFolder }: { global?: boolean; onNewFolder?: () => void }) => {
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   const [sumbitted, setSubmitted] = useState(false);
@@ -104,7 +104,7 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
       {!global && (
         <DropdownMenu>
           <IconTooltip label="Add module" side="right"><DropdownMenuTrigger render={<SidebarGroupAction aria-label="Add module" className="invisible group-hover:visible pointer-coarse:visible" />}><Plus className="size-3" /></DropdownMenuTrigger></IconTooltip>
-          <DropdownMenuContent side="right"><DropdownMenuItem onClick={openDialog}>New module</DropdownMenuItem>{isTauri() && <DropdownMenuItem onClick={openImport}>Import folder…</DropdownMenuItem>}</DropdownMenuContent>
+          <DropdownMenuContent side="right"><DropdownMenuItem onClick={openDialog}>New module</DropdownMenuItem>{onNewFolder && <DropdownMenuItem onClick={onNewFolder}>New folder</DropdownMenuItem>}{isTauri() && <DropdownMenuItem onClick={openImport}>Import folder…</DropdownMenuItem>}</DropdownMenuContent>
         </DropdownMenu>
       )}
       <DialogContent>

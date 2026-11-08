@@ -28,6 +28,8 @@ commands! { core;
     set_module_numbering(module_id: String, enabled: bool) => crate::set_module_numbering(&core.db, module_id, enabled);
     import_module(name: String, bytes: Vec<u8>, images: Vec<ImportImage>) => crate::import_module(core.data_dir(), &core.db, name, bytes, images);
     create_module(name: String) => crate::create_module(&core.db, name);
+    sidebar_items() => crate::sidebar::sidebar_items(&core.db);
+    save_sidebar_items(items: Vec<crate::sidebar::SidebarItem>) => crate::sidebar::save_sidebar_items(&core.db, items);
     modules() => crate::modules(&core.db);
     rename_module(module_id: String, name: String) => crate::rename_module(&core.db, module_id, name);
     delete_module(module_id: String) => crate::delete_module(core.data_dir(), &core.db, module_id);

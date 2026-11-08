@@ -249,6 +249,7 @@ pub(crate) fn ensure_column(
 fn migrate_base(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(
         "
+        create table if not exists sidebar_items (id TEXT PRIMARY KEY, data TEXT NOT NULL);
         create table if not exists modules (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL
