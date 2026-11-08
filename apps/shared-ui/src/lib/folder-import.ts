@@ -1,8 +1,8 @@
 import type { JSONContent } from "@tiptap/core";
 import { markdownToJSON } from "./markdown-paste.ts";
 
-export type ImportEntry = { path: string; text?: string; bytes?: number[] };
-export type ImportFolder = { name: string; entries: ImportEntry[] };
+export type ImportEntry = { path: string; text?: string; bytes?: number[]; sourceId?: string };
+export type ImportFolder = { name: string; entries: ImportEntry[]; originalName?: string };
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const compare = (a: string, b: string) => natural.compare(a, b) || a.localeCompare(b);
 const basename = (path: string) => path.split("/").pop()!;
@@ -18,55 +18,77 @@ function normalize(path: string) {
   return parts.join("/");
 }
 
-/** Build everything before creating storage. Image ids are replaced on commit. */
-export async function prepareFolderImport(folder: ImportFolder, progress: (message: string) => void = () => {}) {
+export type ImportOptions = {
+  order?: string[]; excluded?: string[]; extraImages?: ImportEntry[];
+  removeNoteLinks: boolean; removeUnsupportedEmbeds: boolean;
+  keepFrontMatter: boolean; normalizeHeadings: boolean;
+};
+export const defaultImportOptions: ImportOptions = { removeNoteLinks: true, removeUnsupportedEmbeds: true, keepFrontMatter: false, normalizeHeadings: true };
+export function importNoteOrder(folder: ImportFolder): string[] {
+  const notes = folder.entries.filter(e => /\.md$/i.test(e.path) && !e.path.split("/").some(p => p.startsWith("."))).map(e => e.path);
+  const hub = `${folder.name}.md`;
+  function walk(prefix: string): string[] {
+    const children = notes.filter(p => p !== hub && p.startsWith(prefix));
+    return [...children.filter(p => !p.slice(prefix.length).includes("/")).sort(compare), ...[...new Set(children.filter(p => p.slice(prefix.length).includes("/")).map(p => p.slice(prefix.length).split("/")[0]))].sort(compare).flatMap(p => walk(`${prefix}${p}/`))];
+  }
+  return [...(notes.includes(hub) ? [hub] : []), ...walk("")];
+}
+
+/** A preview and conversion use the same plan; neither writes storage. */
+export async function prepareFolderImport(folder: ImportFolder, progress: (message: string) => void = () => {}, settings: Partial<ImportOptions> = {}) {
+  const options = { ...defaultImportOptions, ...settings };
   const entries = folder.entries.filter(e => !e.path.split("/").some(p => p.startsWith(".")));
-  const notes = entries.filter(e => /\.md$/i.test(e.path)).sort((a, b) => compare(a.path, b.path));
-  const images = entries.filter(e => imageMime(e.path));
+  const byPath = new Map(entries.map(e => [e.path, e]));
+  const notes = [...new Set(options.order ?? importNoteOrder(folder))].filter(p => /\.md$/i.test(p) && byPath.has(p) && !options.excluded?.includes(p)).map(p => byPath.get(p)!);
+  const images = [...entries.filter(e => imageMime(e.path)), ...(options.extraImages ?? []).filter(e => imageMime(e.path))];
   const skipped = entries.filter(e => !/\.md$/i.test(e.path) && !imageMime(e.path)).map(e => e.path).sort(compare);
   const unresolved: string[] = [];
+  const imageIssues: { note: string; target: string; ambiguous: boolean }[] = [];
+  let resolvedReferences = 0;
   const usedImages = new Map<string, ImportEntry>();
   const order: string[] = [];
   const content: JSONContent[] = [];
-  const hub = notes.find(e => e.path === `${folder.name}.md`);
+  let previousFolders: string[] = [];
   const resolve = (note: string, target: string, syntax?: "markdown" | "wiki") => {
-    try { target = decodeURIComponent(target); } catch { /* keep literal name */ }
+    try { target = decodeURIComponent(target); } catch { /* keep literal */ }
     const exact = normalize(target);
     const local = normalize(`${note.includes("/") ? note.slice(0, note.lastIndexOf("/") + 1) : ""}${target}`);
-    // Standard Markdown URLs are relative to the note; wiki paths are vault-relative.
     const paths = syntax === "markdown" ? [local, exact] : [exact, local];
-    return paths.map(path => images.find(e => e.path === path)).find(Boolean) ?? images.filter(e => basename(e.path) === basename(target)).sort((a, b) => a.path.length - b.path.length || compare(a.path, b.path))[0];
+    for (const path of paths) {
+      const matches = images.filter(e => e.path === path);
+      if (matches.length === 1) return { image: matches[0], ambiguous: false };
+      if (matches.length > 1) return { ambiguous: true };
+    }
+    // A path-qualified reference must never silently select an unrelated namesake.
+    const matches = target.replace(/^\.\//, "").includes("/") ? [] : images.filter(e => basename(e.path) === basename(target));
+    return { image: matches.length === 1 ? matches[0] : undefined, ambiguous: matches.length > 1 };
   };
-  async function addNote(entry: ImportEntry, level: number, isHub = false) {
-    progress(`Reading note ${order.length + 1} of ${notes.length}: ${basename(entry.path)}`);
+  for (const entry of notes) {
+    progress(`Convert: note ${order.length + 1} of ${notes.length}: ${basename(entry.path)}`);
     order.push(entry.path);
-    if (!isHub) content.push(heading(basename(entry.path).replace(/\.md$/i, ""), level));
-    const source = (entry.text ?? "").replace(/^\uFEFF?[^\n:\r]+:[ \t]*\[\[([^\]\r\n]+)\]\][ \t]*\r?\n/, (line, target) => target === folder.name ? "" : line);
-    const doc = markdownToJSON(source, (target, alt, width, syntax) => {
-      const image = resolve(entry.path, target, syntax);
-      if (!image) { unresolved.push(`${entry.path}: ${target}`); return undefined; }
-      usedImages.set(image.path, image);
-      return { type: "image", attrs: { fileId: image.path, imageId: crypto.randomUUID(), src: null, alt, width: width || null, masks: [] } };
+    const folders = entry.path.split("/").slice(0, -1);
+    folders.forEach((name, i) => {
+      if (previousFolders.slice(0, i + 1).join("/") !== folders.slice(0, i + 1).join("/")) content.push(heading(name.replace(/^\d+[\s._-]+/, ""), i + 1));
     });
-    const shift = (node: JSONContent) => {
-      if (node.type === "heading") node.attrs = { ...node.attrs, level: Math.min(6, Number(node.attrs?.level ?? 1) + (isHub ? 0 : level)) };
-      node.content?.forEach(shift);
-    };
-    shift(doc);
+    previousFolders = folders;
+    const level = folders.length + 1;
+    const isHub = entry.path === `${folder.originalName ?? folder.name}.md`;
+    if (!isHub) content.push(heading(basename(entry.path).replace(/\.md$/i, ""), level));
+    const source = (entry.text ?? "").replace(/^((?:\uFEFF?---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*\r?\n)?)(?:up|parent):[ \t]*\[\[[^\]\r\n]+\]\][ \t]*\r?\n/i, "$1");
+    const doc = markdownToJSON(source, (target, alt, width, syntax) => {
+      const { image, ambiguous } = resolve(entry.path, target, syntax);
+      if (!image) { unresolved.push(`${entry.path}: ${target}${ambiguous ? " (ambiguous)" : ""}`); imageIssues.push({ note: entry.path, target, ambiguous }); return undefined; }
+      resolvedReferences++;
+      const key = image.sourceId ? `${image.sourceId}/${image.path}` : image.path;
+      usedImages.set(key, { ...image, path: key });
+      return { type: "image", attrs: { fileId: key, imageId: crypto.randomUUID(), src: null, alt, width: width || null, masks: [] } };
+    }, options);
+    // Map original levels consistently; peer headings stay peers even when levels skip.
+    const levels = [...new Set((doc.content ?? []).filter(n => n.type === "heading").map(n => Number(n.attrs?.level ?? 1)))].sort((a,b) => a-b);
+    if (options.normalizeHeadings) for (const node of doc.content ?? []) if (node.type === "heading") node.attrs = { ...node.attrs, level: Math.min(6, (isHub ? 0 : level) + 1 + levels.indexOf(Number(node.attrs?.level ?? 1))) };
     content.push(...doc.content ?? []);
     await new Promise(resolve => setTimeout(resolve, 0));
   }
-  if (hub) await addNote(hub, 0, true);
-  async function walk(prefix: string, depth: number) {
-    const children = notes.filter(e => e !== hub && e.path.startsWith(prefix));
-    for (const note of children.filter(e => !e.path.slice(prefix.length).includes("/"))) await addNote(note, depth + 1);
-    const folders = [...new Set(children.filter(e => e.path.slice(prefix.length).includes("/")).map(e => e.path.slice(prefix.length).split("/")[0]))].sort(compare);
-    for (const name of folders) {
-      content.push(heading(name.replace(/^\d+[\s._-]+/, ""), depth + 1));
-      await walk(`${prefix}${name}/`, depth + 1);
-    }
-  }
-  await walk("", 0);
-  if (!notes.length) throw new Error("This folder contains no Markdown notes.");
-  return { document: { type: "doc", content } as JSONContent, notes: order, images: [...usedImages.values()], skipped, unresolved };
+  if (!notes.length) throw new Error("Select at least one Markdown note.");
+  return { document: { type: "doc", content } as JSONContent, notes: order, images: [...usedImages.values()], skipped, unresolved, imageIssues, resolvedReferences };
 }

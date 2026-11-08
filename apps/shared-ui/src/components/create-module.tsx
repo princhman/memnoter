@@ -1,6 +1,6 @@
 import { isTauri } from "@/lib/backend";
-import { importFolder } from "@/lib/import-module";
-import type { ImportFolder } from "@/lib/folder-import";
+import { ImportFolderDialog } from "./import-folder";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "../lib/backend.ts";
 import { useCallback, useEffect, useState } from "react";
@@ -13,7 +13,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Plus } from "lucide-react";
 import { Field, FieldError, FieldGroup } from "@/components/ui/field";
@@ -23,7 +22,6 @@ import { Button } from "./ui/button";
 import { SidebarGroupAction } from "./ui/sidebar";
 import { useCommand } from "@/lib/commands";
 import { IconTooltip } from "./icon-tooltip";
-import { MOD_KEY } from "@/lib/utils";
 
 // Registered by the global copy only, so it outlives the sidebar sheet.
 const NewModuleCommand = ({ run }: { run: () => void }) => {
@@ -37,7 +35,7 @@ const NewModuleCommand = ({ run }: { run: () => void }) => {
 };
 
 const ImportModuleCommand = ({ run }: { run: () => void }) => {
-  useCommand({ id: "module.import", title: "Import folder…", keywords: ["obsidian", "markdown"], run: () => { run(); window.dispatchEvent(new Event("memnoter-import-folder")); } });
+  useCommand({ id: "module.import", title: "Import folder…", keywords: ["obsidian", "markdown"], run });
   return null;
 };
 
@@ -45,9 +43,6 @@ const ImportModuleCommand = ({ run }: { run: () => void }) => {
 // that unmounts when closed, so the copy answering the app menu and the welcome
 // screen lives outside it and has no button.
 const CreateModule = ({ global = false }: { global?: boolean }) => {
-  const [importProgress, setImportProgress] = useState("");
-  const [importSummary, setImportSummary] = useState("");
-  const [importing, setImporting] = useState(false);
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   const [sumbitted, setSubmitted] = useState(false);
@@ -76,28 +71,7 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
     },
   });
 
-  const runImport = useCallback(async () => {
-    if (importing) return;
-    setImporting(true);
-    setImportSummary("");
-    setImportProgress("Choose a folder…");
-    try {
-      const folder = await invoke<ImportFolder | null>("pick_import_folder");
-      if (!folder) { setImportProgress(""); return; }
-      const result = await importFolder(folder, setImportProgress);
-      await queryClient.invalidateQueries({ queryKey: ["modules"] });
-      setImportProgress("");
-      setImportSummary(`Imported ${result.notes.length} notes and ${result.images.length} images into ${result.name}. Skipped ${result.skipped.length} files.\n${result.skipped.join("\n")}\n${result.unresolved.length} unresolved images.\n${result.unresolved.join("\n")}`);
-      void navigate({ to: "/$moduleId", params: { moduleId: result.moduleId } });
-    } catch (error) { setImportProgress(""); setImportSummary(`Import failed: ${String(error)}`); }
-    finally { setImporting(false); }
-  }, [importing, navigate, queryClient]);
-  useEffect(() => {
-    if (!global) return;
-    const run = () => { void runImport(); };
-    window.addEventListener("memnoter-import-folder", run);
-    return () => window.removeEventListener("memnoter-import-folder", run);
-  }, [global, runImport]);
+  const openImport = () => window.dispatchEvent(new Event("memnoter-import-folder"));
 
   const trimmedName = name.trim();
 
@@ -118,22 +92,19 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
   };
 
   return (
-    <Dialog open={open} onOpenChange={value => { if (!importing) setOpen(value); }}>
+    <>
+    {global && isTauri() && <ImportFolderDialog onImported={async moduleId => {
+      await queryClient.invalidateQueries({ queryKey: ["modules"] });
+      void navigate({ to: "/$moduleId", params: { moduleId } });
+    }} />}
+    <Dialog open={open} onOpenChange={setOpen}>
       {global && <NewModuleCommand run={openDialog} />}
-      {global && isTauri() && <ImportModuleCommand run={openDialog} />}
+      {global && isTauri() && <ImportModuleCommand run={openImport} />}
       {!global && (
-        <IconTooltip label="New module" hint={`${MOD_KEY}N`} side="right">
-          <DialogTrigger
-            render={
-              <SidebarGroupAction
-                aria-label="New module"
-                className="invisible group-hover:visible pointer-coarse:visible"
-              />
-            }
-          >
-            <Plus className="size-3" />
-          </DialogTrigger>
-        </IconTooltip>
+        <DropdownMenu>
+          <IconTooltip label="Add module" side="right"><DropdownMenuTrigger render={<SidebarGroupAction aria-label="Add module" className="invisible group-hover:visible pointer-coarse:visible" />}><Plus className="size-3" /></DropdownMenuTrigger></IconTooltip>
+          <DropdownMenuContent side="right"><DropdownMenuItem onClick={openDialog}>New module</DropdownMenuItem>{isTauri() && <DropdownMenuItem onClick={openImport}>Import folder…</DropdownMenuItem>}</DropdownMenuContent>
+        </DropdownMenu>
       )}
       <DialogContent>
         <form onSubmit={handleSubmit}>
@@ -150,25 +121,21 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
                 placeholder="Mathematics"
                 aria-invalid={!!error}
                 aria-describedby={error ? "module-name-error" : undefined}
-                disabled={mutation.isPending || importing}
+                disabled={mutation.isPending}
               />
               <FieldError id="module-name-error">{error}</FieldError>
             </Field>
           </FieldGroup>
-          {isTauri() && <div className="py-3">
-            <Button type="button" variant="outline" disabled={importing || mutation.isPending} onClick={() => void runImport()}>Import folder…</Button>
-            <p role="status" className="text-sm py-2">{importProgress}</p>
-            {importSummary && <pre className="text-sm whitespace-pre-wrap max-h-64 overflow-auto">{importSummary}</pre>}
-          </div>}
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" disabled={importing}>Cancel</Button>} />
-            <Button type="submit" disabled={mutation.isPending || importing}>
+            <DialogClose render={<Button variant="outline">Cancel</Button>} />
+            <Button type="submit" disabled={mutation.isPending}>
               {mutation.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
+    </>
   );
 };
 

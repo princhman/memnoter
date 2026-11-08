@@ -137,7 +137,7 @@ for (const discard of [false, true]) {
   });
 }
 
-for (const stage of ['modules', 'import_module', 'Indexing notes and cards…', 'get_content']) {
+for (const stage of ['modules', 'import_module']) {
   test(`import failure at ${stage} leaves neither a module nor image files`, async () => {
     const dir = join(tmpdir(), `memnoter-harness-${child.pid}`, 'files');
     const { readdirSync } = await import('node:fs');
@@ -160,3 +160,68 @@ for (const stage of ['modules', 'import_module', 'Indexing notes and cards…', 
     assert.deepEqual(readdirSync(dir).sort(), files);
   });
 }
+
+for (const stage of ['get_content', 'index_note']) {
+  test(`post-commit ${stage} failure retains the imported module and reports retry`, async () => {
+    const result = await page.evaluate(async ({ folder, stage }) => {
+      const original = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = (command, args) => {
+        if (command === stage) throw new Error('injected index failure');
+        return original(command, args);
+      };
+      try {
+        const result = await importFolder(folder, () => {});
+        return { warning: result.indexingWarning, retained: (await call('modules')).some(m => m.id === result.moduleId) };
+      } finally { window.__TAURI_INTERNALS__.invoke = original; }
+    }, { folder: { ...synthetic, name: `Index retry ${stage}` }, stage });
+    assert.deepEqual(result, { warning: 'Imported; search indexing will retry', retained: true });
+  });
+}
+
+test("sidebar dropdown leads to a configurable import dialog and commits only on Import", async () => {
+  const ui = await browser.newPage();
+  const calls = [];
+  let picks = 0;
+  const imageRequests = [];
+  await ui.exposeFunction('rustCall', async (command, args = {}) => {
+    calls.push(command);
+    if (command === 'read_import_images') { imageRequests.push(...args.images); return args.images.map(() => [137,80,78,71]); }
+    if (command === 'pick_import_folder') return ++picks === 1 ? {
+      name: 'Dialog vault', entries: [{path:'a.md',text:'## Module Info\n\n## Aims\n\n![[pic.png]]'}, {path:'b.md',text:'B'}, {path:'c.md',text:'C'}, {path:'slides.pdf'}],
+    } : { name: 'Images', entries: [{path:'pic.png',sourceId:'extra'}, {path:'unused.png',sourceId:'extra'}] };
+    const response = await new Promise(resolve => { pending.push(resolve); child.stdin.write(JSON.stringify({command,args})+'\n'); });
+    if (response.error) throw new Error(response.error);
+    return response.value;
+  });
+  await ui.addInitScript(() => { window.__TAURI_INTERNALS__ = { invoke: (command,args) => window.rustCall(command,args), convertFileSrc: path => path }; });
+  try {
+    await ui.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/import-dialog.html`);
+    await ui.locator('.group').first().hover();
+    await ui.getByRole('button', { name: 'Add module', exact: true }).click();
+    await ui.getByRole('menuitem', {name:'New module',exact:true}).click();
+    await ui.getByRole('heading',{name:'Create new module'}).waitFor();
+    assert.equal(await ui.getByRole('button',{name:'Import folder…',exact:true}).count(),0);
+    await ui.getByRole('button',{name:'Cancel',exact:true}).click();
+    await ui.locator('.group').first().hover();
+    await ui.getByRole('button',{name:'Add module',exact:true}).click();
+    await ui.getByRole('menuitem',{name:'Import folder…',exact:true}).click();
+    await ui.getByLabel('Module name', {exact:false}).fill('Planned module');
+    await ui.getByRole('button',{name:'Next',exact:true}).click();
+    await ui.getByRole('button',{name:'Reorder b',exact:true}).focus();
+    await ui.keyboard.press('Space'); await ui.keyboard.press('ArrowUp'); await ui.keyboard.press('Enter');
+    await ui.getByRole('checkbox',{name:'c',exact:true}).uncheck();
+    await ui.getByRole('button',{name:'Next',exact:true}).click();
+    await ui.getByText('0 of 1 image found. 1 is missing.').waitFor();
+    await ui.getByRole('button',{name:'Look in another folder…',exact:true}).click();
+    await ui.getByText('1 image found.').waitFor();
+    assert.ok(!calls.includes('import_module'));
+    await ui.getByRole('button',{name:'Next',exact:true}).click();
+    await ui.getByRole('button',{name:'Import',exact:true}).click();
+    await ui.getByText('Opened imported module').waitFor();
+    await ui.getByText('Imported 2 notes and 1 image into Planned module.').waitFor();
+    await ui.getByRole('dialog').waitFor({ state: 'hidden' });
+    const stored = await ui.evaluate(async () => window.rustCall('modules'));
+    assert.ok(stored.some(m => m.name === 'Planned module'));
+    assert.deepEqual(imageRequests, [{sourceId:'extra',path:'pic.png'}]);
+  } finally { await ui.close(); }
+});

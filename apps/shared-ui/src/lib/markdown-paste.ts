@@ -88,6 +88,17 @@ md.inline.ruler.before("escape", "obsidian", (state, silent) => {
       state.pos += wiki[0].length;
       return true;
     }
+    if (!wiki[1] && state.env?.keepWikiLinks) {
+      if (!silent) {
+        const [path, fragment] = target.split("#");
+        const href = /\.md$/i.test(path) ? path : `${path}.md`;
+        state.push("link_open", "a", 1).attrSet("href", `${href}${fragment ? `#${fragment}` : ""}`);
+        state.push("text", "", 0).content = alias || name;
+        state.push("link_close", "a", -1);
+      }
+      state.pos += wiki[0].length;
+      return true;
+    }
     return emit(wiki[1] ? "obsidian_placeholder" : "text", wiki[1] ? `[${image ? "image" : "embed"}: ${image ? target.split(/[\\/]/).pop() : target}]` : alias || name, wiki[0].length);
   }
   const highlight = /^==(?=\S)((?:(`+)[\s\S]*?\2(?!`)|\$[^$\n]+\$|(?!=)[\s\S]|=(?!=))+?)==/.exec(remaining);
@@ -137,9 +148,42 @@ function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageRe
 }
 
 /** Schema-independent TipTap JSON; never fetches files or generates identities. */
-export function markdownToJSON(source: string, resolveImage?: ImageResolver): JSONContent {
-  const tokens = md.parse(stripMetadata(source), {});
+export type MarkdownImportOptions = { removeNoteLinks?: boolean; removeUnsupportedEmbeds?: boolean; keepFrontMatter?: boolean };
+export function markdownToJSON(source: string, resolveImage?: ImageResolver, options: MarkdownImportOptions = {}): JSONContent {
+  // Retain YAML as literal data, rather than interpreting its delimiters as headings.
+  const front = options.keepFrontMatter && /^\uFEFF?---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(source);
+  if (front) source = source.slice(front[0].length);
+  const tokens = md.parse(stripMetadata(source), { keepWikiLinks: options.removeNoteLinks === false });
+  function clean(tokens: Token[]): Token[] {
+    return tokens.filter(token => !(options.removeUnsupportedEmbeds && (
+      (token.type === "obsidian_placeholder" && token.content.startsWith("[embed:")) ||
+      (token.type === "image" && /\.(?:pdf|mp4|mp3|wav|mov|docx?|pptx?|xlsx?|zip)(?:[?#].*)?$/i.test(String(token.attrGet("src") ?? "")))
+    ))).map(token => {
+      if (token.children) {
+        if (options.removeNoteLinks && token.type === "inline" && !token.children.some(child => child.type === "code_inline" && child.content.includes("\n"))) {
+          const kept = token.content.split("\n").filter(line => !/^\s*(?:\[\[[^\]\n]+\]\]|\[[^\]\n]*\]\((?![a-z]+:)[^)]*\.md(?:#[^)]*)?\))\s*$/i.test(line)).join("\n");
+          if (kept !== token.content) {
+            token.content = kept;
+            token.children = md.parseInline(kept, {})[0].children ?? [];
+          }
+        }
+        {
+          // Closing link tokens carry no href. Remove matched pairs together.
+          let noteLink = false;
+          token.children = token.children.filter(child => {
+            if (child.type === "link_open") noteLink = !!options.removeNoteLinks && /^(?![a-z]+:|\/\/)[^?#]*\.md(?:[?#].*)?$/i.test(String(child.attrGet("href") ?? ""));
+            if (child.type === "link_close") { const drop = noteLink; noteLink = false; return !drop; }
+            return !(child.type === "link_open" && noteLink);
+          });
+          token.children = clean(token.children);
+        }
+      }
+      return token;
+    });
+  }
+  clean(tokens);
   const root: JSONContent = { type: "doc", content: [] };
+  if (front) root.content!.push({ type: "codeBlock", attrs: { language: "yaml" }, content: [text(front[1])] });
   const stack = [root];
   const add = (node: JSONContent) => stack[stack.length - 1].content!.push(node);
   for (const token of tokens) {

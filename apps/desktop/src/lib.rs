@@ -228,6 +228,7 @@ pub fn run() {
             create_module,
             import_module,
             import_folder::pick_import_folder,
+            import_folder::read_import_images,
             modules,
             get_content,
             add_update,
