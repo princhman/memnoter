@@ -1,4 +1,5 @@
 import { action, formatKeys } from "@/lib/shortcuts";
+import { isImageNode } from "../lib/cards.ts";
 import { useRef, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -86,7 +87,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
 
         let containsImage = false;
         state.doc.nodesBetween(from, to, (node) => {
-          if (node.type.name === "image" || node.type.name === "inlineImage") containsImage = true;
+          if (isImageNode(node)) containsImage = true;
           return !containsImage;
         });
         if (containsImage) return false;

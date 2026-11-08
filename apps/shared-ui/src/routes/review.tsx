@@ -1,4 +1,5 @@
 import { endOfDay } from "@/lib/day-clock";
+import { siblingOf } from "../lib/card-id.ts";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "@/lib/store";
 import { writeCards } from "@/lib/card-writes";
@@ -249,7 +250,20 @@ function Review() {
         }));
         if (session.current !== mine) return;
         const queueBefore = queue ?? [];
-        const rest = separateSibling(queueBefore.filter((queued) => queued.id !== card.id), card, reviewTime);
+        const remaining = queueBefore.filter(queued => queued.id !== card.id);
+        const hasSibling = card.kind === "basic" && remaining.some(queued =>
+          queued.kind === "basic" && queued.moduleId === card.moduleId && queued.id === siblingOf(card.id));
+        // Fetch availability from the core without reshuffling the session.
+        // Include future cards so a delay crossing midnight is retained too.
+        const coreCards = !hasSibling ? [] : await invoke<StoredCard[]>("due_cards", {
+          moduleId: card.moduleId, now: Number.MAX_SAFE_INTEGER, createdAtCutoff: null,
+        }).catch(() => null);
+        if (session.current !== mine) return;
+        const rest = coreCards ? separateSibling(remaining, card, coreCards)
+          // Storage already accepted the grade. On a transient read failure,
+          // leave its sibling for the next session rather than grade twice.
+          : remaining.filter(queued => !(card.kind === "basic" && queued.kind === "basic" &&
+              queued.moduleId === card.moduleId && queued.id === siblingOf(card.id)));
         // A card due again today comes back in this session once due.
         const queueAfter = result.card.dueAt < endOfDay(reviewTime)
           ? [...rest, { ...card, ...result.card }]

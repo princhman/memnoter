@@ -1,3 +1,4 @@
+import { TOC_ID_ATTRIBUTE } from "../lib/outline.ts";
 import { pointInTriangle, type Point } from "@/lib/menu-aim";
 import { isNativeHost } from "@/lib/backend";
 import { headingNumbers } from "@/lib/heading-numbering";
@@ -246,7 +247,7 @@ function DesktopTableOfContents({
   }, [hoveredId, activeId]);
 
   function scrollTo(item: TableOfContentDataItem) {
-    const heading = editor?.view.dom.querySelector<HTMLElement>(`[data-toc-id="${CSS.escape(item.id)}"]`) ?? item.dom;
+    const heading = editor?.view.dom.querySelector<HTMLElement>(`[${TOC_ID_ATTRIBUTE}="${CSS.escape(item.id)}"]`) ?? item.dom;
     heading.scrollIntoView({ behavior: "smooth", block: "start" });
   }
   function renderRow(item: TableOfContentDataItem) {

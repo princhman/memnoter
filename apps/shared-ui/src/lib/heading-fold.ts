@@ -1,4 +1,5 @@
 import { action } from "./shortcuts.ts";
+import { outline, headingId } from "./outline.ts";
 import { Extension } from "@tiptap/core";
 import {
   type EditorState,
@@ -43,28 +44,8 @@ declare module "@tiptap/core" {
   }
 }
 
-// Where each top-level heading's section ends: the next heading at its level
-// or higher, or the end of the document.
 function sectionEnds(doc: PMNode): Map<number, number> {
-  const ends = new Map<number, number>();
-  const open: { pos: number; level: number }[] = [];
-
-  doc.forEach((node, pos) => {
-    if (node.type.name !== "heading") return;
-    const level = Number(node.attrs.level);
-    while (open.length && open[open.length - 1].level >= level) {
-      ends.set(open.pop()!.pos, pos);
-    }
-    open.push({ pos, level });
-  });
-  for (const heading of open) ends.set(heading.pos, doc.content.size);
-
-  return ends;
-}
-
-// The TOC extension gives every heading with text a unique id.
-function headingId(node: PMNode | null | undefined): string | null {
-  return node?.type.name === "heading" ? (node.attrs["data-toc-id"] ?? null) : null;
+  return new Map(outline(doc).map(heading => [heading.pos, heading.end]));
 }
 
 // The content each folded heading hides: from after the heading to its section end.

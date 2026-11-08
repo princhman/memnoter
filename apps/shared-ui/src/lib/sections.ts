@@ -1,4 +1,5 @@
 import { action } from "./shortcuts.ts";
+import { outline } from "./outline.ts";
 import { Extension } from "@tiptap/core";
 import type { EditorState } from "@tiptap/pm/state";
 import { TextSelection } from "@tiptap/pm/state";
@@ -23,21 +24,8 @@ const MAX_LEVEL = 6;
 export function currentSection(state: EditorState) {
   const { $from } = state.selection;
   const blockPos = $from.depth > 0 ? $from.before(1) : $from.pos;
-  let heading: { pos: number; level: number } | null = null;
-  let end = state.doc.content.size;
-
-  state.doc.forEach((node, pos) => {
-    if (node.type.name !== "heading") return;
-    const level = Number(node.attrs.level);
-    if (pos <= blockPos) {
-      heading = { pos, level };
-      end = state.doc.content.size;
-    } else if (heading && end === state.doc.content.size && level <= heading.level) {
-      end = pos;
-    }
-  });
-
-  return { blockPos, heading: heading as { pos: number; level: number } | null, end };
+  const heading = outline(state.doc).filter(item => item.pos <= blockPos).slice(-1)[0] ?? null;
+  return { blockPos, heading, end: heading?.end ?? state.doc.content.size };
 }
 
 export const Sections = Extension.create({

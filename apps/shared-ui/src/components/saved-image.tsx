@@ -1,5 +1,6 @@
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { SavedImage as ImageSchema, InlineImage as InlineImageSchema } from "@/lib/editor-schema/images";
+import { occlusionCardId } from "@/lib/card-id";
 import { ImagePreview } from "@/components/image-preview";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { imageOperation } from "@/lib/write-lifecycle";
@@ -126,7 +127,7 @@ export function SavedImageView(props: NodeViewProps) {
     // Numbered as in the mask editor.
     const entries = maskCards(masks).map(({ owner, members }, index) => ({
       answer: members.length > 1 ? `Card ${index + 1} (${members.length} masks)` : `Card ${index + 1}`,
-      schedule: schedules.byId.get(`${imageId}:o:${owner.id}`),
+      schedule: schedules.byId.get(occlusionCardId(imageId, owner.id)),
     }));
     const due = entries.some(({ schedule }) => schedule && schedule.dueAt <= schedules.now);
     element.replaceChildren(cardInfo(entries, due, schedules.now,

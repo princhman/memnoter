@@ -1,3 +1,4 @@
+import { siblingOf } from "./card-id.ts";
 import {
   DefaultScheduler,
   Rating,
@@ -9,6 +10,8 @@ import type { CardKind, CardPayload } from "./cards";
 
 // Scheduling runs here with ts-fsrs; Rust only stores the results. The
 // library's default parameters for FSRS-7, with no settings yet.
+export { State as CardState } from "ts-fsrs";
+
 const FSRS_VERSION = "FSRS-7";
 
 export type Scheduler = DefaultScheduler<"FSRS-7">;
@@ -156,24 +159,21 @@ export function formatInterval(ms: number) {
 // shown instead of waiting for it.
 export const LEARN_AHEAD_MS = 20 * MINUTE;
 
-// Keep this window in step with REVIEW_AVAILABILITY in the Rust core.
-const SIBLING_DELAY_MS = 10 * MINUTE;
-
 type QueueCard = { dueAt: number; availableAt?: number };
 
 export function reviewDueAt(card: QueueCard) {
   return Math.max(card.dueAt, card.availableAt ?? 0);
 }
 
-// The desktop keeps a session snapshot instead of reloading after each grade.
-// Mirror the core's availability in that snapshot; undo restores queueBefore.
-export function separateSibling(queue: StoredCard[], reviewed: StoredCard, reviewTime: number) {
+// The core's due_cards query owns sibling availability, including synced
+// reviews and undo. Copy only that value into the retained session snapshot.
+export function separateSibling(queue: StoredCard[], reviewed: StoredCard, coreCards: readonly StoredCard[]) {
   if (reviewed.kind !== "basic") return queue;
-  const siblingId = reviewed.id.endsWith(":reverse")
-    ? reviewed.id.slice(0, -8)
-    : `${reviewed.id}:reverse`;
-  return queue.map((card) => card.kind === "basic" && card.moduleId === reviewed.moduleId && card.id === siblingId
-    ? { ...card, availableAt: reviewTime + SIBLING_DELAY_MS }
+  const siblingId = siblingOf(reviewed.id);
+  const sibling = coreCards.find(card => card.moduleId === reviewed.moduleId && card.kind === "basic" && card.id === siblingId);
+  if (!sibling) return queue;
+  return queue.map(card => card.kind === "basic" && card.moduleId === reviewed.moduleId && card.id === siblingId
+    ? { ...card, availableAt: sibling.availableAt }
     : card);
 }
 

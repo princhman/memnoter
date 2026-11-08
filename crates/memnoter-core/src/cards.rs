@@ -317,9 +317,13 @@ fn json_column(text: String) -> serde_json::Value {
 // Derived from card state so undo, synced reviews and reloads all agree, without
 // changing either FSRS schedule or adding local burial state. Only exact basic
 // forward/reverse pairs in the same note participate; clozes are independent.
-const REVIEW_AVAILABILITY: &str = "with review_cards as (
-    select c.*, coalesce(s.last_review_at + 600000, 0) as available_at,
-           max(c.due_at, coalesce(s.last_review_at + 600000, 0)) as review_due_at
+const SIBLING_DELAY_MS: i64 = 10 * 60 * 1000;
+
+fn review_availability() -> String {
+    format!(
+        "with review_cards as (
+    select c.*, coalesce(s.last_review_at + {SIBLING_DELAY_MS}, 0) as available_at,
+           max(c.due_at, coalesce(s.last_review_at + {SIBLING_DELAY_MS}, 0)) as review_due_at
     from cards c left join cards s
       on c.kind = 'basic' and s.kind = 'basic'
      and s.module_id = c.module_id and s.deleted_at is null
@@ -327,7 +331,9 @@ const REVIEW_AVAILABILITY: &str = "with review_cards as (
          when instr(c.id, ':') = 0 then c.id || ':reverse'
          when substr(c.id, -8) = ':reverse' then substr(c.id, 1, length(c.id) - 8)
      end
-)";
+)"
+    )
+}
 
 fn query_due_cards(
     conn: &Connection,
@@ -335,9 +341,10 @@ fn query_due_cards(
     now: i64,
     created_at_cutoff: Option<i64>,
 ) -> CommandResult<Vec<Card>> {
+    let availability = review_availability();
     let mut stmt = conn
         .prepare(&format!(
-            "{REVIEW_AVAILABILITY}
+            "{availability}
              select c.id, c.module_id, m.name, c.kind, c.front, c.back, c.due_at,
                     c.stability, c.stability_fast, c.difficulty, c.scheduled_days,
                     c.learning_step, c.state, c.schedule_status, c.last_review_at,
@@ -386,10 +393,11 @@ fn query_due_counts(
     day_end: i64,
     created_at_cutoff: Option<i64>,
 ) -> CommandResult<Vec<DueCount>> {
+    let availability = review_availability();
     let mut stmt = conn
         .prepare(&format!(
             // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
-            "{REVIEW_AVAILABILITY}
+            "{availability}
              select module_id, sum(review_due_at <= ?1), sum(review_due_at <= ?1 and state = 0),
                  sum(review_due_at <= ?1 and state in (1, 3)), sum(review_due_at <= ?1 and state = 2),
                  sum(review_due_at > ?1 and state = 0), sum(review_due_at > ?1 and state in (1, 3)),
@@ -695,6 +703,60 @@ mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn persisted_card_id_golden_sibling_contract() {
+        let vectors: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/card-ids.json")).unwrap();
+        // Each vector's expected sibling is stored with a distinct review time;
+        // the real availability query must find only basic forward/reverse pairs.
+        for row in vectors {
+            let id = row["id"].as_str().unwrap();
+            let kind = row["kind"].as_str().unwrap();
+            let f = Fixture::new();
+            let module = "a";
+            let mut content = basic(id, "Front", "Back");
+            content.kind = kind.into();
+            if kind == "occlusion" {
+                f.db.conn
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "insert into files values ('asset','a','/synthetic/asset','image/png')",
+                        [],
+                    )
+                    .unwrap();
+                content.front = json!({"fileId": "asset", "revealed": false});
+                content.back = json!({"fileId": "asset", "revealed": true});
+            }
+            let mut cards = vec![content];
+            if let Some(sibling) = row["sibling"].as_str() {
+                cards.push(basic(sibling, "Back", "Front"));
+            }
+            f.sync(module, &cards, 0);
+            if let Some(sibling) = row["sibling"].as_str() {
+                f.db.conn
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "update cards set last_review_at = 100 where id = ?1",
+                        [sibling],
+                    )
+                    .unwrap();
+            }
+            let due = f.due(Some(module), 1_000_000);
+            let card = due.iter().find(|card| card.id == id).unwrap();
+            assert_eq!(
+                card.available_at,
+                if row["sibling"].is_string() {
+                    600_100
+                } else {
+                    0
+                },
+                "{id}"
+            );
         }
     }
 

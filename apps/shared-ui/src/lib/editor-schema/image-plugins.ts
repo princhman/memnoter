@@ -1,7 +1,7 @@
+import { isImageNode } from "../cards.ts";
 import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { NodeType } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
-const IMAGE_NODES = new Set(["image", "inlineImage"]);
 
 // Puts the cursor in the text flowing beside a wrapped image: at the end of
 // the last text block that starts above the click, or in a new paragraph when
@@ -61,7 +61,7 @@ export function imageTextPlugin(type: NodeType) {
     props: {
       handleTextInput(view, _from, _to, text) {
         const { selection } = view.state;
-        if (!(selection instanceof NodeSelection) || !IMAGE_NODES.has(selection.node.type.name)) return false;
+        if (!(selection instanceof NodeSelection) || !isImageNode(selection.node)) return false;
         typeBesideImage(view, selection, text);
         return true;
       },
