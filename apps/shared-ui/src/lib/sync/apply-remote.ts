@@ -1,3 +1,4 @@
+import { cardsChanged } from "../card-events";
 import { appendSavedUpdate, contentKey, patchContent, type ContentUpdate, type FileType } from "@/lib/content";
 import { dueCountsKey, isModuleOpen } from "@/lib/card-sync";
 import { refreshDerived } from "@/lib/note-index";
@@ -61,6 +62,7 @@ export function onRemote(result: ApplyResult) {
     void queryClient.invalidateQueries({ queryKey: ["sidebar-items"] });
   }
   if (result.modulesChanged || result.deleted.length > 0 || result.reviewsChanged) {
+    cardsChanged();
     // Card schedules are under the due counts' key too.
     void queryClient.invalidateQueries({ queryKey: dueCountsKey });
   }

@@ -18,7 +18,7 @@ const bucketOf = (data: Uint8ClampedArray, i: number) =>
 // its border; a border colour alone misleads when a strip of another shade
 // runs along one edge. Returns null when the border is mostly transparent
 // (the image already has no background of its own).
-export function detectBackground(data: Uint8ClampedArray, width: number, height: number): RGB | null {
+function detectBackground(data: Uint8ClampedArray, width: number, height: number): RGB | null {
   const border = new Map<number, number>();
   let transparent = 0;
   let total = 0;
@@ -38,7 +38,6 @@ export function detectBackground(data: Uint8ClampedArray, width: number, height:
     sample(width - 1, y);
   }
   if (total === 0 || transparent * 2 > total) return null;
-  // Colours along at least a tenth of the opaque border.
   const candidates = new Map<number, { count: number; sum: RGB }>();
   for (const [key, count] of border) {
     if (count * 10 >= total - transparent) candidates.set(key, { count: 0, sum: [0, 0, 0] });
@@ -59,7 +58,6 @@ export function detectBackground(data: Uint8ClampedArray, width: number, height:
   return [best.sum[0] / best.count / 255, best.sum[1] / best.count / 255, best.sum[2] / best.count / 255];
 }
 
-// Average brightness of the visible pixels, for images without a background.
 function inkLuma(data: Uint8ClampedArray) {
   let sum = 0;
   let weight = 0;
@@ -71,8 +69,7 @@ function inkLuma(data: Uint8ClampedArray) {
   return weight ? sum / weight : 0;
 }
 
-// Adapts RGBA pixels in place for a dark or light theme.
-export function adaptPixels(data: Uint8ClampedArray, width: number, height: number, dark: boolean) {
+function adaptPixels(data: Uint8ClampedArray, width: number, height: number, dark: boolean) {
   const background = detectBackground(data, width, height);
   // Ink drawn for a light background is dark, and vice versa.
   const invert = background ? luma(background) > 0.5 === dark : inkLuma(data) > 0.5 !== dark;
@@ -262,7 +259,6 @@ export function adaptedUrl(image: string, dark: boolean, load: () => Promise<Blo
   const key = cacheKey(image, dark);
   let entry = cache.get(key);
   if (entry) {
-    // Most recently used goes last, so eviction drops the stalest.
     cache.delete(key);
     cache.set(key, entry);
   } else {

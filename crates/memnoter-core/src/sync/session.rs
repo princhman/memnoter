@@ -118,12 +118,14 @@ impl Session {
                     }
                     let bytes = match crypto::decrypt_blob(&self.key, doc, &blob) {
                         Ok(bytes) => bytes,
-                        Err(_) => return Ok(vec![Action::Close {
+                        Err(_) => {
+                            return Ok(vec![Action::Close {
                             code: 1008,
                             reason:
                                 "Synced data could not be decrypted. Check your sync passphrase."
                                     .into(),
-                        }]),
+                        }])
+                        }
                     };
                     cursor = cursor.max(e["seq"].as_i64().ok_or("Invalid sequence")?);
                     entries.push(json!({"seq":e["seq"],"doc":doc,"bytes":bytes}));
@@ -294,6 +296,33 @@ impl Session {
         vec![Action::Reconnect {
             delay_ms: (base as f64 * jitter) as u64,
         }]
+    }
+}
+/// Retry deadlines are session-local; the database retains unfinished transfers.
+#[derive(Default)]
+pub struct FileTransfers {
+    retry_after: HashMap<String, u64>,
+}
+impl FileTransfers {
+    pub fn ready(&self, id: &str, now_ms: u64) -> bool {
+        self.retry_after
+            .get(id)
+            .is_none_or(|deadline| *deadline <= now_ms)
+    }
+    pub fn failed(&mut self, id: String, now_ms: u64) {
+        self.retry_after.insert(id, now_ms.saturating_add(30_000));
+    }
+    pub fn completed(&mut self, id: &str) {
+        self.retry_after.remove(id);
+    }
+    pub fn retain(&mut self, pending: &[String]) {
+        self.retry_after.retain(|id, _| pending.contains(id));
+    }
+    pub fn next_delay(&self, now_ms: u64) -> Option<u64> {
+        self.retry_after
+            .values()
+            .min()
+            .map(|deadline| deadline.saturating_sub(now_ms))
     }
 }
 #[cfg(test)]

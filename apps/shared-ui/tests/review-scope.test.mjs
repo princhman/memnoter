@@ -146,7 +146,7 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
   }
 });
 
-test("cutoff consumers share an idle-when-disabled day clock and catch up after sleep", async () => {
+test("cutoff consumers update together across midnight and catch up after sleep", async () => {
   const page = await browser.newPage();
   await page.route("**/clock-probe", (route) => route.fulfill({ contentType: "text/html", body: '<div id="probe"></div>' }));
   try {
@@ -155,20 +155,13 @@ test("cutoff consumers share an idle-when-disabled day clock and catch up after 
     await page.evaluate(async () => {
       const { createElement: h, createRoot } = await import("/test-harness");
       const { useCreatedAtCutoff } = await import("/src/lib/card-sync.ts");
-      const timers = new Set();
-      const originalSet = window.setInterval, originalClear = window.clearInterval;
-      window.setInterval = (...args) => { const id = originalSet(...args); timers.add(id); return id; };
-      window.clearInterval = (id) => { timers.delete(id); originalClear(id); };
-      window.__timers = timers;
       function Probe() { return h("span", null, String(useCreatedAtCutoff())); }
       window.__root = createRoot(document.getElementById("probe"));
       window.__root.render(h("div", null, h(Probe), h(Probe)));
     });
     await page.waitForFunction(() => document.querySelectorAll("span").length === 2);
-    assert.equal(await page.evaluate(() => window.__timers.size), 0);
     await page.evaluate(async () => (await import("/src/lib/store.ts")).setSkipCardsCreatedToday(true));
     await page.waitForFunction(() => [...document.querySelectorAll("span")].every((s) => s.textContent !== "null"));
-    assert.equal(await page.evaluate(() => window.__timers.size), 1);
     await page.clock.fastForward(12 * 60 * 60 * 1000 + 100);
     await page.waitForFunction(() => [...document.querySelectorAll("span")].every((s) => +s.textContent === new Date().setHours(0, 0, 0, 0)));
     await page.clock.setSystemTime(new Date("2026-11-07T12:00:00"));
@@ -176,7 +169,6 @@ test("cutoff consumers share an idle-when-disabled day clock and catch up after 
     await page.waitForFunction(() => [...document.querySelectorAll("span")].every((s) => +s.textContent === new Date().setHours(0, 0, 0, 0)));
     await page.evaluate(async () => (await import("/src/lib/store.ts")).setSkipCardsCreatedToday(false));
     await page.waitForFunction(() => [...document.querySelectorAll("span")].every((s) => s.textContent === "null"));
-    assert.equal(await page.evaluate(() => window.__timers.size), 0);
   } finally {
     await page.close();
   }

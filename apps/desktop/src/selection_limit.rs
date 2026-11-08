@@ -28,24 +28,38 @@ struct NSRange {
 }
 
 fn clamp(range: NSRange) -> NSRange {
-    NSRange { location: range.location, length: range.length.min(MAX_LENGTH) }
+    NSRange {
+        location: range.location,
+        length: range.length.min(MAX_LENGTH),
+    }
 }
 
 type AsyncFn = unsafe extern "C-unwind" fn(*mut AnyObject, Sel, NSRange, *mut c_void);
-type SyncFn = unsafe extern "C-unwind" fn(*mut AnyObject, Sel, NSRange, *mut NSRange) -> *mut AnyObject;
+type SyncFn =
+    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, NSRange, *mut NSRange) -> *mut AnyObject;
 
 static ASYNC_ORIGINAL: OnceLock<AsyncFn> = OnceLock::new();
 static SYNC_ORIGINAL: OnceLock<SyncFn> = OnceLock::new();
 
 // -attributedSubstringForProposedRange:completionHandler:
-unsafe extern "C-unwind" fn clamped_async(this: *mut AnyObject, cmd: Sel, range: NSRange, handler: *mut c_void) {
+unsafe extern "C-unwind" fn clamped_async(
+    this: *mut AnyObject,
+    cmd: Sel,
+    range: NSRange,
+    handler: *mut c_void,
+) {
     if let Some(original) = ASYNC_ORIGINAL.get() {
         original(this, cmd, clamp(range), handler);
     }
 }
 
 // -attributedSubstringForProposedRange:actualRange:
-unsafe extern "C-unwind" fn clamped_sync(this: *mut AnyObject, cmd: Sel, range: NSRange, actual: *mut NSRange) -> *mut AnyObject {
+unsafe extern "C-unwind" fn clamped_sync(
+    this: *mut AnyObject,
+    cmd: Sel,
+    range: NSRange,
+    actual: *mut NSRange,
+) -> *mut AnyObject {
     match SYNC_ORIGINAL.get() {
         Some(original) => original(this, cmd, clamp(range), actual),
         None => std::ptr::null_mut(),
@@ -77,13 +91,13 @@ pub fn limit_attributed_substrings(webview: *mut c_void) {
         let sel = sel!(attributedSubstringForProposedRange:completionHandler:);
         if ASYNC_ORIGINAL.get().is_none() {
             if let Some(original) = override_method(class, sel, std::mem::transmute::<AsyncFn, Imp>(clamped_async)) {
-                let _ = ASYNC_ORIGINAL.set(std::mem::transmute::<Imp, AsyncFn>(original));
+                assert!(ASYNC_ORIGINAL.set(std::mem::transmute::<Imp, AsyncFn>(original)).is_ok(), "Async selection hook installed twice");
             }
         }
         let sel = sel!(attributedSubstringForProposedRange:actualRange:);
         if SYNC_ORIGINAL.get().is_none() {
             if let Some(original) = override_method(class, sel, std::mem::transmute::<SyncFn, Imp>(clamped_sync)) {
-                let _ = SYNC_ORIGINAL.set(std::mem::transmute::<Imp, SyncFn>(original));
+                assert!(SYNC_ORIGINAL.set(std::mem::transmute::<Imp, SyncFn>(original)).is_ok(), "Sync selection hook installed twice");
             }
         }
     }

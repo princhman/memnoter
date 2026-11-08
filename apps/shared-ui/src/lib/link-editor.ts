@@ -1,8 +1,7 @@
 import { action } from "./shortcuts.ts";
-import { isTauri } from "./backend.ts";
+import { openExternalLink } from "./backend.ts";
 import { Extension } from "@tiptap/core";
 import { type EditorState, Plugin, PluginKey } from "@tiptap/pm/state";
-import { openUrl } from "@tauri-apps/plugin-opener";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -38,8 +37,7 @@ export function normalizeHref(input: string) {
 }
 
 export function openLink(href: string) {
-  if (!isTauri()) { window.open(href, "_blank", "noopener,noreferrer"); return; }
-  openUrl(href).catch((error) => console.error("Failed to open link:", error));
+  openExternalLink(href);
 }
 
 export const LinkEditor = Extension.create({

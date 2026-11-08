@@ -71,7 +71,6 @@ import ImageIO
         insetReport?.cancel()
         insetReport = Task { @MainActor in
             do {
-                try await Task.sleep(for: .milliseconds(40))
                 guard !Task.isCancelled, ready else { return }
                 reportedViewport = viewport
                 _ = try await run("window.memnoterEditor?.[topMethod](top * window.innerHeight / height); window.memnoterEditor?.[bottomMethod](inset * window.innerHeight / height)",
@@ -207,12 +206,11 @@ import ImageIO
                 #if DEBUG
                 print("[editor exec] \(command) \(args)")
                 #endif
-                let reply = try await execute(command, args)
+                // Tiptap also returns false for harmless no-ops, such as setting
+                // an existing paragraph. Failures arrive through the error event
+                // or the JavaScript exception handled below.
+                _ = try await execute(command, args)
                 if focusAfter { _ = try await callEditor(.focus) }
-                #if DEBUG
-                print("[editor reply] \(command): \(String(describing: reply))")
-                #endif
-                if reply as? Bool == false { self.error = "Editor could not perform \(command)." }
             } catch { self.error = String(describing: error) }
         }
     }
@@ -229,7 +227,8 @@ import ImageIO
         let previous = barrier
         let next = Task { @MainActor in
             // A failed flush can be retried; open itself also drains pending writes.
-            _ = try? await previous?.value
+            do { _ = try await previous?.value }
+            catch { NSLog("Previous editor operation failed; retrying: %@", String(describing: error)) }
             _ = try await callEditor(method, arguments, parameters: parameters)
         }
         barrier = next

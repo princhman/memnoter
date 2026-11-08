@@ -6,6 +6,7 @@ import { useRef, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { CellSelection } from "@tiptap/pm/tables";
+import { TableControls } from "@/components/table-controls";
 import { TableBubbleActions } from "@/components/table-bubble-actions";
 import { TextSelection } from "@tiptap/pm/state";
 import {
@@ -69,6 +70,8 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
   if (!editor || !active) return null;
 
   return (
+    <>
+    <TableControls editor={editor} />
     <BubbleMenu
       editor={editor}
       role="toolbar"
@@ -218,6 +221,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       {active.inTable && <TableBubbleActions editor={editor} />}
       </>}
     </BubbleMenu>
+    </>
   );
 }
 

@@ -1,6 +1,7 @@
+import { editorHost } from "@/lib/editor-host";
 import { outline } from "./outline.ts";
 import { useEffect, useLayoutEffect } from "react";
-import { isNativeHost } from "./backend";
+import { onHostNavigation } from "./editor-host";
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import { sectionFocusKey } from "./section-focus";
@@ -14,13 +15,11 @@ import {
   type ModuleView,
 } from "./store";
 
-const SCROLL_CONTAINER = ".app-scroll-container";
 // Images and formulas mount after the text and change the layout; hold the
-// anchored block in place until the user takes over or this passes.
-const ANCHOR_HOLD_MS = 3_000;
+// anchored block in place until the user navigates or takes over.
 const SAVE_DELAY_MS = 150;
 
-const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown", "memnoter:reveal"];
+const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"];
 
 type ScrollAnchor = NonNullable<ModuleView["scrollAnchor"]>;
 
@@ -118,17 +117,17 @@ function restoreScroll(
       onFailure();
     }
   });
-  let holdTimeout: number | undefined;
 
   const stop = () => {
     if (stopActiveRestore === stop) stopActiveRestore = undefined;
+    stopNavigation();
     resizeObserver.disconnect();
-    window.clearTimeout(holdTimeout);
     for (const event of USER_SCROLL_EVENTS) {
       container.removeEventListener(event, stop);
     }
   };
 
+  const stopNavigation = onHostNavigation(container, stop);
   stopActiveRestore?.();
   stopActiveRestore = stop;
   try {
@@ -138,7 +137,6 @@ function restoreScroll(
     stop();
     throw error;
   }
-  holdTimeout = window.setTimeout(stop, ANCHOR_HOLD_MS);
   for (const event of USER_SCROLL_EVENTS) {
     container.addEventListener(event, stop, { passive: true });
   }
@@ -146,10 +144,8 @@ function restoreScroll(
   return stop;
 }
 
-// Stops holding each restored editor's scroll position.
 const activeSaves = new Map<Editor, () => void>();
 
-// Native calls this before switching notes or suspending JavaScript.
 export function flushPersistedViews() {
   for (const save of activeSaves.values()) save();
   saveState();
@@ -163,7 +159,7 @@ const restoredViews = new WeakMap<Editor, (() => void) | undefined>();
 export function restoreView(editor: Editor, moduleId: string) {
   if (editor.isDestroyed || restoredViews.has(editor)) return;
 
-  const container = editor.view.dom.closest<HTMLElement>(SCROLL_CONTAINER);
+  const container = editorHost.scrollContainer(editor.view.dom);
   if (!container) return;
 
   const saved = appStore.state.viewByModule[moduleId];
@@ -195,7 +191,7 @@ export function restoreView(editor: Editor, moduleId: string) {
         editor.commands.setFolds(saved.foldedSections ?? []);
         // A restored caret must not summon the keyboard on launch. Tapping the
         // editor is the user's decision to begin editing.
-        if (!isNativeHost()) editor.commands.focus(undefined, { scrollIntoView: false });
+        if (editorHost.restoreFocus) editor.commands.focus(undefined, { scrollIntoView: false });
         stopRestoring = restoreScroll(editor, container, saved, discard);
       }
     } else {
@@ -223,10 +219,9 @@ export function usePersistedView(
   useLayoutEffect(() => {
     if (!editor || !isReady) return;
 
-    const container = editor.view.dom.closest<HTMLElement>(SCROLL_CONTAINER);
+    const container = editorHost.scrollContainer(editor.view.dom);
     if (!container) return;
 
-    // Loading usually restored it already.
     restoreView(editor, moduleId);
 
     let saveTimeout: number | undefined;
@@ -265,7 +260,6 @@ export function usePersistedView(
     return () => {
       activeSaves.delete(editor);
       restoredViews.get(editor)?.();
-      // A rerun of this effect for the same editor restores again.
       restoredViews.delete(editor);
       // Switching notes right after a change must not lose it.
       if (saveTimeout !== undefined) {

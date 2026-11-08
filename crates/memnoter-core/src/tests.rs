@@ -60,17 +60,18 @@ impl Fixture {
     }
 
     fn file_with_id(&self, module: &str, id: String) -> String {
-        let path = self.dir.join("files").join(&id);
-        std::fs::write(&path, b"image bytes").unwrap();
-        self.db
-            .conn
-            .lock()
-            .unwrap()
-            .execute(
-                "insert into files values (?1, ?2, ?3, 'image/png')",
-                params![id, module, path.to_str().unwrap()],
-            )
-            .unwrap();
+        let status: serde_json::Value =
+            serde_json::from_str(&dispatch(&self.core, "sync_status", "{}").unwrap()).unwrap();
+        dispatch(
+            &self.core,
+            "sync_store_file",
+            &serde_json::json!({
+                "fileId": id, "moduleId": module, "fileType": "image/png",
+                "bytes": b"image bytes".to_vec(), "generation": status["generation"],
+            })
+            .to_string(),
+        )
+        .unwrap();
         id
     }
 
@@ -87,16 +88,24 @@ impl Fixture {
     }
 
     fn row_exists(&self, id: &str) -> bool {
-        self.db
-            .conn
-            .lock()
-            .unwrap()
-            .query_one(
-                "select exists(select 1 from files where id = ?1)",
-                [id],
-                |row| row.get(0),
-            )
-            .unwrap()
+        ["note", "other"]
+            .iter()
+            .filter_map(|module| {
+                dispatch(
+                    &self.core,
+                    "get_content",
+                    &serde_json::json!({"moduleId":module}).to_string(),
+                )
+                .ok()
+            })
+            .any(|raw| {
+                let content: serde_json::Value = serde_json::from_str(&raw).unwrap();
+                content["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|file| file["id"] == id)
+            })
     }
 }
 
@@ -568,13 +577,12 @@ fn search_ranks_titles_first_and_marks_matches() {
         .unwrap();
     f.index("other", "nothing here", r"\int_0^1 f(x)\,dx", 1, false)
         .unwrap();
-    f.db.lock()
-        .unwrap()
-        .execute(
-            "update search_index set title = 'Integrals' where module_id = 'other'",
-            [],
-        )
-        .unwrap();
+    dispatch(
+        &f.core,
+        "rename_module",
+        &serde_json::json!({"moduleId":"other","name":"Integrals"}).to_string(),
+    )
+    .unwrap();
 
     let results = search_notes(&f.db, "integ".into(), 10).unwrap();
     let ids: Vec<_> = results.iter().map(|r| r.module_id.as_str()).collect();
@@ -849,10 +857,10 @@ fn images_survive_moving_the_data_directory() {
     let moved = dir.with_extension("moved");
     let core = Core::open(&dir).unwrap();
     let db = &core.db;
-    let module = create_module(&db, "Images".into()).unwrap();
+    let module = create_module(db, "Images".into()).unwrap();
     let image = save_file(
         &dir,
-        &db,
+        db,
         module.clone(),
         b"image bytes".to_vec(),
         "image/png".into(),

@@ -1,3 +1,4 @@
+import { editorHost } from "./editor-host";
 // Share one observer and one mount frame across an editor's formula views.
 // Keep rendered views mounted: scrolling back should not repeat their work.
 export function createViewportRenderer() {
@@ -30,6 +31,7 @@ export function createViewportRenderer() {
       // mount so the observer uses the actual note scroll container as root.
       frame = requestAnimationFrame(() => {
         frame = undefined;
+        const first = pending.keys().next().value;
         observer = new IntersectionObserver(
           (entries) => {
             for (const entry of entries) {
@@ -42,7 +44,7 @@ export function createViewportRenderer() {
             }
           },
           {
-            root: pending.keys().next().value?.closest(".app-scroll-container") ?? null,
+            root: first ? editorHost.scrollContainer(first) : null,
             rootMargin: "800px 0px",
           },
         );

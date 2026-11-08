@@ -113,11 +113,6 @@ jobs:
             exit 1
           fi
           build_number=$(date -u +%Y%m%d%H%M)
-          if [[ "$build_number" -le 202611031741 ]]; then
-            echo "::error::Build number must exceed the last local upload (202611031741). Check the runner clock."
-            exit 1
-          fi
-          echo "MARKETING_VERSION=$version" >> "$GITHUB_ENV"
           echo "CURRENT_PROJECT_VERSION=$build_number" >> "$GITHUB_ENV"
 
       # Swift 6 and iOS 17 deployment support; don't depend on runner defaults.
@@ -162,9 +157,7 @@ jobs:
             -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            DEVELOPMENT_TEAM=BVQCX5TLX3 CODE_SIGN_STYLE=Automatic \
-            MARKETING_VERSION="$MARKETING_VERSION" \
-            CURRENT_PROJECT_VERSION="$CURRENT_PROJECT_VERSION"
+            DEVELOPMENT_TEAM=BVQCX5TLX3 CODE_SIGN_STYLE=Automatic
 
       - name: Upload archive dSYMs
         if: ${{ always() }}

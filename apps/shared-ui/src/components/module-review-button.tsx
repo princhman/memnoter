@@ -1,16 +1,14 @@
-import { Link, useMatchRoute } from "@tanstack/react-router";
+import { useOpenModuleId } from "@/lib/open-module";
+import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
 
 // Reviews the open module's cards; shown beside the breadcrumbs.
 export function ModuleReviewButton() {
-  const matchRoute = useMatchRoute();
+  const moduleId = useOpenModuleId();
   const { forModule } = useDueCounts();
-  // These pages also match the module id pattern.
-  const isPage = !!matchRoute({ to: "/settings" }) || !!matchRoute({ to: "/review" });
-  const match = matchRoute({ to: "/$moduleId" });
-  if (!match || isPage) return null;
+  if (!moduleId) return null;
 
   return (
     <Button
@@ -18,10 +16,10 @@ export function ModuleReviewButton() {
       variant="ghost"
       className="text-muted-foreground"
       nativeButton={false}
-      render={<Link to="/review" search={{ module: match.moduleId }} />}
+      render={<Link to="/review" search={{ module: moduleId }} />}
     >
       Review
-      <CardCounts counts={forModule(match.moduleId)} />
+      <CardCounts counts={forModule(moduleId)} />
     </Button>
   );
 }

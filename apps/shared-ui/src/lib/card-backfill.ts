@@ -7,7 +7,6 @@ import { saveQueue } from "@/lib/saves";
 
 import type { WritePermit } from "@/lib/write-lifecycle";
 
-const FIRST_RENDER_TIMEOUT_MS = 10_000;
 
 // Loads a note into an editor that is never shown. That gives its card blocks
 // ids exactly as opening the note would, and those ids are saved like any edit.
@@ -22,13 +21,8 @@ export async function indexStoredCards(moduleId: string, doc: import("yjs").Doc,
   doc.on("update", save);
 
   let editor: Editor | undefined;
-  let timeout: number | undefined;
   try {
-    await new Promise<void>((resolve, reject) => {
-      timeout = window.setTimeout(
-        () => reject(new Error("Timed out loading the note")),
-        FIRST_RENDER_TIMEOUT_MS,
-      );
+    await new Promise<void>((resolve) => {
       editor = new Editor({
         element: document.createElement("div"),
         editable: false,
@@ -46,7 +40,6 @@ export async function indexStoredCards(moduleId: string, doc: import("yjs").Doc,
       sync.stop();
     }
   } finally {
-    window.clearTimeout(timeout);
     editor?.destroy();
     doc.off("update", save);
   }

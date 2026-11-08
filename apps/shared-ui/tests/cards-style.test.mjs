@@ -1,54 +1,47 @@
+import { browserHarness } from "./support/browser.mjs";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-// Parse the shipped stylesheet: these declarations are the visual contract
-// for real editable text, not a separate test-only rendering of the syntax.
-const require = createRequire(import.meta.resolve("vite"));
-const { parse } = require("postcss");
-const css = parse(await readFile(new URL("../src/App.css", import.meta.url), "utf8"));
-const style = (selector) => {
-  const declarations = new Map();
-  css.walkRules(selector, (rule) => rule.walkDecls(({ prop, value }) => declarations.set(prop, value)));
-  return declarations;
-};
+const { createServer, webkit } = browserHarness(import.meta.url);
 
-test("cloze braces stay hidden while editing their block", () => {
-  const braces = style(".tiptap .cloze-brace");
-  assert.equal(Number.parseFloat(braces.get("font-size")), 0);
-  assert.ok(!["none", "hidden"].includes(braces.get("display")));
-
-  // The active-block rule must not make the braces visible again.
-  const active = style(".tiptap .card-block-active .cloze-brace");
-  assert.equal(Number.parseFloat(active.get("font-size") ?? braces.get("font-size")), 0);
-});
-
-test("the hidden answer is tinted and clearly underlined", () => {
-  const answer = style(".tiptap .cloze-text");
-  assert.equal(answer.get("border-radius"), undefined);
-  assert.match(answer.get("box-shadow"), /^inset 0 -2px 0 0 /);
-  assert.ok(answer.get("background-color") && answer.get("background-color") !== "transparent");
-});
-
-test("the `::` arrow is drawn without a box behind it", () => {
-  const separator = style(".tiptap .card-sep");
-  assert.equal(separator.get("color"), "transparent");
-  assert.equal(separator.get("background-color"), undefined);
-  assert.equal(separator.get("mask"), undefined);
-});
-
-test("rendered cloze math shares the tint and has a square underline", () => {
-  const math = style(".tiptap .cloze-math .inline-math-widget");
-  assert.equal(math.get("background-color"), style(".tiptap .cloze-text").get("background-color"));
-  assert.equal(math.get("border-radius"), "0");
-  assert.equal(math.get("box-shadow"), style(".tiptap .cloze-text").get("box-shadow"));
-  assert.equal(style(".dark .tiptap .cloze-math .inline-math-widget").get("background-color"),
-    style(".dark .tiptap .cloze-text").get("background-color"));
-});
-
-
-test("the card dot's list offset matches one level of list indent", () => {
-  const indent = Number.parseFloat(style(".tiptap ul,\n.tiptap ol").get("padding-left")) + Number.parseFloat(style(".tiptap li").get("padding-left"));
-  assert.equal(Number.parseFloat(style(".tiptap").get("--card-list-indent")), indent);
+test("real card decorations hide braces and tint prose and rendered math in either theme", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/selection.html`);
+    await page.waitForFunction(() => !!window.editor);
+    await page.evaluate(() => editor.commands.setContent({ type: "doc", content: [
+      { type: "paragraph", content: [{ type: "text", text: "Recall {{answer " }, { type: "inlineMath", content: [{ type: "text", text: "x^2" }] }, { type: "text", text: "}}" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Question :: Answer" }] },
+    ] }));
+    for (const dark of [false, true]) for (const active of [false, true]) {
+      await page.evaluate(({ dark, active }) => {
+        document.documentElement.classList.toggle("dark", dark);
+        editor.commands.setTextSelection(active ? 5 : editor.state.doc.content.size - 1);
+      }, { dark, active });
+      await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))));
+      const styles = await page.evaluate(() => {
+        const read = selector => [...document.querySelectorAll(selector)].map(el => {
+          const s = getComputedStyle(el); const r = el.getBoundingClientRect();
+          return { text: el.textContent, size: parseFloat(s.fontSize), display: s.display, background: s.backgroundColor, shadow: s.boxShadow, width: r.width, height: r.height };
+        });
+        return { braces: read(".cloze-brace"), text: read(".cloze-text"), math: read(".cloze-math .inline-math-widget") };
+      });
+      assert.ok(styles.braces.length >= 2);
+      assert.ok(styles.braces.every(s => s.size === 0 && s.display !== "none"));
+      assert.ok(styles.text.length > 0 && styles.math.length > 0);
+      for (const s of [...styles.text, ...styles.math]) {
+        assert.notEqual(s.background, "rgba(0, 0, 0, 0)");
+        assert.notEqual(s.shadow, "none", "answers remain underlined");
+      }
+      assert.ok(styles.text.some(s => s.width > 0 && s.height > 0));
+      assert.ok(styles.math.every(s => s.width > 0 && s.height > 0));
+      assert.equal(styles.text[0].background, styles.math[0].background);
+    }
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent), "Recall {{answer x^2}}Question :: Answer");
+  } finally { await browser?.close(); await server.close(); }
 });

@@ -126,7 +126,6 @@ struct RootView: View {
             .navigationTitle(selected == "review" && detailWidth < 500 ? "" : (module?.name ?? (selected == "review" ? "Review" : "Home")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Reserve narrow-window space for review history and counts.
                 if selected != "review" || detailWidth >= 500 {
                     ToolbarItem(placement: .principal) {
                         Text(module?.name ?? (selected == "review" ? "Review" : "Home"))
@@ -282,8 +281,7 @@ struct RootView: View {
                     }
                     do {
                         try await session?.flush()
-                        store.sync?.nudge()
-                        try await Task.sleep(for: .seconds(3))
+                        _ = try await store.sync?.pushAndWait()
                     } catch is CancellationError { }
                     catch { store.error = String(describing: error) }
                 }
@@ -331,11 +329,11 @@ struct RootView: View {
         do {
             try await client.write("set_module_numbering", NumberingArgs(moduleId: moduleId, enabled: enabled))
             store.modules = try await client.call("modules", Empty())
-            // Refresh the displayed editor and its live Contents without replacing the web view.
             _ = try await session?.callEditor(.refreshModules)
         } catch {
             // A write may have succeeded before a refresh failed; show persisted state on retry.
-            if let modules: [NoteModule] = try? await client.call("modules", Empty()) { store.modules = modules }
+            do { store.modules = try await client.call("modules", Empty()) }
+            catch { NSLog("Reloading modules after numbering failure: %@", String(describing: error)) }
             throw error
         }
     }

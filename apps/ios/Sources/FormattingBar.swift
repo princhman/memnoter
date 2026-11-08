@@ -11,7 +11,6 @@ struct FormatButtonStyle: ButtonStyle {
             .foregroundStyle(Color.primary)
             .background(Color(uiColor: .tertiarySystemFill).opacity(active || configuration.isPressed ? 1 : 0), in: RoundedRectangle(cornerRadius: 8))
             .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.35)
-            // Expand the hit target without enlarging the visible 30pt control.
             .padding(.horizontal, 3)
             .padding(.vertical, 7)
             .contentShape(Rectangle())
@@ -71,9 +70,7 @@ struct FormattingBar: View {
     }
 
     @ViewBuilder private var cardGroup: some View {
-        // Keep cloze creation visible without scrolling, including in a narrow window.
         Button { session.exec(session.state.inCloze ? .removeCard : .makeCard) } label: {
-            // Braces mean cloze on desktop too; the pressed state shows it can be removed.
             Label("Cloze", systemImage: "curlybraces")
                 .labelStyle(.titleAndIcon)
                 .fixedSize()
@@ -83,7 +80,6 @@ struct FormattingBar: View {
         .disabled(!session.state.inCloze && !session.state.canMakeCard)
         .accessibilityLabel(session.state.inCloze ? "Remove cloze" : "Make cloze from selection")
         .accessibilityAddTraits(session.state.inCloze ? .isSelected : [])
-        // Offer joining only when the selection spans separate clozes.
         if session.state.canJoinClozes {
             formatButton("Join clozes", "rectangle.stack", .joinClozes)
         }
@@ -188,7 +184,6 @@ struct FormattingBar: View {
 
     private var linkEditor: some View {
         HStack {
-            // Merely opening this popover leaves the editor's selection intact.
             TextField("Link URL", text: $link)
                 .textFieldStyle(.roundedBorder).keyboardType(.URL)
                 .textInputAutocapitalization(.never).autocorrectionDisabled()

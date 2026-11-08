@@ -14,30 +14,21 @@ test("card popup omits empty headings and new badges while retaining answers and
     browser = await webkit.launch();
     const page = await browser.newPage();
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/editor.html`);
-    const rows = await page.evaluate(async () => {
-      const { cardInfo } = await import("/src/lib/flashcards.ts");
-      return [
-        { answer: null, state: 0 },
-        { answer: "Forward", state: 0 },
-        { answer: "Reverse", state: 0 },
-        { answer: "Paris", state: 2 },
-        { answer: null, state: 1 },
-        { answer: null, state: 3 },
-        { answer: null, state: null },
-      ].map(({ answer, state }) => {
+    for (const [answer, state, expected] of [
+      [null, 0, "Due now"], ["Forward", 0, "ForwardDue now"], ["Reverse", 0, "ReverseDue now"],
+      ["Paris", 2, "ParisReviewDue now"], [null, 1, "LearningDue now"],
+      [null, 3, "RelearningDue now"], [null, null, "UnsavedNot saved yet"],
+    ]) {
+      await page.evaluate(async ({ answer, state }) => {
+        const { cardInfo } = await import("/src/lib/flashcards.ts");
         const schedule = state === null ? undefined : { id: "card", state, dueAt: 10, createdAt: 0, lastReviewAt: null };
-        const popup = cardInfo([{ answer, schedule }], true, 20, null);
-        return {
-          heading: popup.querySelector(".card-info-heading")?.textContent ?? null,
-          due: popup.querySelector(".card-info-due").textContent,
-          dot: popup.dataset.state,
-        };
-      });
-    });
-    assert.deepEqual(rows.map(r => r.heading), [null, "Forward", "Reverse", "ParisReview", "Learning", "Relearning", "Unsaved"]);
-    assert.equal(rows[0].due, "Due now");
-    assert.equal(rows[0].dot, "new");
-    assert.equal(rows[6].due, "Not saved yet");
+        document.body.replaceChildren(cardInfo([{ answer, schedule }], true, 20, null));
+      }, { answer, state });
+      const details = page.getByRole("group", { name: "Card details" });
+      await details.focus();
+      assert.ok((await details.getByRole("tooltip").textContent()).startsWith(expected));
+      assert.equal(await details.getByText("New", { exact: true }).count(), 0);
+    }
   } finally {
     await browser?.close();
     await server.close();

@@ -1,5 +1,5 @@
 import type { NativeViewState } from "../editor-host/protocol";
-import { isNativeHost, postNativeEvent, listen } from "./backend.ts";
+import { capabilities, postNativeEvent, listen } from "./backend.ts";
 import { createStore } from "@tanstack/react-store";
 
 // Where the reader was in a module, restored when it is opened again.
@@ -55,13 +55,14 @@ function normalizeState(value: Partial<appState> | null): appState {
 function loadState(): appState {
   try {
     // Custom WKURLSchemeHandler origins do not provide reliable Web Storage.
-    if (isNativeHost()) {
+    if (capabilities.nativeViewState) {
       return normalizeState({ ...window.__memnoterViewState, skipCardsCreatedToday: false });
     }
     const saved = localStorage.getItem(STORAGE_KEY);
     // Merge so state saved by older versions picks up new fields.
     return saved ? normalizeState(JSON.parse(saved)) : defaultState;
-  } catch {
+  } catch (error) {
+    console.error("Failed to load saved app state:", error);
     return defaultState;
   }
 }
@@ -74,7 +75,7 @@ let saveTimeout: number | undefined;
 export function saveState() {
   window.clearTimeout(saveTimeout);
   saveTimeout = undefined;
-  if (isNativeHost()) {
+  if (capabilities.nativeViewState) {
     const { skipCardsCreatedToday: _, ...viewState } = appStore.state;
     postNativeEvent("viewState", viewState);
     return;
@@ -149,7 +150,7 @@ export function setSkipCardsCreatedToday(skipCardsCreatedToday: boolean) {
   appStore.setState((state) => ({ ...state, skipCardsCreatedToday }));
 }
 
-if (isNativeHost()) {
+if (capabilities.nativeViewState) {
   void listen<boolean>("skip-cards-created-today", ({ payload }) => {
     if (appStore.state.skipCardsCreatedToday !== payload) setSkipCardsCreatedToday(payload);
   });

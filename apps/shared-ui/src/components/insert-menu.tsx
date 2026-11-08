@@ -26,12 +26,17 @@ function pickImages(onPick: (files: File[]) => void) {
   input.type = "file";
   input.accept = IMAGE_TYPES.join(",");
   input.multiple = true;
+  input.hidden = true;
+  input.dataset.imagePicker = "";
   input.addEventListener("change", () => {
+    input.remove();
     const files = Array.from(input.files ?? []).filter((file) =>
       IMAGE_TYPES.includes(file.type),
     );
     if (files.length) onPick(files);
   });
+  input.addEventListener("cancel", () => input.remove());
+  document.body.append(input);
   input.click();
 }
 
