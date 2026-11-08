@@ -675,7 +675,15 @@ mod tests {
             }
             restore(&mut conn, &dir.0, &backup.id, at(1)).unwrap();
             let status = serde_json::to_value(super::super::sync::status(&conn).unwrap()).unwrap();
-            assert_eq!(status["account"], serde_json::json!(current));
+            let expected = current.map(|raw| {
+                let value: serde_json::Value = serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
+                if value["server"].is_string() && value["userId"].is_string() {
+                    serde_json::json!({"server":value["server"],"userId":value["userId"]}).to_string()
+                } else { raw.to_string() }
+            });
+            // Restoring a legacy backup preserves the identity cursor without
+            // putting renewed credentials back into subsequent backups.
+            assert_eq!(status["account"], serde_json::json!(expected));
             assert_eq!(status["cursor"], if keep { 42 } else { 0 });
             let docs: Vec<String> = conn
                 .prepare("select doc from sync_outbox")

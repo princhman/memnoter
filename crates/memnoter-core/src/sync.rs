@@ -746,15 +746,19 @@ pub(crate) fn status(conn: &Connection) -> CommandResult<SyncStatus> {
     })
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AccountIdentity { server: String, #[serde(rename = "userId")] user_id: String }
+fn account_identity(raw: &str) -> String {
+    match serde_json::from_str::<AccountIdentity>(raw) {
+        Ok(mut identity) => { identity.server = identity.server.trim_end_matches('/').to_owned(); serde_json::to_string(&identity).unwrap() }
+        Err(_) => raw.to_owned(), // pre-identity native rows migrate at host startup
+    }
+}
+
 fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     let was_enabled = is_enabled(&tx)?;
-    // Legacy opaque IDs remain readable; structured identities discard every
-    // field except the portable server/user pair before touching storage.
-    let identity = serde_json::from_str::<serde_json::Value>(account).ok().and_then(|v| {
-        Some(serde_json::json!({"server": v.get("server")?.as_str()?.trim_end_matches('/'), "userId": v.get("userId")?.as_str()?}).to_string())
-    });
-    set_value(&tx, "account", identity.as_deref().unwrap_or(account))?;
+    set_value(&tx, "account", account_identity(account))?;
     rotate_generation(&tx)?;
     if !was_enabled {
         set_value(&tx, "cursor", 0)?;
@@ -770,13 +774,13 @@ pub(crate) fn reconcile_restored_account(
     current: Option<&str>,
 ) -> CommandResult<()> {
     let restored = get_value::<String>(conn, "account")?;
-    let same = restored.as_deref() == current && current.is_some();
+    let same = restored.as_deref().map(account_identity) == current.map(account_identity) && current.is_some();
     let tx = conn.transaction().map_err(db_err)?;
     if !same {
         disable(&tx)?;
     }
     if let Some(account) = current {
-        set_value(&tx, "account", account)?;
+        set_value(&tx, "account", account_identity(account))?;
         if !same {
             set_value(&tx, "cursor", 0)?;
             seed(&tx)?;
