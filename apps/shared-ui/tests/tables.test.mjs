@@ -337,3 +337,18 @@ test("block math conversion cannot lift selected cell content out of the table",
   assert.equal(changed, false);
   assert.deepEqual(await page.evaluate(() => editor.getJSON()), before);
 });
+
+test("/image keeps its file input attached until a pick, then hands over the images", async () => {
+  await fresh();
+  await page.keyboard.type("/image");
+  const chooser = page.waitForEvent("filechooser");
+  await page.keyboard.press("Enter");
+  const picker = await chooser;
+  // A detached input can be collected while the dialog is open, losing the pick.
+  assert.equal(await page.evaluate(() => document.querySelectorAll("input[data-image-picker]").length), 1);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+  await picker.setFiles({ name: "pixel.png", mimeType: "image/png", buffer: png });
+  await page.waitForFunction(() => window.pickedImages.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.pickedImages), ["pixel.png"]);
+  assert.equal(await page.evaluate(() => document.querySelectorAll("input[data-image-picker]").length), 0);
+});
