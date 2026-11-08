@@ -23,7 +23,7 @@ pub mod crypto;
 
 use crate::{db_err, delete_module_data, CommandResult, ContentUpdate, Db};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use yrs::{updates::decoder::Decode, Any, Doc, Map, Out, ReadTxn, StateVector, Transact, Update};
 
@@ -69,14 +69,7 @@ pub fn migrate(conn: &Connection) -> CommandResult<()> {
         );",
     )
     .map_err(db_err)?;
-    let has_sync_id = conn
-        .prepare("select 1 from pragma_table_info('review_log') where name = 'sync_id'")
-        .and_then(|mut stmt| stmt.exists([]))
-        .map_err(db_err)?;
-    if !has_sync_id {
-        conn.execute_batch("alter table review_log add column sync_id TEXT;")
-            .map_err(db_err)?;
-    }
+    crate::db::ensure_column(conn, "review_log", "sync_id", "TEXT")?;
     conn.execute_batch(
         "create unique index if not exists review_log_sync_id on review_log(sync_id) where sync_id is not null;",
     )
@@ -493,25 +486,6 @@ fn module_exists(conn: &Connection, module_id: &str) -> CommandResult<bool> {
     .map_err(db_err)
 }
 
-fn insert_module(conn: &Connection, module_id: &str, name: &str) -> CommandResult<()> {
-    conn.execute(
-        "insert into modules (id, name) values (?1, ?2)",
-        params![module_id, name],
-    )
-    .map_err(db_err)?;
-    conn.execute(
-        "insert into contents (module_id, state) values (?1, ?2)",
-        params![module_id, Vec::<u8>::new()],
-    )
-    .map_err(db_err)?;
-    conn.execute(
-        "insert into search_index (module_id, title, body, math) values (?1, ?2, '', '')",
-        params![module_id, name],
-    )
-    .map_err(db_err)?;
-    Ok(())
-}
-
 // Brings the local module rows in line with the vault: creates and renames.
 // Returns the modules the vault deleted that still exist here; deleting them
 // removes files, so the caller does it after committing.
@@ -534,20 +508,11 @@ fn reconcile(tx: &Transaction, doc: &Doc) -> CommandResult<(bool, Vec<String>)> 
         let Some(name) = module.name else { continue };
         match local {
             None => {
-                insert_module(tx, &id, &name)?;
+                crate::content::module_rows::insert(tx, &id, &name, &[])?;
                 changed = true;
             }
             Some(current) if current != name => {
-                tx.execute(
-                    "update modules set name = ?2 where id = ?1",
-                    params![id, name],
-                )
-                .map_err(db_err)?;
-                tx.execute(
-                    "update search_index set title = ?2 where module_id = ?1",
-                    params![id, name],
-                )
-                .map_err(db_err)?;
+                crate::content::module_rows::rename(tx, &id, &name)?;
                 changed = true;
             }
             Some(_) => {}
@@ -677,14 +642,9 @@ fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResul
     Ok(())
 }
 
-fn delete_modules(
-    conn: &mut Connection,
-    files_dir: Option<&Path>,
-    ids: &[String],
-) -> CommandResult<()> {
-    let Some(dir) = files_dir else { return Ok(()) };
+fn delete_modules(conn: &mut Connection, files_dir: &Path, ids: &[String]) -> CommandResult<()> {
     for id in ids {
-        delete_module_data(conn, dir, id)?;
+        delete_module_data(conn, files_dir, id)?;
         conn.execute("delete from sync_docs where doc = ?1", [review_doc_id(id)])
             .map_err(db_err)?;
     }
@@ -826,7 +786,7 @@ fn outbox(conn: &Connection, limit_bytes: i64) -> CommandResult<Vec<OutboxEntry>
 
 fn apply_remote(
     conn: &mut Connection,
-    files_dir: Option<&Path>,
+    files_dir: &Path,
     entries: Vec<RemoteEntry>,
     new_cursor: i64,
 ) -> CommandResult<ApplyResult> {
@@ -860,7 +820,7 @@ fn apply_remote(
     let vault = vault_modules(&doc);
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut touched: HashMap<String, ()> = HashMap::new();
+    let mut touched = HashSet::new();
     for entry in content_entries {
         if vault.get(&entry.doc).is_some_and(|module| module.deleted) {
             continue;
@@ -868,7 +828,7 @@ fn apply_remote(
         if !module_exists(&tx, &entry.doc)? {
             // Content can arrive before the vault entry that names it, for
             // example after the vault was compacted. The name follows later.
-            insert_module(&tx, &entry.doc, "Untitled")?;
+            crate::content::module_rows::insert(&tx, &entry.doc, "Untitled", &[])?;
             result.modules_changed = true;
         }
         tx.execute(
@@ -883,7 +843,7 @@ fn apply_remote(
                 bytes: entry.bytes,
             },
         });
-        touched.insert(entry.doc, ());
+        touched.insert(entry.doc);
     }
     let mut reviews: BTreeMap<String, Vec<RemoteEntry>> = BTreeMap::new();
     for entry in review_entries {
@@ -908,17 +868,8 @@ fn apply_remote(
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
     // The search and card indexes are rebuilt from the note text.
-    for module_id in touched.keys() {
-        tx.execute(
-            "delete from search_index_state where module_id = ?1",
-            [module_id],
-        )
-        .map_err(db_err)?;
-        tx.execute(
-            "delete from card_indexed_modules where module_id = ?1",
-            [module_id],
-        )
-        .map_err(db_err)?;
+    for module_id in &touched {
+        crate::search::invalidate_indexes(&tx, module_id)?;
     }
     let previous = cursor(&tx)?;
     set_value(&tx, "cursor", previous.max(new_cursor))?;
@@ -1042,23 +993,18 @@ fn store_file(
     file_type: &str,
     bytes: &[u8],
 ) -> CommandResult<crate::FileType> {
-    if uuid::Uuid::parse_str(file_id).is_err() {
-        return Err("Invalid file ID".into());
-    }
     if !module_exists(conn, module_id)? {
         return Err("The image's note no longer exists".into());
     }
-    std::fs::create_dir_all(files_dir).map_err(db_err)?;
-    let path = files_dir.join(file_id);
+    let data_dir = files_dir.parent().ok_or("Invalid files directory")?;
+    let path = crate::files::assets::path(data_dir, file_id)?;
+    if !path.is_file() {
+        crate::files::assets::write(data_dir, file_id, bytes)?;
+    }
     let path_str = path
         .to_str()
         .ok_or("File path is not valid UTF-8")?
-        .to_string();
-    // Written under a temporary name first, so a crash never leaves half a
-    // file under the real one.
-    let partial = files_dir.join(format!("{file_id}.partial"));
-    std::fs::write(&partial, bytes).map_err(db_err)?;
-    std::fs::rename(&partial, &path).map_err(db_err)?;
+        .to_owned();
     conn.execute(
         "insert or ignore into files (id, module_id, path, file_type) values (?1, ?2, ?3, ?4)",
         params![file_id, module_id, path_str, file_type],
@@ -1123,7 +1069,7 @@ pub fn sync_apply(
 ) -> CommandResult<ApplyResult> {
     let mut conn = db.lock()?;
     check_generation(&conn, &generation)?;
-    let result = apply_remote(&mut conn, Some(&data_dir.join("files")), entries, cursor)?;
+    let result = apply_remote(&mut conn, &data_dir.join("files"), entries, cursor)?;
     Ok(result)
 }
 
@@ -1183,13 +1129,11 @@ pub fn sync_reconcile(data_dir: &Path, db: &Db, generation: String) -> CommandRe
     let doc = load_vault(&tx)?;
     let (modules_changed, deleted) = reconcile(&tx, &doc)?;
     tx.commit().map_err(db_err)?;
-    delete_modules(&mut conn, Some(&data_dir.join("files")), &deleted)?;
+    delete_modules(&mut conn, &data_dir.join("files"), &deleted)?;
     Ok(ApplyResult {
-        updates: Vec::new(),
         modules_changed,
         deleted,
-        reviews_changed: false,
-        files_changed: false,
+        ..ApplyResult::default()
     })
 }
 
@@ -1331,7 +1275,11 @@ mod tests {
                 bytes: vault_update(&[("m.name", "From iPad".into())]),
             },
         ];
-        let result = apply_remote(&mut conn, None, entries, 3).unwrap();
+        let files_dir = Path::new(conn.path().unwrap())
+            .parent()
+            .unwrap()
+            .join("files");
+        let result = apply_remote(&mut conn, &files_dir, entries, 3).unwrap();
         assert!(result.modules_changed);
         assert_eq!(result.updates.len(), 1);
         let name: String = conn
@@ -1347,7 +1295,7 @@ mod tests {
         assert!(outbox_docs(&conn).iter().all(|doc| doc == VAULT_DOC));
 
         // The cursor never moves back.
-        apply_remote(&mut conn, None, vec![], 1).unwrap();
+        apply_remote(&mut conn, &files_dir, vec![], 1).unwrap();
         assert_eq!(cursor(&conn).unwrap(), 3);
     }
 
@@ -1357,10 +1305,14 @@ mod tests {
         conn.execute_batch("insert into modules (id, name) values ('m', 'Old'); insert into contents values ('m', X'');")
             .unwrap();
         enable(&mut conn, "{}").unwrap();
+        let files_dir = Path::new(conn.path().unwrap())
+            .parent()
+            .unwrap()
+            .join("files");
         let rename = vault_update_after(&conn, &[("m.name", "New".into())]);
         apply_remote(
             &mut conn,
-            None,
+            &files_dir,
             vec![RemoteEntry {
                 seq: 1,
                 doc: VAULT_DOC.into(),
@@ -1375,9 +1327,13 @@ mod tests {
         assert_eq!(name, "New");
 
         let delete = vault_update(&[("m.deleted", true.into())]);
+        let files_dir = Path::new(conn.path().unwrap())
+            .parent()
+            .unwrap()
+            .join("files");
         let result = apply_remote(
             &mut conn,
-            None,
+            &files_dir,
             vec![
                 RemoteEntry {
                     seq: 2,
@@ -1402,9 +1358,13 @@ mod tests {
     fn content_before_its_vault_entry_creates_a_placeholder() {
         let (_dir, mut conn) = db();
         enable(&mut conn, "{}").unwrap();
+        let files_dir = Path::new(conn.path().unwrap())
+            .parent()
+            .unwrap()
+            .join("files");
         apply_remote(
             &mut conn,
-            None,
+            &files_dir,
             vec![RemoteEntry {
                 seq: 1,
                 doc: "n".into(),
@@ -1420,7 +1380,7 @@ mod tests {
         let named = vault_update(&[("n.name", "Biology".into())]);
         apply_remote(
             &mut conn,
-            None,
+            &files_dir,
             vec![RemoteEntry {
                 seq: 2,
                 doc: VAULT_DOC.into(),
@@ -1480,7 +1440,16 @@ mod tests {
             })
             .collect();
         from.execute("delete from sync_outbox", []).unwrap();
-        apply_remote(to, None, entries, *seq).unwrap()
+        apply_remote(
+            to,
+            &Path::new(to.path().unwrap())
+                .parent()
+                .unwrap()
+                .join("files"),
+            entries,
+            *seq,
+        )
+        .unwrap()
     }
 
     fn add_card(conn: &Connection, module: &str, card: &str) {

@@ -129,7 +129,7 @@ fn sync_dispatch_upgrades_existing_database_and_applies_to_fresh_device() {
         .execute_batch(
             "drop table sync_outbox; drop table sync_state; drop table sync_docs;
          drop table sync_file_uploads; drop index review_log_sync_id;
-         alter table review_log drop column sync_id;",
+         alter table review_log drop column sync_id; PRAGMA user_version = 0;",
         )
         .unwrap();
     let upgraded = Core::open(&a.dir).unwrap();

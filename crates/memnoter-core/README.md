@@ -1,13 +1,15 @@
 # memnoter-core
 
 Tauri-free storage and data operations shared by Memnoter's desktop app and
-future native clients and sync server. No UniFFI bindings are included yet.
+native iOS app through the `memnoter-ffi` UniFFI crate.
 
 Open one `Core::open(data_dir)` for a data directory. It creates/migrates
 `main.db`, enables WAL and foreign keys, creates `files/`, settles interrupted
 restores, and imports a sibling legacy `com.vladyslavnalyvaiko.notes` directory
 when appropriate. Pass an absolute, writable, application-owned directory.
-Images have UUID filenames under `files/`; database image paths are absolute.
+Images have UUID filenames under `files/`; paths are derived from validated IDs.
+The legacy absolute `files.path` column remains for older builds. Ordered
+migrations use SQLite `user_version`, including unversioned database upgrades.
 Backups live in `backups/<timestamp>/` and include both SQLite and images.
 Do not independently modify these paths while the core is open.
 

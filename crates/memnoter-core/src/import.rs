@@ -1,5 +1,4 @@
 use crate::*;
-use std::io::Write;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,36 +22,11 @@ pub fn import_module(
     let mut written = Vec::new();
     let result = (|| {
         for image in &images {
-            if Uuid::parse_str(&image.id).is_err() {
-                return Err("Invalid import image ID".into());
-            }
-            let path = data_dir.join("files").join(&image.id);
-            // Never overwrite another note's asset, including on a duplicate id.
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-                .map_err(db_err)?;
+            let path = crate::files::assets::write(data_dir, &image.id, &image.bytes)?;
             written.push(path);
-            file.write_all(&image.bytes).map_err(db_err)?;
-            file.sync_all().map_err(db_err)?;
         }
         let tx = conn.transaction().map_err(db_err)?;
-        tx.execute(
-            "insert into modules (id, name) values (?1, ?2)",
-            params![id, name],
-        )
-        .map_err(db_err)?;
-        tx.execute(
-            "insert into contents (module_id, state) values (?1, ?2)",
-            params![id, bytes],
-        )
-        .map_err(db_err)?;
-        tx.execute(
-            "insert into search_index (module_id, title, body, math) values (?1, ?2, '', '')",
-            params![id, name],
-        )
-        .map_err(db_err)?;
+        content::module_rows::insert(&tx, &id, &name, &bytes)?;
         sync::record_module(&tx, &id, sync::VaultChange::Name(&name))?;
         for (image, path) in images.iter().zip(&written) {
             tx.execute(
@@ -72,12 +46,11 @@ pub fn import_module(
         tx.commit().map_err(db_err)?;
         Ok(id)
     })();
-    if result.is_err() {
+    if let Err(error) = &result {
         for path in written {
-            if let Err(error) = std::fs::remove_file(&path) {
+            if let Err(cleanup_error) = std::fs::remove_file(&path) {
                 return Err(format!(
-                    "Import failed: {}. Image cleanup failed: {error}",
-                    result.unwrap_err()
+                    "Import failed: {error}. Image cleanup failed: {cleanup_error}"
                 ));
             }
         }
@@ -325,12 +298,18 @@ mod tests {
         let saved = save_file(&dir.0, &core.db, id, vec![7], "image/png".into()).unwrap();
         let orphan = dir.0.join("files").join(Uuid::new_v4().to_string());
         std::fs::write(&orphan, b"crashed import").unwrap();
+        let partial = dir
+            .0
+            .join("files")
+            .join(format!("{}.partial", Uuid::new_v4()));
+        std::fs::write(&partial, b"interrupted download").unwrap();
         let unmanaged = dir.0.join("files/keep.txt");
         std::fs::write(&unmanaged, b"keep").unwrap();
         drop(core);
         let core = Core::open(&dir.0).unwrap();
         assert_eq!(modules(&core.db).unwrap().len(), 1);
         assert!(!orphan.exists());
+        assert!(!partial.exists());
         assert!(Path::new(&saved.path).exists());
         assert!(unmanaged.exists());
     }

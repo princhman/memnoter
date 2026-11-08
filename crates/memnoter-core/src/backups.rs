@@ -1,7 +1,7 @@
 // Snapshots of the database and images under app_data_dir/backups/<id>/, and
 // restoring from them.
 
-use super::{db_err, open_db, rewrite_file_paths, CommandResult, Db};
+use super::{db_err, open_db, CommandResult, Db};
 use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
@@ -227,8 +227,6 @@ fn stage_restore(source: &Path, app_dir: &Path, account: Option<&str>) -> Comman
     if check != "ok" {
         return Err(format!("Backup is damaged: {check}"));
     }
-    // Stored image paths are absolute; point them at this data dir.
-    rewrite_file_paths(&db_path, &app_dir.join("files"))?;
     // Reconcile before the swap so failure leaves the live database untouched.
     let staged = open_db(&staging)?;
     let mut conn = staged.lock()?;
@@ -476,7 +474,8 @@ mod tests {
     #[test]
     fn restore_brings_back_the_database_and_images() {
         let dir = TempDir::new();
-        let mut conn = open_db(&dir.0).unwrap().conn.into_inner().unwrap();
+        let db = open_db(&dir.0).unwrap();
+        let conn = db.lock().unwrap();
         let image = Uuid::new_v4().to_string();
         let image_path = dir.0.join("files").join(&image);
         std::fs::write(&image_path, b"image bytes").unwrap();
@@ -490,11 +489,29 @@ mod tests {
             params![image, image_path.to_str().unwrap()],
         )
         .unwrap();
-        super::super::index_note_text(&mut conn, "note", "original searchable", "", 1, false)
-            .unwrap();
+        drop(conn);
+        super::super::index_note(
+            &db,
+            "note".into(),
+            "original searchable".into(),
+            "".into(),
+            1,
+            false,
+        )
+        .unwrap();
+        let conn = db.lock().unwrap();
         let backup = create(&conn, &dir.0, at(0)).unwrap();
-        super::super::index_note_text(&mut conn, "note", "replacement searchable", "", 1, false)
-            .unwrap();
+        drop(conn);
+        super::super::index_note(
+            &db,
+            "note".into(),
+            "replacement searchable".into(),
+            "".into(),
+            1,
+            false,
+        )
+        .unwrap();
+        let mut conn = db.lock().unwrap();
 
         conn.execute_batch(
             "update contents set state = X'02';
@@ -508,13 +525,17 @@ mod tests {
         restore(&mut conn, &dir.0, &backup.id, at(1)).unwrap();
 
         assert_eq!(state(&conn), vec![1]);
+        drop(conn);
         assert_eq!(
-            super::super::search(&conn, "original", 10).unwrap().len(),
+            super::super::search_notes(&db, "original".into(), 10)
+                .unwrap()
+                .len(),
             1
         );
-        assert!(super::super::search(&conn, "replacement", 10)
+        assert!(super::super::search_notes(&db, "replacement".into(), 10)
             .unwrap()
             .is_empty());
+        let mut conn = db.lock().unwrap();
         let modules: i64 = conn
             .query_one("select count(*) from modules", [], |row| row.get(0))
             .unwrap();
@@ -532,13 +553,14 @@ mod tests {
             .unwrap();
         restore(&mut conn, &dir.0, &ids[0], at(2)).unwrap();
         assert_eq!(state(&conn), vec![2]);
+        drop(conn);
         assert_eq!(
-            super::super::search(&conn, "replacement", 10)
+            super::super::search_notes(&db, "replacement".into(), 10)
                 .unwrap()
                 .len(),
             1
         );
-        assert!(super::super::search(&conn, "original", 10)
+        assert!(super::super::search_notes(&db, "original".into(), 10)
             .unwrap()
             .is_empty());
         assert!(dir.0.join("files").join("later").exists());
@@ -548,10 +570,11 @@ mod tests {
     // reference must survive independently of both the visible tree and cards.
     #[test]
     fn restore_retains_compacted_image_leases_and_occlusion_cards() {
-        use crate::{compact_content, delete_module_data};
+        use crate::{delete_module_data, save_compaction};
         use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
         let dir = TempDir::new();
-        let mut conn = open_db(&dir.0).unwrap().conn.into_inner().unwrap();
+        let db = open_db(&dir.0).unwrap();
+        let conn = db.lock().unwrap();
         conn.execute_batch(
             "insert into modules (id, name) values ('source', 'Source'), ('copy', 'Copy');
              insert into contents values ('source', X'0000'), ('copy', X'0000');",
@@ -587,7 +610,9 @@ mod tests {
         )
         .unwrap();
         let watermark = conn.last_insert_rowid();
-        compact_content(&mut conn, "copy", &removed, watermark).unwrap();
+        drop(conn);
+        save_compaction(&db, "copy".into(), removed.clone(), watermark).unwrap();
+        let mut conn = db.lock().unwrap();
         let front = serde_json::json!({"version":1,"fileId":image,"imageId":"image","targetMaskId":"mask","revealed":false,"masks":[{"id":"mask","shape":"rectangle","x":0.1,"y":0.1,"width":0.2,"height":0.2}]}).to_string();
         let mut back: serde_json::Value = serde_json::from_str(&front).unwrap();
         back["revealed"] = true.into();
