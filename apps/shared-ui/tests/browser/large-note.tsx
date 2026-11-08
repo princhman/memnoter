@@ -1,3 +1,5 @@
+import { Profiler } from "react";
+import { TableOfContents, createTocStore } from "@/components/table-of-contents";
 import { createRoot, type Root } from "react-dom/client";
 import { EditorContent } from "@tiptap/react";
 import { TextBubbleMenu } from "@/components/text-bubble-menu";
@@ -53,7 +55,9 @@ Object.assign(window, {
     normalizer.destroy(); scratch.destroy();
     const doc = new Y.Doc(); Y.applyUpdate(doc, Y.encodeStateAsUpdate(saved)); saved.destroy();
     const start = performance.now();
-    const extensions = noteExtensions({ document: doc }).map(extension => {
+    const store = createTocStore();
+    const tocCommits: number[] = [];
+    const extensions = noteExtensions({ document: doc, onTocUpdate: items => store.setState(() => items) }).map(extension => {
       if (!extension.config.onTransaction) return extension;
       return extension.extend({
         onTransaction(event) {
@@ -64,7 +68,7 @@ Object.assign(window, {
     const editor = new Editor({ element: root.appendChild(document.createElement("div")), extensions });
     activeEditor = editor; activeDoc = doc;
     mount = createRoot(root);
-    mount.render(<TooltipProvider><EditorContent editor={editor} /><TextBubbleMenu editor={editor} /></TooltipProvider>);
+    mount.render(<TooltipProvider><EditorContent editor={editor} /><TextBubbleMenu editor={editor} /><Profiler id="toc" onRender={() => tocCommits.push(performance.now())}><TableOfContents editor={editor} store={store} /></Profiler></TooltipProvider>);
     editor.view.dispatch(editor.state.tr.setMeta(headingNumberingKey, true));
     await paint();
     const opening = performance.now() - start;
@@ -85,7 +89,7 @@ Object.assign(window, {
     const stats = { nodes, characters: editor.state.doc.textContent.length, opening };
     const positions: number[] = [];
     editor.state.doc.descendants((node, pos) => { if (node.type.name === "paragraph" && node.textContent.length > 20) positions.push(pos + 5); });
-    Object.assign(window, { editor, timings, doc, paint, stats, positions,
+    Object.assign(window, { editor, timings, doc, paint, stats, positions, tocCommits,
       async profileBackground() {
         // Exercise the production queue with in-memory receipts only. This
         // excludes native IPC and disk, without contacting the app backend.

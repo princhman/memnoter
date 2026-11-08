@@ -22,6 +22,8 @@ export const headingNumberingKey = new PluginKey<boolean>("headingNumbering");
 export const HeadingNumbering = Extension.create({
   name: "headingNumbering",
   addProseMirrorPlugins() {
+    // Selection-only transactions keep the immutable document and its numbers.
+    const cache = new WeakMap<Node, DecorationSet>();
     return [new Plugin({
       key: headingNumberingKey,
       state: {
@@ -31,7 +33,9 @@ export const HeadingNumbering = Extension.create({
       props: {
         decorations(state) {
           if (!headingNumberingKey.getState(state)) return null;
-          return DecorationSet.create(state.doc, [...headingNumbers(state.doc)].map(([pos, number]) =>
+          const cached = cache.get(state.doc);
+          if (cached) return cached;
+          const decorations = DecorationSet.create(state.doc, [...headingNumbers(state.doc)].map(([pos, number]) =>
             Decoration.widget(pos + 1, (view) => {
               const span = view.dom.ownerDocument.createElement("span");
               span.className = "heading-number";
@@ -47,6 +51,8 @@ export const HeadingNumbering = Extension.create({
               key: `heading-number-${number}`,
             }),
           ));
+          cache.set(state.doc, decorations);
+          return decorations;
         },
       },
     })];

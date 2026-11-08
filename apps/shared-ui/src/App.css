@@ -996,54 +996,29 @@ body {
 }
 
 /* ---------- Floating table of contents ---------- */
-/* A rail of dashes on the right edge; hovering one shows that section's outline. */
 .toc {
     position: fixed;
     z-index: 30;
     top: 50%;
     right: 1.25rem;
-    display: flex;
-    align-items: flex-start;
     transform: translateY(-50%);
 }
 
 .toc-rail {
-    position: relative;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
+    height: min(calc(var(--toc-rows, 1) * 8px), 60vh);
     max-height: 60vh;
     padding-left: 0.75rem;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: none;
 }
 
-/* Fine-pointer users can scrub every heading without scrolling the rail. */
-@media (pointer: fine) {
-    .toc-rail .toc-dash {
-        flex: 1 1 8px;
-    }
-
-    .toc-dash > span {
-        max-height: 50%;
-        pointer-events: none;
-    }
-
-    .toc-dash[data-active="true"] > span,
-    .toc-dash[data-related="true"] > span {
-        max-height: none;
-    }
-}
-
-/* Each dash gets a taller hit area than the 2px line it draws. */
+/* All rows shrink together; no heading is lost to a rail scrollbar. */
 .toc-dash {
     display: flex;
-    flex: none;
+    flex: 1 1 8px;
     align-items: center;
     justify-content: flex-end;
-    height: 8px;
     min-height: 0;
     padding-left: 0.5rem;
     cursor: pointer;
@@ -1052,234 +1027,18 @@ body {
 .toc-dash > span,
 .toc-dash[data-folded="true"]::before {
     height: 2px;
+    max-height: 50%;
     border-radius: 1px;
     background: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
-    transition: background-color 120ms ease;
-}
-
-.toc-dash[data-related="true"] > span,
-.toc-dash[data-related="true"]::before {
-    background: var(--chart-1);
-}
-
-/* Taller dashes for a finger; tapping one opens its outline. */
-@media (pointer: coarse) {
-    .toc-dash {
-        height: 14px;
-        padding-left: 1rem;
-    }
-}
-
-.toc-dash[data-active="true"] > span,
-.toc-dash[data-active="true"]::before {
-    background: var(--chart-3);
-}
-
-/* Positioned and clipped from script; catches the pointer on its way to the popup. */
-.toc-safe-area {
-    position: absolute;
-    z-index: 1;
-}
-
-/* Sits flush against the rail's padding, so hover carries over without a gap. */
-.toc-panel,
-.toc-flyout {
-    position: absolute;
-    right: 100%;
-    display: flex;
-    flex-direction: column;
-    width: max-content;
-    min-width: 10rem;
-    max-width: 16rem;
-    max-height: 50vh;
-    padding: 0.3rem;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    border-radius: 0.75rem;
-    background: var(--popover);
-    color: var(--popover-foreground);
-    box-shadow: 0 12px 32px color-mix(in oklch, black 30%, transparent);
-    animation: toc-panel-in 120ms ease-out;
-}
-
-
-.toc-panel {
-    right: 100%;
-}
-
-.toc-flyout {
-    z-index: 3;
-    animation: toc-flyout-in 120ms ease-out;
-    min-width: 0;
-    max-width: none;
-    padding: 0.5rem;
-    scrollbar-gutter: stable;
-}
-
-.toc-flyout-back {
-    display: none;
-    flex: none;
-    align-items: center;
-    gap: 0.375rem;
-    height: 1.75rem;
-    padding-inline: 0.5rem;
-    color: var(--muted-foreground);
-    font-size: 0.8125rem;
-    cursor: pointer;
-}
-
-.toc-flyout-back > svg {
-    width: 0.875rem;
-    height: 0.875rem;
-    transform: rotate(180deg);
-}
-
-.toc-flyout[data-side="overlay"] .toc-flyout-back {
-    display: flex;
-}
-
-@keyframes toc-flyout-in {
-    from { opacity: 0; }
-}
-
-.toc-flyout-safe-area {
-    z-index: 2;
-}
-
-/* When the note has no spare margin, present a deliberate floating outline. */
-.toc[data-compact="true"] .toc-panel,
-.toc-flyout {
-    width: min(20rem, calc(100vw - 6rem));
-    min-width: 0;
-    max-width: none;
-    max-height: calc(100vh - 2rem);
-    padding: 0.5rem;
-    overflow-anchor: none;
-    scrollbar-gutter: stable;
-    /* Local covers hide the scroll shadows only when that edge is reached. */
-    background-color: var(--popover);
-    background-image:
-        linear-gradient(var(--popover), var(--popover)),
-        linear-gradient(var(--popover), var(--popover)),
-        linear-gradient(to bottom, color-mix(in oklch, var(--muted-foreground) 25%, transparent), transparent),
-        linear-gradient(to top, color-mix(in oklch, var(--muted-foreground) 25%, transparent), transparent);
-    background-position: top, bottom, top, bottom;
-    background-size: 100% 12px;
-    background-repeat: no-repeat;
-    background-attachment: local, local, scroll, scroll;
-}
-
-.toc-row {
-    display: flex;
-    flex: none;
-    min-width: 0;
-    border-radius: 0.375rem;
-}
-
-.toc[data-compact="true"] .toc-row,
-.toc-flyout .toc-row {
-    height: 1.75rem;
-}
-
-.toc-row[data-hover="true"] {
-    background: var(--accent);
-}
-
-.toc-branch-trigger {
-    display: flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
-    width: 1.75rem;
-    border-radius: 0.375rem;
-    color: var(--muted-foreground);
-    cursor: pointer;
-}
-
-.toc-branch-trigger > svg {
-    width: 0.875rem;
-    height: 0.875rem;
-}
-
-.toc-branch-trigger:focus-visible {
-    background: var(--accent);
-    outline: none;
-}
-
-.toc-title-tooltip {
-    position: absolute;
-    z-index: 4;
-    width: max-content;
-    max-width: min(20rem, calc(100vw - 2rem));
-    padding: 0.375rem 0.625rem;
-    border-radius: 0.5rem;
-    background: var(--popover);
-    color: var(--popover-foreground);
-    box-shadow: var(--floating-shadow, 0 8px 24px rgb(0 0 0 / 0.2));
-    font-size: 0.75rem;
-    overflow-wrap: anywhere;
     pointer-events: none;
 }
 
-.toc[data-compact="true"] .toc-panel::-webkit-scrollbar,
-.toc-flyout::-webkit-scrollbar {
-    width: 6px;
-}
+.toc-dash[data-related="true"] > span,
+.toc-dash[data-related="true"]::before { background: var(--chart-1); }
+.toc-dash[data-active="true"] > span,
+.toc-dash[data-active="true"]::before { background: var(--chart-3); }
+.toc-dash:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
-.toc[data-compact="true"] .toc-panel::-webkit-scrollbar-thumb,
-.toc-flyout::-webkit-scrollbar-thumb {
-    border-radius: 1rem;
-    background: var(--muted-foreground);
-}
-
-.toc-item:focus-visible {
-    background: var(--accent);
-    outline: none;
-}
-
-
-@keyframes toc-panel-in {
-    from {
-        opacity: 0;
-        transform: translateX(0.25rem);
-    }
-}
-
-.toc-item {
-    display: flex;
-    flex: 1;
-    min-width: 0;
-    align-items: center;
-    gap: 0.25rem;
-    padding-block: 0.125rem;
-    padding-right: 0.5rem;
-    border-radius: 0.375rem;
-    color: var(--popover-foreground);
-    font-size: 0.8125rem;
-    line-height: 1.35;
-    text-align: left;
-    white-space: nowrap;
-    cursor: pointer;
-}
-
-.toc-item-title {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-/* Folded sections: a chevron in the outline, a dot before the dash in the rail. */
-.toc-item > svg {
-    flex: none;
-    width: 0.875rem;
-    height: 0.875rem;
-    color: var(--muted-foreground);
-}
-
-/* Colours come from the dash rules above, so the dot highlights with it. */
 .toc-dash[data-folded="true"]::before {
     content: "";
     width: 3px;
@@ -1288,19 +1047,43 @@ body {
     border-radius: 50%;
 }
 
-.toc-item[data-active="true"] {
-    color: var(--sidebar-primary);
+.toc-popup {
+    position: absolute;
+    right: 100%;
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    max-width: min(20rem, calc(100vw - 5rem));
+    padding: 0.375rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border-radius: 0.75rem;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 12px 32px color-mix(in oklch, black 30%, transparent);
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .toc-panel,
-    .toc-flyout {
-        animation: none;
-    }
+.toc-item {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
 }
+.toc-item:hover, .toc-item:focus-visible { background: var(--accent); outline: none; }
+.toc-item-title { min-width: 0; overflow-wrap: anywhere; }
+.toc-item > svg { flex: none; width: 0.875rem; height: 0.875rem; }
+.toc-item[data-active="true"] { color: var(--sidebar-primary); }
+.toc-item .katex { font-size: 1em; }
 
-.toc-item .katex {
-    font-size: 1em;
+@media (pointer: coarse) {
+    .toc-rail { height: min(calc(var(--toc-rows, 1) * 14px), 60vh); }
+    .toc-dash { flex-basis: 14px; padding-left: 1rem; }
 }
 
 /* Search matches are drawn as boxes behind the text, never as spans inside it,
@@ -1715,8 +1498,7 @@ body {
 .dark .note-image-controls,
 .dark .image-crop-dialog,
 .dark .tiptap .inline-math-preview > span,
-.dark .toc-panel,
-.dark .toc-flyout,
+.dark .toc-popup,
 .dark .tiptap .card-info-popup,
 .dark .occlusion-dialog {
     box-shadow: var(--floating-shadow);

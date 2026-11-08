@@ -120,3 +120,52 @@ Final pnpm test passes all 254 tests, including the new real-folder benchmark an
 synthetic outline regression. Earlier runs during concurrent checkout changes
 failed on TOC-panel TypeScript errors and browser reloads; those errors were
 resolved by the owning agent, and these two harnesses now disable HMR.
+
+## Massive-note clipboard investigation (2026-11-08)
+
+Run `node --experimental-strip-types --test tests/copy-large-note.test.mjs`.
+The synthetic fixture contains 1,000 root sections, 3,000 headings, 100 tables,
+100 block formulas, 1,000 inline formulas and 100 locally served images
+(14,800 descendants, 350,670 text characters). The large-note harness now mounts
+the desktop TOC as well as the real bubble menu and production extensions.
+A React Profiler verifies zero TOC commits during five in-section cursor moves;
+a cross-section move must still reveal the final section's details in the rail.
+The test dispatches a real DOM copy event with an in-memory DataTransfer and
+checks HTML and plain text, including the final section, tables, images and math.
+The 3-second copy/select-all ceilings detect catastrophic regressions rather than
+frame-rate differences. Native OS clipboard writes and WKWebView IPC are excluded.
+
+The original synthetic run (before adding resolved image assets) had 14,900 nodes:
+HEAD select-all/copy took 465/148ms; the uncommitted TOC took 490/148ms. Five
+in-section selections caused five TOC commits with the uncommitted TOC and zero
+at HEAD. After the section-selector fix, the same workload took 487/147ms and
+zero commits. These are single observations, not statistically established speedups.
+The hard freeze was not reproduced, so its root cause remains unconfirmed.
+The sidebar module menus expose Review, Rename and Delete; there is no note-copy
+or Markdown-export action there. Desktop Copy uses the native editing selector.
+
+Profiling isolates pre-existing selection overhead: WebKit measured 148ms in
+text-selection decorations, 53ms in heading-number decorations and 51ms in
+inline-math decorations, versus 2ms in clipboardTextSerializer. Chromium CPU
+sampling likewise put ProseMirror's buildTree/takeSpansForNode work first among
+JavaScript costs (197 buildTree self samples). Upstream buildTree scans the
+remaining decoration array for each child: creating thousands of selection
+boxes can grow quadratically. This investigation does not replace that upstream
+algorithm or claim to fix a native clipboard hang. Heading-number decoration sets
+are now cached by immutable document, removing their selection-only rebuild.
+The TOC subscribes to section identity, uses binary section lookup, memoizes
+roots/levels and numbering, and uses a fold-range sweep and Set membership to
+avoid headings-times-folds rendering costs.
+
+For optional Chromium CPU samples, set COPY_PROFILE=1. COPY_CHROMIUM can supply
+an already-installed compatible executable. COPY_BENCH_ROOT can point at a
+throwaway HEAD worktree containing this browser harness and linked dependencies.
+The default regression uses WebKit. No app data or clipboard contents are changed.
+
+Final resolved-image workload: HEAD select-all/copy 500/135ms; fixed checkout
+464/139ms. Heading-number decoration time went from 47ms to below WebKit's
+millisecond resolution. Clipboard text serialization was 2/1ms. Opening was
+2,593/2,507ms. Single-run differences should not be treated as stable speedups.
+Final focused tests: 18 passed. Full `npm test`: 259 passed on the clean rerun;
+the first run overlapped edits/build and had 10 navigation/context failures.
+`npm run build` passed with the existing chunk-size warning.

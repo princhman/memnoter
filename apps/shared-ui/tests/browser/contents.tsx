@@ -1,18 +1,16 @@
-import { Profiler } from "react";
 import { createRoot } from "react-dom/client";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { InlineMath } from "@/lib/inline-math";
 import Toc from "@tiptap/extension-table-of-contents";
-import { prepareFolderImport } from "@/lib/folder-import";
 import { TableOfContents, createTocStore } from "@/components/table-of-contents";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/App.css";
 
 const store = createTocStore();
-let tocCommits = 0;
 const params = new URLSearchParams(location.search);
 const level = params.has("relative") ? 2 : 1;
-const weeks = params.has("short") ? 1 : 10;
+const weeks = params.has("short") ? 2 : 10;
 const topics = params.has("short") ? 2 : 18;
 function topicContent(week: number, topic: number) {
   const title = topic === 10 ? "A long title about compilation and the many steps that a programmer takes to build a program" : `Week ${week + 1} course topic ${topic + 1}`;
@@ -28,13 +26,13 @@ const content = Array.from({ length: weeks }, (_, week) => {
 }).join("");
 function Outline() {
   const editor = useEditor({
-    extensions: [StarterKit, Toc.configure({
+    extensions: [StarterKit, InlineMath, Toc.configure({
       scrollParent: () => document.querySelector<HTMLElement>("main")!,
       onUpdate: (items) => store.setState(() => items),
     })],
-    content,
-    onCreate: ({ editor }) => Object.assign(window, { editor, store, prepareFolderImport }),
+    content: `<p>Introduction before the first section.</p>${content}`,
+    onCreate: ({ editor }) => Object.assign(window, { editor, store }),
   });
-  return <TooltipProvider><header style={{ height: 64, background: "var(--background)", position: "relative", zIndex: 40 }}>Programming notes</header><main className="app-scroll-container" style={{ height: "calc(100vh - 64px)", overflow: "auto", padding: "32px 64px" }}><EditorContent editor={editor} /><Profiler id="contents" onRender={() => Object.assign(window, { tocCommits: ++tocCommits })}><TableOfContents editor={editor} store={store} numbered={params.has("numbered")} /></Profiler></main></TooltipProvider>;
+  return <TooltipProvider><header style={{ height: 64, background: "var(--background)", position: "relative", zIndex: 40 }}>Programming notes</header><main className="app-scroll-container" style={{ height: "calc(100vh - 64px)", overflow: "auto", padding: "32px 64px" }}><EditorContent editor={editor} /><TableOfContents editor={editor} store={store} numbered={params.has("numbered")} /></main></TooltipProvider>;
 }
 createRoot(document.getElementById("root")!).render(<Outline />);
