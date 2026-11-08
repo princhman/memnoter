@@ -10,9 +10,10 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await server?.close(); });
 
-test('sidebar creates, renames, collapses and deletes folders while preserving modules and reloads order', async () => {
-  const page = await browser.newPage();
-  await page.addInitScript(() => window.installTestBridge({ tauri: { invoke: async (command, args) => {
+// A sidebar stored in localStorage, optionally starting with `seed` items.
+const useSidebarStore = (page, seed = []) => page.addInitScript(seed => {
+  if (localStorage.getItem('sidebar') === null && seed.length) localStorage.setItem('sidebar', JSON.stringify(seed));
+  window.installTestBridge({ tauri: { invoke: async (command, args) => {
     const items = JSON.parse(localStorage.getItem('sidebar') ?? '[]');
     if (command === 'sidebar_items') return items;
     if (command === 'save_sidebar_items') {
@@ -24,7 +25,12 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
       return null;
     }
     return [];
-  } } }));
+  } } });
+}, seed);
+
+test('sidebar creates, renames, collapses and deletes folders while preserving modules and reloads order', async () => {
+  const page = await browser.newPage();
+  await useSidebarStore(page);
   const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('sidebar') ?? '[]'));
   const row = id => page.locator(`[data-sidebar-item="${id}"]`).first();
   // Wait for the re-rendered list, not just the saved state, before measuring rows again.
@@ -34,8 +40,11 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
   const drag = async (from, to) => {
     const a = await from.boundingBox();
     const b = await to.boundingBox();
+    const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.mouse.move(a.x + 40, a.y + 12); await page.mouse.down();
-    await page.mouse.move(b.x + 40, b.y + 12, { steps: 15 }); await page.mouse.up();
+    // Let the sensor activate and the drop targets be measured before moving on, and settle before dropping.
+    await page.mouse.move(a.x + 40, a.y + 24, { steps: 3 }); await frames();
+    await page.mouse.move(b.x + 40, b.y + 12, { steps: 15 }); await frames(); await page.mouse.up();
   };
   const moduleOrder = () => page.locator('[data-sidebar-item]').evaluateAll(rows => rows.map(row => row.dataset.sidebarItem).filter(id => !id.startsWith('folder-')));
   try {
@@ -86,5 +95,32 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
     await row('0').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Science', exact: true }).count(), 0);
     assert.equal((await stored()).filter(item => item.name && item.deleted).length, 1);
+  } finally { await page.close(); }
+});
+
+test('a dragged module is previewed under the pointer, also while over a folder', async () => {
+  const page = await browser.newPage();
+  await useSidebarStore(page, [{ id: 'folder-study', name: 'Study', folder_id: null, sort_order: 0, collapsed: false, deleted: false }]);
+  try {
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/sidebar.html`);
+    const row = page.locator('[data-sidebar-item="1"]').first();
+    await row.waitFor();
+    const folder = page.getByRole('button', { name: 'Study', exact: true });
+    const [from, over] = await Promise.all([row.boundingBox(), folder.boundingBox()]);
+    const preview = page.locator('[data-sidebar-drag-preview]');
+    assert.equal(await preview.count(), 0, 'no preview before dragging');
+    await page.mouse.move(from.x + 40, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(over.x + 40, over.y + over.height / 2, { steps: 15 });
+    // A folder is not a slot in the list, so the row cannot preview by moving there:
+    // a copy of it follows the pointer instead.
+    await preview.waitFor({ timeout: 3000 });
+    const box = await preview.boundingBox();
+    assert.ok(Math.abs(box.y + box.height / 2 - (over.y + over.height / 2)) < 20, `the preview is under the pointer: ${box.y} vs ${over.y}`);
+    assert.ok(Math.abs(box.width - from.width) < 4, 'the preview is as wide as the row');
+    assert.ok((await preview.innerText()).includes(await row.innerText()), 'the preview shows the module');
+    await page.mouse.up();
+    await preview.waitFor({ state: 'detached', timeout: 3000 });
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar')).some(item => item.id === '1' && item.folder_id === 'folder-study'));
   } finally { await page.close(); }
 });

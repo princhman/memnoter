@@ -1,5 +1,6 @@
 import { useState, type PointerEventHandler, type ReactNode } from 'react';
-import { DndContext, PointerSensor, useSensor, useSensors, useDroppable, closestCenter, pointerWithin } from '@dnd-kit/core';
+import { createPortal } from 'react-dom';
+import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, useDroppable, closestCenter, pointerWithin } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ChevronRight, Ellipsis, Folder } from 'lucide-react';
@@ -48,11 +49,15 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
   const query = useQuery({ queryKey: sidebarKey, queryFn: () => call<SidebarItem[]>('sidebar_items') });
   const [editing, setEditing] = useState<SidebarItem | 'new' | null>(null);
   const [name, setName] = useState('');
+  // The row being dragged, so a copy of it can follow the pointer.
+  const [dragging, setDragging] = useState<{ id: string; width: number }>();
   const mutation = useMutation({
     mutationFn: (items: SidebarItem[]) => writeOperation(() => call('save_sidebar_items', { items })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: sidebarKey }),
   });
   const items = sidebarLayout(modules, query.data ?? []);
+  const dragged = dragging ? items.find(item => item.id === dragging.id) : undefined;
+  const draggedModule = dragged ? modules.find(module => module.id === dragged.id) : undefined;
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const save = (next: SidebarItem[]) => mutation.mutate(next.filter(item => JSON.stringify(item) !== JSON.stringify(query.data?.find(saved => saved.id === item.id))));
   const edit = (item: SidebarItem | 'new') => { setEditing(item); setName(item === 'new' ? '' : item.name ?? ''); };
@@ -92,7 +97,10 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
         const item = items.find(item => item.id === container.id);
         return item && item.id !== args.active.id && (active?.name === null || item.folder_id === null);
       }) });
-    }} onDragEnd={({ active, over }) => {
+    }} onDragStart={({ active }) => setDragging({ id: String(active.id), width: document.querySelector(`[data-sidebar-item="${window.CSS.escape(String(active.id))}"]`)?.getBoundingClientRect().width ?? 0 })}
+    onDragCancel={() => setDragging(undefined)}
+    onDragEnd={({ active, over }) => {
+      setDragging(undefined);
       suppressNextClick();
       if (!over || mutation.isPending) return;
       const target = String(over.id).replace(/:contents$/, '');
@@ -102,6 +110,14 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
       <DropZone id="root" highlight={false}><SortableContext items={items.filter(item => item.folder_id === null).map(item => item.id)} strategy={verticalListSortingStrategy}>
         <div className="space-y-0.5 pb-2">{items.filter(item => item.folder_id === null).map(row)}</div>
       </SortableContext></DropZone>
+      {/* A folder is not a slot in the list, so the row cannot preview by moving into it:
+          a copy follows the pointer instead. Portalled out of the scrolling sidebar. */}
+      {createPortal(<DragOverlay dropAnimation={null}>{dragged && <div data-sidebar-drag-preview inert aria-hidden style={{ width: dragging?.width }}
+        className="floating-surface cursor-grabbing rounded-md text-sm">
+        <SidebarMenu>{dragged.name === null
+          ? (draggedModule && renderModule(draggedModule))
+          : <SidebarMenuItem><SidebarMenuButton><ChevronRight /><Folder /><span>{dragged.name}</span></SidebarMenuButton></SidebarMenuItem>}</SidebarMenu>
+      </div>}</DragOverlay>, document.body)}
     </DndContext>
     <Dialog open={editing !== null} onOpenChange={open => { if (!open) setEditing(null); }}><DialogContent>
       <form onSubmit={event => {
