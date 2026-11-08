@@ -13,7 +13,7 @@ test('reader zoom preserves the reading point, scroll, crop and gesture lifecycl
     const page = await browser.newPage({ deviceScaleFactor: 2, viewport: { width: 1000, height: 1000 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => { if (command === 'get_content') return { state: [], updates: [], files: [] }; if (command === 'document_path') return '/selection.pdf'; throw new Error(command); } } });`);
-    await page.route('**/selection.pdf', route => route.fulfill({ contentType: 'application/pdf', body: pdfBytes() }));
+    await page.route('**/selection.pdf', route => route.fulfill({ contentType: 'application/pdf', body: pdfBytes(185) }));
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-region-selection.html`);
     const viewer = page.locator('#viewer');
     const viewport = viewer.locator('.overflow-auto');
@@ -22,7 +22,7 @@ test('reader zoom preserves the reading point, scroll, crop and gesture lifecycl
     const zoomIn = viewer.getByRole('button', { name: /^Zoom in/ });
     const zoomOut = viewer.getByRole('button', { name: /^Zoom out/ });
     await viewer.locator('canvas').first().waitFor();
-    await page.waitForFunction(() => document.querySelector('#viewer canvas')?.width > 0);
+    await page.waitForFunction(() => document.querySelector('#viewer canvas')?.getContext('2d').getImageData(0, 0, 1, 1).data[3] === 255);
     const waitLevel = value => page.waitForFunction(value => document.querySelector('[aria-label="Zoom level"]')?.textContent === value, value);
     // The same page coordinate must stay at the viewport center through button zoom.
     await viewport.evaluate(element => { element.scrollTop = 850; });
@@ -44,6 +44,50 @@ test('reader zoom preserves the reading point, scroll, crop and gesture lifecycl
     const beforeButton = await point();
     await zoomIn.click(); await waitLevel('110%'); samePoint(beforeButton, await point());
     await zoomOut.click(); await waitLevel('100%'); samePoint(beforeButton, await point());
+
+    // A held macOS pinch must remain a bitmap preview across a brief pause,
+    // including deep in a long PDF. The image must stay visible at settle.
+    await viewport.evaluate(element => { element.scrollTop = 416 * 149; });
+    await page.waitForFunction(() => document.querySelector('[data-pdf-page="150"] canvas')?.getContext('2d').getImageData(0, 0, 1, 1).data[3] === 255);
+    const beforeHeldPinch = await point();
+    const heldCanvas = viewer.locator('[data-pdf-page="150"] canvas');
+    const heldWidth = await heldCanvas.evaluate(element => element.width);
+    async function nativeGesture(type, scale) {
+      await viewport.evaluate((element, { type, scale }) => {
+        const box = element.getBoundingClientRect();
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(event, { scale: { value: scale }, clientX: { value: box.left + element.clientWidth / 2 }, clientY: { value: box.top + element.clientHeight / 2 } });
+        element.dispatchEvent(event);
+      }, { type, scale });
+    }
+    await nativeGesture('gesturestart', 1);
+    await nativeGesture('gesturechange', 1.25);
+    await page.waitForTimeout(500); // Fingers remain down; no gestureend yet.
+    assert.equal(await level.textContent(), '100%', 'a paused native pinch must not rerender the PDF mid-gesture');
+    assert.equal(await heldCanvas.evaluate(element => element.width), heldWidth);
+    samePoint(beforeHeldPinch, await point());
+    await nativeGesture('gesturechange', 1.3);
+    const settleFrames = await viewport.evaluate(element => new Promise((resolve, reject) => {
+      const canvas = element.querySelector('[data-pdf-page="150"] canvas');
+      const initialWidth = canvas.width;
+      const samples = [];
+      const sample = () => {
+        samples.push([...canvas.getContext('2d').getImageData(0, 0, 1, 1).data]);
+        if (canvas.width !== initialWidth && samples.length >= 3) resolve(samples);
+        else if (samples.length >= 120) reject(new Error('Zoomed page did not finish rendering'));
+        else requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+      const box = element.getBoundingClientRect();
+      const end = new Event('gestureend', { bubbles: true, cancelable: true });
+      Object.defineProperties(end, { scale: { value: 1.3 }, clientX: { value: box.left + element.clientWidth / 2 }, clientY: { value: box.top + element.clientHeight / 2 } });
+      element.dispatchEvent(end);
+    }));
+    assert.ok(settleFrames.every(pixel => pixel.join() === "255,0,0,255"), `settling must keep the page image visible: ${JSON.stringify(settleFrames)}`);
+    await waitLevel('130%'); samePoint(beforeHeldPinch, await point());
+    for (const value of ['120%', '110%', '100%']) { await zoomOut.click(); await waitLevel(value); }
+    await viewport.evaluate(element => { element.scrollTop = 850; });
+    await page.waitForTimeout(260); // Native/wheel overlap suppression expires.
 
     async function wheel(delta, count = 1, ctrlKey = true, fraction = .5) {
       return viewport.evaluate((element, { delta, count, ctrlKey, fraction }) => {

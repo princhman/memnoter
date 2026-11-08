@@ -1,7 +1,7 @@
 // The red page and green inset identify crop coordinates and overlay leakage.
-export function pdfBytes() {
-  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R 11 0 R 13 0 R] /Count 6 >>'];
-  for (let index = 0; index < 6; index++) {
+export function pdfBytes(pageCount = 6) {
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, index) => `${3 + index * 2} 0 R`).join(" ")}] /Count ${pageCount} >>`];
+  for (let index = 0; index < pageCount; index++) {
     const stream = '1 0 0 rg 0 0 400 400 re f\n0 1 0 rg 100 100 200 200 re f\n';
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Resources << >> /Contents ${4 + index * 2} 0 R >>`, `<< /Length ${stream.length} >>\nstream\n${stream}endstream`);
   }

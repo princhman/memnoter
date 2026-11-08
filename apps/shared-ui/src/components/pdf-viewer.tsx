@@ -53,12 +53,25 @@ const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, a
     setReady(null); setError("");
     const ratio = window.devicePixelRatio || 1;
     const viewport = page.getViewport({ scale: zoom });
-    target.width = Math.ceil(viewport.width * ratio);
-    target.height = Math.ceil(viewport.height * ratio);
-    const render = page.render({ canvas: target, viewport, transform: [ratio, 0, 0, ratio, 0, 0] });
-    const textLayer = new TextLayer({ textContentSource: page.streamTextContent(), container: layer, viewport });
-    void Promise.all([render.promise, textLayer.render()]).then(() => { if (!disposed) setReady({ page, zoom }); }).catch(error => { if (!disposed) setError(String(error)); });
-    return () => { disposed = true; render.cancel(); textLayer.cancel(); layer.replaceChildren(); target.width = 0; target.height = 0; };
+    // Keep the displayed bitmap while PDF.js draws the new resolution. Resizing
+    // the visible canvas here would clear it for one or more animation frames.
+    const bitmap = document.createElement("canvas");
+    bitmap.width = Math.ceil(viewport.width * ratio);
+    bitmap.height = Math.ceil(viewport.height * ratio);
+    const nextText = document.createElement("div");
+    const render = page.render({ canvas: bitmap, viewport, transform: [ratio, 0, 0, ratio, 0, 0] });
+    const textLayer = new TextLayer({ textContentSource: page.streamTextContent(), container: nextText, viewport });
+    void Promise.all([render.promise, textLayer.render()]).then(() => {
+      if (disposed) return;
+      target.width = bitmap.width; target.height = bitmap.height;
+      const context = target.getContext("2d");
+      if (!context) throw new Error("PDF canvas is unavailable");
+      context.drawImage(bitmap, 0, 0);
+      layer.style.cssText = nextText.style.cssText;
+      layer.replaceChildren(...nextText.childNodes);
+      setReady({ page, zoom });
+    }).catch(error => { if (!disposed) setError(String(error)); }).finally(() => { bitmap.width = 0; bitmap.height = 0; });
+    return () => { disposed = true; render.cancel(); textLayer.cancel(); };
   }, [page, zoom, live]);
   return <div data-pdf-page={pageNumber} className="pdf-page relative shrink-0 bg-white shadow-sm" style={{ width, height, "--scale-factor": zoom, "--total-scale-factor": zoom * (page?.userUnit ?? 1) } as React.CSSProperties}>
     {live && <><canvas ref={canvas} className="absolute inset-0 size-full" /><div ref={text} className="textLayer" /></>}
@@ -154,6 +167,8 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const zoomValue = useRef(zoom);
   zoomValue.current = zoom;
   const content = useRef<HTMLDivElement>(null);
+  const previewPages = useRef<HTMLElement[]>([]);
+  const pinchActive = useRef(false);
   const zoomAnchor = useRef<ZoomAnchor | null>(null);
   const finishPinch = useRef<(() => number) | null>(null);
   const [current, setCurrent] = useState(saved.page);
@@ -227,7 +242,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   // the render window or the page number actually changes.
   function measure() {
     const element = container.current;
-    if (!element) return;
+    if (!element || pinchActive.current) return;
     const rows = latestHeights.current;
     const next = visiblePages(rows, element.scrollTop, element.clientHeight);
     setActive(previous => sameList(previous, next) ? previous : next);
@@ -276,7 +291,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     return bounds ? { page: index, x: (x - bounds.left) / bounds.width, y: (y - bounds.top) / bounds.height, clientX: x, clientY: y } : null;
   }
   function clearPreview() {
-    if (content.current) { content.current.style.transform = ""; content.current.style.transformOrigin = ""; content.current.style.pointerEvents = ""; }
+    for (const page of previewPages.current) { page.style.transform = ""; page.style.transformOrigin = ""; page.style.willChange = ""; }
+    previewPages.current = [];
+    if (content.current) content.current.style.pointerEvents = "";
   }
   useLayoutEffect(() => {
     clearPreview();
@@ -308,6 +325,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     if (!element || !grid) return;
     const viewportHeight = () => element.clientHeight;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let previewFrame = 0;
     let preview = zoomValue.current;
     let anchor: ZoomAnchor | null = null;
     let native = false;
@@ -316,6 +334,8 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     function finish() {
       if (!anchor) return zoomValue.current;
       clearTimeout(timer);
+      cancelAnimationFrame(previewFrame); previewFrame = 0;
+      pinchActive.current = false;
       if (native) { native = false; ignoreWheelUntil = performance.now() + 250; }
       if (preview !== zoomValue.current) {
         zoomAnchor.current = anchor;
@@ -334,16 +354,28 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         if (!anchor) return;
         const selection = window.getSelection();
         if (selection?.anchorNode && grid.contains(selection.anchorNode)) selection.removeAllRanges();
+        pinchActive.current = true;
         setPinching(true);
-        const bounds = grid.getBoundingClientRect();
-        if (anchor) grid.style.transformOrigin = `${anchor.clientX - bounds.left}px ${anchor.clientY - bounds.top}px`;
+        // Promote only the rendered pages, rather than the entire long document.
+        // Cache geometry once; incoming events only update the latest scale.
+        previewPages.current = Array.from(grid.querySelectorAll("canvas")).flatMap(canvas => canvas.parentElement ? [canvas.parentElement] : []);
+        const origin = anchor;
+        const origins = previewPages.current.map(page => {
+          const bounds = page.getBoundingClientRect();
+          return `${origin.clientX - bounds.left}px ${origin.clientY - bounds.top}px`;
+        });
+        previewPages.current.forEach((page, index) => { page.style.transformOrigin = origins[index]; page.style.willChange = "transform"; });
         grid.style.pointerEvents = "none";
       }
       preview = clampZoom(value);
-      grid.style.transform = `scale(${preview / zoomValue.current})`;
+      if (!previewFrame) previewFrame = requestAnimationFrame(() => {
+        previewFrame = 0;
+        for (const page of previewPages.current) page.style.transform = `scale(${preview / zoomValue.current})`;
+      });
       clearTimeout(timer);
-      // WebKit sends gestureend; the timer also recovers an interrupted stream.
-      timer = setTimeout(finish, native ? 350 : 160);
+      // A pause is not the end of a native gesture. Keep its preview until
+      // gestureend; a longer watchdog recovers a lost end event.
+      timer = setTimeout(finish, native ? 2000 : 240);
     };
     function wheel(event: WheelEvent) {
       if (!event.ctrlKey) return;
@@ -357,7 +389,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       if (event.type === "gesturestart") {
         native = true;
         // Discard a leading wheel preview if WebKit sends both protocols.
-        clearTimeout(timer); clearPreview(); anchor = null;
+        clearTimeout(timer); cancelAnimationFrame(previewFrame); previewFrame = 0; clearPreview(); anchor = null;
         nativeBase = zoomValue.current;
       }
       if ("scale" in event && typeof event.scale === "number" && Number.isFinite(event.scale) && event.scale > 0) show(nativeBase * event.scale, event);
@@ -366,7 +398,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     element.addEventListener("wheel", wheel, { passive: false });
     for (const type of ["gesturestart", "gesturechange", "gestureend"]) element.addEventListener(type, gesture, { passive: false });
     return () => {
-      clearTimeout(timer); finishPinch.current = null; clearPreview();
+      clearTimeout(timer); cancelAnimationFrame(previewFrame); pinchActive.current = false; finishPinch.current = null; clearPreview();
       element.removeEventListener("wheel", wheel);
       for (const type of ["gesturestart", "gesturechange", "gestureend"]) element.removeEventListener(type, gesture);
     };
