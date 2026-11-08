@@ -192,13 +192,13 @@ test("sidebar dropdown leads to a configurable import dialog and commits only on
   await ui.addInitScript(() => { window.installTestBridge({ tauri: { invoke: (command,args) => window.rustCall(command,args) } }); });
   try {
     await ui.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/import-dialog.html`);
-    await ui.locator('.group').first().hover();
+    await ui.getByRole('region', { name: 'Module actions' }).hover();
     await ui.getByRole('button', { name: 'Add module', exact: true }).click();
     await ui.getByRole('menuitem', {name:'New module',exact:true}).click();
     await ui.getByRole('heading',{name:'Create new module'}).waitFor();
     assert.equal(await ui.getByRole('button',{name:'Import folder…',exact:true}).count(),0);
     await ui.getByRole('button',{name:'Cancel',exact:true}).click();
-    await ui.locator('.group').first().hover();
+    await ui.getByRole('region', { name: 'Module actions' }).hover();
     await ui.getByRole('button',{name:'Add module',exact:true}).click();
     await ui.getByRole('menuitem',{name:'Import folder…',exact:true}).click();
     await ui.getByLabel('Module name', {exact:false}).fill('Planned module');

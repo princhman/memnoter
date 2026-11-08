@@ -3,7 +3,7 @@ import type { Command } from "@tiptap/pm/state";
 
 // Runs after suggestion, math and list keymaps. Always consumes Tab so it
 // cannot move focus away from an editable note, even at a list boundary.
-export function tabSpacing(outdent = false): Command {
+function tabSpacing(outdent = false): Command {
   return (state, dispatch) => {
     const { $from, $to } = state.selection;
     if ($from.parent.type.spec.code && $from.sameParent($to)) {

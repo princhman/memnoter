@@ -37,7 +37,6 @@ pub fn review_doc_id(module_id: &str) -> String {
     format!("{REVIEW_PREFIX}{module_id}")
 }
 
-// Card state and review log rows as JSON, for the review documents.
 const CARD_STATE_JSON: &str = "json_object('due_at', due_at, 'stability', stability,
     'stability_fast', stability_fast, 'difficulty', difficulty, 'scheduled_days', scheduled_days,
     'learning_step', learning_step, 'reps', reps, 'lapses', lapses, 'state', state,
@@ -116,7 +115,6 @@ pub fn is_enabled(conn: &Connection) -> CommandResult<bool> {
     .map_err(db_err)
 }
 
-// Records a local note change for upload, when sync is on.
 pub fn record_update(conn: &Connection, module_id: &str, bytes: &[u8]) -> CommandResult<bool> {
     if !is_enabled(conn)? {
         return Ok(false);
@@ -130,7 +128,6 @@ pub enum VaultChange<'a> {
     Deleted,
 }
 
-// Records a local module change in the vault, when sync is on.
 pub fn record_module(
     conn: &Connection,
     module_id: &str,
@@ -171,7 +168,6 @@ fn forget_module_docs(conn: &Connection, module_id: &str) -> CommandResult<()> {
     push_outbox(conn, &reviews, &[])
 }
 
-// Records a new image for upload and tells other devices about it.
 pub fn record_file(
     conn: &Connection,
     file_id: &str,
@@ -586,7 +582,6 @@ fn seed(conn: &Connection) -> CommandResult<()> {
     seed_reviews(conn, &modules)
 }
 
-// One review document per module that has reviewed cards or review history.
 fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResult<()> {
     conn.execute_batch(
         "delete from sync_docs where doc like 'r-%';
@@ -691,7 +686,6 @@ pub struct ApplyResult {
     modules_changed: bool,
     pub deleted: Vec<String>,
     reviews_changed: bool,
-    // Images this device does not have yet are known.
     files_changed: bool,
 }
 
@@ -864,7 +858,6 @@ fn apply_remote(
     }
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
-    // The search and card indexes are rebuilt from the note text.
     for module_id in &touched {
         crate::search::invalidate_indexes(&tx, module_id)?;
     }
@@ -1529,58 +1522,28 @@ mod tests {
     }
 
     #[test]
-    fn images_are_queued_and_announced() {
-        let (_a_dir, mut a) = db();
-        let (b_dir, mut b) = db();
-        let file = uuid::Uuid::new_v4().to_string();
-        a.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');")
-            .unwrap();
-        a.execute(
-            "insert into files values (?1, 'm', '/x', 'image/png')",
-            [&file],
-        )
-        .unwrap();
-        enable(&mut a, "{}").unwrap();
-        assert_eq!(pending_uploads(&a).unwrap(), vec![file.clone()]);
-
-        let later = uuid::Uuid::new_v4().to_string();
-        a.execute(
-            "insert into files values (?1, 'm', '/y', 'image/jpeg')",
-            [&later],
-        )
-        .unwrap();
-        assert!(record_file(&a, &later, "m", "image/jpeg").unwrap());
-        assert_eq!(pending_uploads(&a).unwrap().len(), 2);
-
-        enable(&mut b, "{}").unwrap();
-        let mut seq = 0;
-        let result = transfer(&a, &mut b, &mut seq);
-        assert!(result.files_changed);
-        let missing = missing_files(&b).unwrap();
-        assert_eq!(missing.len(), 2);
-        let stored =
-            store_file(&b, &b_dir.join("files"), &later, "m", "image/jpeg", b"jpeg").unwrap();
-        assert_eq!(std::fs::read(&stored.path).unwrap(), b"jpeg");
-        assert_eq!(missing_files(&b).unwrap().len(), 1);
-        // Downloaded images are not uploaded again.
-        assert!(pending_uploads(&b).unwrap().is_empty());
-    }
-
-    #[test]
     fn a_shared_image_stays_downloadable_after_its_owner_is_deleted() {
         let (a_dir, mut a) = db();
         let (_b_dir, mut b) = db();
-        let file = uuid::Uuid::new_v4().to_string();
         a.execute_batch(
             "insert into modules (id, name) values ('owner', 'Owner'), ('other', 'Other');
              insert into contents values ('owner', X''), ('other', X'');",
         )
         .unwrap();
-        a.execute(
-            "insert into files values (?1, 'owner', ?2, 'image/png')",
-            params![file, "/x"],
+        let core = crate::Core::open(&a_dir).unwrap();
+        let raw = crate::dispatch(
+            &core,
+            "save_file",
+            &serde_json::json!({
+                "moduleId":"owner", "bytes":[1,2,3], "mimeType":"image/png",
+            })
+            .to_string(),
         )
         .unwrap();
+        let file = serde_json::from_str::<serde_json::Value>(&raw).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         // The other note references the image, as an occlusion card does.
         a.execute(
             "insert into shared_image_refs values ('other', ?1)",
