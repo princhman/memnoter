@@ -14,7 +14,7 @@ import { getObject, isTokenValid, putObject, wipeCloudData, type SyncAccount } f
 import { importKey } from "./crypto";
 import { createFileSync, type FileSync } from "./files";
 import { setSyncedFileHandler } from "./file-requests";
-import { AUTH_PROTOCOL_PREFIX, SYNC_PROTOCOL } from "./protocol";
+import { AUTH_PROTOCOL_PREFIX, SYNC_PROTOCOL, SYNC_CONTRACT } from "./protocol";
 import {
   createSyncEngine,
   type BlobStore,
@@ -111,7 +111,7 @@ function blobStore(account: SyncAccount, signal: AbortSignal): BlobStore {
 }
 
 function socketUrl(server: string) {
-  return `${server.replace(/\/+$/, "").replace(/^http/, "ws")}/v1/sync`;
+  return `${server.replace(/\/+$/, "").replace(/^http/, "ws")}${SYNC_CONTRACT.paths.sync}`;
 }
 
 function browserSocket(account: SyncAccount, onUnauthorized: () => void, signal: AbortSignal) {

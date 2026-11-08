@@ -65,7 +65,7 @@ export async function isTokenValid(server: string, token: string, signal?: Abort
 
 // Encrypted images ("files") and log blobs too large for the log ("blobs").
 export async function putObject(server: string, token: string, kind: "files" | "blobs", id: string, bytes: Uint8Array, signal?: AbortSignal) {
-  return syncRequest(`${server.replace(/\/+$/, "")}/v1/${kind}/${id}`, {
+  return syncRequest(`${server.replace(/\/+$/, "")}${SYNC_CONTRACT.paths[kind]}${id}`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream" },
     body: bytes,
@@ -78,7 +78,7 @@ export async function putObject(server: string, token: string, kind: "files" | "
 
 // null when the server has no such object (yet).
 export async function getObject(server: string, token: string, kind: "files" | "blobs", id: string, signal?: AbortSignal) {
-  return syncRequest(`${server.replace(/\/+$/, "")}/v1/${kind}/${id}`, {
+  return syncRequest(`${server.replace(/\/+$/, "")}${SYNC_CONTRACT.paths[kind]}${id}`, {
     headers: { Authorization: `Bearer ${token}` },
   }, async (response, progress, requestSignal) => {
     const bytes = await readTransfer(response, progress, requestSignal);
