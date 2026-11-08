@@ -1,5 +1,4 @@
 import { action } from "@/lib/shortcuts";
-// ai - generated module
 import { Node, PasteRule, type Editor } from "@tiptap/core";
 import { Node as PMNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
@@ -10,9 +9,7 @@ import { createMathIndex } from "./math-index";
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     inlineMath: {
-      // use current selection
       insertInlineMath: (tex?: string) => ReturnType;
-      // unwrap inline math touched by the selection, or wrap the selection
       toggleInlineMath: () => ReturnType;
     };
   }
@@ -73,7 +70,6 @@ export const InlineMath = Node.create<InlineMathOptions>({
         (tex) =>
         ({ state, tr, dispatch }) => {
           const { from, to, $from } = state.selection;
-          // Math blocks and code hold plain text only.
           if ($from.parent.type.spec.code) return false;
           const text = tex ?? state.doc.textBetween(from, to, " ");
           const node = this.type.create(null, text ? state.schema.text(text) : null);
@@ -91,13 +87,11 @@ export const InlineMath = Node.create<InlineMathOptions>({
         ({ state, tr, dispatch, commands }) => {
           const { from, to } = state.selection;
           const found: { pos: number; node: PMNode }[] = [];
-          // Also visits the formula that holds the cursor.
           state.doc.nodesBetween(from, to, (node, pos) => {
             if (node.type === this.type) found.push({ pos, node });
           });
           if (!found.length) return commands.insertInlineMath();
 
-          // Back to front so earlier positions stay valid.
           for (const { pos, node } of found.reverse()) {
             const text = cleanMathText(node.textContent);
             const end = pos + node.nodeSize;
@@ -133,7 +127,6 @@ export const InlineMath = Node.create<InlineMathOptions>({
     ];
   },
 
-  // cursor / key handling
   addKeyboardShortcuts() {
     const name = this.name;
 
@@ -244,7 +237,6 @@ export const InlineMath = Node.create<InlineMathOptions>({
       "Shift-ArrowUp": () => vertical(-1, true),
       "Shift-ArrowDown": () => vertical(1, true),
 
-      // enter inside math = finish editing
       Enter: ({ editor }) => {
         const { selection } = editor.state;
         const { $from } = selection;
@@ -258,7 +250,6 @@ export const InlineMath = Node.create<InlineMathOptions>({
         const { $from } = selection;
 
         if ($from.parent.type.name === name) {
-          // empty node -> remove it
           if (!cleanMathText($from.parent.textContent)) {
             const from = $from.before();
             return editor
@@ -266,14 +257,12 @@ export const InlineMath = Node.create<InlineMathOptions>({
               .deleteRange({ from, to: from + $from.parent.nodeSize })
               .run();
           }
-          // at start -> step out to the left
           if ($from.parentOffset === 0) {
             return editor.commands.setTextSelection($from.before());
           }
           return false;
         }
 
-        // Right after a rendered formula -> start editing it (caret at end)
         if ($from.nodeBefore?.type.name === name) {
           return editor.commands.setTextSelection($from.pos - 1);
         }
@@ -299,7 +288,6 @@ export const InlineMath = Node.create<InlineMathOptions>({
           return false;
         }
 
-        // Right before a rendered formula -> start editing it (caret at start)
         if ($from.nodeAfter?.type.name === name) {
           return editor.commands.setTextSelection($from.pos + 1);
         }
@@ -308,7 +296,6 @@ export const InlineMath = Node.create<InlineMathOptions>({
     };
   },
 
-  // Plugins
   addProseMirrorPlugins() {
     const name = this.name;
     const type = this.type;
@@ -318,7 +305,6 @@ export const InlineMath = Node.create<InlineMathOptions>({
     const renderActions = this.options.renderPreviewActions;
     const previewRoots = new WeakMap<globalThis.Node, () => void>();
 
-    // floating preview, shown above the node while it is being edited
     const makePreview = (tex: string) => () => {
       const visibleTex = cleanMathText(tex);
       const anchor = document.createElement("span");

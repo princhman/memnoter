@@ -25,7 +25,6 @@ export function maskCards(masks: Mask[]): { owner: Mask; members: Mask[] }[] {
   return [...groups].map(([key, members]) => ({ owner: members.find(m => m.id === key) ?? members[0], members }));
 }
 
-// The ids of the masks a face asks.
 export function targetsOf(face: OcclusionFace): string[] {
   return Array.isArray(face.targetMaskIds) ? face.targetMaskIds : [face.targetMaskId];
 }
@@ -40,7 +39,6 @@ export function drawMask(shape: Mask["shape"], points: Point[], id: string): Mas
   if (shape === "freehand") return { id, shape, points: points.map(p => ({ x: clamp(p.x), y: clamp(p.y) })) };
   return shape === "rectangle" ? { id, shape, x, y, width, height } : { id, shape, cx: x + width / 2, cy: y + height / 2, rx: width / 2, ry: height / 2 };
 }
-// The box a mask fills, for moving and resizing it like a crop area.
 export function maskBounds(mask: Mask): Box {
   if (mask.shape === "rectangle") return { x: mask.x, y: mask.y, width: mask.width, height: mask.height };
   if (mask.shape === "ellipse") return { x: mask.cx - mask.rx, y: mask.cy - mask.ry, width: 2 * mask.rx, height: 2 * mask.ry };
@@ -49,7 +47,6 @@ export function maskBounds(mask: Mask): Box {
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
-// The mask fitted to a new box; a freehand path is stretched to fill it.
 export function withBounds(mask: Mask, box: Box): Mask {
   if (mask.shape === "rectangle") return { ...mask, ...box };
   if (mask.shape === "ellipse") {
@@ -82,6 +79,5 @@ export function validMasks(value: unknown): Mask[] {
 export function renewImageIdentity(attrs: Record<string, unknown>, newId: () => string) {
   const masks = validMasks(attrs.masks);
   const ids = new Map(masks.map(m => [m.id, newId()]));
-  // Joined masks stay joined under their new ids.
   return { ...attrs, imageId: newId(), masks: masks.map(m => ({ ...m, id: ids.get(m.id)!, ...(m.group ? { group: ids.get(m.group) ?? ids.get(m.id)! } : {}) })) };
 }

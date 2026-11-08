@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// One navigation slot for entering focus and returning to the whole note.
 struct SectionFocusControl: View {
     @Bindable var session: WebSession
     let moduleName: String

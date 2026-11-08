@@ -146,10 +146,8 @@ function restoreScroll(
   return stop;
 }
 
-// Stops holding each restored editor's scroll position.
 const activeSaves = new Map<Editor, () => void>();
 
-// Native calls this before switching notes or suspending JavaScript.
 export function flushPersistedViews() {
   for (const save of activeSaves.values()) save();
   saveState();
@@ -226,7 +224,6 @@ export function usePersistedView(
     const container = editor.view.dom.closest<HTMLElement>(SCROLL_CONTAINER);
     if (!container) return;
 
-    // Loading usually restored it already.
     restoreView(editor, moduleId);
 
     let saveTimeout: number | undefined;
@@ -265,7 +262,6 @@ export function usePersistedView(
     return () => {
       activeSaves.delete(editor);
       restoredViews.get(editor)?.();
-      // A rerun of this effect for the same editor restores again.
       restoredViews.delete(editor);
       // Switching notes right after a change must not lose it.
       if (saveTimeout !== undefined) {

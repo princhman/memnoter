@@ -6,7 +6,6 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 pub const MENU_EVENT: &str = "menu";
 
-// (id, title, accelerator) of the items handled by the frontend.
 const SETTINGS: (&str, &str, &str) = ("settings", "Settings…", "CmdOrCtrl+,");
 const NEW_MODULE: (&str, &str, &str) = ("new-module", "New Module…", "CmdOrCtrl+N");
 const FIND: (&str, &str, &str) = ("find", "Find…", "CmdOrCtrl+F");

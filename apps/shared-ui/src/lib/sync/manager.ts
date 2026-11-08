@@ -1,6 +1,6 @@
 import { onRemote as applyRemote, onFileStored, cancelRemoteReindex, drainRemoteReindex, type ApplyResult } from "./apply-remote.ts";
 // Runs cloud sync for the app: owns the engine, adapts it to the Tauri
-// commands in apps/desktop/src/sync.rs and folds remote changes into the caches
+// core commands and folds remote changes into the caches
 // the editor reads, exactly like a local save would.
 
 import { call as invoke } from "@/lib/backend";
@@ -24,7 +24,6 @@ import {
 } from "./engine";
 
 export type SyncUiStatus = {
-  // null until the stored account was read.
   account: Omit<SyncAccount, "key" | "token"> | null;
   loaded: boolean;
   state: SyncState;
@@ -267,7 +266,6 @@ async function signedOut(message: string | null) {
   }));
 }
 
-// Called at startup; later calls do nothing.
 export function startSync() {
   started ??= serially(loadAndRun);
   return started;
@@ -292,7 +290,6 @@ async function loadAndRun() {
   }
 }
 
-// Turns sync on, or signs in again with a fresh token.
 export function enableSync(account: SyncAccount) {
   return serially(async () => {
     account = { ...account, server: account.server.replace(/\/+$/, "") };

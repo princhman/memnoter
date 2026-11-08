@@ -126,7 +126,6 @@ struct RootView: View {
             .navigationTitle(selected == "review" && detailWidth < 500 ? "" : (module?.name ?? (selected == "review" ? "Review" : "Home")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Reserve narrow-window space for review history and counts.
                 if selected != "review" || detailWidth >= 500 {
                     ToolbarItem(placement: .principal) {
                         Text(module?.name ?? (selected == "review" ? "Review" : "Home"))
@@ -331,7 +330,6 @@ struct RootView: View {
         do {
             try await client.write("set_module_numbering", NumberingArgs(moduleId: moduleId, enabled: enabled))
             store.modules = try await client.call("modules", Empty())
-            // Refresh the displayed editor and its live Contents without replacing the web view.
             _ = try await session?.callEditor(.refreshModules)
         } catch {
             // A write may have succeeded before a refresh failed; show persisted state on retry.

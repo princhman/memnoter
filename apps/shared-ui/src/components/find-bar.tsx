@@ -223,7 +223,6 @@ export function FindBar() {
         else handlers.current.goToNext();
       }
     };
-    // The Find item of the app menu.
     const handleFind = () => handlers.current.open(false);
 
     window.addEventListener("keydown", handleKeyDown);
@@ -244,7 +243,6 @@ export function FindBar() {
 
     const terms = findRequest.terms.filter(Boolean);
     if (terms.length) {
-      // The terms are plain text from the search index.
       setCaseSensitive(false);
       setUseRegex(false);
       setSearchTerm(terms[0]);
@@ -280,7 +278,6 @@ export function FindBar() {
     }
   };
 
-  // Replace moves on to the next match, which may be hidden.
   const replace = () => {
     editor.commands.replace();
     revealCurrentResult(editor);

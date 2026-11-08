@@ -140,7 +140,6 @@ pub fn save_file(
 
     assets::write(data_dir, &id, &bytes)?;
 
-    // ai-suggested error handling - cleanup if failed
     // The file row and its upload record commit together.
     let inserted = (|| -> CommandResult<()> {
         let tx = conn.unchecked_transaction().map_err(db_err)?;

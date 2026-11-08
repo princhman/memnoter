@@ -368,7 +368,7 @@ body {
     color: var(--muted-foreground);
 }
 
-/* Task-ish visual polish if you add task lists later */
+/* Task lists */
 .tiptap ul[data-type="taskList"] {
     list-style: none;
     padding-left: 0;
@@ -423,7 +423,7 @@ body {
     border-top: 1px solid var(--border);
 }
 
-/* Links, if enabled later */
+/* Links */
 .tiptap a {
     color: var(--link);
     text-decoration: underline;
