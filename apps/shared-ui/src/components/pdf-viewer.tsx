@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -15,15 +15,20 @@ import { openPdfPane } from "@/lib/pdf-pane";
 import { ToolButton } from "./ui/tool-button";
 GlobalWorkerOptions.workerSrc = workerUrl;
 
-function PdfPage({ page, zoom, active }: { page: PDFPageProxy; zoom: number; active: boolean }) {
+const PAGE_GAP = 16;
+type Size = { width: number; height: number };
+
+// Memoized: scrolling re-renders the viewer, but a page only redraws when it
+// arrives, the zoom changes, or it enters or leaves the render window.
+const PdfPage = memo(function PdfPage({ page, size, zoom, active }: { page?: PDFPageProxy; size: Size; zoom: number; active: boolean }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
-  const viewport = page.getViewport({ scale: zoom });
   const [error, setError] = useState("");
+  const live = active && !!page;
   useEffect(() => {
     const target = canvas.current;
     const layer = text.current;
-    if (!active || !target || !layer) return;
+    if (!live || !page || !target || !layer) return;
     let disposed = false;
     const ratio = window.devicePixelRatio || 1;
     const viewport = page.getViewport({ scale: zoom });
@@ -33,12 +38,13 @@ function PdfPage({ page, zoom, active }: { page: PDFPageProxy; zoom: number; act
     const textLayer = new TextLayer({ textContentSource: page.streamTextContent(), container: layer, viewport });
     void Promise.all([render.promise, textLayer.render()]).catch(error => { if (!disposed) setError(String(error)); });
     return () => { disposed = true; render.cancel(); textLayer.cancel(); layer.replaceChildren(); target.width = 0; target.height = 0; };
-  }, [page, zoom, active]);
-  return <div className="pdf-page relative shrink-0 bg-white shadow-sm" style={{ width: viewport.width, height: viewport.height, "--scale-factor": zoom, "--total-scale-factor": zoom * page.userUnit } as React.CSSProperties}>
-    {active && <><canvas ref={canvas} className="absolute inset-0 size-full" /><div ref={text} className="textLayer" /></>}
+  }, [page, zoom, live]);
+  return <div className="pdf-page relative shrink-0 bg-white shadow-sm" style={{ width: size.width, height: size.height, "--scale-factor": zoom, "--total-scale-factor": zoom * (page?.userUnit ?? 1) } as React.CSSProperties}>
+    {live && <><canvas ref={canvas} className="absolute inset-0 size-full" /><div ref={text} className="textLayer" /></>}
     {error && <p role="alert" className="relative bg-background p-2 text-sm text-destructive">{error}</p>}
   </div>;
-}
+});
+
 // Full screen puts the tools in the app header; the pane gets one slim row,
 // with the pane's own controls on either side of them.
 function ReaderTools({ children, fullscreen, leading, trailing }: { children: ReactNode; fullscreen: boolean; leading?: ReactNode; trailing?: ReactNode }) {
@@ -49,6 +55,9 @@ function ReaderTools({ children, fullscreen, leading, trailing }: { children: Re
     <div className="flex min-w-0 flex-1 items-center gap-1">{leading}</div>{children}{trailing}
   </div>;
 }
+
+const sameList = (a: number[], b: number[]) => a.length === b.length && a.every((value, index) => value === b[index]);
+
 export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode }) {
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -56,52 +65,107 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc:
   const [zoom, setZoom] = useState(saved.zoom);
   const [current, setCurrent] = useState(saved.page);
   const [input, setInput] = useState(String(saved.page));
-  const [pages, setPages] = useState<PDFPageProxy[]>([]);
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  // Pages load as they come into view; until then they take page one's size.
+  const [pages, setPages] = useState<(PDFPageProxy | undefined)[]>([]);
+  const [base, setBase] = useState<Size>({ width: 612, height: 792 });
+  const [active, setActive] = useState<number[]>([]);
   const [error, setError] = useState("");
-  const [windowState, setWindowState] = useState({ top: 0, height: 800 });
   const container = useRef<HTMLDivElement>(null);
   const restored = useRef(false);
+  const requested = useRef(new Set<number>());
+  const frame = useRef(0);
+  const shownPage = useRef(saved.page);
+
   useEffect(() => {
     if (!doc.available) { requestSyncedFile(doc.id); return; }
     let disposed = false;
-    let pdf: PDFDocumentProxy | undefined;
     let loading: ReturnType<typeof getDocument> | undefined;
     void (async () => {
       const url = fileUrl(await documentPath({ id: doc.id }));
       if (disposed) return;
       const asset = (folder: string) => new URL(`${import.meta.env.BASE_URL}pdfjs/${folder}/`, document.baseURI).href;
       loading = getDocument({ url, cMapUrl: asset("cmaps"), cMapPacked: true, standardFontDataUrl: asset("standard_fonts"), wasmUrl: asset("wasm"), iccUrl: asset("iccs") });
-      pdf = await loading.promise;
-      const loaded: PDFPageProxy[] = [];
-      for (let i = 1; i <= pdf.numPages; i++) { if (disposed) return; loaded.push(await pdf.getPage(i)); }
+      const loaded = await loading.promise;
+      const first = await loaded.getPage(1);
       if (disposed) return;
-      setPages(loaded);
+      const viewport = first.getViewport({ scale: 1 });
+      requested.current = new Set([0]);
+      setBase({ width: viewport.width, height: viewport.height });
+      setPages(Array.from({ length: loaded.numPages }, (_, index) => index === 0 ? first : undefined));
+      setPdf(loaded);
       if (doc.pageCount === null) {
-        await setDocumentPageCount({ id: doc.id, pageCount: pdf.numPages });
+        await setDocumentPageCount({ id: doc.id, pageCount: loaded.numPages });
         void client.invalidateQueries({ queryKey: documentsKey });
       }
     })().catch(error => { if (!disposed) setError(error instanceof Error ? error.message : String(error)); });
     return () => { disposed = true; void loading?.destroy(); };
+    // Not keyed on pageCount: saving it must not reload the document.
   }, [doc.id, doc.available, client]);
-  const heights = pages.map(page => page.getViewport({ scale: zoom }).height + 16);
+
+  // Fetch the pages about to be drawn.
+  useEffect(() => {
+    if (!pdf) return;
+    for (const index of active) {
+      if (requested.current.has(index)) continue;
+      requested.current.add(index);
+      void pdf.getPage(index + 1).then(page => setPages(previous => {
+        const next = previous.slice();
+        next[index] = page;
+        return next;
+      })).catch(() => requested.current.delete(index));
+    }
+  }, [pdf, active]);
+
+  const sizes = useMemo(() => pages.map(page => {
+    if (!page) return { width: base.width * zoom, height: base.height * zoom };
+    const viewport = page.getViewport({ scale: zoom });
+    return { width: viewport.width, height: viewport.height };
+  }), [pages, zoom, base]);
+  const heights = useMemo(() => sizes.map(size => size.height + PAGE_GAP), [sizes]);
+  const latestHeights = useRef(heights);
+  latestHeights.current = heights;
+
+  // Reads the scroll position at most once a frame, and only sets state when
+  // the render window or the page number actually changes.
+  function measure() {
+    const element = container.current;
+    if (!element) return;
+    const rows = latestHeights.current;
+    const next = visiblePages(rows, element.scrollTop, element.clientHeight);
+    setActive(previous => sameList(previous, next) ? previous : next);
+    let offset = 0; let page = 1;
+    for (let i = 0; i < rows.length; i++) { if (offset > element.scrollTop + 1) break; page = i + 1; offset += rows[i]; }
+    if (shownPage.current !== page) {
+      shownPage.current = page;
+      setCurrent(page);
+      setInput(String(page));
+    }
+  }
+  function scheduleMeasure() {
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => { frame.current = 0; measure(); });
+  }
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+
   function jump(page: number) {
     const element = container.current;
     if (!element) return;
-    element.scrollTop = heights.slice(0, page - 1).reduce((sum, value) => sum + value, 0);
+    element.scrollTop = latestHeights.current.slice(0, page - 1).reduce((sum, value) => sum + value, 0);
+    measure();
   }
   useLayoutEffect(() => {
     if (pages.length && !restored.current) { restored.current = true; jump(Math.min(saved.page, pages.length)); }
     const element = container.current;
     if (!element) return;
-    const update = () => setWindowState({ top: element.scrollTop, height: element.clientHeight });
-    update();
-    const observer = new ResizeObserver(update); observer.observe(element);
+    measure();
+    const observer = new ResizeObserver(scheduleMeasure); observer.observe(element);
     return () => observer.disconnect();
-  }, [pages, zoom]);
+    // Re-measure when the layout changes size, not on every page arrival.
+  }, [pages.length, zoom]);
   useEffect(() => {
     try { localStorage.setItem(`pdf-view:${doc.id}`, JSON.stringify({ page: current, zoom })); } catch { /* Storage may be unavailable. */ }
   }, [doc.id, current, zoom]);
-  const active = visiblePages(heights, windowState.top, windowState.height);
   const zoomPage = useRef<number | null>(null);
   useLayoutEffect(() => { if (zoomPage.current !== null) { jump(zoomPage.current); zoomPage.current = null; } }, [zoom]);
   function changeZoom(next: number) {
@@ -109,11 +173,14 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc:
     zoomPage.current = current;
     setZoom(value);
   }
-  return <div className="flex h-full min-h-0 min-w-0 flex-col bg-muted/50">
+  const activeSet = useMemo(() => new Set(active), [active]);
+
+  // The backdrop matches the app header, so the page sits on one surface.
+  return <div className="flex h-full min-h-0 min-w-0 flex-col bg-background">
     <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
       <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onChange={event => setInput(event.target.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
-        const page = parsePage(input, pages.length); if (page !== null) { jump(page); setCurrent(page); } else setInput(String(current));
+        const page = parsePage(input, pages.length); if (page !== null) jump(page); else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom(zoom - 0.1)}><ZoomOut /></ToolButton>
       <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom(zoom + 0.1)}><ZoomIn /></ToolButton>
@@ -122,15 +189,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing }: { doc:
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
       </ToolButton>}
     </ReaderTools>
-    {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" onScroll={event => {
-      const element = event.currentTarget;
-      setWindowState({ top: element.scrollTop, height: element.clientHeight });
-      let offset = 0; let page = 1;
-      for (let i = 0; i < heights.length; i++) { if (offset > element.scrollTop + 1) break; page = i + 1; offset += heights[i]; }
-      setCurrent(page); setInput(String(page));
-    }}>
+    {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF…</p>}
-      <div className="grid min-w-full w-max justify-items-center gap-4 pb-4">{pages.map((page, index) => <PdfPage key={page.pageNumber} page={page} zoom={zoom} active={active.includes(index)} />)}</div>
+      <div className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} size={size} zoom={zoom} active={activeSet.has(index)} />)}</div>
     </div>}
   </div>;
 }
