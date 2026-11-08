@@ -17,9 +17,9 @@ struct SectionFocusControl: View {
             if session.state.focusedSectionId != nil {
                 HStack(spacing: 0) {
                     Menu {
-                        Button(moduleName, systemImage: "doc.text") { session.exec("showDocument") }
+                        Button(moduleName, systemImage: "doc.text") { session.exec(.showDocument) }
                         ForEach(session.state.focusedSectionPath.dropLast()) { crumb in
-                            Button(crumb.title) { session.exec("focusSection", ["id": crumb.id]) }
+                            Button(crumb.title) { session.exec(.focusSection, ["id": crumb.id]) }
                         }
                     } label: {
                         Text(title)
@@ -32,7 +32,7 @@ struct SectionFocusControl: View {
                     }
                     .accessibilityIdentifier("sectionFocus.menu")
                     .accessibilityLabel("Focused section: \(title). Ancestor sections")
-                    Button { session.exec("showDocument") } label: {
+                    Button { session.exec(.showDocument) } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 14, weight: .semibold))
                             .frame(width: 44, height: 44)
@@ -42,7 +42,7 @@ struct SectionFocusControl: View {
                     .help("Show whole note")
                 }
             } else if session.state.focusableSection != nil {
-                Button { session.exec("focusCurrentSection") } label: {
+                Button { session.exec(.focusCurrentSection) } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "scope")
                         Text("Focus")

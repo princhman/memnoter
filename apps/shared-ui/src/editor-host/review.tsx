@@ -1,7 +1,8 @@
 import { createRoot } from "react-dom/client";
 import { CardFace } from "../components/card-face";
 import { getScheduler, scheduleReview, previewDue, formatInterval, type StoredCard, type Grade } from "../lib/fsrs";
-import "../lib/backend";
+import { postNativeEvent } from "../lib/backend";
+import { BRIDGE_VERSION, type ReviewApi } from "./protocol";
 import "../App.css";
 import "./review.css";
 import "./theme";
@@ -11,7 +12,7 @@ import "katex/dist/katex.min.css";
 // rating controls belong to SwiftUI. All persistence uses the ordinary bridge.
 const root = createRoot(document.getElementById("root")!);
 let shownAt = Date.now();
-const api = {
+const api: ReviewApi = {
   show(card: StoredCard, revealed: boolean) {
     if (!revealed) shownAt = Date.now();
     root.render(<main key={`${card.id}:${card.reps}`} className="review-scroll-container p-8"><CardFace kind={card.kind} front={card.front} back={card.back} revealed={revealed} /></main>);
@@ -26,6 +27,5 @@ const api = {
     return result;
   },
 };
-Object.assign(window, { memnoterReview: api });
-// Use the same event envelope as the editor host.
-(window as unknown as { webkit: { messageHandlers: { memnoter: { postMessage: (body: unknown) => void } } } }).webkit.messageHandlers.memnoter.postMessage({ kind: "event", event: "ready", payload: { protocolVersion: 1 } });
+window.memnoterReview = api;
+postNativeEvent("ready", { protocolVersion: BRIDGE_VERSION });

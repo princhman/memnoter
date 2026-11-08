@@ -1,5 +1,5 @@
-import { onRemote, onFileStored, type ApplyResult } from "@/lib/sync/manager";
-import type { FileType } from "@/lib/content";
+import { BRIDGE_VERSION, EXEC_COMMANDS } from "./protocol";
+import { onRemote, onFileStored } from "@/lib/sync/apply-remote";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { requestCardReveal } from "@/lib/card-reveal";
 import { blockIdOf } from "@/lib/cards";
@@ -16,25 +16,6 @@ import { flushPersistedViews } from "@/lib/view-persistence";
 import { headingMathLabel } from "@/lib/heading-label";
 import { headingNumbers, headingNumberingKey } from "@/lib/heading-numbering";
 import { editorOutline, editorState, execEditor } from "./commands";
-
-declare global {
-  interface Window {
-    memnoterEditor: {
-      applyRemote(result: ApplyResult): void;
-      fileStored(moduleId: string, file: FileType): void;
-      setBottomInset(px: number): void;
-      setTopInset(px: number): void;
-      revealCard(moduleId: string, cardId: string): void;
-      open(moduleId: string): Promise<void>;
-      flush(): Promise<void>;
-      refreshModules(): Promise<void>;
-      exec(command: string, args?: Record<string, unknown>): boolean;
-      setOutlineTracking(enabled: boolean): void;
-      focus(): boolean;
-      blur(): boolean;
-    };
-  }
-}
 
 // How long after typing the caret may not be revealed upward.
 const TYPING_SETTLE_MS = 300;
@@ -105,16 +86,12 @@ export function Host() {
         catch (error) { throw fail(error); }
       },
       exec(command, args) {
-        try { return execEditor(getEditor(["scrollToHeading", "focusSection", "focusCurrentSection", "showDocument", "find"].includes(command)), command, args); }
+        try { return execEditor(getEditor(EXEC_COMMANDS[command] === true), command, args); }
         catch (error) { fail(error); return false; }
       },
       revealCard(moduleId, cardId) { requestCardReveal({ moduleId, blockId: blockIdOf(cardId) }); },
       focus() {
         try { return getEditor().commands.focus(); }
-        catch (error) { fail(error); return false; }
-      },
-      blur() {
-        try { return getEditor().commands.blur(); }
         catch (error) { fail(error); return false; }
       },
     };
@@ -135,7 +112,7 @@ export function Host() {
     const stopSaves = saveStatusStore.subscribe(saveStatus);
     const stopImages = imageStatusStore.subscribe(saveStatus);
     saveStatus();
-    postNativeEvent("ready", { protocolVersion: 1 });
+    postNativeEvent("ready", { protocolVersion: BRIDGE_VERSION });
     return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
   }, []);
 

@@ -92,7 +92,7 @@ struct RootView: View {
                     ReviewView(client: client, directory: store.directory, moduleId: reviewModule, editCard: editReviewCard)
                         .id(reviewModule ?? "all")
                 } else if module != nil, let session {
-                    if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec("find", ["text": value]) } }
+                    if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec(.find, ["text": value]) } }
                     WebSurface(session: session)
                         .background(Color(uiColor: .systemBackground))
                         .overlay {
@@ -144,8 +144,8 @@ struct RootView: View {
                 }
                 if let session, module != nil {
                     ToolbarItemGroup(placement: .topBarLeading) {
-                        Button { session.exec("undo") } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
-                        Button { session.exec("redo") } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                        Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
+                        Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
                     }
                     if session.state.focusedSectionId != nil || session.state.focusableSection != nil {
                         if #available(iOS 26.0, *) {
@@ -161,7 +161,7 @@ struct RootView: View {
                             .accessibilityLabel("Contents")
                             .popover(isPresented: $showingContents) {
                                 ContentsPopover(session: session) { heading in
-                                    session.exec("scrollToHeading", ["id": heading.id])
+                                    session.exec(.scrollToHeading, ["id": heading.id])
                                     showingContents = false
                                 }
                             }
@@ -187,14 +187,14 @@ struct RootView: View {
                 session = restored
                 store.sync?.onRemote = { json in
                     if let session, session.ready {
-                        _ = try await session.run("window.memnoterEditor.applyRemote(JSON.parse(json))", ["json": json])
+                        _ = try await session.callEditor(.applyRemote, ["result": try JSONSerialization.jsonObject(with: Data(json.utf8))], parameters: ["result"])
                     }
                     await store.refresh()
                     if let selected, selected != "home", selected != "review", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
                 }
                 store.sync?.onFile = { module, json in
                     if let session, session.ready {
-                        _ = try await session.run("window.memnoterEditor.fileStored(module, JSON.parse(json))", ["module": module, "json": json])
+                        _ = try await session.callEditor(.fileStored, ["module": module, "file": try JSONSerialization.jsonObject(with: Data(json.utf8))], parameters: ["module", "file"])
                     }
                     await store.refresh()
                 }
@@ -252,7 +252,7 @@ struct RootView: View {
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else { throw URLError(.cannotDecodeContentData) }
                     let file: SavedFile = try await client.call("save_file", FileArgs(moduleId: id, bytes: Array(data), mimeType: item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"))
-                    let inserted = try await session?.run("return window.memnoterEditor.exec('insertImage', {fileId: id, alt: 'Photo'})", ["id": file.id]) as? Bool
+                    let inserted = try await session?.execute(.insertImage, ["fileId": file.id, "alt": "Photo"]) as? Bool
                     if inserted != true { throw URLError(.cannotCreateFile) }
                     try await session?.flush()
                 } catch { store.error = String(describing: error) }
@@ -327,7 +327,7 @@ struct RootView: View {
             try await client.write("set_module_numbering", NumberingArgs(moduleId: moduleId, enabled: enabled))
             store.modules = try await client.call("modules", Empty())
             // Refresh the displayed editor and its live Contents without replacing the web view.
-            _ = try await session?.run("await window.memnoterEditor.refreshModules()")
+            _ = try await session?.callEditor(.refreshModules)
         } catch {
             // A write may have succeeded before a refresh failed; show persisted state on retry.
             if let modules: [NoteModule] = try? await client.call("modules", Empty()) { store.modules = modules }
@@ -342,7 +342,7 @@ struct RootView: View {
             do {
                 try await session.flush()
                 // Queue the shared reveal before opening, so it waits for note restoration.
-                _ = try await session.run("window.memnoterEditor.revealCard(moduleId, cardId)", ["moduleId": card.moduleId, "cardId": card.id])
+                _ = try await session.callEditor(.revealCard, ["moduleId": card.moduleId, "cardId": card.id], parameters: ["moduleId", "cardId"])
                 try await session.open(card.moduleId)
                 store.recordOpenedModule(card.moduleId)
                 selected = card.moduleId

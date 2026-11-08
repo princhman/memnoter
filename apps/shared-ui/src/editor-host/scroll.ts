@@ -1,3 +1,4 @@
+import { postNativeEvent } from "../lib/backend.ts";
 import type { Editor } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { suppressesTextInput } from "../lib/editor-input.ts";
@@ -7,7 +8,7 @@ export function traceScroll(reason: string, details: Record<string, unknown> = {
   if (!(window as Window & { __memnoterScrollDebug?: boolean }).__memnoterScrollDebug) return;
   const payload = { time: Date.now(), reason, ...details };
   console.debug("[scroll]", JSON.stringify(payload));
-  (window as Window & { webkit?: { messageHandlers?: { memnoter?: { postMessage(value: unknown): void } } } }).webkit?.messageHandlers?.memnoter?.postMessage({ kind: "event", event: "scrollDebug", payload });
+  postNativeEvent("scrollDebug", payload);
 }
 
 export function observeScroll(container: HTMLElement) {

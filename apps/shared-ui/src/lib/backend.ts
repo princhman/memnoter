@@ -1,8 +1,9 @@
+import { FILE_SCHEME, type NativeEvent, type NativeEvents } from "../editor-host/protocol.ts";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
 type NativeMessage = { kind: "call"; id: string; command: string; args: object } |
-  { kind: "event"; event: string; payload: unknown };
+  NativeEvent;
 type Handler = (event: { event: string; id: number; payload: unknown }) => void;
 
 declare global {
@@ -71,8 +72,8 @@ export async function listen<T>(event: string, handler: (event: { event: string;
   };
 }
 
-export function postNativeEvent(event: string, payload: unknown = null) {
-  if (isNativeHost()) window.webkit!.messageHandlers!.memnoter!.postMessage({ kind: "event", event, payload });
+export function postNativeEvent<K extends keyof NativeEvents>(event: K, ...args: null extends NativeEvents[K] ? [payload?: NativeEvents[K]] : [payload: NativeEvents[K]]) {
+  if (isNativeHost()) window.webkit!.messageHandlers!.memnoter!.postMessage({ kind: "event", event, payload: args[0] ?? null } as NativeEvent);
 }
 
 export function fileUrl(path: string): string {
@@ -85,5 +86,5 @@ export function fileUrl(path: string): string {
   if (parts.length !== 2 || parts[0] !== "files" || !parts[1] || parts.some(part => part === "." || part === "..")) {
     throw new Error("Expected an app data files/<id> path");
   }
-  return `memnoter-file://localhost/${parts.map(encodeURIComponent).join("/")}`;
+  return `${FILE_SCHEME}://localhost/${parts.map(encodeURIComponent).join("/")}`;
 }

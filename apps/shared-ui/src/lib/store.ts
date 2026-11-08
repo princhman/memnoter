@@ -1,3 +1,4 @@
+import type { NativeViewState } from "../editor-host/protocol";
 import { isNativeHost, postNativeEvent, listen } from "./backend.ts";
 import { createStore } from "@tanstack/react-store";
 
@@ -27,7 +28,7 @@ type appState = {
 };
 
 declare global {
-  interface Window { __memnoterViewState?: Partial<appState>; }
+  interface Window { __memnoterViewState?: Partial<NativeViewState>; }
 }
 
 const RECENT_LIMIT = 20;
@@ -54,8 +55,8 @@ function normalizeState(value: Partial<appState> | null): appState {
 function loadState(): appState {
   try {
     // Custom WKURLSchemeHandler origins do not provide reliable Web Storage.
-    if (isNativeHost() && window.__memnoterViewState) {
-      return normalizeState(window.__memnoterViewState);
+    if (isNativeHost()) {
+      return normalizeState({ ...window.__memnoterViewState, skipCardsCreatedToday: false });
     }
     const saved = localStorage.getItem(STORAGE_KEY);
     // Merge so state saved by older versions picks up new fields.
@@ -74,7 +75,8 @@ export function saveState() {
   window.clearTimeout(saveTimeout);
   saveTimeout = undefined;
   if (isNativeHost()) {
-    postNativeEvent("viewState", appStore.state);
+    const { skipCardsCreatedToday: _, ...viewState } = appStore.state;
+    postNativeEvent("viewState", viewState);
     return;
   }
   try {

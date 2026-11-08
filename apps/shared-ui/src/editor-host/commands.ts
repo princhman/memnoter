@@ -1,3 +1,4 @@
+import type { ExecCommand, EditorState } from "./protocol";
 import { sectionOffset, sectionToTop } from "./scroll.ts";
 import { suppressesTextInput } from "../lib/editor-input.ts";
 import type { Editor } from "@tiptap/core";
@@ -34,7 +35,7 @@ export function editorOutline(editor: Editor) {
     !folded.some(range => item.pos >= range.from && item.pos < range.to));
 }
 
-export function editorState(editor: Editor) {
+export function editorState(editor: Editor): EditorState {
   const marks = ["bold", "italic", "underline", "strike", "code", "link", "highlight"].filter(mark => editor.isActive(mark));
   const focusedPos = sectionFocusKey.getState(editor.state);
   const focusedHeading = focusedPos == null ? null : editor.state.doc.nodeAt(focusedPos);
@@ -72,7 +73,7 @@ export function editorState(editor: Editor) {
 }
 
 // Keep the protocol explicit: never dispatch an arbitrary name into editor.commands.
-export function execEditor(editor: Editor, command: string, args: Record<string, unknown> = {}): boolean {
+export function execEditor(editor: Editor, command: ExecCommand, args: Record<string, unknown> = {}): boolean {
   const commands = editor.commands;
   switch (command) {
     case "insertTable": return editor.isActive("table") ? false : commands.insertTable({ rows: 3, cols: 3, withHeaderRow: true });
@@ -166,6 +167,9 @@ export function execEditor(editor: Editor, command: string, args: Record<string,
     case "find":
       if (typeof args.text !== "string") throw new Error("find requires text");
       return commands.setSearchTerm(args.text);
-    default: throw new Error(`Unknown editor command: ${command}`);
+    default: {
+      const unknown: never = command;
+      throw new Error(`Unknown editor command: ${unknown}`);
+    }
   }
 }
