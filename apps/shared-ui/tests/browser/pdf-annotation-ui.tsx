@@ -12,9 +12,11 @@ import { PdfViewer } from "@/components/pdf-viewer";
 
 function Fixture() {
   const [documentId, setDocumentId] = useState("text-pdf");
+  const [outsideClicks, setOutsideClicks] = useState(0);
   const pending = useSelector(pendingPdfQuote, value => value);
   return <>
     <button onClick={() => { void exclusiveWrite(() => new Promise(resolve => setTimeout(resolve, 1000))); }}>Block writes briefly</button>
+    <button onClick={() => setOutsideClicks(count => count + 1)}>Outside action</button><output id="outside-count">{outsideClicks}</output>
     <p id="outside">Outside text stays outside quotes</p>
     <button onClick={() => setDocumentId("replacement-pdf")}>Replace document</button>
     <button onClick={() => pendingPdfQuote.setState(() => null)}>Clear quote</button>

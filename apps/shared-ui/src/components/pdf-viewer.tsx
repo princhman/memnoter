@@ -12,7 +12,7 @@ import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, Highlighter, X } from "lucide-react";
+import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, Highlighter, MessageSquare, Quote, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
@@ -362,7 +362,12 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       for (const type of ["gesturestart", "gesturechange", "gestureend"]) element.removeEventListener(type, gesture);
     };
   }, [doc.available, error]);
+  const textMenu = useRef<HTMLDivElement>(null);
   const [textAction, setTextAction] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const menu = textMenu.current;
+    if (menu && root.current && textAction) menu.style.left = `${Math.max(8, Math.min(textAction.left, root.current.clientWidth - menu.offsetWidth - 8))}px`;
+  }, [textAction]);
   useEffect(() => {
     const reader = content.current;
     const viewport = container.current;
@@ -479,9 +484,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
 
   // The backdrop matches the app header, so the page sits on one surface.
   return <div ref={root} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="relative flex h-full min-h-0 min-w-0 flex-col bg-background">
-    {textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div role="group" aria-label="PDF text actions" className="absolute z-30 flex gap-1 rounded-md bg-primary p-1 text-xs text-primary-foreground shadow-md" style={textAction}>
-      <button type="button" className="rounded px-1 py-0.5 focus-visible:outline-2" onPointerDown={event => event.preventDefault()} onClick={quoteText}>Quote text</button>
-      {(["highlight", "comment"] as const).map(kind => <button key={kind} type="button" className="rounded px-1 py-0.5 focus-visible:outline-2 disabled:opacity-50" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => {
+    {textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="absolute z-30 flex max-w-[calc(100%-1rem)] items-center gap-0.5 overflow-x-auto rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
+      <Button size="xs" variant="ghost" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote text</Button>
+      {(["highlight", "comment"] as const).map(kind => <Button key={kind} size="xs" variant="ghost" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => {
         const selected = content.current && readPdfTextSelection(content.current, doc);
         if (!selected) return;
         const draft = { anchors: selected.anchors, excerpt: selected.parts.map(part => part.text).join("\n") };
@@ -492,15 +497,15 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
           } else setAnnotationEditor({ kind: "new", anchorPage: selected.anchors[0].page, ...draft, ...annotationPosition(selected.anchor) });
           window.getSelection()?.removeAllRanges(); setTextAction(null);
         } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); }
-      }}>{kind === "highlight" ? "Highlight" : "Comment"}</button>)}
+      }}>{kind === "highlight" ? <Highlighter aria-hidden="true" /> : <MessageSquare aria-hidden="true" />}{kind === "highlight" ? "Highlight" : "Comment"}</Button>)}
     </div>}
-    {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="absolute z-30 flex gap-1 rounded-md bg-primary p-1 text-xs text-primary-foreground shadow-md" style={annotationEditor}>
-      <button type="button" disabled={!annotations.ready || writeBlocked} onClick={() => {
+    {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="absolute z-30 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-0.5 rounded-lg floating-surface p-1 text-foreground shadow-md" style={annotationEditor}>
+      <Button size="xs" variant="ghost" aria-label="Highlight area" disabled={!annotations.ready || writeBlocked} onClick={() => {
         try { const id = annotations.create({ kind: "highlight", anchors: annotationEditor.anchors }); setAnnotationEditor({ kind: "existing", id, anchorPage: annotationEditor.anchorPage, left: annotationEditor.left, top: annotationEditor.top }); }
         catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); }
-      }}>Highlight area</button>
-      <button type="button" disabled={!annotations.ready || writeBlocked} onClick={() => setAnnotationEditor({ ...annotationEditor, kind: "new" })}>Comment on area</button>
-      <button type="button" aria-label="Cancel area annotation" onClick={() => setAnnotationEditor(null)}>×</button>
+      }}><Highlighter aria-hidden="true" />Highlight</Button>
+      <Button size="xs" variant="ghost" aria-label="Comment on area" disabled={!annotations.ready || writeBlocked} onClick={() => setAnnotationEditor({ ...annotationEditor, kind: "new" })}><MessageSquare aria-hidden="true" />Comment</Button>
+      <ToolButton size="icon-xs" label="Cancel area annotation" onClick={() => setAnnotationEditor(null)}><X /></ToolButton>
     </div>}
     {annotationEditor && annotationEditor.kind !== "area" && (() => {
       const existing = annotationEditor.kind === "existing" ? annotations.annotations.find(annotation => annotation.id === annotationEditor.id) : undefined;
