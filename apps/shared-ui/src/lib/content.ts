@@ -1,3 +1,4 @@
+import { queryClient } from "./query-client.ts";
 import { call as invoke } from "./backend.ts";
 import * as Y from "yjs";
 
@@ -32,7 +33,7 @@ export function applySavedContent(doc: Y.Doc, content: GetContentResponse) {
     for (const update of content.updates) {
       Y.applyUpdate(doc, new Uint8Array(update.bytes));
     }
-  }, "tauri-load");
+  }, LOAD_ORIGIN);
 }
 
 export async function loadContent(
@@ -116,8 +117,20 @@ export function reconcileContent(moduleId: string, content: GetContentResponse):
 }
 export function contentQueryOptions(moduleId: string) {
   return {
-    queryKey: ["content", moduleId],
+    queryKey: contentKey(moduleId),
     // Runs at QueryClient publication, including after an outstanding read.
     structuralSharing: (_old: unknown, incoming: unknown) => reconcileContent(moduleId, incoming as GetContentResponse),
   };
+}
+
+export const LOAD_ORIGIN = "tauri-load";
+export const contentKey = (moduleId: string) => ["content", moduleId] as const;
+
+export function patchContent(moduleId: string, patch: (content: GetContentResponse) => GetContentResponse) {
+  queryClient.setQueryData<GetContentResponse>(contentKey(moduleId), content => content && patch(content));
+}
+
+export function appendSavedUpdate(moduleId: string, update: ContentUpdate) {
+  acknowledgeContent(moduleId, update);
+  patchContent(moduleId, content => ({ ...content, updates: [...content.updates.filter(known => known.id !== update.id), update] }));
 }

@@ -1,4 +1,4 @@
-import type { CardCountKind } from "@/components/card-counts";
+import type { CardCountKind } from "@/lib/card-count-kind";
 import type { CardCounts } from "@/lib/card-sync";
 import { createStore } from "@tanstack/react-store";
 

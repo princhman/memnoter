@@ -1,3 +1,5 @@
+import { ReactNodeViewRenderer } from "@tiptap/react";
+import { SavedImage as ImageSchema, InlineImage as InlineImageSchema } from "@/lib/editor-schema/images";
 import { ImagePreview } from "@/components/image-preview";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { imageOperation } from "@/lib/write-lifecycle";
@@ -5,14 +7,12 @@ import { OcclusionEditor } from "@/components/occlusion-editor";
 import { saveQueue } from "@/lib/saves";
 import { maskCards, validMasks } from "@/lib/occlusion";
 import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
-import { HANDLES, moveBox, resizeBox, type Box, type Handle } from "@/lib/box";
+import { CropDialog, type Crop as ImageCrop } from "./image-crop-dialog";
+import { copyImageAttrs } from "@/lib/editor-schema/images";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
-import { NodeViewWrapper, ReactNodeViewRenderer, useEditorState, type NodeViewProps } from "@tiptap/react";
-import { mergeAttributes, ResizableNodeView } from "@tiptap/core";
-import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
-import type { NodeType } from "@tiptap/pm/model";
-import type { EditorView } from "@tiptap/pm/view";
-import Image from "@tiptap/extension-image";
+import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
+import { ResizableNodeView } from "@tiptap/core";
+import { NodeSelection } from "@tiptap/pm/state";
 import { call as invoke, fileUrl as convertFileSrc, isNativeHost, postNativeEvent } from "../lib/backend.ts";
 import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -39,78 +39,7 @@ export const FilesContext = createContext<FilesContextValue>({
 
 const visiblePreviews = new Set<HTMLElement>();
 
-type Crop = Box;
-const MIN_CROP = 0.05;
-
-function CropDialog({ image, onCancel, onSave }: {
-  image: HTMLImageElement;
-  onCancel: () => void;
-  onSave: (crop: Crop) => Promise<void>;
-}) {
-  const frame = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ pointerId: number; startX: number; startY: number; crop: Crop; mode: "move" | Handle } | null>(null);
-  const [crop, setCrop] = useState<Crop>({ x: 0, y: 0, width: 1, height: 1 });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const beginDrag = (event: ReactPointerEvent<HTMLElement>, mode: "move" | Handle) => {
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, crop, mode };
-  };
-
-  const updateDrag = (event: ReactPointerEvent<HTMLElement>) => {
-    const current = drag.current;
-    const bounds = frame.current?.getBoundingClientRect();
-    if (!current || !bounds || current.pointerId !== event.pointerId) return;
-    const dx = (event.clientX - current.startX) / bounds.width;
-    const dy = (event.clientY - current.startY) / bounds.height;
-    if (current.mode === "move") {
-      setCrop(moveBox(current.crop, dx, dy));
-    } else {
-      setCrop(resizeBox(current.crop, current.mode, dx, dy, MIN_CROP));
-    }
-  };
-
-  const endDrag = () => { drag.current = null; };
-
-  const save = async () => {
-    setSaving(true);
-    setError("");
-    try { await onSave(crop); } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save the cropped image");
-      setSaving(false);
-    }
-  };
-
-  const area = { left: `${crop.x * 100}%`, top: `${crop.y * 100}%`, width: `${crop.width * 100}%`, height: `${crop.height * 100}%` };
-  const uncropped = crop.x === 0 && crop.y === 0 && crop.width === 1 && crop.height === 1;
-
-  return (
-    <div className="image-crop-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
-      <section className="image-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="image-crop-title">
-        <h2 id="image-crop-title">Crop image</h2>
-        <p>Drag any edge or corner to crop, or drag inside the area to reposition it.</p>
-        <div className="image-crop-preview">
-          <div ref={frame} className="image-crop-frame">
-            <img src={image.src} alt="Crop preview" draggable={false} />
-            <div className="image-crop-shade-clip"><div className="image-crop-shade" style={area} /></div>
-            <div className="image-crop-selection" style={area} onPointerDown={(event) => beginDrag(event, "move")} onPointerMove={updateDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
-              {HANDLES.map((handle) => (
-                <span key={handle} className={`image-crop-handle image-crop-handle-${handle}`} aria-label={`Resize crop area (${handle})`} onPointerDown={(event) => beginDrag(event, handle)} onPointerMove={updateDrag} onPointerUp={endDrag} onPointerCancel={endDrag} />
-              ))}
-            </div>
-          </div>
-        </div>
-        {error && <p className="image-crop-error" role="alert">{error}</p>}
-        <div className="image-crop-actions"><Button variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button><Button onClick={() => void save()} disabled={saving || uncropped}>{saving ? "Saving…" : "Apply crop"}</Button></div>
-      </section>
-    </div>
-  );
-}
-
-function SavedImageView(props: NodeViewProps) {
+export function SavedImageView(props: NodeViewProps) {
   const { node, editor, updateAttributes, deleteNode } = props;
   const selected = useEditorState({
     editor,
@@ -382,11 +311,11 @@ function SavedImageView(props: NodeViewProps) {
     const position = latest.current.getPos();
     if (position === undefined) return;
     const { state, schema } = editor;
-    const { fileId, src, alt, title, width, height, adaptive, imageId, masks } = node.attrs;
+    const attrs = copyImageAttrs(node);
     const tr = state.tr;
     let selectAt: number;
     if (isInline) {
-      const image = schema.nodes.image.create({ fileId, src, alt, title, width, height, adaptive, imageId, masks, alignment, wrap });
+      const image = schema.nodes.image.create({ ...attrs, alignment, wrap });
       tr.delete(position, position + 1);
       const $at = tr.doc.resolve(position);
       if ($at.parent.content.size === 0) {
@@ -403,7 +332,7 @@ function SavedImageView(props: NodeViewProps) {
         tr.insert(selectAt, image);
       }
     } else {
-      const image = schema.nodes.inlineImage.create({ fileId, src, alt, title, width, height, adaptive, imageId, masks });
+      const image = schema.nodes.inlineImage.create(attrs);
       tr.replaceWith(position, position + 1, schema.nodes.paragraph.create(null, image));
       selectAt = position + 1;
     }
@@ -415,7 +344,7 @@ function SavedImageView(props: NodeViewProps) {
     editor.view.dispatch(tr);
   };
 
-  const applyCrop = (crop: Crop) => imageOperation(async () => {
+  const applyCrop = (crop: ImageCrop) => imageOperation(async () => {
     if (saveQueue.isSuspended() || editor.isDestroyed) throw new Error("Image writes are suspended");
     const fileId = node.attrs.fileId as string | null;
     if (!fileId) throw new Error("This image cannot be read for cropping");
@@ -567,96 +496,6 @@ function swapImage(img: HTMLImageElement, next: string) {
 
 type ImageLayout = "inline" | "wrap" | "break";
 
-const IMAGE_NODES = new Set(["image", "inlineImage"]);
-
-// Puts the cursor in the text flowing beside a wrapped image: at the end of
-// the last text block that starts above the click, or in a new paragraph when
-// nothing follows the image yet.
-function placeCursorBeside(view: EditorView, imagePos: number, imageSize: number, y: number) {
-  const after = imagePos + imageSize;
-  const $after = view.state.doc.resolve(after);
-  const parent = $after.parent;
-  let target: number | null = null;
-  let offset = after;
-  for (let index = $after.index(); index < parent.childCount; index++) {
-    const child = parent.child(index);
-    if (!child.isTextblock) break;
-    const dom = view.nodeDOM(offset);
-    // The first block starts level with the image, so it always qualifies.
-    if (target !== null && (!(dom instanceof HTMLElement) || dom.getBoundingClientRect().top > y)) break;
-    target = offset + child.nodeSize - 1;
-    offset += child.nodeSize;
-  }
-  const tr = view.state.tr;
-  if (target === null) {
-    tr.insert(after, view.state.schema.nodes.paragraph.create());
-    target = after + 1;
-  }
-  tr.setSelection(TextSelection.create(tr.doc, target));
-  view.dispatch(tr);
-  view.focus();
-}
-
-// Typing replaces a selected node, so a selected image would be overwritten.
-// Send the text where it reads next to the image instead.
-function typeBesideImage(view: EditorView, selection: NodeSelection, text: string) {
-  const { node, from } = selection;
-  const after = from + node.nodeSize;
-  if (node.type.isInline) {
-    const tr = view.state.tr.insertText(text, after);
-    view.dispatch(tr.setSelection(TextSelection.create(tr.doc, after + text.length)));
-    return;
-  }
-  if (node.attrs.wrap) {
-    const block = (view.nodeDOM(from) as HTMLElement | null)?.querySelector(".note-image-block");
-    placeCursorBeside(view, from, node.nodeSize, block?.getBoundingClientRect().bottom ?? 0);
-    view.dispatch(view.state.tr.insertText(text));
-    return;
-  }
-  // Text below an image on its own line starts a new line of its own.
-  const tr = view.state.tr.insert(after, view.state.schema.nodes.paragraph.create(null, view.state.schema.text(text)));
-  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, after + 1 + text.length)));
-}
-
-// Handles typing on a selected image, and clicks in the blank space beside a
-// floated image, which belongs to no text block: the browser would resolve
-// those clicks into the image itself.
-function imageTextPlugin(type: NodeType) {
-  return new Plugin({
-    key: new PluginKey("image-text"),
-    props: {
-      handleTextInput(view, _from, _to, text) {
-        const { selection } = view.state;
-        if (!(selection instanceof NodeSelection) || !IMAGE_NODES.has(selection.node.type.name)) return false;
-        typeBesideImage(view, selection, text);
-        return true;
-      },
-      handleDOMEvents: {
-        mousedown(view, event) {
-          if (event.button !== 0 || event.target !== view.dom || !view.editable) return false;
-          let handled = false;
-          view.state.doc.descendants((node, pos) => {
-            if (handled) return false;
-            if (node.type !== type || !node.attrs.wrap) return;
-            const dom = view.nodeDOM(pos);
-            const block = dom instanceof HTMLElement ? dom.querySelector(".note-image-block") ?? dom : null;
-            if (!block) return false;
-            const box = block.getBoundingClientRect();
-            if (event.clientY < box.top || event.clientY > box.bottom) return false;
-            const textSide = node.attrs.alignment === "right" ? event.clientX < box.left : event.clientX > box.right;
-            if (!textSide) return false;
-            placeCursorBeside(view, pos, node.nodeSize, event.clientY);
-            handled = true;
-            return false;
-          });
-          if (handled) event.preventDefault();
-          return handled;
-        },
-      },
-    },
-  });
-}
-
 const IMAGE_LAYOUTS = [
   ["inline", "In line", "Sits inside one line of text, like a large letter", TextCursorInput],
   ["wrap", "Wrap text", "Text flows beside the image over several lines", WrapText],
@@ -696,7 +535,7 @@ function ToolbarButton({ label, hint, pressed, disabled, onClick, children }: {
 // Images move with pointer events (see image-pointer-move.ts), never native
 // drag and drop: ProseMirror would make the node draggable on mousedown, and
 // that drag swallows the click that selects the image and opens its toolbar.
-function imageStopEvent({ event }: { event: Event }) {
+export function imageStopEvent({ event }: { event: Event }) {
   const { type } = event;
   // Other content can still be dropped on or beside the image.
   if (type === "dragover" || type === "dragenter" || type === "drop") return false;
@@ -704,71 +543,11 @@ function imageStopEvent({ event }: { event: Event }) {
   return !["copy", "cut", "paste"].includes(type);
 }
 
-export const SavedImage = Image.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      fileId: { default: null, parseHTML: el => el.getAttribute("data-file-id"), renderHTML: attrs => attrs.fileId ? { "data-file-id": attrs.fileId } : {} },
-      imageId: { default: null, parseHTML: el => el.getAttribute("data-image-id"), renderHTML: attrs => attrs.imageId ? { "data-image-id": attrs.imageId } : {} },
-      masks: { default: [], parseHTML: el => { try { return validMasks(JSON.parse(el.getAttribute("data-occlusion-masks") || "[]")); } catch { return []; } }, renderHTML: attrs => ({ "data-occlusion-masks": JSON.stringify(validMasks(attrs.masks)) }) },
-      // Blends the image into the theme; see image-adapt.ts.
-      adaptive: {
-        default: false,
-        parseHTML: (element) => element.hasAttribute("data-adaptive"),
-        renderHTML: (attributes) => (attributes.adaptive ? { "data-adaptive": "" } : {}),
-      },
-      alignment: {
-        default: "left",
-        parseHTML: (element) => element.getAttribute("data-align") || "left",
-        renderHTML: (attributes) => ({
-          "data-align": attributes.alignment,
-          style: `display: block; margin-left: ${attributes.alignment === "left" ? "0" : "auto"}; margin-right: ${attributes.alignment === "right" ? "0" : "auto"}`,
-        }),
-      },
-      // Floats the image so the following text flows around it.
-      wrap: {
-        default: false,
-        parseHTML: (element) => element.hasAttribute("data-wrap"),
-        renderHTML: (attributes) =>
-          attributes.wrap
-            ? { "data-wrap": "", style: `float: ${attributes.alignment === "right" ? "right" : "left"}` }
-            : {},
-      },
-    };
-  },
-  parseHTML() { return [{ tag: "img[data-file-id]", priority: 60 }, { tag: "img[src]" }]; },
-  addNodeView() {
-    return ReactNodeViewRenderer(SavedImageView, { stopEvent: imageStopEvent });
-  },
-  addProseMirrorPlugins() {
-    return [imageTextPlugin(this.type)];
-  },
-});
 
-// The same image, placed within a line of text instead of on its own line.
-export const InlineImage = SavedImage.extend({
-  name: "inlineImage",
-  inline: true,
-  group: "inline",
-  addAttributes() {
-    const { alignment: _alignment, wrap: _wrap, ...attributes } = (this.parent?.() ?? {}) as Record<string, unknown>;
-    return attributes;
-  },
-  parseHTML() {
-    return [{ tag: "img[data-inline-image]", priority: 70 }];
-  },
-  renderHTML({ HTMLAttributes }) {
-    return ["img", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { "data-inline-image": "" })];
-  },
-  // The block image already owns the markdown input rule and setImage.
-  addInputRules() {
-    return [];
-  },
-  addCommands() {
-    return {};
-  },
-  // SavedImage's plugin covers both node types; plugin keys must be unique.
-  addProseMirrorPlugins() {
-    return [];
-  },
+// UI entrypoints retained for image-only editors. Headless readers import the schema.
+export const SavedImage = ImageSchema.extend({
+  addNodeView() { return ReactNodeViewRenderer(SavedImageView, { stopEvent: imageStopEvent }); },
+});
+export const InlineImage = InlineImageSchema.extend({
+  addNodeView() { return ReactNodeViewRenderer(SavedImageView, { stopEvent: imageStopEvent }); },
 });

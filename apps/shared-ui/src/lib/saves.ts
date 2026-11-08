@@ -1,9 +1,8 @@
 import { call as invoke } from "./backend.ts";
 import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
-import { queryClient } from "@/lib/query-client";
 import { createSaveQueue, type SaveQueueStatus } from "@/lib/save-queue";
-import { acknowledgeContent, type ContentUpdate, type GetContentResponse } from "@/lib/content";
+import { appendSavedUpdate, LOAD_ORIGIN, type ContentUpdate } from "@/lib/content";
 
 export const saveStatusStore = createStore<SaveQueueStatus>({
   pending: 0,
@@ -15,17 +14,7 @@ export const saveStatusStore = createStore<SaveQueueStatus>({
 export const saveQueue = createSaveQueue<number[], ContentUpdate>({
   persist: (moduleId, bytes) =>
     invoke<ContentUpdate>("add_update", { moduleId, bytes }),
-  onSaved: (moduleId, update) => {
-    acknowledgeContent(moduleId, update);
-    queryClient.setQueryData<GetContentResponse>(
-      ["content", moduleId],
-      (oldContent) =>
-        oldContent && {
-          ...oldContent,
-          updates: [...oldContent.updates, update],
-        },
-    );
-  },
+  onSaved: appendSavedUpdate,
   onStatus: (status) => saveStatusStore.setState(() => status),
   onError: (_, error) => console.error("Failed to save Tiptap update:", error),
 });
@@ -36,7 +25,7 @@ export function applyPendingSaves(doc: Y.Doc, updates: readonly number[][]) {
   if (updates.length === 0) return;
   doc.transact(() => {
     for (const update of updates) Y.applyUpdate(doc, new Uint8Array(update));
-  }, "tauri-load");
+  }, LOAD_ORIGIN);
 }
 
 export function flushSaves(timeoutMs: number) {

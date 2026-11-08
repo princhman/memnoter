@@ -1,3 +1,4 @@
+import { useModules } from "@/lib/modules";
 import { MOD_KEY } from "@/lib/utils";
 import { openReview } from "@/lib/card-sync";
 import {
@@ -15,10 +16,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
-import { Module } from "@/lib/types";
-import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
-import { call as invoke } from "../lib/backend.ts";
 import CreateModule from "./create-module";
 import { Ellipsis, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import {
@@ -120,10 +118,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
 };
 
 const AppSidebar = () => {
-  const { isPending, error, data } = useQuery({
-    queryKey: ["modules"],
-    queryFn: async () => await invoke<Module[]>("modules"),
-  });
+  const { isPending, error, data } = useModules();
   const matchRoute = useMatchRoute();
   const { total } = useDueCounts();
 

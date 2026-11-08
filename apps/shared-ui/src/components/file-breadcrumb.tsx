@@ -1,3 +1,4 @@
+import { useModules } from "@/lib/modules";
 import { IconTooltip } from "@/components/icon-tooltip";
 import {
   Breadcrumb,
@@ -10,9 +11,6 @@ import {
 } from "@/components/ui/breadcrumb";
 import { cn } from "cn";
 import { useSidebar } from "./ui/sidebar";
-import { useQuery } from "@tanstack/react-query";
-import { call as invoke } from "../lib/backend.ts";
-import { Module } from "@/lib/types";
 import { useMatchRoute } from "@tanstack/react-router";
 import { useEditorState } from "@tiptap/react";
 import { getFocusedSectionPath } from "@/lib/section-focus";
@@ -38,10 +36,7 @@ export function FileBreadcrumb() {
     isPending,
     error,
     data: modules = [],
-  } = useQuery({
-    queryKey: ["modules"],
-    queryFn: async () => await invoke<Module[]>("modules"),
-  });
+  } = useModules();
 
   const matchRoute = useMatchRoute();
   // These pages also match the module id pattern.

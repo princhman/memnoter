@@ -36,7 +36,7 @@ const SHIFT_KEY = MOD_KEY === "⌘" ? "⇧" : "Shift+";
 const shortcut = (key: string) => `${MOD_KEY}${ALT_KEY}${key}`;
 const shiftShortcut = (key: string) => `${MOD_KEY}${SHIFT_KEY}${key}`;
 
-export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+import { IMAGE_TYPES } from "@/lib/editor-schema/images";
 
 function pickImages(onPick: (files: File[]) => void) {
   const input = document.createElement("input");

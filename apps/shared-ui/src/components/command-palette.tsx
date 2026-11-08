@@ -1,3 +1,4 @@
+import { useModules } from "@/lib/modules";
 import {
   useEffect,
   useId,
@@ -27,7 +28,6 @@ import { requestFind } from "@/lib/find-request";
 import { getRecentModuleIds } from "@/lib/recent-modules";
 import { backfillSearchIndex } from "@/lib/search-index";
 import { findTermsFor, splitMarked } from "@/lib/search-marks";
-import type { Module } from "@/lib/types";
 
 const SEARCH_DEBOUNCE_MS = 120;
 const SEARCH_LIMIT = 20;
@@ -149,11 +149,7 @@ export function CommandPalette() {
   const trimmed = query.trim();
   const debouncedQuery = useDebounced(trimmed, SEARCH_DEBOUNCE_MS);
 
-  const modules = useQuery({
-    queryKey: ["modules"],
-    queryFn: async () => await invoke<Module[]>("modules"),
-    enabled: open,
-  });
+  const modules = useModules({ enabled: open, });
 
   const search = useQuery({
     queryKey: ["search-notes", debouncedQuery],

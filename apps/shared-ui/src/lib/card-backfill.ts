@@ -1,3 +1,4 @@
+import { LOAD_ORIGIN } from "./content";
 import { Editor } from "@tiptap/core";
 import { call as invoke } from "./backend.ts";
 import * as Y from "yjs";
@@ -26,7 +27,7 @@ async function indexStoredCards(moduleId: string) {
   applyPendingSaves(doc, pending);
   // A note opened meanwhile gives its blocks ids of its own; keep only those.
   const save = (update: Uint8Array, origin: unknown) => {
-    if (origin !== "tauri-load" && !isModuleOpen(moduleId)) {
+    if (origin !== LOAD_ORIGIN && !isModuleOpen(moduleId)) {
       saveQueue.enqueue(moduleId, Array.from(update));
     }
   };
