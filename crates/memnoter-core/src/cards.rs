@@ -71,31 +71,9 @@ pub fn migrate_flashcards(conn: &Connection) -> CommandResult<()> {
     )
     .map_err(db_err)?;
 
-    // Cards stored before sections existed: add the column, and check every
-    // note again so each card gets its section.
-    let has_section = conn
-        .prepare("select 1 from pragma_table_info('cards') where name = 'section'")
-        .and_then(|mut stmt| stmt.exists([]))
-        .map_err(db_err)?;
-    if !has_section {
-        conn.execute_batch(
-            "alter table cards add column section TEXT NOT NULL DEFAULT '[]';
-             delete from card_indexed_modules;",
-        )
-        .map_err(db_err)?;
-    }
-    let has_two_way_index = conn
-        .prepare(
-            "select 1 from pragma_table_info('card_indexed_modules') where name = 'syntax_version'",
-        )
-        .and_then(|mut stmt| stmt.exists([]))
-        .map_err(db_err)?;
-    if !has_two_way_index {
-        conn.execute_batch(
-            "alter table card_indexed_modules add column syntax_version INTEGER NOT NULL DEFAULT 1;
-             delete from card_indexed_modules;",
-        )
-        .map_err(db_err)?;
+    if crate::db::ensure_column(conn, "cards", "section", "TEXT NOT NULL DEFAULT '[]'")? {
+        conn.execute("delete from card_indexed_modules", [])
+            .map_err(db_err)?;
     }
     Ok(())
 }
@@ -244,10 +222,9 @@ fn sync_module_cards(
             .map_err(db_err)?;
         for card in cards {
             if card.kind == "occlusion" {
-                let front_id = card.front.get("fileId").and_then(|v| v.as_str());
-                let back_id = card.back.get("fileId").and_then(|v| v.as_str());
+                let front_id =
+                    crate::files::assets::card_image(&card.kind, &card.front, &card.back);
                 let exists = front_id.is_some()
-                    && front_id == back_id
                     && tx
                         .query_row(
                             "select exists(select 1 from files where id = ?1)",
@@ -291,11 +268,7 @@ fn sync_module_cards(
         params![module_id, now, kept],
     )
     .map_err(db_err)?;
-    tx.execute(
-        "delete from card_indexed_modules where module_id = ?1",
-        [module_id],
-    )
-    .map_err(db_err)?;
+    crate::search::invalidate_indexes(&tx, module_id)?;
     if conflicts.is_empty() {
         tx.execute(
             "insert or ignore into card_indexed_modules (module_id) values (?1)",
@@ -329,12 +302,15 @@ const REVIEW_AVAILABILITY: &str = "with review_cards as (
      end
 )";
 
-fn query_due_cards(
-    conn: &Connection,
-    module_id: Option<&str>,
+pub fn due_cards(
+    db: &Db,
+    module_id: Option<String>,
     now: i64,
     created_at_cutoff: Option<i64>,
 ) -> CommandResult<Vec<Card>> {
+    let conn = db.lock()?;
+    let module_id = module_id.as_deref();
+
     let mut stmt = conn
         .prepare(&format!(
             "{REVIEW_AVAILABILITY}
@@ -380,12 +356,14 @@ fn query_due_cards(
     rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }
 
-fn query_due_counts(
-    conn: &Connection,
+pub fn due_counts(
+    db: &Db,
     now: i64,
     day_end: i64,
     created_at_cutoff: Option<i64>,
 ) -> CommandResult<Vec<DueCount>> {
+    let conn = db.lock()?;
+
     let mut stmt = conn
         .prepare(&format!(
             // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
@@ -417,7 +395,10 @@ fn query_due_counts(
     rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }
 
-fn query_card_schedules(conn: &Connection, module_id: &str) -> CommandResult<Vec<CardSchedule>> {
+pub fn card_schedules(db: &Db, module_id: String) -> CommandResult<Vec<CardSchedule>> {
+    let conn = db.lock()?;
+    let module_id = module_id.as_str();
+
     let mut stmt = conn
         .prepare(
             "select id, due_at, last_review_at, state, created_at from cards
@@ -493,13 +474,18 @@ fn write_card_state(
 
 // Stores a review computed by ts-fsrs. `expected_reps` is the repetition count
 // the review was computed from.
-fn save_review(
-    conn: &mut Connection,
-    card_id: &str,
+pub fn review_card(
+    db: &Db,
+    card_id: String,
     expected_reps: i64,
-    card: &ReviewedCard,
-    log: &ReviewLog,
+    card: ReviewedCard,
+    log: ReviewLog,
 ) -> CommandResult<()> {
+    let mut conn = db.lock()?;
+    let card_id = card_id.as_str();
+    let card = &card;
+    let log = &log;
+
     let tx = conn.transaction().map_err(db_err)?;
     write_card_state(&tx, card_id, expected_reps, card, Some(&log.fsrs_model))?;
     let before = &log.before;
@@ -535,14 +521,19 @@ fn save_review(
 // to `previous`, its state before that review, and the review leaves the log.
 // `expected_reps` is the count that review left, so a card reviewed again
 // since is not rolled back.
-fn undo_last_review(
-    conn: &mut Connection,
-    card_id: &str,
+pub fn undo_review(
+    db: &Db,
+    card_id: String,
     expected_reps: i64,
-    previous: &ReviewedCard,
-    previous_fsrs_model: Option<&str>,
+    previous: ReviewedCard,
+    previous_fsrs_model: Option<String>,
     review_time: i64,
 ) -> CommandResult<()> {
+    let mut conn = db.lock()?;
+    let card_id = card_id.as_str();
+    let previous = &previous;
+    let previous_fsrs_model = previous_fsrs_model.as_deref();
+
     let tx = conn.transaction().map_err(db_err)?;
     let removed: Option<Option<String>> = tx
         .query_row(
@@ -572,61 +563,6 @@ pub fn sync_cards(
     sync_module_cards(&mut conn, &module_id, &cards, Utc::now().timestamp_millis())
 }
 
-pub fn due_cards(
-    db: &Db,
-    module_id: Option<String>,
-    now: i64,
-    created_at_cutoff: Option<i64>,
-) -> CommandResult<Vec<Card>> {
-    let conn = db.lock()?;
-    query_due_cards(&conn, module_id.as_deref(), now, created_at_cutoff)
-}
-
-pub fn card_schedules(db: &Db, module_id: String) -> CommandResult<Vec<CardSchedule>> {
-    let conn = db.lock()?;
-    query_card_schedules(&conn, &module_id)
-}
-
-pub fn due_counts(
-    db: &Db,
-    now: i64,
-    day_end: i64,
-    created_at_cutoff: Option<i64>,
-) -> CommandResult<Vec<DueCount>> {
-    let conn = db.lock()?;
-    query_due_counts(&conn, now, day_end, created_at_cutoff)
-}
-
-pub fn review_card(
-    db: &Db,
-    card_id: String,
-    expected_reps: i64,
-    card: ReviewedCard,
-    log: ReviewLog,
-) -> CommandResult<()> {
-    let mut conn = db.lock()?;
-    save_review(&mut conn, &card_id, expected_reps, &card, &log)
-}
-
-pub fn undo_review(
-    db: &Db,
-    card_id: String,
-    expected_reps: i64,
-    previous: ReviewedCard,
-    previous_fsrs_model: Option<String>,
-    review_time: i64,
-) -> CommandResult<()> {
-    let mut conn = db.lock()?;
-    undo_last_review(
-        &mut conn,
-        &card_id,
-        expected_reps,
-        &previous,
-        previous_fsrs_model.as_deref(),
-        review_time,
-    )
-}
-
 #[derive(serde::Serialize)]
 pub struct UnindexedModule {
     id: String,
@@ -650,19 +586,27 @@ pub fn unindexed_card_modules(db: &Db) -> CommandResult<Vec<UnindexedModule>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{delete_module_data, open_db};
+    use crate::{delete_module_data, Core};
     use serde_json::json;
     use uuid::Uuid;
 
     struct Fixture {
         dir: std::path::PathBuf,
-        db: Db,
+        core: Core,
+    }
+
+    impl std::ops::Deref for Fixture {
+        type Target = Core;
+        fn deref(&self) -> &Core {
+            &self.core
+        }
     }
 
     impl Fixture {
         fn new() -> Self {
             let dir = std::env::temp_dir().join(format!("notes-cards-{}", Uuid::new_v4()));
-            let db = open_db(&dir).unwrap();
+            let core = Core::open(&dir).unwrap();
+            let db = &core.db;
             db.conn
                 .lock()
                 .unwrap()
@@ -671,7 +615,7 @@ mod tests {
                      insert into contents values ('a', X''), ('b', X'');",
                 )
                 .unwrap();
-            Self { dir, db }
+            Self { dir, core }
         }
 
         fn sync(&self, module: &str, cards: &[CardContent], now: i64) -> Vec<String> {
@@ -679,7 +623,7 @@ mod tests {
         }
 
         fn due(&self, module: Option<&str>, now: i64) -> Vec<Card> {
-            query_due_cards(&self.db.conn.lock().unwrap(), module, now, None).unwrap()
+            due_cards(&self.db, module.map(str::to_owned), now, None).unwrap()
         }
 
         fn column<T: rusqlite::types::FromSql>(&self, sql: &str, id: &str) -> T {
@@ -746,13 +690,35 @@ mod tests {
         }
     }
 
-    fn review(f: &Fixture, id: &str, expected_reps: i64, due_at: i64) -> CommandResult<()> {
-        save_review(
-            &mut f.db.conn.lock().unwrap(),
-            id,
+    fn undo(
+        f: &Fixture,
+        id: &str,
+        expected_reps: i64,
+        previous: &ReviewedCard,
+        model: Option<&str>,
+        time: i64,
+    ) -> CommandResult<()> {
+        undo_review(
+            &f.db,
+            id.into(),
             expected_reps,
-            &reviewed(due_at, expected_reps + 1),
-            &log(3),
+            ReviewedCard {
+                fsrs: previous.fsrs.clone(),
+                reps: previous.reps,
+                lapses: previous.lapses,
+            },
+            model.map(str::to_owned),
+            time,
+        )
+    }
+
+    fn review(f: &Fixture, id: &str, expected_reps: i64, due_at: i64) -> CommandResult<()> {
+        review_card(
+            &f.db,
+            id.into(),
+            expected_reps,
+            reviewed(due_at, expected_reps + 1),
+            log(3),
         )
     }
 
@@ -774,8 +740,9 @@ mod tests {
         let conn = f.db.conn.lock().unwrap();
         conn.execute("update cards set due_at = 15 where id = 'later'", [])
             .unwrap();
+        drop(conn);
         let ids = |cutoff| {
-            query_due_cards(&conn, None, 20, cutoff)
+            due_cards(&f.db, None, 20, cutoff)
                 .unwrap()
                 .into_iter()
                 .map(|c| c.id)
@@ -783,7 +750,7 @@ mod tests {
         };
         assert_eq!(ids(Some(10)), ["yesterday", "reviewed"]);
         assert_eq!(ids(None).len(), 4);
-        let filtered = query_due_counts(&conn, 12, 20, Some(10)).unwrap();
+        let filtered = due_counts(&f.db, 12, 20, Some(10)).unwrap();
         assert_eq!(
             (
                 filtered[0].count,
@@ -793,12 +760,14 @@ mod tests {
             ),
             (2, 1, 1, 0)
         );
-        let all = query_due_counts(&conn, 12, 20, None).unwrap();
+        let all = due_counts(&f.db, 12, 20, None).unwrap();
         assert_eq!((all[0].count, all[0].new, all[0].later_new), (3, 2, 1));
         assert_eq!(ids(Some(21)).len(), 4);
         assert_eq!(
-            conn.query_row("select due_at from cards where id = 'today'", [], |r| r
-                .get::<_, i64>(0))
+            f.db.lock()
+                .unwrap()
+                .query_row("select due_at from cards where id = 'today'", [], |r| r
+                    .get::<_, i64>(0))
                 .unwrap(),
             10
         );
@@ -826,14 +795,12 @@ mod tests {
                     .collect::<Vec<_>>()
             };
             assert_eq!(ids(100), ["block:cloze", "other"]);
-            let conn = f.db.conn.lock().unwrap();
-            let counts = query_due_counts(&conn, 100, 600_100, None).unwrap();
+            let counts = due_counts(&f.db, 100, 600_100, None).unwrap();
             assert_eq!((counts[0].count, counts[0].later_new), (2, 1));
             assert_eq!(
-                query_due_counts(&conn, 100, 600_099, None).unwrap()[0].later_new,
+                due_counts(&f.db, 100, 600_099, None).unwrap()[0].later_new,
                 0
             );
-            drop(conn);
             assert!(!ids(600_099).contains(&sibling.to_string()));
             assert!(ids(600_100).contains(&sibling.to_string()));
             let card = f
@@ -856,15 +823,7 @@ mod tests {
             let mut previous = reviewed(10, 0);
             previous.fsrs.last_review_at = None;
             previous.fsrs.state = 0;
-            undo_last_review(
-                &mut f.db.conn.lock().unwrap(),
-                first,
-                1,
-                &previous,
-                None,
-                100,
-            )
-            .unwrap();
+            undo(&f, first, 1, &previous, None, 100).unwrap();
             assert_eq!(ids(100).len(), 4);
 
             // If only the sibling remains, wait rather than reveal it immediately.
@@ -1000,43 +959,6 @@ mod tests {
     }
 
     #[test]
-    fn two_way_syntax_upgrade_reindexes_closed_notes_only_once() {
-        let f = Fixture::new();
-        f.sync("a", &[basic("forward", "Q", "A")], 10);
-        let conn = f.db.conn.lock().unwrap();
-        conn.execute_batch("alter table card_indexed_modules drop column syntax_version;")
-            .unwrap();
-        migrate_flashcards(&conn).unwrap();
-        assert_eq!(
-            conn.query_row("select count(*) from card_indexed_modules", [], |r| r
-                .get::<_, i64>(0))
-                .unwrap(),
-            0
-        );
-        conn.execute(
-            "insert into card_indexed_modules (module_id) values ('a')",
-            [],
-        )
-        .unwrap();
-        migrate_flashcards(&conn).unwrap();
-        assert_eq!(
-            conn.query_row("select count(*) from card_indexed_modules", [], |r| r
-                .get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            conn.query_row(
-                "select created_at from cards where id = 'forward'",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-            10
-        );
-    }
-
-    #[test]
     fn adding_sections_checks_every_note_again() {
         let f = Fixture::new();
         f.sync("a", &[basic("1", "Q", "A")], 10);
@@ -1080,7 +1002,7 @@ mod tests {
         // A graduated card due again counts as review, not new.
         review(&f, "2", 0, 15).unwrap();
         assert_eq!(
-            query_card_schedules(&f.db.conn.lock().unwrap(), "a").unwrap(),
+            card_schedules(&f.db, "a".into()).unwrap(),
             vec![
                 CardSchedule {
                     id: "1".into(),
@@ -1099,7 +1021,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            query_due_counts(&f.db.conn.lock().unwrap(), 20, 20, None).unwrap(),
+            due_counts(&f.db, 20, 20, None).unwrap(),
             vec![
                 DueCount {
                     module_id: "a".into(),
@@ -1125,7 +1047,7 @@ mod tests {
         );
         // Before card 2 is due it counts only as later today, until the day ends.
         assert_eq!(
-            query_due_counts(&f.db.conn.lock().unwrap(), 12, 15, None).unwrap()[0],
+            due_counts(&f.db, 12, 15, None).unwrap()[0],
             DueCount {
                 module_id: "a".into(),
                 count: 1,
@@ -1137,10 +1059,7 @@ mod tests {
                 later_review: 1,
             }
         );
-        assert_eq!(
-            query_due_counts(&f.db.conn.lock().unwrap(), 12, 14, None).unwrap()[0].later_review,
-            0
-        );
+        assert_eq!(due_counts(&f.db, 12, 14, None).unwrap()[0].later_review, 0);
     }
 
     #[test]
@@ -1269,14 +1188,12 @@ mod tests {
         previous.fsrs.last_review_at = None;
 
         // Only the review that left the card at this count can be undone.
-        let error = undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 0, &previous, None, 100)
-            .unwrap_err();
+        let error = undo(&f, "1", 0, &previous, None, 100).unwrap_err();
         assert!(error.contains("reviewed elsewhere"), "{error}");
-        let error = undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 1, &previous, None, 99)
-            .unwrap_err();
+        let error = undo(&f, "1", 1, &previous, None, 99).unwrap_err();
         assert!(error.contains("no longer the card's latest"), "{error}");
 
-        undo_last_review(&mut f.db.conn.lock().unwrap(), "1", 1, &previous, None, 100).unwrap();
+        undo(&f, "1", 1, &previous, None, 100).unwrap();
         let after: (i64, i64, String) =
             f.db.conn
                 .lock()

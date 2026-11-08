@@ -18,7 +18,7 @@ const MAX_QUERY_TERMS: usize = 16;
 // parentheses and column filters are matched as text. Terms are ANDed, and the
 // last one is a prefix so results follow typing. Terms without any letter or
 // digit produce no tokens, so they are dropped rather than matching nothing.
-pub fn fts_query(input: &str) -> Option<String> {
+fn fts_query(input: &str) -> Option<String> {
     let terms: Vec<String> = input
         .split_whitespace()
         .filter(|term| term.chars().any(char::is_alphanumeric))
@@ -34,14 +34,16 @@ pub fn fts_query(input: &str) -> Option<String> {
     Some(format!("{}*", terms.join(" ")))
 }
 
-pub fn index_note_text(
-    conn: &mut Connection,
-    module_id: &str,
-    body: &str,
-    math: &str,
+pub fn index_note(
+    db: &Db,
+    module_id: String,
+    body: String,
+    math: String,
     version: i64,
     backfill: bool,
 ) -> CommandResult<()> {
+    let mut conn = db.lock()?;
+    let module_id = module_id.as_str();
     let tx = conn.transaction().map_err(db_err)?;
     // Backfill may have read its snapshot before a live index write. Never
     // replace an index already refreshed by this extractor (or a newer one).
@@ -79,8 +81,9 @@ pub fn index_note_text(
     tx.commit().map_err(db_err)
 }
 
-pub fn search(conn: &Connection, query: &str, limit: i64) -> CommandResult<Vec<SearchResult>> {
-    let Some(query) = fts_query(query) else {
+pub fn search_notes(db: &Db, query: String, limit: i64) -> CommandResult<Vec<SearchResult>> {
+    let conn = db.lock()?;
+    let Some(query) = fts_query(&query) else {
         return Ok(Vec::new());
     };
     // bm25 weights follow the column order: module_id, title, body, math.
@@ -121,18 +124,6 @@ pub fn search(conn: &Connection, query: &str, limit: i64) -> CommandResult<Vec<S
     rows.collect::<Result<Vec<_>>>().map_err(db_err)
 }
 
-pub fn index_note(
-    db: &Db,
-    module_id: String,
-    body: String,
-    math: String,
-    version: i64,
-    backfill: bool,
-) -> CommandResult<()> {
-    let mut conn = db.lock()?;
-    index_note_text(&mut conn, &module_id, &body, &math, version, backfill)
-}
-
 pub fn unindexed_modules(db: &Db, version: i64) -> CommandResult<Vec<String>> {
     let conn = db.lock()?;
     let mut stmt = conn
@@ -148,7 +139,20 @@ pub fn unindexed_modules(db: &Db, version: i64) -> CommandResult<Vec<String>> {
     rows.collect::<Result<Vec<String>>>().map_err(db_err)
 }
 
-pub fn search_notes(db: &Db, query: String, limit: i64) -> CommandResult<Vec<SearchResult>> {
-    let conn = db.lock()?;
-    search(&conn, &query, limit)
+/// Derived text/card receipts must be invalidated together after note changes.
+pub(crate) fn invalidate_indexes(
+    tx: &rusqlite::Transaction<'_>,
+    module_id: &str,
+) -> CommandResult<()> {
+    tx.execute(
+        "delete from search_index_state where module_id = ?1",
+        [module_id],
+    )
+    .map_err(db_err)?;
+    tx.execute(
+        "delete from card_indexed_modules where module_id = ?1",
+        [module_id],
+    )
+    .map_err(db_err)?;
+    Ok(())
 }

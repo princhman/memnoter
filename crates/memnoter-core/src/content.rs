@@ -1,5 +1,41 @@
 use crate::*;
 
+pub(crate) mod module_rows {
+    use crate::*;
+    use rusqlite::Transaction;
+    pub fn insert(tx: &Transaction<'_>, id: &str, name: &str, state: &[u8]) -> CommandResult<()> {
+        tx.execute(
+            "insert into modules (id, name) values (?1, ?2)",
+            params![id, name],
+        )
+        .map_err(db_err)?;
+        tx.execute(
+            "insert into contents (module_id, state) values (?1, ?2)",
+            params![id, state],
+        )
+        .map_err(db_err)?;
+        tx.execute(
+            "insert into search_index (module_id, title, body, math) values (?1, ?2, '', '')",
+            params![id, name],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+    pub fn rename(tx: &Transaction<'_>, id: &str, name: &str) -> CommandResult<()> {
+        tx.execute(
+            "update modules set name = ?2 where id = ?1",
+            params![id, name],
+        )
+        .map_err(db_err)?;
+        tx.execute(
+            "update search_index set title = ?2 where module_id = ?1",
+            params![id, name],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+}
+
 pub fn set_module_numbering(db: &Db, module_id: String, enabled: bool) -> CommandResult<()> {
     db.lock()?
         .execute(
@@ -15,26 +51,7 @@ pub fn create_module(db: &Db, name: String) -> CommandResult<String> {
     let conn = conn.transaction().map_err(db_err)?;
     let id = Uuid::new_v4().to_string();
 
-    conn.execute(
-        "insert into modules (id, name)
-             values (?1, ?2)",
-        params![id, name],
-    )
-    .map_err(db_err)?;
-
-    conn.execute(
-        "insert into contents (module_id, state)
-             values (?1, ?2)",
-        params![id, Vec::<u8>::new()],
-    )
-    .map_err(db_err)?;
-
-    conn.execute(
-        "insert into search_index (module_id, title, body, math)
-             values (?1, ?2, '', '')",
-        params![id, name],
-    )
-    .map_err(db_err)?;
+    module_rows::insert(&conn, &id, &name, &[])?;
 
     sync::record_module(&conn, &id, sync::VaultChange::Name(&name))?;
     conn.commit().map_err(db_err)?;
@@ -63,17 +80,7 @@ pub fn rename_module(db: &Db, module_id: String, name: String) -> CommandResult<
     let mut conn = db.lock()?;
     let conn = conn.transaction().map_err(db_err)?;
 
-    conn.execute(
-        "update modules set name = ?2 where id = ?1",
-        params![&module_id, &name],
-    )
-    .map_err(db_err)?;
-
-    conn.execute(
-        "update search_index set title = ?2 where module_id = ?1",
-        params![&module_id, &name],
-    )
-    .map_err(db_err)?;
+    module_rows::rename(&conn, &module_id, &name)?;
 
     sync::record_module(&conn, &module_id, sync::VaultChange::Name(&name))?;
     conn.commit().map_err(db_err)?;
@@ -90,15 +97,7 @@ pub fn delete_module_data(
     asset_refs::retain_all(&tx, Some(module_id))?;
     // Stored faces (including retired ones) also retain assets. Transfer shared
     // files to a surviving note; deleting the uploader must not break copies.
-    tx.execute(
-        "insert or ignore into shared_image_refs(module_id, file_id)
-         select cards.module_id, files.id from cards join files
-         on files.id = json_extract(cards.front, '$.fileId')
-         or files.id = json_extract(cards.back, '$.fileId')
-         where cards.kind = 'occlusion' and cards.module_id <> ?1",
-        [module_id],
-    )
-    .map_err(db_err)?;
+    files::assets::retain_card_refs(&tx, module_id)?;
     tx.execute(
         "update files set module_id = (select min(module_id) from shared_image_refs
          where file_id = files.id and module_id <> ?1)
@@ -112,20 +111,17 @@ pub fn delete_module_data(
     sync::publish_file_owners(&tx)?;
     let files = {
         let mut stmt = tx
-            .prepare("select id, path from files where module_id = ?1")
+            .prepare("select id from files where module_id = ?1")
             .map_err(db_err)?;
         let rows = stmt
-            .query_map([module_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
+            .query_map([module_id], |row| row.get::<_, String>(0))
             .map_err(db_err)?;
         rows.collect::<Result<Vec<_>>>().map_err(db_err)?
     };
-    for (id, path) in &files {
-        if Uuid::parse_str(id).is_err() || Path::new(path) != files_dir.join(id) {
-            return Err("Refusing to delete a file outside managed storage".into());
-        }
-    }
+    let files = files
+        .iter()
+        .map(|id| files::assets::path(files_dir.parent().ok_or("Invalid files directory")?, id))
+        .collect::<CommandResult<Vec<_>>>()?;
     tx.execute("delete from files where module_id = ?1", [module_id])
         .map_err(db_err)?;
     tx.execute("delete from search_index where module_id = ?1", [module_id])
@@ -135,11 +131,14 @@ pub fn delete_module_data(
         .map_err(db_err)?;
     tx.commit().map_err(db_err)?;
 
-    for (_, path) in files {
+    for path in files {
         if let Err(error) = std::fs::remove_file(&path) {
             if error.kind() != std::io::ErrorKind::NotFound {
                 // The module is already deleted; report disk cleanup separately.
-                eprintln!("Failed to remove deleted module image {path}: {error}");
+                eprintln!(
+                    "Failed to remove deleted module image {}: {error}",
+                    path.display()
+                );
             }
         }
     }
@@ -158,10 +157,6 @@ pub fn delete_module(data_dir: &Path, db: &Db, module_id: String) -> CommandResu
 
 pub fn get_content(db: &Db, module_id: String) -> CommandResult<GetContentResponse> {
     let conn = db.lock()?;
-    read_content(&conn, &module_id)
-}
-
-pub fn read_content(conn: &Connection, module_id: &str) -> CommandResult<GetContentResponse> {
     let state = conn
         .query_one(
             "select state from contents where module_id = ?1",
@@ -186,20 +181,27 @@ pub fn read_content(conn: &Connection, module_id: &str) -> CommandResult<GetCont
         .map_err(db_err)?;
 
     let mut files_stmt = conn
-        .prepare("select id, path, file_type from files where module_id = ?1")
+        .prepare("select id, file_type from files where module_id = ?1")
         .map_err(db_err)?;
 
-    let files = files_stmt
+    let mut files = files_stmt
         .query_map(params![&module_id], |row| {
             Ok(FileType {
                 id: row.get(0)?,
-                path: row.get(1)?,
-                file_type: row.get(2)?,
+                path: String::new(),
+                file_type: row.get(1)?,
             })
         })
         .map_err(db_err)?
         .collect::<Result<Vec<FileType>>>()
         .map_err(db_err)?;
+
+    for file in &mut files {
+        file.path = files::assets::path(&db.data_dir, &file.id)?
+            .to_str()
+            .ok_or("Invalid file path")?
+            .to_owned();
+    }
 
     Ok(GetContentResponse {
         state,
@@ -233,19 +235,10 @@ pub fn save_compaction(
     update_id: i64,
 ) -> CommandResult<()> {
     let mut conn = db.lock()?;
-    compact_content(&mut conn, &module_id, &new_state, update_id)
-}
-
-pub fn compact_content(
-    conn: &mut Connection,
-    module_id: &str,
-    new_state: &[u8],
-    update_id: i64,
-) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     // Keep leases and snapshot replacement atomic. Capture intermediate saved
     // revisions before discarding them, then validate/capture the new snapshot.
-    asset_refs::retain_module(&tx, module_id)?;
+    asset_refs::retain_module(&tx, &module_id)?;
     tx.execute(
         "update contents set state = ?1 where module_id = ?2",
         params![new_state, module_id],
@@ -256,6 +249,6 @@ pub fn compact_content(
         params![module_id, update_id],
     )
     .map_err(db_err)?;
-    asset_refs::retain_module(&tx, module_id)?;
+    asset_refs::retain_module(&tx, &module_id)?;
     tx.commit().map_err(db_err)
 }
