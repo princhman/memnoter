@@ -169,3 +169,12 @@ test("joined clozes and supplied identities survive the real editor and map Anki
     assert.equal(cards.filter(c => c.kind === "cloze").length, 2);
   } finally { editor.destroy(); }
 });
+
+test("a cloze blank holding only an image does not shift the other blanks' histories", () => {
+  const schedule = { kind: "new", suspended: false, intervalDays: 0, ease: 2.5, reps: 0, lapses: 0, reviews: [] };
+  const source = { decks: [{ id: 1, name: "Deck", cardCount: 2 }], media: ["pic.png"], warnings: [], items: [
+    { noteId: 1, deckId: 1, notetype: "Cloze", kind: "cloze", text: '{{c1::<img src="pic.png">}} and {{c2::text answer}}', extra: "", cards: [{ ...schedule, ord: 0 }, { ...schedule, ord: 1 }] },
+  ] };
+  const module = prepareAnkiImport(source, defaultSelection(source.decks)).modules[0];
+  assert.deepEqual(module.histories.map(h => h.anki.ord), [1]);
+});

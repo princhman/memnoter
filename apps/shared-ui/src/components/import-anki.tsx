@@ -9,6 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { importToast } from "@/lib/import-toast";
+import { modulesCache } from "@/lib/modules";
+import { queryClient } from "@/lib/query-client";
 
 export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => Promise<void> }) {
   const [session, setSession] = useState<AnkiSession>();
@@ -90,12 +92,15 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
   const save = async () => {
     if (!session || !plan || invalid || attempted) return;
     setBusy(true); busyRef.current = true; setError(""); setAttempted(true);
+    // Saved modules may already sit in folders; the sidebar must see them before anything can reorder it.
+    const refresh = () => Promise.all([modulesCache.invalidate(), queryClient.invalidateQueries({ queryKey: ["sidebar-items"] })]);
     try {
       const result = await importAnki(session, plan, setProgress);
+      await refresh();
       close();
       importToast("success", `Imported ${result.modules.length} modules and ${result.cards} cards.`, result.warnings, result.warnings.length === 1 ? "warning" : "warnings");
       if (result.modules[0]) await onImported(result.modules[0].id);
-    } catch (e) { setError(String(e)); }
+    } catch (e) { setError(String(e)); void refresh(); }
     finally { setBusy(false); busyRef.current = false; }
   };
   return <>
@@ -118,7 +123,7 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
           {busy && <p role="status">{progress}</p>}
         </div>
         <DialogFooter><Button variant="outline" disabled={busy} onClick={close}>Cancel</Button>{step > 0 && <Button variant="outline" disabled={busy || attempted} onClick={() => setStep(step - 1)}>Back</Button>}
-          {step < 2 ? <Button disabled={invalid} onClick={() => setStep(step + 1)}>Next</Button> : <Button disabled={busy || invalid || attempted} onClick={() => void save()}>Import</Button>}</DialogFooter>
+          {step < 2 ? <Button disabled={step === 0 ? !plan?.modules.length : invalid} onClick={() => setStep(step + 1)}>Next</Button> : <Button disabled={busy || invalid || attempted} onClick={() => void save()}>Import</Button>}</DialogFooter>
       </DialogContent>
     </Dialog>
   </>;

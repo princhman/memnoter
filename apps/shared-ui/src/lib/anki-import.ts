@@ -173,7 +173,8 @@ function clozeBlocks(context: Context, item: Extract<AnkiItem, { kind: "cloze" }
   if (!clozes) warn(context, "Some cloze notes have no blanks that could be read; they were imported as plain text.");
   const extra = htmlToLines(item.extra);
   if (body.images.length) warn(context, "Images inside cards are placed below the card.");
-  const numbers = [...item.text.matchAll(/\{\{c(\d+)::/g)].map(m => Number(m[1]));
+  // Blanks with no text (an image only) vanish in conversion; skip their numbers so histories stay aligned.
+  const numbers = [...item.text.matchAll(/\{\{c(\d+)::([\s\S]*?)(?:::[^{}<>]*?)?\}\}/g)].filter(m => hasContent(htmlToLines(m[2]).lines)).map(m => Number(m[1]));
   const groups = new Map<number, string[]>();
   numbers.slice(0, clozes).forEach((n, index) => groups.set(n, [...groups.get(n) ?? [], `c${index + 1}`]));
   const block = paragraph(joined);
