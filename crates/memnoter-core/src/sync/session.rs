@@ -62,6 +62,10 @@ impl Session {
             text: value.to_string(),
         }
     }
+    pub fn reset_cursor(&mut self, cursor: i64) {
+        self.cursor = cursor;
+        self.blobs.clear();
+    }
     pub fn hello(&mut self) -> Vec<Action> {
         self.ready = false;
         self.inflight = None;
