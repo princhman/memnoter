@@ -54,6 +54,16 @@ test("deck roles, name validation, cancellation and session release save nothing
   const page = await open();
   try {
     assert.equal(await page.getByRole("combobox", { name: "Role for Course::A", exact: true }).inputValue(), "module");
+    // Each deck is one row: its name, card count and role share a line, and a deck with
+    // subdecks folds them away.
+    const row = page.getByText("A 1 card", { exact: true });
+    assert.equal(await row.count(), 1);
+    const [rowBox, roleBox] = await Promise.all([row.boundingBox(), page.getByRole("combobox", { name: "Role for Course::A", exact: true }).boundingBox()]);
+    assert.ok(Math.abs((rowBox.y + rowBox.height / 2) - (roleBox.y + roleBox.height / 2)) < 4, "name and role are on one line");
+    await page.getByRole("button", { name: "Collapse Course", exact: true }).click();
+    assert.equal(await page.getByRole("combobox", { name: "Role for Course::A", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "Expand Course", exact: true }).click();
+    await page.getByRole("combobox", { name: "Role for Course::A", exact: true }).waitFor();
     await page.getByRole("button", { name: "Next", exact: true }).click();
     const names = page.getByLabel("Module name", { exact: true });
     await names.nth(0).fill("");

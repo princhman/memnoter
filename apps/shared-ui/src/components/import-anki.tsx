@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { IMPORT_ANKI_EVENT } from "@/lib/app-events";
 import { call } from "@/lib/backend";
 import { deckTree, defaultSelection, prepareAnkiImport, type AnkiSelection, type DeckNode, type DeckRole } from "@/lib/anki-import";
@@ -60,18 +62,30 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
     children(node);
     setSelection({ ...selection, roles });
   };
-  const renderNode = (node: DeckNode, ancestor: boolean) => {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (key: string) => setCollapsed(previous => { const next = new Set(previous); if (!next.delete(key)) next.add(key); return next; });
+  // One row per deck: disclosure, name with its card count, and its role.
+  const renderNode = (node: DeckNode, ancestor: boolean, depth = 0): ReactNode => {
     if (!node.total) return null;
     const role = selection.roles[node.key] ?? "skip";
-    const row = <div className="flex items-center justify-between gap-3 py-1">
-      <span>{node.name} ({node.total} cards)</span>
-      <select aria-label={`Role for ${node.key}`} value={role} disabled={busy} onChange={e => changeRole(node, e.target.value as DeckRole)} className="rounded bg-muted px-2 py-1">
-        <option value="module">Module</option>
-        {ancestor && <><option value="heading">Heading</option><option value="merge">Merge into parent</option></>}
-        <option value="skip">Skip</option>
-      </select>
+    const nested = node.children.filter(child => child.total);
+    const open = !collapsed.has(node.key);
+    return <div key={node.key}>
+      <div className="flex items-center gap-2 py-1" style={{ paddingLeft: `${depth}rem` }}>
+        {nested.length
+          ? <button type="button" aria-label={`${open ? "Collapse" : "Expand"} ${node.name}`} aria-expanded={open} onClick={() => toggle(node.key)} className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted">
+              <ChevronRight className={cn("size-4 transition-transform", open && "rotate-90")} />
+            </button>
+          : <span className="size-5 shrink-0" aria-hidden />}
+        <span className="min-w-0 flex-1 truncate">{node.name} <span className="text-muted-foreground">{node.total} {node.total === 1 ? "card" : "cards"}</span></span>
+        <select aria-label={`Role for ${node.key}`} value={role} disabled={busy} onChange={e => changeRole(node, e.target.value as DeckRole)} className="w-44 shrink-0 rounded bg-muted px-2 py-1 text-foreground">
+          <option value="module">Module</option>
+          {ancestor && <><option value="heading">Heading</option><option value="merge">Merge into parent</option></>}
+          <option value="skip">Skip</option>
+        </select>
+      </div>
+      {open && nested.map(child => renderNode(child, role === "module" || (ancestor && role !== "skip"), depth + 1))}
     </div>;
-    return node.children.some(c => c.total) ? <details key={node.key} open className="pl-3"><summary>{node.name}</summary>{row}{node.children.map(child => renderNode(child, role === "module" || (ancestor && role !== "skip")))}</details> : <div key={node.key} className="pl-3">{row}</div>;
   };
   const save = async () => {
     if (!session || !plan || invalid || attempted) return;
