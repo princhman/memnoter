@@ -282,8 +282,7 @@ struct RootView: View {
                     }
                     do {
                         try await session?.flush()
-                        store.sync?.nudge()
-                        try await Task.sleep(for: .seconds(3))
+                        _ = try await store.sync?.pushAndWait()
                     } catch is CancellationError { }
                     catch { store.error = String(describing: error) }
                 }
@@ -335,7 +334,8 @@ struct RootView: View {
             _ = try await session?.callEditor(.refreshModules)
         } catch {
             // A write may have succeeded before a refresh failed; show persisted state on retry.
-            if let modules: [NoteModule] = try? await client.call("modules", Empty()) { store.modules = modules }
+            do { store.modules = try await client.call("modules", Empty()) }
+            catch { NSLog("Reloading modules after numbering failure: %@", String(describing: error)) }
             throw error
         }
     }

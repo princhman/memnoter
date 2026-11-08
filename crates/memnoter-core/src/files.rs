@@ -24,7 +24,11 @@ pub(crate) mod assets {
             std::fs::File::open(data_dir.join("files"))?.sync_all()
         })();
         if let Err(error) = result {
-            let _ = std::fs::remove_file(&partial);
+            if let Err(cleanup) = std::fs::remove_file(&partial) {
+                if cleanup.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("Removing incomplete asset {}: {cleanup}", partial.display());
+                }
+            }
             return Err(db_err(error));
         }
         Ok(path)
@@ -175,10 +179,10 @@ pub fn save_file(
 pub fn read_file(
     data_dir: &Path,
     db: &Db,
-    module_id: String,
+    _module_id: String,
     file_id: String,
 ) -> CommandResult<FileContents> {
-    let _ = module_id; // Copied images may refer to another note's managed asset.
+    // Copied images may refer to another note's managed asset.
     let expected_path = assets::path(data_dir, &file_id)?;
     let conn = db.lock()?;
     let file_type: String = conn
