@@ -35,7 +35,8 @@ import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/
 const RootLayout = () => {
   const isFullscreen = useIsFullscreen();
   const path = useRouterState({ select: state => state.location.pathname });
-  const ownScroll = /^\/files\/[^/]+/.test(path) || !["/", "/files", "/files/", "/review", "/settings"].includes(path);
+  const isPdfReader = /^\/files\/[^/]+/.test(path);
+  const ownScroll = isPdfReader || !["/", "/files", "/files/", "/review", "/settings"].includes(path);
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   const navigate = useNavigate();
   const router = useRouter();
@@ -100,11 +101,11 @@ const RootLayout = () => {
           onOpenChange={setSidebarOpen}
           // Fills the body, which keeps clear of the iPad's status bar.
           className="relative h-full min-h-0 overflow-hidden overscroll-none"
-          style={
-            toolbarWidth === null
-              ? undefined
-              : ({ "--toolbar-width": `${toolbarWidth}px` } as CSSProperties)
-          }
+          // Avoid resizing and recentering PDF canvases on every animation frame.
+          style={{
+            ...(toolbarWidth === null ? {} : { "--toolbar-width": `${toolbarWidth}px` }),
+            ...(isPdfReader ? { "--sidebar-motion-duration": "0ms" } : {}),
+          } as CSSProperties}
         >
           <AppSidebar />
           <CreateModule global />
