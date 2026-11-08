@@ -1,3 +1,4 @@
+import { BetaNotice } from "@/components/beta-notice";
 import { useQuery } from "@tanstack/react-query";
 import { isTauri } from "@/lib/backend";
 import { getVersion } from "@tauri-apps/api/app";
@@ -15,6 +16,7 @@ export default function AboutSection() {
       <p className="text-sm text-muted-foreground">
         Memnoter{version ? ` v${version}` : ""}
       </p>
+      <p className="text-sm text-muted-foreground"><BetaNotice /></p>
     </section>
   );
 }

@@ -36,6 +36,7 @@ import {
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
+import { BetaBadge } from "./beta-notice";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { useEffect, useState, useRef, type ReactNode } from "react";
@@ -198,6 +199,7 @@ const AppSidebar = () => {
 
       <SidebarFooter>
         <UpdateStatus>
+          <BetaBadge />
           <IconTooltip label="Settings" hint={formatKeys(action("settings.open").keys)} side="top">
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
           </IconTooltip>
