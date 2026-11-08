@@ -1,3 +1,5 @@
+import contract from "../../../../sync/test/fixtures/protocol.json" with { type: "json" };
+export { contract as SYNC_CONTRACT };
 // Wire protocol between the app and the sync server, shared by both sides.
 //
 // The server stores an append-only log of opaque, end-to-end encrypted blobs,
@@ -8,25 +10,25 @@
 //
 // Frames are JSON text; `data` fields are base64.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = contract.version;
 // WebSocket subprotocols: this one, plus "auth.<token>", because browsers
 // cannot set headers on a WebSocket request.
-export const SYNC_PROTOCOL = "memnoter.v1";
-export const AUTH_PROTOCOL_PREFIX = "auth.";
+export const SYNC_PROTOCOL = contract.protocol;
+export const AUTH_PROTOCOL_PREFIX = contract.authPrefix;
 
 // Largest encrypted blob the server accepts: a Durable Object SQLite row holds
 // at most 2 MB. Larger blobs will go to R2 (phase 2).
-export const MAX_BLOB_BYTES = 1_900_000;
+export const MAX_BLOB_BYTES = contract.MAX_BLOB_BYTES;
 // Largest frame the server accepts (Workers WebSocket messages max at 32 MiB).
-export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+export const MAX_FRAME_BYTES = contract.MAX_FRAME_BYTES;
 
 // The server asks a device to upload a snapshot once a document has this many
 // log entries since its last one.
 export const COMPACT_HINT_AFTER = 400;
 
 // Sent as-is and answered by the server without waking the Durable Object.
-export const PING = "ping";
-export const PONG = "pong";
+export const PING = contract.PING;
+export const PONG = contract.PONG;
 
 export type WireEntry = { seq: number; doc: string; data: string };
 
@@ -54,7 +56,7 @@ export type ServerMessage =
   | { t: "error"; message: string; fatal?: boolean };
 
 // Close code: the account's cloud data was deleted and every device signed out.
-export const CLOSE_SIGNED_OUT = 4003;
+export const CLOSE_SIGNED_OUT = contract.closeSignedOut;
 
 // A blob too large for the log is stored in R2 and the log holds a reference:
 // one byte 2 and the 32 hex characters of its id, unencrypted, so the server
@@ -64,6 +66,7 @@ const BLOB_REF_FORMAT = 2;
 const BLOB_REF_LENGTH = 33;
 
 export function makeBlobRef(id: string): Uint8Array {
+  if (!isValidBlobId(id)) throw new Error("Invalid blob id");
   const bytes = new Uint8Array(BLOB_REF_LENGTH);
   bytes[0] = BLOB_REF_FORMAT;
   bytes.set(new TextEncoder().encode(id), 1);
@@ -90,10 +93,10 @@ export function isValidFileId(id: unknown): id is string {
 }
 
 // Largest image the server accepts.
-export const MAX_FILE_BYTES = 50 * 1024 * 1024;
+export const MAX_FILE_BYTES = contract.MAX_FILE_BYTES;
 
 // Largest blob stored in R2 instead of the log.
-export const MAX_LARGE_BLOB_BYTES = 64 * 1024 * 1024;
+export const MAX_LARGE_BLOB_BYTES = contract.MAX_LARGE_BLOB_BYTES;
 
 export function isValidDocId(doc: unknown): doc is string {
   return typeof doc === "string" && doc.length > 0 && doc.length <= 64 && /^[A-Za-z0-9_-]+$/.test(doc);
@@ -114,3 +117,7 @@ export function fromBase64(text: string): Uint8Array {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
+
+export const CLOSE_POLICY = contract.closePolicy;
+export const PUSH_BATCH_BYTES = contract.PUSH_BATCH_BYTES;
+export const PASSPHRASE_MIN_LENGTH = contract.PASSPHRASE_MIN_LENGTH;

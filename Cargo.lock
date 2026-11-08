@@ -2374,6 +2374,7 @@ name = "memnoter-core"
 version = "0.1.3"
 dependencies = [
  "aes-gcm",
+ "base64 0.22.1",
  "chrono",
  "pbkdf2",
  "rusqlite",

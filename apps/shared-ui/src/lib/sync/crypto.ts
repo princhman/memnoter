@@ -6,7 +6,7 @@
 // document id is authenticated data, so the server cannot move a blob from one
 // note into another without decryption failing.
 
-import { fromBase64, toBase64 } from "./protocol";
+import { fromBase64, toBase64 } from "./protocol.ts";
 
 const FORMAT = 1;
 const IV_BYTES = 12;

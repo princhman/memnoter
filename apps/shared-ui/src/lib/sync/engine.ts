@@ -11,7 +11,7 @@
 
 import { decryptBlob, encryptBlob } from "./crypto";
 import {
-  CLOSE_SIGNED_OUT,
+  CLOSE_SIGNED_OUT, CLOSE_POLICY, PUSH_BATCH_BYTES, SYNC_CONTRACT, MAX_LARGE_BLOB_BYTES,
   MAX_BLOB_BYTES,
   makeBlobRef,
   newBlobId,
@@ -84,11 +84,11 @@ export type SyncEngineOptions = {
   now?: () => number;
 };
 
-const PUSH_BATCH_BYTES = 1024 * 1024;
+
 
 // An error that retrying cannot fix, such as a wrong passphrase.
 class FatalSyncError extends Error {}
-const CLOSE_POLICY = 1008;
+
 
 export function createSyncEngine({
   store,
@@ -99,8 +99,8 @@ export function createSyncEngine({
   merge,
   onStatus,
   onApplied,
-  pushDelayMs = 400,
-  pingEveryMs = 45_000,
+  pushDelayMs = SYNC_CONTRACT.PUSH_DELAY_MS,
+  pingEveryMs = SYNC_CONTRACT.PING_EVERY_MS,
   now = () => Date.now(),
 }: SyncEngineOptions) {
   let socket: SyncSocket | null = null;
@@ -284,6 +284,7 @@ export function createSyncEngine({
   // The blob itself when it fits in the log, otherwise a reference to a copy
   // uploaded to the blob store; null when neither is possible.
   async function storable(blob: Uint8Array): Promise<Uint8Array | null> {
+    if (blob.length > MAX_LARGE_BLOB_BYTES) throw new FatalSyncError("A note change is too large to sync.");
     if (blob.length <= MAX_BLOB_BYTES) return blob;
     if (!blobs) return null;
     const id = newBlobId();
