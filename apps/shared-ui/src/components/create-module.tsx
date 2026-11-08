@@ -1,8 +1,9 @@
 import { IMPORT_FOLDER_EVENT } from "@/lib/app-events";
+import { modulesCache } from "@/lib/modules";
 import { isTauri } from "@/lib/backend";
 import { ImportFolderDialog } from "./import-folder";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { call as invoke } from "../lib/backend.ts";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -59,12 +60,11 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
   }, [global, openDialog]);
 
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: async (name: string) =>
       invoke<string>("create_module", { name }),
     onSuccess: (moduleId) => {
-      queryClient.invalidateQueries({ queryKey: ["modules"] });
+      modulesCache.invalidate();
       setName("");
       setSubmitted(false);
       setOpen(false);
@@ -95,7 +95,7 @@ const CreateModule = ({ global = false }: { global?: boolean }) => {
   return (
     <>
     {global && isTauri() && <ImportFolderDialog onImported={async moduleId => {
-      await queryClient.invalidateQueries({ queryKey: ["modules"] });
+      await modulesCache.invalidate();
       void navigate({ to: "/$moduleId", params: { moduleId } });
     }} />}
     <Dialog open={open} onOpenChange={setOpen}>

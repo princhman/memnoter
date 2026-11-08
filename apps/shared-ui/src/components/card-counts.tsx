@@ -1,3 +1,4 @@
+import type { CardCountKind } from "@/lib/card-count-kind";
 import type { CardCounts as Counts } from "@/lib/card-sync";
 import { cn } from "@/lib/utils";
 
@@ -7,12 +8,7 @@ const PARTS = [
   { key: "review", label: "to review", className: "text-emerald-800 dark:text-emerald-400" },
 ] as const;
 
-export type CardCountKind = (typeof PARTS)[number]["key"];
-
-// FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
-export function cardCountKind(state: number): CardCountKind {
-  return state === 0 ? "new" : state === 2 ? "review" : "learning";
-}
+export { cardCountKind, type CardCountKind } from "@/lib/card-count-kind";
 
 // Cards due now as Anki shows them: new, learning and to review, each in its
 // own colour. Each count carries a superscript +n, in its

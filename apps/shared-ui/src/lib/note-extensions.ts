@@ -1,5 +1,5 @@
 import { MarkdownPaste } from "./markdown-paste-plugin";
-import type { Editor } from "@tiptap/core";
+import type { Editor, AnyExtension } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
 import { ImageMoveHistory } from "@/lib/image-move-history";
@@ -18,10 +18,8 @@ import { LinkEditor } from "@/lib/link-editor";
 import { SectionFocus } from "@/lib/section-focus";
 import { Sections } from "@/lib/sections";
 import { HeadingFold } from "@/lib/heading-fold";
-import { IMAGE_TYPES, SlashCommand } from "@/components/slash-menu";
-import { LatexSuggest } from "@/components/latex-menu";
+import { IMAGE_TYPES, SavedImage, InlineImage } from "./editor-schema/images";
 import { FindHighlights } from "@/lib/find-highlights";
-import { InlineImage, SavedImage } from "@/components/saved-image";
 import { InlineMath } from "@/lib/inline-math";
 import { MathBlock } from "@/lib/math-block";
 import { Arrows } from "@/lib/arrows";
@@ -59,6 +57,7 @@ const DeferredTableOfContents = TableOfContents.extend({
 
 type NoteExtensionOptions = {
   document: Y.Doc;
+  ui?: { inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
   insertImages?: (editor: Editor, files: File[], position: number) => void;
   onTocUpdate?: (content: TableOfContentData) => void;
   onFirstRender?: () => void;
@@ -68,6 +67,7 @@ type NoteExtensionOptions = {
 // schema lacks a node or attribute would delete it from the document.
 export function noteExtensions({
   document,
+  ui = {},
   insertImages = () => {},
   onTocUpdate,
   onFirstRender,
@@ -88,16 +88,15 @@ export function noteExtensions({
     MoveLines,
     ItalicCaret,
     TextSelectionHighlight,
-    InlineMath,
-    MathBlock,
+    ui.inlineMath ?? InlineMath,
+    ui.mathBlock ?? MathBlock,
     Flashcards,
     HeadingHieararchy,
     SectionFocus,
     Sections,
     HeadingFold,
     HeadingNumbering,
-    SlashCommand.configure({ insertImages }),
-    LatexSuggest,
+    ...(ui.menus ?? []),
     DeferredTableOfContents.configure({
       scrollParent: () =>
         window.document.querySelector<HTMLElement>(".app-scroll-container") ??
@@ -109,14 +108,14 @@ export function noteExtensions({
       injectCSS: false,
     }),
     Collaboration.configure({ document, onFirstRender }),
-    SavedImage.configure({
+    (ui.savedImage ?? SavedImage).configure({
       inline: false,
       allowBase64: false,
       HTMLAttributes: {
         class: "note-image",
       },
     }),
-    InlineImage.configure({
+    (ui.inlineImage ?? InlineImage).configure({
       allowBase64: false,
       HTMLAttributes: {
         class: "note-image",

@@ -1,7 +1,7 @@
 import { action, formatKeys } from "@/lib/shortcuts";
+import { useModules } from "@/lib/modules";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
-import { useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { FileText, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -37,10 +37,7 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  const { data: modules } = useQuery({
-    queryKey: ["modules"],
-    queryFn: async () => await invoke<Module[]>("modules"),
-  });
+  const { data: modules } = useModules();
   const recentIds = useSelector(appStore, (state) => state.recentModuleIds);
 
   // Recently opened ones first, then the rest in the sidebar's order.

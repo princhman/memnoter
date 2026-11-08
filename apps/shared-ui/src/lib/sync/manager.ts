@@ -1,3 +1,5 @@
+import { contentKey, patchContent } from "../content";
+import { modulesCache } from "../modules";
 // Runs cloud sync for the app: owns the engine, adapts it to the Tauri
 // commands in apps/desktop/src/sync.rs and folds remote changes into the caches
 // the editor reads, exactly like a local save would.
@@ -6,7 +8,7 @@ import { call as invoke } from "@/lib/backend";
 import { listen } from "@/lib/backend";
 import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
-import { acknowledgeContent, type ContentUpdate, type FileType, type GetContentResponse } from "@/lib/content";
+import { appendSavedUpdate, type ContentUpdate, type FileType } from "@/lib/content";
 import { dueCountsKey, isModuleOpen } from "@/lib/card-sync";
 import { reindexStoredCards } from "@/lib/card-backfill";
 import { queryClient } from "@/lib/query-client";
@@ -109,21 +111,17 @@ export function onRemote(result: ApplyResult) {
   for (const { moduleId, update } of result.updates) {
     // The same path as a local save: an open editor applies the update from
     // the cache, and compaction then includes it.
-    acknowledgeContent(moduleId, update);
-    queryClient.setQueryData<GetContentResponse>(
-      ["content", moduleId],
-      (content) => content && { ...content, updates: [...content.updates, update] },
-    );
+    appendSavedUpdate(moduleId, update);
     scheduleReindex(moduleId);
   }
   for (const moduleId of result.deleted) {
     saveQueue.drop(moduleId);
     forgetModule(moduleId);
     window.dispatchEvent(new CustomEvent(MODULE_DELETED_REMOTELY_EVENT, { detail: moduleId }));
-    queryClient.removeQueries({ queryKey: ["content", moduleId] });
+    queryClient.removeQueries({ queryKey: contentKey(moduleId) });
   }
   if (result.modulesChanged || result.deleted.length > 0) {
-    void queryClient.invalidateQueries({ queryKey: ["modules"] });
+    void modulesCache.invalidate();
   }
   if (result.modulesChanged || result.deleted.length > 0 || result.reviewsChanged) {
     // Card schedules are under the due counts' key too.
@@ -133,12 +131,8 @@ export function onRemote(result: ApplyResult) {
 }
 
 export function onFileStored(moduleId: string, file: FileType) {
-  queryClient.setQueryData<GetContentResponse>(
-    ["content", moduleId],
-    (content) => content && !content.files.some((known) => known.id === file.id)
-      ? { ...content, files: [...content.files, file] }
-      : content,
-  );
+  patchContent(moduleId, content => !content.files.some(known => known.id === file.id)
+    ? { ...content, files: [...content.files, file] } : content);
   syncedFileArrived();
   // Image occlusion cards need their image to be indexed.
   scheduleReindex(moduleId);

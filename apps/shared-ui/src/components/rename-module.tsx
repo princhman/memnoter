@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { call as invoke } from "../lib/backend.ts";
 import { useState } from "react";
 import {
@@ -13,7 +13,7 @@ import { Field, FieldError, FieldGroup } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "./ui/button";
-import { Module } from "@/lib/types";
+import { modulesCache } from "@/lib/modules";
 
 const RenameModule = ({
   moduleName,
@@ -29,17 +29,12 @@ const RenameModule = ({
   const [name, setName] = useState(moduleName);
   const [sumbitted, setSubmitted] = useState(false);
 
-  const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: async (name: string) => {
       await invoke("rename_module", { moduleId, name });
     },
     onSuccess: () => {
-      queryClient.setQueryData(["modules"], (oldData: any) =>
-        oldData.map((module: Module) =>
-          module.id === moduleId ? { ...module, name } : module,
-        ),
-      );
+      modulesCache.rename(moduleId, name);
       setSubmitted(false);
       onOpenChange(false);
     },

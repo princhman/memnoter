@@ -33,7 +33,7 @@ type SlashItem = {
 };
 
 
-export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+import { IMAGE_TYPES } from "@/lib/editor-schema/images";
 
 function pickImages(onPick: (files: File[]) => void) {
   const input = document.createElement("input");
