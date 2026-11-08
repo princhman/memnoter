@@ -372,8 +372,12 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       });
       // Tap the dot at its centre; locator.tap() left the popup open on CI.
       const tapDot = async () => {
-        const box = await dot.boundingBox();
-        await menu.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+        await dot.waitFor({ state: 'visible' });
+        const point = await dot.evaluate(element => {
+          const box = element.getBoundingClientRect();
+          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        });
+        await menu.touchscreen.tap(point.x, point.y);
       };
       for (const focused of [true, false]) {
         if (!focused) {
