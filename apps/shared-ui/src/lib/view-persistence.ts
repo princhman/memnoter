@@ -1,3 +1,4 @@
+import { outline } from "./outline.ts";
 import { useEffect, useLayoutEffect } from "react";
 import { isNativeHost } from "./backend";
 import type { Editor } from "@tiptap/core";
@@ -181,10 +182,7 @@ export function restoreView(editor: Editor, moduleId: string) {
     if (saved) {
       const { doc } = editor.state;
       const position = (value: number) => Number.isInteger(value) && value >= 0 && value <= doc.content.size;
-      const headingIds = new Set<string>();
-      doc.forEach(node => {
-        if (node.type.name === "heading") headingIds.add(node.attrs["data-toc-id"]);
-      });
+      const headingIds = new Set(outline(doc).map(heading => heading.id));
       if (!position(saved.anchor) || !position(saved.head) ||
           !Number.isFinite(saved.scrollTop) || saved.scrollTop < 0 ||
           (saved.scrollAnchor && (!position(saved.scrollAnchor.pos) || !Number.isFinite(saved.scrollAnchor.offset))) ||

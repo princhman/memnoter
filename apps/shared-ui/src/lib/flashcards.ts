@@ -1,3 +1,4 @@
+import { isImageNode } from "./cards.ts";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { renewImageIdentity } from "./occlusion.ts";
 import { Extension } from "@tiptap/core";
@@ -6,8 +7,8 @@ import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } 
 import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
-import { cardIdsOf, changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, type ClozeId, type Range } from "./cards.ts";
-import { formatInterval } from "./fsrs.ts";
+import { isCardBlock, cardIdsOf, changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, type ClozeId, type Range } from "./cards.ts";
+import { CardState, formatInterval } from "./fsrs.ts";
 
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
 
@@ -64,7 +65,7 @@ export function cardInfo(
   // A block may contain several cards; its dot follows the next one due.
   const next = entries.flatMap(({ schedule }) => schedule ? [schedule] : [])
     .reduce<CardSchedule | undefined>((first, card) => !first || card.dueAt < first.dueAt ? card : first, undefined);
-  const stateName = (state: number) => state === 0 ? "New" : state === 1 ? "Learning" : state === 3 ? "Relearning" : "Review";
+  const stateName = (state: number) => state === CardState.New ? "New" : state === CardState.Learning ? "Learning" : state === CardState.Relearning ? "Relearning" : "Review";
   info.dataset.state = next ? stateName(next.state).toLowerCase() : "unsaved";
 
   const popup = document.createElement("span");
@@ -197,9 +198,6 @@ function joinedClozeGroups(node: Node, from: number, to: number) {
   return [...groups.filter((group) => !group.some((id) => members.includes(id))), members];
 }
 
-function isCardBlock(node: Node) {
-  return node.isTextblock && !node.type.spec.code && "cardId" in node.attrs;
-}
 
 // The cloze around the selection, braces included, as document positions.
 export function clozeAt(state: EditorState) {
@@ -468,7 +466,7 @@ export const Flashcards = Extension.create({
           const ids = new Set(blockIds);
           const targets: number[] = [];
           state.doc.descendants((node, pos) => {
-            if (["image", "inlineImage"].includes(node.type.name) && ids.has(node.attrs.imageId)) targets.push(pos);
+            if (isImageNode(node) && ids.has(node.attrs.imageId)) targets.push(pos);
             if (!node.isTextblock) return true;
             if (ids.has(node.attrs.cardId)) targets.push(pos);
             return true;
@@ -477,7 +475,7 @@ export const Flashcards = Extension.create({
           if (dispatch) {
             for (const pos of targets) {
               const node = tr.doc.nodeAt(pos)!;
-              if (["image", "inlineImage"].includes(node.type.name)) tr.setNodeMarkup(pos, undefined, renewImageIdentity(node.attrs, () => crypto.randomUUID()));
+              if (isImageNode(node)) tr.setNodeMarkup(pos, undefined, renewImageIdentity(node.attrs, () => crypto.randomUUID()));
               else tr.setNodeAttribute(pos, "cardId", crypto.randomUUID());
             }
           }
@@ -541,7 +539,7 @@ export const Flashcards = Extension.create({
           const plan = planCardIds(tr.doc, ranges, () => crypto.randomUUID());
           const images: { pos: number; attrs: Record<string, unknown>; touched: boolean }[] = [];
           tr.doc.descendants((node, pos) => {
-            if (["image", "inlineImage"].includes(node.type.name)) images.push({ pos, attrs: node.attrs, touched: ranges.some(r => r.from < pos + node.nodeSize && r.to > pos) });
+            if (isImageNode(node)) images.push({ pos, attrs: node.attrs, touched: ranges.some(r => r.from < pos + node.nodeSize && r.to > pos) });
           });
           const seen = new Set<unknown>();
           for (const image of images.sort((a,b) => Number(a.touched) - Number(b.touched))) {
@@ -563,7 +561,7 @@ export const Flashcards = Extension.create({
             if (slice === view.dragging?.slice) return slice;
             const map = (fragment: import("@tiptap/pm/model").Fragment): import("@tiptap/pm/model").Fragment => Fragment.fromArray(Array.from({ length: fragment.childCount }, (_, i) => {
               const node = fragment.child(i);
-              return ["image", "inlineImage"].includes(node.type.name)
+              return isImageNode(node)
                 ? node.type.create(renewImageIdentity(node.attrs, () => crypto.randomUUID()), node.content, node.marks)
                 : node.copy(map(node.content));
             }));

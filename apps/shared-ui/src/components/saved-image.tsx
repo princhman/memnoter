@@ -1,3 +1,5 @@
+import { occlusionCardId } from "../lib/card-id.ts";
+import { isImageNode } from "../lib/cards.ts";
 import { ImagePreview } from "@/components/image-preview";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { imageOperation } from "@/lib/write-lifecycle";
@@ -197,7 +199,7 @@ function SavedImageView(props: NodeViewProps) {
     // Numbered as in the mask editor.
     const entries = maskCards(masks).map(({ owner, members }, index) => ({
       answer: members.length > 1 ? `Card ${index + 1} (${members.length} masks)` : `Card ${index + 1}`,
-      schedule: schedules.byId.get(`${imageId}:o:${owner.id}`),
+      schedule: schedules.byId.get(occlusionCardId(imageId, owner.id)),
     }));
     const due = entries.some(({ schedule }) => schedule && schedule.dueAt <= schedules.now);
     element.replaceChildren(cardInfo(entries, due, schedules.now,
@@ -567,7 +569,6 @@ function swapImage(img: HTMLImageElement, next: string) {
 
 type ImageLayout = "inline" | "wrap" | "break";
 
-const IMAGE_NODES = new Set(["image", "inlineImage"]);
 
 // Puts the cursor in the text flowing beside a wrapped image: at the end of
 // the last text block that starts above the click, or in a new paragraph when
@@ -627,7 +628,7 @@ function imageTextPlugin(type: NodeType) {
     props: {
       handleTextInput(view, _from, _to, text) {
         const { selection } = view.state;
-        if (!(selection instanceof NodeSelection) || !IMAGE_NODES.has(selection.node.type.name)) return false;
+        if (!(selection instanceof NodeSelection) || !isImageNode(selection.node)) return false;
         typeBesideImage(view, selection, text);
         return true;
       },

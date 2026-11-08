@@ -1,0 +1,42 @@
+[
+  {
+    "id": "block",
+    "blockId": "block",
+    "kind": "basic",
+    "sibling": "block:reverse"
+  },
+  {
+    "id": "block:reverse",
+    "blockId": "block",
+    "kind": "basic",
+    "sibling": "block"
+  },
+  {
+    "id": "block:c1",
+    "blockId": "block",
+    "kind": "cloze",
+    "localId": "c1",
+    "sibling": null
+  },
+  {
+    "id": "block:answer-42",
+    "blockId": "block",
+    "kind": "cloze",
+    "localId": "answer-42",
+    "sibling": null
+  },
+  {
+    "id": "block:legacy:answer",
+    "blockId": "block",
+    "kind": "cloze",
+    "localId": "legacy:answer",
+    "sibling": null
+  },
+  {
+    "id": "image:o:mask-1",
+    "blockId": "image",
+    "kind": "occlusion",
+    "localId": "mask-1",
+    "sibling": null
+  }
+]
