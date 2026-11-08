@@ -88,6 +88,21 @@ pub struct CardContent {
     section: Vec<String>,
 }
 
+pub(crate) const CARD_STATE_FIELDS: &[&str] = &[
+    "due_at",
+    "stability",
+    "stability_fast",
+    "difficulty",
+    "scheduled_days",
+    "learning_step",
+    "state",
+    "schedule_status",
+    "last_review_at",
+    "reps",
+    "lapses",
+    "fsrs_model",
+];
+
 // The scheduling fields shared by a stored card and a review log row.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -283,7 +298,10 @@ fn sync_module_cards(
 }
 
 fn json_column(text: String) -> serde_json::Value {
-    serde_json::from_str(&text).unwrap_or(serde_json::Value::Null)
+    serde_json::from_str(&text).unwrap_or_else(|error| {
+        eprintln!("Malformed card content JSON (1 row): {error}");
+        serde_json::Value::Null
+    })
 }
 
 // A two-way sibling waits ten minutes after the other side's last review.
@@ -339,7 +357,10 @@ pub fn due_cards(
                 module_id: row.get(1)?,
                 module_name: row.get(2)?,
                 available_at: row.get(19)?,
-                section: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_default(),
+                section: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_else(|error| {
+                    eprintln!("Malformed card section JSON (1 row): {error}");
+                    Vec::new()
+                }),
                 kind: row.get(3)?,
                 front: json_column(row.get(4)?),
                 back: json_column(row.get(5)?),
@@ -440,11 +461,15 @@ fn write_card_state(
     let fsrs = &card.fsrs;
     let updated = tx
         .execute(
-            "update cards set due_at = ?3, stability = ?4, stability_fast = ?5,
-                 difficulty = ?6, scheduled_days = ?7, learning_step = ?8,
-                 state = ?9, schedule_status = ?10, last_review_at = ?11,
-                 reps = ?12, lapses = ?13, fsrs_model = ?14
-             where id = ?1 and reps = ?2 and deleted_at is null",
+            &format!(
+                "update cards set {} where id = ?1 and reps = ?2 and deleted_at is null",
+                CARD_STATE_FIELDS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| format!("{field} = ?{}", index + 3))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             params![
                 card_id,
                 expected_reps,

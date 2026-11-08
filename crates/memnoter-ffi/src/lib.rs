@@ -61,12 +61,7 @@ impl MemnoterCore {
     }
     /// A synchronous launch-time check; the host owns the background executor.
     pub fn daily_backup(&self) -> Result<(), MemnoterError> {
-        memnoter_core::backups::spawn_daily_backup(self.core.clone())
-            .join()
-            .map_err(|_| MemnoterError::Storage {
-                message: "Backup worker panicked".into(),
-            })?;
-        Ok(())
+        memnoter_core::backups::daily_backup(&self.core).map_err(Into::into)
     }
 }
 
@@ -173,7 +168,7 @@ impl SyncSession {
             )?,
             "blob" => {
                 s.blob(
-                    v["id"].as_str().unwrap_or_default().into(),
+                    v["id"].as_str().ok_or("Missing blob id".to_owned())?.into(),
                     serde_json::from_value(v["bytes"].clone()).map_err(|e| {
                         MemnoterError::Storage {
                             message: e.to_string(),
@@ -183,16 +178,22 @@ impl SyncSession {
                 vec![]
             }
             "compact" => s.compact(
-                v["doc"].as_str().unwrap_or_default(),
-                v["cursor"].as_i64().unwrap_or_default(),
+                v["doc"].as_str().ok_or("Missing document".to_owned())?,
+                v["cursor"].as_i64().ok_or("Missing cursor".to_owned())?,
                 serde_json::from_value(v["bytes"].clone()).map_err(|e| MemnoterError::Storage {
                     message: e.to_string(),
                 })?,
             )?,
             "tick" => s.tick(),
             "closed" => s.closed(
-                v["code"].as_u64().unwrap_or_default() as u16,
-                v["reason"].as_str().unwrap_or_default().into(),
+                v["code"]
+                    .as_u64()
+                    .and_then(|code| u16::try_from(code).ok())
+                    .ok_or("Invalid close code".to_owned())?,
+                v["reason"]
+                    .as_str()
+                    .ok_or("Missing close reason".to_owned())?
+                    .into(),
             ),
             _ => {
                 return Err(MemnoterError::Storage {
@@ -227,5 +228,45 @@ pub fn sync_key_check(key: Vec<u8>, check: Option<Vec<u8>>) -> Result<Vec<u8>, M
         Ok(vec![])
     } else {
         memnoter_core::sync::crypto::make_key_check(&key).map_err(Into::into)
+    }
+}
+
+#[derive(uniffi::Object, Default)]
+pub struct SyncFilePolicy(std::sync::Mutex<memnoter_core::sync::session::FileTransfers>);
+#[uniffi::export]
+impl SyncFilePolicy {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    pub fn ready(&self, id: String, now_ms: u64) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .ready(&id, now_ms)
+    }
+    pub fn failed(&self, id: String, now_ms: u64) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .failed(id, now_ms);
+    }
+    pub fn completed(&self, id: String) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .completed(&id);
+    }
+    pub fn retain(&self, pending: Vec<String>) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(&pending);
+    }
+    pub fn next_delay(&self, now_ms: u64) -> Option<u64> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .next_delay(now_ms)
     }
 }

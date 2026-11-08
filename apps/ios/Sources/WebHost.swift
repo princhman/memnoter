@@ -71,7 +71,6 @@ import ImageIO
         insetReport?.cancel()
         insetReport = Task { @MainActor in
             do {
-                try await Task.sleep(for: .milliseconds(40))
                 guard !Task.isCancelled, ready else { return }
                 reportedViewport = viewport
                 _ = try await run("window.memnoterEditor?.[topMethod](top * window.innerHeight / height); window.memnoterEditor?.[bottomMethod](inset * window.innerHeight / height)",
@@ -229,7 +228,8 @@ import ImageIO
         let previous = barrier
         let next = Task { @MainActor in
             // A failed flush can be retried; open itself also drains pending writes.
-            _ = try? await previous?.value
+            do { _ = try await previous?.value }
+            catch { NSLog("Previous editor operation failed; retrying: %@", String(describing: error)) }
             _ = try await callEditor(method, arguments, parameters: parameters)
         }
         barrier = next

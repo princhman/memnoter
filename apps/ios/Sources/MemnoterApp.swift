@@ -5,10 +5,14 @@ import SwiftUI
     var body: some Scene {
         WindowGroup { RootView(store: store).defaultAppStorage(store.preferences).onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { _ in
             Task { await store.refresh() }
+        }.onReceive(NotificationCenter.default.publisher(for: .coreDidWrite)) { _ in
+            Task { await store.refresh() }
         }.task {
             await store.start()
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                let midnight = Calendar.current.startOfDay(for: Date()).addingTimeInterval(24 * 60 * 60)
+                let nextDay = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? midnight
+                do { try await Task.sleep(for: .seconds(max(0, nextDay.timeIntervalSinceNow))) } catch { return }
                 await store.refresh()
             }
         } }

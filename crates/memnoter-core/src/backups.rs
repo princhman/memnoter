@@ -127,7 +127,7 @@ pub fn create(conn: &Connection, app_dir: &Path, now: DateTime<Utc>) -> CommandR
         std::fs::rename(&partial, dir.join(&id)).map_err(db_err)
     })();
     if result.is_err() {
-        let _ = std::fs::remove_dir_all(&partial);
+        maintenance(remove_if_exists(&partial));
     }
     result?;
 
@@ -160,7 +160,8 @@ pub fn backup_if_due(
     now: DateTime<Utc>,
 ) -> CommandResult<Option<Backup>> {
     if let Some(latest) = list(app_dir)?.first() {
-        let latest = DateTime::from_timestamp_millis(latest.created_at).unwrap_or_default();
+        let latest =
+            DateTime::from_timestamp_millis(latest.created_at).ok_or("Invalid backup timestamp")?;
         // A clock that moved backwards should not stop backups for a long time.
         if latest <= now && now - latest < BACKUP_INTERVAL {
             return Ok(None);
@@ -263,7 +264,7 @@ pub fn restore(
     let staging = match stage_restore(&source, app_dir, account.as_deref()) {
         Ok(staging) => staging,
         Err(error) => {
-            let _ = remove_if_exists(&app_dir.join(RESTORE_STAGING));
+            maintenance(remove_if_exists(&app_dir.join(RESTORE_STAGING)));
             return Err(error);
         }
     };
@@ -273,7 +274,7 @@ pub fn restore(
     let placeholder = Connection::open_in_memory().map_err(db_err)?;
     if let Err((open, error)) = std::mem::replace(conn, placeholder).close() {
         *conn = open;
-        let _ = remove_if_exists(&staging);
+        maintenance(remove_if_exists(&staging));
         return Err(db_err(error));
     }
 
@@ -333,13 +334,14 @@ pub fn restore_backup(
 
 /// Run the launch-time daily backup check off the caller's thread.
 /// As on desktop, this checks once; the 24-hour interval is persisted in snapshots.
+pub fn daily_backup(core: &crate::Core) -> CommandResult<()> {
+    let conn = core.db.lock()?;
+    backup_if_due(&conn, core.data_dir(), Utc::now())?;
+    Ok(())
+}
 pub fn spawn_daily_backup(core: std::sync::Arc<crate::Core>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let result = core
-            .db
-            .lock()
-            .and_then(|conn| backup_if_due(&conn, core.data_dir(), Utc::now()));
-        if let Err(error) = result {
+        if let Err(error) = daily_backup(&core) {
             eprintln!("Daily backup failed: {error}");
         }
     })
@@ -701,10 +703,14 @@ mod tests {
             restore(&mut conn, &dir.0, &backup.id, at(1)).unwrap();
             let status = serde_json::to_value(super::super::sync::status(&conn).unwrap()).unwrap();
             let expected = current.map(|raw| {
-                let value: serde_json::Value = serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
+                let value: serde_json::Value =
+                    serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
                 if value["server"].is_string() && value["userId"].is_string() {
-                    serde_json::json!({"server":value["server"],"userId":value["userId"]}).to_string()
-                } else { raw.to_string() }
+                    serde_json::json!({"server":value["server"],"userId":value["userId"]})
+                        .to_string()
+                } else {
+                    raw.to_string()
+                }
             });
             // Restoring a legacy backup preserves the identity cursor without
             // putting renewed credentials back into subsequent backups.

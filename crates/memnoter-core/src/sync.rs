@@ -32,22 +32,38 @@ pub const VAULT_DOC: &str = "vault";
 const MODULES_MAP: &str = "modules";
 const FILES_MAP: &str = "files";
 const REVIEW_PREFIX: &str = "r-";
+const REVIEW_CARDS_MAP: &str = "cards";
+const REVIEW_LOG_MAP: &str = "log";
 
 pub fn review_doc_id(module_id: &str) -> String {
     format!("{REVIEW_PREFIX}{module_id}")
 }
 
 // Card state and review log rows as JSON, for the review documents.
-const CARD_STATE_JSON: &str = "json_object('due_at', due_at, 'stability', stability,
-    'stability_fast', stability_fast, 'difficulty', difficulty, 'scheduled_days', scheduled_days,
-    'learning_step', learning_step, 'reps', reps, 'lapses', lapses, 'state', state,
-    'schedule_status', schedule_status, 'last_review_at', last_review_at, 'fsrs_model', fsrs_model)";
-const LOG_JSON: &str =
-    "json_object('card_id', card_id, 'rating', rating, 'review_time', review_time,
-    'duration_ms', duration_ms, 'fsrs_model', fsrs_model, 'state', state,
-    'schedule_status', schedule_status, 'due_at', due_at, 'last_review_at', last_review_at,
-    'stability', stability, 'stability_fast', stability_fast, 'difficulty', difficulty,
-    'scheduled_days', scheduled_days, 'learning_step', learning_step)";
+fn json_object_sql(fields: &[&str]) -> String {
+    format!(
+        "json_object({})",
+        fields
+            .iter()
+            .map(|field| format!("'{field}', {field}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+fn card_state_json() -> String {
+    json_object_sql(crate::cards::CARD_STATE_FIELDS)
+}
+fn log_json() -> String {
+    let mut fields = vec![
+        "card_id",
+        "rating",
+        "review_time",
+        "duration_ms",
+        "fsrs_model",
+    ];
+    fields.extend_from_slice(&crate::cards::CARD_STATE_FIELDS[..9]);
+    json_object_sql(&fields)
+}
 pub const OUTBOX_EVENT: &str = "sync-outbox";
 
 pub fn migrate(conn: &Connection) -> CommandResult<()> {
@@ -259,7 +275,10 @@ pub fn record_review(
     }
     let (module_id, state): (String, String) = conn
         .query_row(
-            &format!("select module_id, {CARD_STATE_JSON} from cards where id = ?1"),
+            &format!(
+                "select module_id, {} from cards where id = ?1",
+                card_state_json()
+            ),
             [card_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -267,7 +286,10 @@ pub fn record_review(
     let added = match added_log {
         Some(rowid) => Some(
             conn.query_row(
-                &format!("select sync_id, {LOG_JSON} from review_log where id = ?1"),
+                &format!(
+                    "select sync_id, {} from review_log where id = ?1",
+                    log_json()
+                ),
                 [rowid],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
@@ -277,8 +299,8 @@ pub fn record_review(
     };
     let doc_id = review_doc_id(&module_id);
     let doc = load_doc(conn, &doc_id)?;
-    let cards = doc.get_or_insert_map("cards");
-    let log = doc.get_or_insert_map("log");
+    let cards = doc.get_or_insert_map(REVIEW_CARDS_MAP);
+    let log = doc.get_or_insert_map(REVIEW_LOG_MAP);
     let update = {
         let mut txn = doc.transact_mut();
         cards.insert(&mut txn, card_id, state);
@@ -331,7 +353,12 @@ fn string_entries(doc: &Doc, map_name: &str) -> Vec<(String, String)> {
     map.iter(&txn)
         .filter_map(|(key, value)| match value {
             Out::Any(Any::String(text)) => Some((key.to_string(), text.to_string())),
-            _ => None,
+            _ => {
+                eprintln!(
+                    "Invalid sync map value {map_name}/{key} (1 skipped row): expected string"
+                );
+                None
+            }
         })
         .collect()
 }
@@ -341,32 +368,22 @@ fn string_entries(doc: &Doc, map_name: &str) -> Vec<(String, String)> {
 // the note's cards are indexed.
 fn apply_review_doc(conn: &Connection, doc: &Doc) -> CommandResult<bool> {
     let mut changed = false;
-    for (card_id, state) in string_entries(doc, "cards") {
+    for (card_id, state) in string_entries(doc, REVIEW_CARDS_MAP) {
         changed |= conn
             .execute(
-                "update cards set
-                     due_at = json_extract(?2, '$.due_at'),
-                     stability = json_extract(?2, '$.stability'),
-                     stability_fast = json_extract(?2, '$.stability_fast'),
-                     difficulty = json_extract(?2, '$.difficulty'),
-                     scheduled_days = json_extract(?2, '$.scheduled_days'),
-                     learning_step = json_extract(?2, '$.learning_step'),
-                     reps = json_extract(?2, '$.reps'),
-                     lapses = json_extract(?2, '$.lapses'),
-                     state = json_extract(?2, '$.state'),
-                     schedule_status = json_extract(?2, '$.schedule_status'),
-                     last_review_at = json_extract(?2, '$.last_review_at'),
-                     fsrs_model = json_extract(?2, '$.fsrs_model')
+                &format!("update cards set {}
                  where id = ?1 and not (
                      reps = json_extract(?2, '$.reps')
                      and coalesce(last_review_at, -1) = coalesce(json_extract(?2, '$.last_review_at'), -1)
-                 )",
+                 )", crate::cards::CARD_STATE_FIELDS.iter()
+                    .map(|field| format!("{field} = json_extract(?2, '$.{field}')"))
+                    .collect::<Vec<_>>().join(", ")),
                 params![card_id, state],
             )
             .map_err(db_err)?
             > 0;
     }
-    for (sync_id, row) in string_entries(doc, "log") {
+    for (sync_id, row) in string_entries(doc, REVIEW_LOG_MAP) {
         if row.is_empty() {
             conn.execute("delete from review_log where sync_id = ?1", [&sync_id])
                 .map_err(db_err)?;
@@ -588,17 +605,22 @@ fn seed(conn: &Connection) -> CommandResult<()> {
 
 // One review document per module that has reviewed cards or review history.
 fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResult<()> {
+    conn.execute(
+        "delete from sync_docs where doc like ?1",
+        [format!("{REVIEW_PREFIX}%")],
+    )
+    .map_err(db_err)?;
     conn.execute_batch(
-        "delete from sync_docs where doc like 'r-%';
-         update review_log set sync_id = lower(hex(randomblob(16))) where sync_id is null;",
+        "update review_log set sync_id = lower(hex(randomblob(16))) where sync_id is null;",
     )
     .map_err(db_err)?;
     for (module_id, _) in modules {
         let states: Vec<(String, String)> = {
             let mut stmt = conn
                 .prepare(&format!(
-                    "select id, {CARD_STATE_JSON} from cards
-                     where module_id = ?1 and (reps > 0 or last_review_at is not null)"
+                    "select id, {} from cards
+                     where module_id = ?1 and (reps > 0 or last_review_at is not null)",
+                    card_state_json()
                 ))
                 .map_err(db_err)?;
             let rows = stmt
@@ -609,8 +631,9 @@ fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResul
         let logs: Vec<(String, String)> = {
             let mut stmt = conn
                 .prepare(&format!(
-                    "select sync_id, {LOG_JSON} from review_log
-                     where card_id in (select id from cards where module_id = ?1) order by id"
+                    "select sync_id, {} from review_log
+                     where card_id in (select id from cards where module_id = ?1) order by id",
+                    log_json()
                 ))
                 .map_err(db_err)?;
             let rows = stmt
@@ -623,8 +646,8 @@ fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResul
         }
         let doc_id = review_doc_id(module_id);
         let doc = Doc::new();
-        let cards = doc.get_or_insert_map("cards");
-        let log = doc.get_or_insert_map("log");
+        let cards = doc.get_or_insert_map(REVIEW_CARDS_MAP);
+        let log = doc.get_or_insert_map(REVIEW_LOG_MAP);
         {
             let mut txn = doc.transact_mut();
             for (card_id, state) in states {
@@ -671,7 +694,6 @@ pub struct OutboxEntry {
 #[derive(Debug, serde::Deserialize)]
 pub struct RemoteEntry {
     // Sent by the frontend; the cursor is passed separately.
-    #[allow(dead_code)]
     seq: i64,
     doc: String,
     bytes: Vec<u8>,
@@ -707,10 +729,17 @@ pub(crate) fn status(conn: &Connection) -> CommandResult<SyncStatus> {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct AccountIdentity { server: String, #[serde(rename = "userId")] user_id: String }
+struct AccountIdentity {
+    server: String,
+    #[serde(rename = "userId")]
+    user_id: String,
+}
 fn account_identity(raw: &str) -> String {
     match serde_json::from_str::<AccountIdentity>(raw) {
-        Ok(mut identity) => { identity.server = identity.server.trim_end_matches('/').to_owned(); serde_json::to_string(&identity).unwrap() }
+        Ok(mut identity) => {
+            identity.server = identity.server.trim_end_matches('/').to_owned();
+            serde_json::to_string(&identity).unwrap()
+        }
         Err(_) => raw.to_owned(), // pre-identity native rows migrate at host startup
     }
 }
@@ -734,7 +763,8 @@ pub(crate) fn reconcile_restored_account(
     current: Option<&str>,
 ) -> CommandResult<()> {
     let restored = get_value::<String>(conn, "account")?;
-    let same = restored.as_deref().map(account_identity) == current.map(account_identity) && current.is_some();
+    let same = restored.as_deref().map(account_identity) == current.map(account_identity)
+        && current.is_some();
     let tx = conn.transaction().map_err(db_err)?;
     if !same {
         disable(&tx)?;
@@ -792,6 +822,14 @@ fn apply_remote(
         return Err("Sync is off".into());
     }
     let mut result = ApplyResult::default();
+    for entry in &entries {
+        if entry.seq > new_cursor {
+            eprintln!(
+                "Sync entry {} sequence {} exceeds batch cursor {new_cursor}",
+                entry.doc, entry.seq
+            );
+        }
+    }
 
     // The vault first, so modules exist before their content is stored.
     let (vault_entries, rest): (Vec<_>, Vec<_>) = entries
@@ -944,12 +982,17 @@ fn missing_files(conn: &Connection) -> CommandResult<Vec<MissingFile>> {
     let doc = load_vault(conn)?;
     let mut missing = Vec::new();
     for (file_id, record) in string_entries(&doc, FILES_MAP) {
-        let Ok(record) = serde_json::from_str::<serde_json::Value>(&record) else {
-            continue;
+        let record = match serde_json::from_str::<serde_json::Value>(&record) {
+            Ok(record) => record,
+            Err(error) => {
+                eprintln!("Malformed sync file record {file_id} (1 skipped row): {error}");
+                continue;
+            }
         };
         let (Some(module_id), Some(file_type)) =
             (record["module"].as_str(), record["type"].as_str())
         else {
+            eprintln!("Invalid sync file record {file_id} (1 skipped row): missing module/type");
             continue;
         };
         let have = conn

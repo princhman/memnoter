@@ -50,7 +50,6 @@ async fn core(
     .map_err(|e| CoreError::Storage(e.to_string()))?
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
