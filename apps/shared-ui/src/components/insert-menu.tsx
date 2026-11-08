@@ -184,9 +184,13 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
     useEffect(() => setSelected(0), [items]);
 
     useEffect(() => {
-      listRef.current
-        ?.querySelector<HTMLElement>(`[data-index="${selected}"]`)
-        ?.scrollIntoView({ block: "nearest" });
+      const list = listRef.current;
+      const option = list?.querySelector<HTMLElement>(`[data-index="${selected}"]`);
+      if (!list || !option) return;
+      const bounds = list.getBoundingClientRect();
+      const row = option.getBoundingClientRect();
+      if (row.top < bounds.top) list.scrollTop -= bounds.top - row.top;
+      else if (row.bottom > bounds.bottom) list.scrollTop += row.bottom - bounds.bottom;
     }, [selected]);
 
     useImperativeHandle(ref, () => ({
@@ -213,7 +217,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
 
     return (
       <div
-        className={cn(!embedded && surfaceClass, "w-56 py-1 pl-1")}
+        className={cn(!embedded && surfaceClass, "w-56 py-1 pl-1", embedded && "flex min-h-0 flex-col")}
         // Keep the editor focused while clicking items.
         onMouseDown={(event) => event.preventDefault()}
       >
@@ -224,7 +228,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
           aria-label="Insert"
           // A stable gutter keeps the rows the same width whether or not
           // filtering leaves enough items to scroll.
-          className="max-h-72 overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
+          className="min-h-0 max-h-72 overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
         >
         {items.map((item, index) => (
           <Fragment key={item.title}>
