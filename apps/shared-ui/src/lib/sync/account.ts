@@ -9,7 +9,7 @@ export type SyncAccount = {
   email: string;
   userId: string;
   token: string;
-  // The raw AES key, base64. Stored locally next to the plaintext notes.
+  // The raw AES key, base64. Persisted only in the OS credential store.
   key: string;
 };
 

@@ -159,13 +159,16 @@ struct SyncKeychain {
         let data = try await request(server: server, path: path, token: token, method: method, body: try body.map { try JSONSerialization.data(withJSONObject: $0) })
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
     }
+    private func identity(_ account: SyncAccount) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: ["server": SyncConfiguration.server(account.server), "userId": account.userId], options: .sortedKeys), as: UTF8.self)
+    }
     func start() async {
         do {
             account = try keychain.load()
             if let account {
                 let state = try await command("sync_status") as? [String: Any] ?? [:]
-                if let old = state["account"] as? String, old != account.userId { _ = try await command("sync_disable") }
-                _ = try await command("sync_enable", ["account": account.userId])
+                if let old = state["account"] as? String, old != account.userId && old != (try identity(account)) { _ = try await command("sync_disable") }
+                _ = try await command("sync_enable", ["account": try identity(account)])
                 let current = try await command("sync_status") as? [String: Any] ?? [:]
                 let result = try await command("sync_reconcile", ["generation": current["generation"] ?? ""])
                 try await deliver(result)
@@ -197,9 +200,9 @@ struct SyncKeychain {
         stop()
         // Switching accounts must reset the old cursor/outbox before seeding.
         if let old = try keychain.load(), old.userId != user || old.server != server { _ = try await command("sync_disable") }
-        let account = SyncAccount(server: server, email: email, userId: user, token: token, key: key)
+        let account = SyncAccount(server: SyncConfiguration.server(server), email: email, userId: user, token: token, key: key)
         try keychain.save(account)
-        _ = try await command("sync_enable", ["account": user])
+        _ = try await command("sync_enable", ["account": try identity(account)])
         self.account = account; fatal = false; resume()
     }
     func signOut() async throws {
