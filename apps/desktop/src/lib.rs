@@ -2,6 +2,7 @@ use memnoter_core::{Core, CoreError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 mod import_folder;
+mod pdf_picker;
 #[cfg(target_os = "macos")]
 mod menu;
 #[cfg(target_os = "macos")]
@@ -108,6 +109,7 @@ pub fn run() {
             confirm_restart,
             core,
             import_folder::pick_import_folder,
+            pdf_picker::pick_pdfs,
             import_folder::read_import_images
         ])
         .build(tauri::generate_context!())
