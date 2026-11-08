@@ -46,7 +46,13 @@ function installBridge() {
 if (typeof window !== "undefined") installBridge();
 
 export function call<T>(command: string, args?: object): Promise<T> {
-  if (!isNativeHost()) return invoke<T>(command, args as Record<string, unknown> | undefined);
+  if (!isNativeHost()) {
+    const shell = command.startsWith("plugin:") || ["confirm_exit", "confirm_restart", "set_editor_history", "pick_import_folder", "read_import_images"].includes(command);
+    return (shell ? invoke<T>(command, args as Record<string, unknown> | undefined)
+      : invoke<T>("core", { command, args: args ?? {} })).catch(error => {
+        throw new Error(typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error));
+      });
+  }
   return new Promise<T>((resolve, reject) => {
     const id = String(++sequence);
     pending.set(id, { resolve: value => resolve(value as T), reject });

@@ -12,6 +12,7 @@ let modules = [{ id: "algebra", name: "Algebra", heading_numbering: false }];
 const calls: unknown[] = [];
 Object.assign(window, { calls });
 mockIPC((command, args) => {
+  if (command === "core") { command = args.command; args = args.args; }
   calls.push({ command, args });
   if (command === "modules") return modules;
   if (command === "due_counts") return [];

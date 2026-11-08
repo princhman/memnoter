@@ -13,7 +13,8 @@ test('exclusiveWrite waits for in-flight writeCards and rejects new writes while
   let finishExclusive;
   let entered = false;
   const calls = [];
-  mockIPC(command => {
+  mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     calls.push(command);
     return new Promise(resolve => { finishWrite = resolve; });
   });

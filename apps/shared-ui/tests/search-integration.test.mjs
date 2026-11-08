@@ -21,6 +21,7 @@ test('stored search indexing reconciles late reads and joins the restore mutatio
   let finishIndex;
   const writes = [];
   mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     if (command === 'get_content') return new Promise(resolve => { finishRead = resolve; });
     assert.equal(command, 'index_note');
     writes.push(args);
@@ -74,6 +75,7 @@ test('a failed index write is kept and written again, unless newer text replaced
   const writes = [];
   let failing = true;
   mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     if (command === 'get_content') return content;
     writes.push(args);
     if (failing) throw new Error('database is locked');

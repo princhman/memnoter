@@ -16,6 +16,12 @@ export function installTestBridge({ tauri, native } = {}) {
       convertFileSrc: path => path,
       ...tauri,
     };
+    // Desktop data commands go through one `core` command; fakes see the inner one.
+    if (tauri.invoke) {
+      const invoke = tauri.invoke;
+      window.__TAURI_INTERNALS__.invoke = (command, args, options) =>
+        command === 'core' ? invoke(args.command, args.args, options) : invoke(command, args, options);
+    }
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
   }
   if (native) window.webkit = { messageHandlers: { memnoter: { postMessage: native } } };

@@ -22,7 +22,7 @@ before(async () => {
   browser = await webkit.launch(); page = await browser.newPage({ viewport: { width: 1150, height: 850 } });
   await page.exposeFunction("rustCall", async (command, args = {}) => {
     const response = await new Promise(resolve => { pending.push(resolve); child.stdin.write(JSON.stringify({command,args})+"\n"); });
-    if (response.error) throw new Error(response.error);
+    if (response.error) throw new Error(response.error.message ?? response.error);
     return response.value;
   });
   await page.addInitScript(() => { window.installTestBridge({ tauri: { invoke: (command, args) => window.rustCall(command,args) } }); });
@@ -98,6 +98,7 @@ for (const discard of [false, true]) {
       const gate = new Promise(resolve => { release = resolve; });
       const started = new Promise(resolve => { entered = resolve; });
       window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command === 'modules') { entered(); await gate; }
         return original(command, args);
       };
@@ -138,6 +139,7 @@ for (const stage of ['modules', 'import_module']) {
     const result = await page.evaluate(async ({ folder, stage }) => {
       const original = window.__TAURI_INTERNALS__.invoke;
       window.__TAURI_INTERNALS__.invoke = (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command === stage) throw new Error('injected failure');
         return original(command, args);
       };
@@ -159,6 +161,7 @@ for (const stage of ['get_content', 'index_note']) {
     const result = await page.evaluate(async ({ folder, stage }) => {
       const original = window.__TAURI_INTERNALS__.invoke;
       window.__TAURI_INTERNALS__.invoke = (command, args) => {
+        if (command === "core") { command = args.command; args = args.args; }
         if (command === stage) throw new Error('injected index failure');
         return original(command, args);
       };
@@ -183,7 +186,7 @@ test("sidebar dropdown leads to a configurable import dialog and commits only on
       name: 'Dialog vault', entries: [{path:'a.md',text:'## Module Info\n\n## Aims\n\n![[pic.png]]'}, {path:'b.md',text:'B'}, {path:'c.md',text:'C'}, {path:'slides.pdf'}],
     } : { name: 'Images', entries: [{path:'pic.png',sourceId:'extra'}, {path:'unused.png',sourceId:'extra'}] };
     const response = await new Promise(resolve => { pending.push(resolve); child.stdin.write(JSON.stringify({command,args})+'\n'); });
-    if (response.error) throw new Error(response.error);
+    if (response.error) throw new Error(response.error.message ?? response.error);
     return response.value;
   });
   await ui.addInitScript(() => { window.installTestBridge({ tauri: { invoke: (command,args) => window.rustCall(command,args) } }); });

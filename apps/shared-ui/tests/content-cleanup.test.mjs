@@ -31,6 +31,7 @@ test("opening a long edit history publishes only the complete document and prese
   for (let i = 0; i < 250; i++) text.insert(text.length, ".");
   const content = { state, updates, files: files("keep", "unused") };
   mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     if (command === "get_content") return content;
     assert.equal(command, "cleanup_files");
     assert.deepEqual(args.fileIds, ["unused"]);
@@ -80,6 +81,7 @@ test("startup cleanup respects saved updates, duplicate references, and later lo
   let content = { state, updates: [...updates], files: files("removed", "shared", "new", "abandoned") };
   const cleanups = [];
   mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     if (command === "get_content") return content;
     assert.equal(command, "cleanup_files");
     cleanups.push(args);
@@ -110,7 +112,8 @@ test("incomplete Yjs update chains cannot authorize deletion", async () => {
   let later;
   doc.on("update", (bytes) => { later = Array.from(bytes); });
   root.insert(1, [image("later")]);
-  mockIPC((command) => {
+  mockIPC((command, args) => {
+    if (command === "core") { command = args.command; args = args.args; }
     assert.equal(command, "get_content", "cleanup must be skipped");
     return { state: [], updates: [{ id: 2, bytes: later }], files: files("earlier", "later") };
   });
@@ -123,7 +126,8 @@ test("invalid content and cleanup errors still allow loading without losing file
   t.mock.method(console, "error", () => {});
   for (const invalid of [true, false]) {
     const content = { state: invalid ? [255] : [], updates: [], files: files("unused") };
-    mockIPC((command) => {
+    mockIPC((command, args) => {
+      if (command === "core") { command = args.command; args = args.args; }
       if (command === "get_content") return content;
       assert.equal(invalid, false, "invalid content must not authorize cleanup");
       throw new Error("storage unavailable");

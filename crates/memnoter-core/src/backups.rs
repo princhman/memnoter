@@ -315,13 +315,17 @@ pub fn backup_now(data_dir: &Path, db: &Db) -> CommandResult<Backup> {
     Ok(backup)
 }
 
-pub fn restore_backup(data_dir: &Path, db: &Db, id: String) -> CommandResult<()> {
+pub fn restore_backup(
+    data_dir: &Path,
+    db: &Db,
+    id: String,
+) -> std::result::Result<(), crate::CoreError> {
     let dir = data_dir;
     let mut conn = db.lock()?;
-    let result = restore(&mut conn, dir, &id, Utc::now());
+    let result = restore(&mut conn, dir, &id, Utc::now()).map_err(crate::CoreError::from);
     if result
         .as_ref()
-        .is_err_and(|error| error.starts_with("Database unavailable."))
+        .is_err_and(|error| matches!(error, crate::CoreError::Unavailable))
     {
         db.unavailable
             .store(true, std::sync::atomic::Ordering::SeqCst);

@@ -127,11 +127,7 @@ pub fn record_update(conn: &Connection, module_id: &str, bytes: &[u8]) -> Comman
     if !is_enabled(conn)? {
         return Ok(false);
     }
-    conn.execute(
-        "insert into sync_outbox (doc, bytes) values (?1, ?2)",
-        params![module_id, bytes],
-    )
-    .map_err(db_err)?;
+    push_outbox(conn, module_id, bytes)?;
     Ok(true)
 }
 

@@ -2,15 +2,21 @@ use crate::*;
 pub struct Db {
     pub(crate) conn: Mutex<Connection>,
     pub(crate) unavailable: AtomicBool,
+    pub(crate) outbox_callback: Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl Db {
-    pub fn lock(&self) -> CommandResult<std::sync::MutexGuard<'_, Connection>> {
+    pub fn lock(&self) -> CommandResult<DbGuard<'_>> {
         let conn = self.conn.lock().map_err(db_err)?;
         if self.unavailable.load(Ordering::SeqCst) {
             return Err("Database unavailable. Restart the app to recover.".into());
         }
-        Ok(conn)
+        let before = outbox_revision(&conn);
+        Ok(DbGuard {
+            conn: Some(conn),
+            db: self,
+            before,
+        })
     }
 }
 
@@ -212,6 +218,7 @@ pub(crate) fn open_db(app_dir: &Path) -> CommandResult<Db> {
     Ok(Db {
         conn: Mutex::new(conn),
         unavailable: AtomicBool::new(false),
+        outbox_callback: Mutex::new(None),
     })
 }
 
@@ -264,4 +271,58 @@ pub(crate) fn migrate_search(conn: &Connection) -> CommandResult<()> {
             where id not in (select module_id from search_index);",
     )
     .map_err(db_err)
+}
+
+// sqlite_sequence is transactional: rollback cannot generate a notification.
+// The generation also detects a restore that reuses the old outbox ids.
+fn outbox_revision(conn: &Connection) -> Option<(i64, String)> {
+    conn.query_row("select coalesce((select seq from sqlite_sequence where name = 'sync_outbox'), 0), coalesce((select value from sync_state where key = 'generation'), '')", [], |row| Ok((row.get(0)?, row.get(1)?))).ok()
+}
+pub struct DbGuard<'a> {
+    conn: Option<std::sync::MutexGuard<'a, Connection>>,
+    db: &'a Db,
+    before: Option<(i64, String)>,
+}
+impl std::ops::Deref for DbGuard<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.conn.as_ref().unwrap()
+    }
+}
+impl std::ops::DerefMut for DbGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        self.conn.as_mut().unwrap()
+    }
+}
+impl Drop for DbGuard<'_> {
+    fn drop(&mut self) {
+        let conn = self.conn.as_ref().unwrap();
+        let changed = conn.is_autocommit()
+            && outbox_revision(conn) != self.before
+            && conn
+                .query_row("select exists(select 1 from sync_outbox)", [], |r| {
+                    r.get::<_, bool>(0)
+                })
+                .unwrap_or(false);
+        let callback = if changed {
+            self.db
+                .outbox_callback
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        } else {
+            None
+        };
+        // Hosts can immediately query the core from their callback.
+        drop(self.conn.take());
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+}
+
+impl std::fmt::Debug for DbGuard<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DbGuard").finish_non_exhaustive()
+    }
 }
