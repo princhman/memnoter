@@ -46,10 +46,11 @@ test('compact list supports whole-row pointer drag, keyboard drop/cancel and ali
     const list = page.getByRole('list', { name: 'Notes to import' });
     const help = await page.getByText('Drag to reorder, including between folders.', { exact: false }).boundingBox();
     assert.ok(help.y + help.height <= (await list.boundingBox()).y);
-    const rows = list.getByRole('listitem');
-    const source = await rows.nth(1).boundingBox(), target = await rows.first().boundingBox();
-    await page.mouse.move(source.x + source.width - 30, source.y + source.height / 2); await page.mouse.down();
-    await page.mouse.move(target.x + target.width - 30, target.y + 4, { steps: 12 });
+    // Drag a row by its reorder handle onto the first row.
+    const source = await page.getByRole('button', { name: 'Reorder b', exact: true }).boundingBox();
+    const target = await page.getByRole('button', { name: 'Reorder a', exact: true }).boundingBox();
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2); await page.mouse.down();
+    await page.mouse.move(target.x + target.width / 2, target.y + 2, { steps: 12 });
     await page.waitForFunction(bounds => {
       const input = [...document.querySelectorAll('input[type="checkbox"]')].find(input => input.labels?.[0]?.textContent === 'a');
       return input && input.getBoundingClientRect().top > bounds.y + bounds.height / 2;
