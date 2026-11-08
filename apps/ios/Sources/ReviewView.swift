@@ -1,44 +1,32 @@
 import SwiftUI
 
-// Rich segments, KaTeX and image masks share the desktop renderer and scheduler.
-// Native models validate scheduling fields; rich face segments use Codable JSON.
 struct ReviewView: View {
     let client: CoreClient
     let directory: URL
     let moduleId: String?
-    let editCard: (StoredCard) -> Void
+    let preferences: UserDefaults
+    let editCard: (String, String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var toolbarWidth: CGFloat = 0
-    @State private var reviewCounts = ReviewCounts()
     @State private var controlsWidth: CGFloat = 0
-    @State private var intervals: [String] = []
     @AppStorage("skipCardsCreatedToday") private var skipCardsCreatedToday = false
-    @State private var loadedCutoff: Int64?
-    private var createdAtCutoff: Int64? {
-        skipCardsCreatedToday ? Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000) : nil
-    }
     @State private var session: WebSession?
-    @State private var cards: [StoredCard] = []
-    @State private var revealed = false
-    @State private var busy = false
-    @State private var error: String?
-    struct GradeStep {
-        let card: StoredCard
-        let result: ReviewResult
-    }
-    @State private var undoSteps: [GradeStep] = []
-    @State private var redoSteps: [GradeStep] = []
-    @State private var syncPending = false
+    private var state: ReviewState { session?.reviewState ?? ReviewState() }
+    private var revealed: Bool { state.revealed }
+    private var busy: Bool { state.busy || state.loading }
+    private var intervals: [String] { state.intervals }
     var body: some View {
         VStack {
-            if let error { Text(error).foregroundStyle(.red).padding() }
-            if let card = cards.first, let session {
-                Text(card.moduleName).font(.caption).foregroundStyle(.secondary)
+            if let error = session?.error { Text(error).foregroundStyle(.red).padding() }
+            if let session {
                 WebSurface(session: session)
-                ratingControls
+                if state.hasCard { ratingControls }
+                else if state.canShowNow {
+                    Button("Show now") { command(.showNow) }.keyboardShortcut(.space, modifiers: [])
+                }
+            }
 
-            } else { ContentUnavailableView("All caught up", systemImage: "checkmark.circle", description: Text("No cards are due.")) }
         }
         .background(Color(uiColor: .systemBackground))
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
@@ -49,13 +37,13 @@ struct ReviewView: View {
             }
             ToolbarItemGroup(placement: horizontalSizeClass == .compact ? .topBarTrailing : .topBarLeading) {
                 Button("Undo", systemImage: "arrow.uturn.backward") { undo() }
-                    .disabled(undoSteps.isEmpty || busy).keyboardShortcut("z")
+                    .disabled(!state.canUndo || busy).keyboardShortcut("z")
                     .padding(.leading, legacyToolbarSpacing)
                 Button("Redo", systemImage: "arrow.uturn.forward") { redo() }
-                    .disabled(redoSteps.isEmpty || busy).keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!state.canRedo || busy).keyboardShortcut("z", modifiers: [.command, .shift])
                 if toolbarWidth < 700 {
                     Menu { cardActions } label: { Label("Card actions", systemImage: "ellipsis") }
-                        .disabled(cards.isEmpty || busy)
+                        .disabled(!state.hasCard || busy)
                 } else {
                     cardActions
                 }
@@ -72,29 +60,12 @@ struct ReviewView: View {
             }
         }
         .task {
-            let web = WebSession(client: client, directory: directory, entry: BridgeProtocol.reviewEntry)
-            web.onReady = { show() }
+            let web = WebSession(client: client, directory: directory, entry: BridgeProtocol.reviewEntry, preferences: preferences)
+            web.onReady = { command(.load, ["scope": moduleId as Any? ?? NSNull()], parameters: ["scope"]) }
             session = web
-            await load()
         }
-        .task {
-            while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(15)) } catch { return }
-                if !busy {
-                    if cards.isEmpty || loadedCutoff != createdAtCutoff { await load() }
-                    else { await refreshCounts() }
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { _ in
-            syncPending = true
-            if !busy { Task { await applyPendingSync() } }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .cardsDidChange)) { _ in
-            // Keep the card being answered; each rating reloads the queue anyway.
-            if !busy { Task { if cards.isEmpty { await load() } else { await refreshCounts() } } }
-        }
-        .onChange(of: skipCardsCreatedToday) { _, _ in Task { if !busy { await load() } } }
+        .onChange(of: skipCardsCreatedToday) { _, _ in Task { await session?.updateCardPreference() } }
+        .onChange(of: moduleId) { _, _ in command(.load, ["scope": moduleId as Any? ?? NSNull()], parameters: ["scope"]) }
         .onDisappear { session?.dispose() }
     }
     private var legacyToolbarSpacing: CGFloat {
@@ -102,27 +73,26 @@ struct ReviewView: View {
         return 16 // Older navigation bars have no shared glass; leave a visible gap.
     }
     @ViewBuilder private var cardActions: some View {
-        Button("Edit card", systemImage: "pencil") { if let card = cards.first { editCard(card) } }
-            .disabled(cards.isEmpty || busy)
-        Button("Go to card in note", systemImage: "scope") { if let card = cards.first { editCard(card) } }
-            .disabled(cards.isEmpty || busy)
+        Button("Edit card", systemImage: "pencil", action: editCurrentCard).disabled(!state.hasCard || busy)
+        Button("Go to card in note", systemImage: "scope", action: editCurrentCard).disabled(!state.hasCard || busy)
     }
-    // The queue the card on screen came from, emphasised in the counts.
-    private var currentKind: ReviewCountKind? { cards.first.map { ReviewCountKind(state: $0.state) } }
+    private func editCurrentCard() {
+        if let moduleId = state.moduleId, let cardId = state.cardId { editCard(moduleId, cardId) }
+    }
     private var countsLabel: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            countLabel(reviewCounts.new, later: reviewCounts.laterNew, current: currentKind == .new, light: 0x0284c7, dark: 0x38bdf8)
-            countLabel(reviewCounts.learning, later: reviewCounts.laterLearning, current: currentKind == .learning, light: 0xdc2626, dark: 0xf87171)
-            countLabel(reviewCounts.review, later: reviewCounts.laterReview, current: currentKind == .review, light: 0x059669, dark: 0x34d399)
+            countLabel(state.counts.new, later: state.laterToday.new, current: state.currentKind == "new", index: 0)
+            countLabel(state.counts.learning, later: state.laterToday.learning, current: state.currentKind == "learning", index: 1)
+            countLabel(state.counts.review, later: state.laterToday.review, current: state.currentKind == "review", index: 2)
         }
         .font(.system(size: 14)).monospacedDigit()
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(reviewCounts.accessibilityLabel + (currentKind.map { ", reviewing \($0.rawValue)" } ?? ""))
+        .accessibilityLabel(state.countsLabel)
         .accessibilityIdentifier("review.counts")
     }
-    private func countLabel(_ count: Int, later: Int, current: Bool, light: Int, dark: Int) -> some View {
-        let rgb = colorScheme == .dark ? dark : light
+    private func countLabel(_ count: Int, later: Int, current: Bool, index: Int) -> some View {
+        let rgb = (colorScheme == .dark ? ReviewPalette.countsDark : ReviewPalette.countsLight)[index]
         return HStack(alignment: .firstTextBaseline, spacing: 1) {
             Text(count.formatted(.number.grouping(.never)))
                 .fontWeight(current ? .bold : .regular).underline(current)
@@ -133,27 +103,12 @@ struct ReviewView: View {
         }
         .foregroundStyle(Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255))
     }
-    func refreshCounts() async {
-        do {
-            let now = Date()
-            let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))!
-            let rows: [ReviewCountRow] = try await client.call("due_counts", CountArgs(
-                now: Int64(now.timeIntervalSince1970 * 1000), dayEnd: Int64(dayEnd.timeIntervalSince1970 * 1000), createdAtCutoff: createdAtCutoff))
-            reviewCounts = ReviewCounts(rows: rows, moduleId: moduleId)
-        } catch { self.error = String(describing: error) }
-    }
     private let gradeTitles = ["Again", "Hard", "Good", "Easy"]
-    private let gradeTints: [Color] = [
-        Color(red: 0.937, green: 0.267, blue: 0.267),
-        Color(red: 0.961, green: 0.620, blue: 0.043),
-        Color(red: 0.063, green: 0.725, blue: 0.506),
-        Color(red: 0.055, green: 0.647, blue: 0.914)
-    ]
+    private func color(_ rgb: Int) -> Color {
+        Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
+    }
     private func gradeText(_ index: Int) -> Color {
-        let light = [0xdc2626, 0xb45309, 0x047857, 0x0369a1]
-        let dark = [0xf87171, 0xfbbf24, 0x34d399, 0x38bdf8]
-        let rgb = (colorScheme == .dark ? dark : light)[index]
-        return Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
+        color((colorScheme == .dark ? ReviewPalette.gradesDark : ReviewPalette.gradesLight)[index])
     }
     private var ratingControls: some View {
         GeometryReader { geometry in
@@ -169,7 +124,7 @@ struct ReviewView: View {
                             .font(.system(size: 14, weight: .medium))
                             .frame(maxWidth: .infinity).frame(height: 48)
                             .foregroundStyle(gradeText(index))
-                            .background(gradeTints[index].opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                            .background(color(ReviewPalette.gradesTint[index]).opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
                             .contentShape(RoundedRectangle(cornerRadius: 12))
                         }
                         .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [])
@@ -189,136 +144,15 @@ struct ReviewView: View {
         .buttonStyle(.plain).disabled(busy)
         .padding(.horizontal, 16).padding(.vertical, 8)
     }
-    func reveal() {
-        guard !busy, let card = cards.first, let session else { return }
-        revealed = true; show()
+    func reveal() { command(.reveal) }
+    func rate(_ rating: Int) { command(.rate, ["grade": rating], parameters: ["grade"]) }
+    func undo() { command(.undo) }
+    func redo() { command(.redo) }
+    private func command(_ method: ReviewApiMethod, _ args: [String: Any] = [:], parameters: [String] = []) {
+        guard let session, session.ready else { return }
         Task {
-            do {
-                let value = try await session.callReview(.preview, ["card": try object(card)], parameters: ["card"])
-                if cards.first?.id == card.id, cards.first?.reps == card.reps { intervals = value as? [String] ?? [] }
-            } catch { self.error = String(describing: error) }
+            do { _ = try await session.callReview(method, args, parameters: parameters) }
+            catch { session.error = String(describing: error) }
         }
-    }
-    func applyPendingSync() async {
-        guard syncPending, !busy else { return }
-        busy = true
-        defer { busy = false }
-        // A sync arriving during the reload only sets the flag, so go round again.
-        while syncPending {
-            syncPending = false
-            undoSteps = []; redoSteps = []
-            await load()
-        }
-    }
-    // `front` is a card to ask next whatever the queue says: one just taken back.
-    func load(front: StoredCard? = nil) async {
-        do {
-            let cutoff = createdAtCutoff
-            var queue: [StoredCard] = try await client.call("due_cards", DueArgs(moduleId: moduleId, now: Int64(Date().timeIntervalSince1970 * 1000), createdAtCutoff: cutoff))
-            if let front {
-                queue.removeAll { $0.id == front.id }
-                queue.insert(front, at: 0)
-            }
-            cards = queue
-            loadedCutoff = cutoff
-            error = nil; intervals = []; revealed = false; show()
-            await refreshCounts()
-        } catch { self.error = String(describing: error) }
-    }
-    func show() {
-        guard let card = cards.first, let session, session.ready else { return }
-        Task { do { _ = try await session.callReview(.show, ["card": try object(card), "revealed": revealed], parameters: ["card", "revealed"]) } catch { self.error = String(describing: error) } }
-    }
-    func rate(_ rating: Int) {
-        guard !busy, revealed, let card = cards.first, let session else { return }
-        busy = true
-        Task {
-            defer { busy = false; if syncPending { Task { await applyPendingSync() } } }
-            do {
-                let value = try await session.callReview(.rate, ["card": try object(card), "rating": rating], parameters: ["card", "rating"])
-                let result = try JSONDecoder().decode(ReviewResult.self, from: JSONSerialization.data(withJSONObject: value ?? [:]))
-                try await client.write("review_card", ReviewArgs(cardId: card.id, expectedReps: card.reps, card: result.card, log: result.log))
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                cards.removeAll { $0.id == card.id }
-                await load()
-                undoSteps.append(GradeStep(card: card, result: result))
-                redoSteps = []
-            } catch { self.error = String(describing: error) }
-        }
-    }
-    func object<T: Encodable>(_ value: T) throws -> Any {
-        try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
-    }
-    func undo() {
-        guard !busy, let step = undoSteps.last else { return }
-        busy = true
-        Task {
-            defer { busy = false; if syncPending { Task { await applyPendingSync() } } }
-            do {
-                try await client.write("undo_review", UndoArgs(cardId: step.card.id, expectedReps: step.result.card.reps, previous: step.card.previous, previousFsrsModel: step.card.fsrsModel, reviewTime: step.result.log.reviewTime))
-                undoSteps.removeLast(); redoSteps.append(step)
-                // Right for the write just made, even if the reload below fails.
-                cards.removeAll { $0.id == step.card.id }
-                cards.insert(step.card, at: 0)
-                revealed = false; show()
-                await load(front: step.card)
-            } catch { self.error = String(describing: error) }
-        }
-    }
-    func redo() {
-        guard !busy, let step = redoSteps.last else { return }
-        busy = true
-        Task {
-            defer { busy = false; if syncPending { Task { await applyPendingSync() } } }
-            do {
-                try await client.write("review_card", ReviewArgs(cardId: step.card.id, expectedReps: step.card.reps, card: step.result.card, log: step.result.log))
-                redoSteps.removeLast(); undoSteps.append(step)
-                cards.removeAll { $0.id == step.card.id }
-                revealed = false; show()
-                await load()
-            } catch { self.error = String(describing: error) }
-        }
-    }
-}
-
-// The core owns due-time, sibling-delay and created-today rules. Swift only
-// selects/sums its per-module rows, exactly as desktop useDueCounts does.
-struct ReviewCountRow: Decodable, Sendable {
-    let moduleId: String
-    let new: Int
-    let learning: Int
-    let review: Int
-    let laterNew: Int
-    let laterLearning: Int
-    let laterReview: Int
-}
-enum ReviewCountKind: String {
-    case new, learning, review = "to review"
-    // FSRS states: 0 new, 1 learning, 2 review, 3 relearning.
-    init(state: Int) {
-        switch state {
-        case 0: self = .new
-        case 2: self = .review
-        default: self = .learning
-        }
-    }
-}
-struct ReviewCounts: Equatable {
-    var new = 0
-    var learning = 0
-    var review = 0
-    var laterNew = 0
-    var laterLearning = 0
-    var laterReview = 0
-    init(rows: [ReviewCountRow] = [], moduleId: String? = nil) {
-        for row in rows where moduleId == nil || row.moduleId == moduleId {
-            new += row.new; learning += row.learning; review += row.review
-            laterNew += row.laterNew; laterLearning += row.laterLearning; laterReview += row.laterReview
-        }
-    }
-    var accessibilityLabel: String {
-        [(new, laterNew, "new"), (learning, laterLearning, "learning"), (review, laterReview, "to review")]
-            .map { count, later, label in "\(count) \(label)" + (later > 0 ? " (+\(later) later today)" : "") }
-            .joined(separator: ", ")
     }
 }

@@ -81,6 +81,7 @@ import ImageIO
             catch { self.error = String(describing: error) }
         }
     }
+    var reviewState = ReviewState()
     var imagePreviewOpen = false
     var ready = false
     var headings: [Heading] = []
@@ -297,6 +298,9 @@ import ImageIO
                         onReady = nil
                         callback?()
                     }
+                case .reviewState:
+                    let data = try JSONSerialization.data(withJSONObject: payload)
+                    reviewState = try JSONDecoder().decode(ReviewState.self, from: data)
                 case .cardsChanged:
                     NotificationCenter.default.post(name: .cardsDidChange, object: client)
                 case .imagePreview:

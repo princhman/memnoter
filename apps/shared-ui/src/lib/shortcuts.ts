@@ -73,3 +73,5 @@ export function matchesShortcut(event: KeyboardEvent, keys: string): boolean {
 export function bindsInJS(entry: ShortcutAction, nativeMenu: boolean): boolean {
   return !nativeMenu || !entry.menuId;
 }
+
+export const HOME_ACTION_IDS = ["block.insert", "module.new", "find.open", "palette.open", "link.edit", "section.sibling", "section.fold", "section.unfold", "math.inline", "sidebar.toggle"] as const;

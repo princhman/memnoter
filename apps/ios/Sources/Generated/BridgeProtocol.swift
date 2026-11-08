@@ -4,6 +4,7 @@ import Foundation
 enum NativeEventName: String, Codable {
     case viewState = "viewState"
     case cardsChanged = "cardsChanged"
+    case reviewState = "reviewState"
     case skipCardsCreatedToday = "skip-cards-created-today"
     case outline = "outline"
     case outlineCurrent = "outlineCurrent"
@@ -76,9 +77,12 @@ enum EditorApiMethod: String, Codable {
     case focus = "focus"
 }
 enum ReviewApiMethod: String, Codable {
-    case show = "show"
-    case preview = "preview"
+    case load = "load"
+    case reveal = "reveal"
+    case showNow = "showNow"
     case rate = "rate"
+    case undo = "undo"
+    case redo = "redo"
 }
 struct Heading: Codable, Identifiable {
     var id: String = ""
@@ -127,6 +131,29 @@ struct EditorState: Codable {
     var editable: Bool = false
     var suppressKeyboard: Bool = false
 }
+struct ReviewCountsState: Codable {
+    var new: Int = 0
+    var learning: Int = 0
+    var review: Int = 0
+}
+struct ReviewState: Codable {
+    var counts: ReviewCountsState = ReviewCountsState()
+    var laterToday: ReviewCountsState = ReviewCountsState()
+    var countsLabel: String = ""
+    var currentKind: String? = nil
+    var intervals: [String] = []
+    var canUndo: Bool = false
+    var canRedo: Bool = false
+    var revealed: Bool = false
+    var busy: Bool = false
+    var hasCard: Bool = false
+    var canShowNow: Bool = false
+    var loading: Bool = false
+    var reviewed: Int = 0
+    var moduleId: String? = nil
+    var cardId: String? = nil
+    var error: String? = nil
+}
 enum BridgeProtocol {
     static let version = 1
     static let fileScheme = "memnoter-file"
@@ -134,4 +161,23 @@ enum BridgeProtocol {
     static let editorEntry = "editor.html"
     static let reviewEntry = "review-native.html"
     static let highlightColors = ["yellow", "green", "blue", "pink", "purple"]
+    static let homeShortcuts: [(keys: String, action: String)] = [
+        ("/", "Insert a block"),
+        ("⌘N", "New module"),
+        ("⌘F", "Find in note"),
+        ("⌘K", "Search modules and commands"),
+        ("⌘L", "Add a link"),
+        ("⌘⌥S", "New section"),
+        ("⌘⌥[", "Fold section"),
+        ("⌘⌥]", "Unfold section"),
+        ("⌘⇧M", "Inline math"),
+        ("⌘D", "Toggle sidebar")
+    ]
+}
+enum ReviewPalette {
+    static let countsLight = [0x0069a8, 0x9f0712, 0x006045]
+    static let countsDark = [0x00bcff, 0xff6467, 0x00d492]
+    static let gradesLight = [0x9f0712, 0x973c00, 0x006045, 0x00598a]
+    static let gradesDark = [0xffa2a2, 0xffb900, 0x00d492, 0x00bcff]
+    static let gradesTint = [0xfb2c36, 0xfe9a00, 0x00bc7d, 0x00a6f4]
 }
