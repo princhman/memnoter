@@ -214,6 +214,8 @@ test("sidebar dropdown leads to a configurable import dialog and commits only on
     await ui.getByText('0 of 1 image found. 1 is missing.').waitFor();
     await ui.getByRole('button',{name:'Look in another folder…',exact:true}).click();
     await ui.getByText('1 image found.').waitFor();
+    await ui.getByText('Using Images (2 images): found 1 missing image.', { exact: false }).waitFor();
+    assert.ok(await ui.getByRole('button',{name:'Choose a different folder…',exact:true}).isVisible());
     assert.ok(!calls.includes('import_module'));
     await ui.getByRole('button',{name:'Next',exact:true}).click();
     await ui.getByRole('button',{name:'Import',exact:true}).click();
