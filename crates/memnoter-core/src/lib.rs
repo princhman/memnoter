@@ -125,6 +125,8 @@ pub struct FileType {
     pub file_type: String,
 }
 
+pub mod documents;
+pub use documents::*;
 pub mod files;
 pub use files::*;
 

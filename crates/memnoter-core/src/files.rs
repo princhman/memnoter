@@ -60,6 +60,8 @@ pub(crate) mod assets {
     pub fn referenced_by(conn: &Connection, id: &str) -> CommandResult<bool> {
         conn.query_row(
             "select exists(select 1 from shared_image_refs where file_id = ?1)
+            or exists(select 1 from documents where id = ?1)
+            or exists(select 1 from files where id = ?1 and file_type = 'application/pdf')
             or exists(select 1 from cards where kind = 'occlusion'
             and (json_extract(front, '$.fileId') = ?1 or json_extract(back, '$.fileId') = ?1))",
             [id],
@@ -96,7 +98,7 @@ pub(crate) mod assets {
             }
             let exists: bool = conn
                 .query_row(
-                    "select exists(select 1 from files where id = ?1)",
+                    "select exists(select 1 from files where id = ?1) or exists(select 1 from documents where id = ?1)",
                     [&id],
                     |r| r.get(0),
                 )

@@ -101,7 +101,7 @@ pub fn delete_module_data(
     tx.execute(
         "update files set module_id = (select min(module_id) from shared_image_refs
          where file_id = files.id and module_id <> ?1)
-         where module_id = ?1 and exists(select 1 from shared_image_refs
+         where module_id = ?1 and file_type <> 'application/pdf' and exists(select 1 from shared_image_refs
          where file_id = files.id and module_id <> ?1)",
         [module_id],
     )
@@ -111,7 +111,7 @@ pub fn delete_module_data(
     sync::publish_file_owners(&tx)?;
     let files = {
         let mut stmt = tx
-            .prepare("select id from files where module_id = ?1")
+            .prepare("select id from files where module_id = ?1 union select id from documents where module_id = ?1")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([module_id], |row| row.get::<_, String>(0))

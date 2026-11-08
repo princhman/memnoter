@@ -300,6 +300,105 @@ pub(crate) fn retain_deleted_files(conn: &Connection, ids: &[String]) -> Command
     Ok(())
 }
 
+const DOCUMENTS_MAP: &str = "documents";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DocumentMetadata {
+    module: String,
+    name: String,
+    size: i64,
+    // Preserve newest-first ordering on every device, including after reseeding.
+    #[serde(default, rename = "createdAt")]
+    created_at: i64,
+}
+
+fn document_entries(conn: &Connection) -> CommandResult<Vec<(String, String)>> {
+    conn.prepare("select id,module_id,name,size,created_at from documents")
+        .map_err(db_err)?
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                DocumentMetadata {
+                    module: r.get(1)?,
+                    name: r.get(2)?,
+                    size: r.get(3)?,
+                    created_at: r.get(4)?,
+                },
+            ))
+        })
+        .map_err(db_err)?
+        .map(|row| {
+            let (id, record) = row.map_err(db_err)?;
+            Ok((id, serde_json::to_string(&record).map_err(db_err)?))
+        })
+        .collect()
+}
+
+pub(crate) fn record_document(conn: &Connection, id: &str, deleted: bool) -> CommandResult<()> {
+    if !is_enabled(conn)? {
+        return Ok(());
+    }
+    let record = if deleted {
+        "{\"deleted\":true}".to_owned()
+    } else {
+        document_entries(conn)?
+            .into_iter()
+            .find(|(key, _)| key == id)
+            .ok_or("Document not found")?
+            .1
+    };
+    let doc = load_vault(conn)?;
+    let map = doc.get_or_insert_map(DOCUMENTS_MAP);
+    let update = {
+        let mut txn = doc.transact_mut();
+        map.insert(&mut txn, id, record);
+        txn.encode_update_v1()
+    };
+    save_vault(conn, &doc)?;
+    push_outbox(conn, VAULT_DOC, &update)
+}
+
+fn deleted_documents(doc: &Doc) -> HashSet<String> {
+    string_entries(doc, DOCUMENTS_MAP)
+        .into_iter()
+        .filter_map(|(id, record)| {
+            let record: serde_json::Value = serde_json::from_str(&record).ok()?;
+            (record["deleted"] == true && uuid::Uuid::parse_str(&id).is_ok()).then_some(id)
+        })
+        .collect()
+}
+
+fn reconcile_documents(conn: &Connection, doc: &Doc) -> CommandResult<()> {
+    let modules = vault_modules(doc);
+    for (id, record) in string_entries(doc, DOCUMENTS_MAP) {
+        if uuid::Uuid::parse_str(&id).is_err() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<DocumentMetadata>(&record) else {
+            continue;
+        };
+        if record.size < 0
+            || modules.get(&record.module).is_some_and(|m| m.deleted)
+            || !module_exists(conn, &record.module)?
+        {
+            continue;
+        }
+        conn.execute(
+            "insert into documents(id,module_id,name,size,created_at) values (?1,?2,?3,?4,?5)
+            on conflict(id) do update set name=excluded.name,size=excluded.size",
+            params![
+                id,
+                record.module,
+                record.name,
+                record.size,
+                record.created_at
+            ],
+        )
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
 fn file_deleted(record: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(record).is_ok_and(|record| record["deleted"] == true)
 }
@@ -625,6 +724,7 @@ fn reconcile(tx: &Transaction, doc: &Doc) -> CommandResult<(bool, Vec<String>)> 
             Some(_) => {}
         }
     }
+    reconcile_documents(tx, doc)?;
     Ok((changed, deleted))
 }
 
@@ -672,6 +772,13 @@ fn seed(conn: &Connection) -> CommandResult<()> {
                 continue;
             }
             files_map.insert(&mut txn, id.as_str(), file_record(module_id, file_type));
+        }
+    }
+    {
+        let map = doc.get_or_insert_map(DOCUMENTS_MAP);
+        let mut txn = doc.transact_mut();
+        for (id, record) in document_entries(conn)? {
+            map.insert(&mut txn, id, record);
         }
     }
     conn.execute_batch("delete from sync_file_uploads; insert into sync_file_uploads (file_id) select id from files where id not in (select file_id from sync_files_gone);")
@@ -754,6 +861,10 @@ fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResul
 }
 
 fn delete_modules(conn: &mut Connection, files_dir: &Path, ids: &[String]) -> CommandResult<()> {
+    let data_dir = files_dir.parent().ok_or("Invalid files directory")?;
+    for id in deleted_documents(&load_vault(conn)?) {
+        crate::documents::remove_local(data_dir, conn, &id)?;
+    }
     for id in ids {
         delete_module_data(conn, files_dir, id)?;
         conn.execute("delete from sync_docs where doc = ?1", [review_doc_id(id)])
@@ -1063,8 +1174,9 @@ pub struct MissingFile {
 fn missing_files(conn: &Connection) -> CommandResult<Vec<MissingFile>> {
     let doc = load_vault(conn)?;
     let mut missing = Vec::new();
+    let deleted_documents = deleted_documents(&doc);
     for (file_id, record) in string_entries(&doc, FILES_MAP) {
-        if file_gone(conn, &file_id)? {
+        if file_gone(conn, &file_id)? || deleted_documents.contains(&file_id) {
             continue;
         }
         let Ok(record) = serde_json::from_str::<serde_json::Value>(&record) else {
@@ -1613,6 +1725,97 @@ mod tests {
             *seq,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn pdf_metadata_precedes_bytes_and_syncs_rename_delete_and_module_deletion() {
+        let a_dir = std::env::temp_dir().join(format!("pdf-sync-{}", uuid::Uuid::new_v4()));
+        let a = crate::Core::open(&a_dir).unwrap();
+        let module = crate::create_module(&a.db, "PDFs".into()).unwrap();
+        let pdf = crate::add_document_bytes(
+            &a_dir,
+            &a.db,
+            module.clone(),
+            "Book.pdf".into(),
+            b"%PDF-1.7".to_vec(),
+        )
+        .unwrap();
+        // Enabling sync must seed documents imported while offline.
+        enable(&mut a.db.lock().unwrap(), "{}").unwrap();
+        let (b_dir, mut b) = db();
+        enable(&mut b, "{}").unwrap();
+        let mut seq = 0;
+        transfer(&a.db.lock().unwrap(), &mut b, &mut seq);
+        assert_eq!(
+            b.query_row("select name from documents where id=?1", [&pdf.id], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "Book.pdf"
+        );
+        assert!(!b_dir.join("files").join(&pdf.id).exists());
+        assert_eq!(missing_files(&b).unwrap().len(), 1);
+        let bytes = std::fs::read(a_dir.join("files").join(&pdf.id)).unwrap();
+        store_file(
+            &b,
+            &b_dir.join("files"),
+            &pdf.id,
+            &module,
+            "application/pdf",
+            &bytes,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(b_dir.join("files").join(&pdf.id)).unwrap(),
+            bytes
+        );
+        assert!(missing_files(&b).unwrap().is_empty());
+        crate::rename_document(&a.db, pdf.id.clone(), "Renamed.pdf".into()).unwrap();
+        transfer(&a.db.lock().unwrap(), &mut b, &mut seq);
+        assert_eq!(
+            b.query_row("select name from documents", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "Renamed.pdf"
+        );
+        crate::delete_document(&a_dir, &a.db, pdf.id.clone()).unwrap();
+        transfer(&a.db.lock().unwrap(), &mut b, &mut seq);
+        assert_eq!(
+            b.query_row("select count(*) from documents", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert!(!b_dir.join("files").join(&pdf.id).exists());
+        assert!(missing_files(&b).unwrap().is_empty());
+        let second = crate::add_document_bytes(
+            &a_dir,
+            &a.db,
+            module.clone(),
+            "Second.pdf".into(),
+            bytes.clone(),
+        )
+        .unwrap();
+        transfer(&a.db.lock().unwrap(), &mut b, &mut seq);
+        store_file(
+            &b,
+            &b_dir.join("files"),
+            &second.id,
+            &module,
+            "application/pdf",
+            &bytes,
+        )
+        .unwrap();
+        crate::delete_module(&a_dir, &a.db, module).unwrap();
+        transfer(&a.db.lock().unwrap(), &mut b, &mut seq);
+        assert_eq!(
+            b.query_row("select count(*) from documents", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert!(!b_dir.join("files").join(&second.id).exists());
+        drop(b);
+        drop(a);
+        std::fs::remove_dir_all(a_dir).unwrap();
+        std::fs::remove_dir_all(b_dir).unwrap();
     }
 
     fn add_card(conn: &Connection, module: &str, card: &str) {

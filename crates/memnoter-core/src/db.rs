@@ -278,8 +278,12 @@ fn migrate_base(conn: &Connection) -> CommandResult<()> {
     .map_err(db_err)
 }
 
-const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] =
-    &[migrate_base, migrate_unversioned, migrate_update_ids];
+const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] = &[
+    migrate_base,
+    migrate_unversioned,
+    migrate_update_ids,
+    documents::migrate,
+];
 
 fn migrate_unversioned(conn: &Connection) -> CommandResult<()> {
     migrate_module_numbering(conn)?;

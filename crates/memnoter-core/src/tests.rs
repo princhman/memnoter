@@ -1029,3 +1029,141 @@ fn unversioned_databases_open_migrate_and_reopen_without_losing_content() {
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+#[test]
+fn pdf_commands_validate_scope_rename_and_delete() {
+    let f = Fixture::new();
+    let add = |module: &str, name: &str, bytes: Vec<u8>| {
+        add_document_bytes(&f.dir, &f.db, module.into(), name.into(), bytes)
+    };
+    assert_eq!(
+        add("note", "bad.pdf", b"not pdf".to_vec()).unwrap_err(),
+        "This file is not a PDF"
+    );
+    let mut oversized = vec![0; 50 * 1024 * 1024 + 1];
+    oversized[..5].copy_from_slice(b"%PDF-");
+    assert_eq!(
+        add("note", "large.pdf", oversized).unwrap_err(),
+        "This PDF is 50 MB. The limit is 50 MB. Try a PDF compression tool to reduce its size."
+    );
+    let doc = add("note", "lecture.pdf", b"%PDF-1.7\nhello".to_vec()).unwrap();
+    assert!(doc.available);
+    assert_eq!(doc.module_name, "Note");
+    assert_eq!(doc.size, 14);
+    let source = f.dir.join("picked.pdf");
+    std::fs::write(&source, b"%PDF-1.4").unwrap();
+    let other = add_document(
+        &f.dir,
+        &f.db,
+        "other".into(),
+        source.to_str().unwrap().into(),
+    )
+    .unwrap();
+    assert_eq!(other.name, "picked.pdf");
+    let all = list_documents(&f.dir, &f.db, None).unwrap();
+    assert_eq!(all.len(), 2);
+    assert!(all[0].created_at >= all[1].created_at);
+    assert_eq!(
+        list_documents(&f.dir, &f.db, Some("note".into()))
+            .unwrap()
+            .len(),
+        1
+    );
+    rename_document(&f.db, doc.id.clone(), "renamed.pdf".into()).unwrap();
+    set_document_page_count(&f.db, doc.id.clone(), 12).unwrap();
+    let record = list_documents(&f.dir, &f.db, Some("note".into()))
+        .unwrap()
+        .remove(0);
+    assert_eq!(record.name, "renamed.pdf");
+    assert_eq!(record.page_count, Some(12));
+    let path = document_path(&f.dir, &f.db, doc.id.clone()).unwrap();
+    assert!(Path::new(&path).is_absolute());
+    delete_document(&f.dir, &f.db, doc.id.clone()).unwrap();
+    assert!(!Path::new(&path).exists());
+    assert!(list_documents(&f.dir, &f.db, Some("note".into()))
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        f.db.lock()
+            .unwrap()
+            .query_row("select count(*) from files where id=?1", [&doc.id], |r| r
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn pdf_survives_cleanup_and_never_transfers_to_another_module() {
+    let f = Fixture::new();
+    let doc = add_document_bytes(
+        &f.dir,
+        &f.db,
+        "note".into(),
+        "book.pdf".into(),
+        b"%PDF-1.7".to_vec(),
+    )
+    .unwrap();
+    assert!(cleanup_files(
+        &f.dir,
+        &f.db,
+        "note".into(),
+        vec![doc.id.clone()],
+        vec![0, 0],
+        7
+    )
+    .unwrap()
+    .is_empty());
+    files::assets::cleanup_orphans(&f.db.lock().unwrap(), &f.dir.join("files")).unwrap();
+    assert!(f.dir.join("files").join(&doc.id).exists());
+    // Even a stale image lease must not transfer a PDF out of its own module.
+    f.db.lock()
+        .unwrap()
+        .execute(
+            "insert into shared_image_refs values ('other',?1)",
+            [&doc.id],
+        )
+        .unwrap();
+    delete_module(&f.dir, &f.db, "other".into()).unwrap();
+    assert!(f.dir.join("files").join(&doc.id).exists());
+    create_module(&f.db, "Survivor".into()).unwrap();
+    let survivor = modules(&f.db)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.name == "Survivor")
+        .unwrap();
+    f.db.lock()
+        .unwrap()
+        .execute(
+            "insert into shared_image_refs values (?1,?2)",
+            params![survivor.id, doc.id],
+        )
+        .unwrap();
+    delete_module(&f.dir, &f.db, "note".into()).unwrap();
+    assert!(!f.dir.join("files").join(&doc.id).exists());
+    assert!(list_documents(&f.dir, &f.db, None).unwrap().is_empty());
+}
+
+#[test]
+fn metadata_without_a_file_row_retains_bytes_until_its_module_is_deleted() {
+    let f = Fixture::new();
+    let doc = add_document_bytes(
+        &f.dir,
+        &f.db,
+        "note".into(),
+        "book.pdf".into(),
+        b"%PDF-1.7".to_vec(),
+    )
+    .unwrap();
+    // A crash during download can leave bytes on disk before the file receipt.
+    f.db.lock()
+        .unwrap()
+        .execute("delete from files where id=?1", [&doc.id])
+        .unwrap();
+    files::assets::cleanup_orphans(&f.db.lock().unwrap(), &f.dir.join("files")).unwrap();
+    assert!(f.dir.join("files").join(&doc.id).exists());
+    delete_module(&f.dir, &f.db, "note".into()).unwrap();
+    assert!(!f.dir.join("files").join(&doc.id).exists());
+}
