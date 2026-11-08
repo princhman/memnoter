@@ -10,11 +10,10 @@ import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
 import { appendSavedUpdate, type ContentUpdate, type FileType } from "@/lib/content";
 import { dueCountsKey, isModuleOpen } from "@/lib/card-sync";
-import { reindexStoredCards } from "@/lib/card-backfill";
+import { refreshDerived } from "@/lib/note-index";
 import { queryClient } from "@/lib/query-client";
 import { exclusiveWrite } from "@/lib/write-lifecycle";
 import { saveQueue } from "@/lib/saves";
-import { indexStoredNote } from "@/lib/search-index";
 import { forgetModule } from "@/lib/store";
 import { getObject, isTokenValid, putObject, wipeCloudData, type SyncAccount } from "./account";
 import { importKey } from "./crypto";
@@ -94,8 +93,7 @@ function scheduleReindex(moduleId: string) {
         // An open note indexes itself as the editor shows the change.
         if (isModuleOpen(moduleId)) return;
         try {
-          await indexStoredNote(moduleId);
-          await reindexStoredCards(moduleId);
+          await refreshDerived(moduleId);
           void queryClient.invalidateQueries({ queryKey: dueCountsKey });
         } catch (error) {
           console.error(`Failed to index synced note ${moduleId}:`, error);
@@ -404,7 +402,7 @@ export function restoreBackup(id: string) {
       await exclusiveWrite(async () => {
         await invoke("restore_backup", { id });
         saveQueue.clear();
-      }, { excludedMutation: "restore-backup", retain: true });
+      }, { kind: "restore" });
     } finally {
       await loadAndRun();
     }

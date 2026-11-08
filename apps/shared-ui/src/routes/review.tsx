@@ -1,3 +1,4 @@
+import { endOfDay } from "@/lib/day-clock";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "@/lib/store";
 import { writeCards } from "@/lib/card-writes";
@@ -8,7 +9,7 @@ import { call as invoke } from "../lib/backend.ts";
 import { CheckCircle2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardFace } from "@/components/card-face";
-import { dueCountsKey, endOfDay, flushCardSyncs, useCreatedAtCutoff } from "@/lib/card-sync";
+import { dueCountsKey, flushCardSyncs, useCreatedAtCutoff } from "@/lib/card-sync";
 import { backfillCards } from "@/lib/card-backfill";
 import {
   formatInterval,

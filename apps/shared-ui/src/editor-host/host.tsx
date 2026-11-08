@@ -11,7 +11,7 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
 import { queryClient } from "@/lib/query-client";
 import { saveStatusStore } from "@/lib/saves";
-import { imageStatusStore, exclusiveWrite } from "@/lib/write-lifecycle";
+import { imageStatusStore, flushAll } from "@/lib/write-lifecycle";
 import { flushPersistedViews } from "@/lib/view-persistence";
 import { headingMathLabel } from "@/lib/heading-label";
 import { headingNumbers, headingNumberingKey } from "@/lib/heading-numbering";
@@ -91,7 +91,7 @@ export function Host() {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
           if (active.current?.moduleId === id && active.current.isReady) return;
           flushPersistedViews();
-          await exclusiveWrite(async () => {});
+          await flushAll({ timeoutMs: 3_000 });
           await new Promise<void>((resolve, reject) => {
             opening.current = { moduleId: id, resolve, reject };
             setModuleId(id);
@@ -101,7 +101,7 @@ export function Host() {
         return operation;
       },
       async flush() {
-        try { flushPersistedViews(); await exclusiveWrite(async () => {}); }
+        try { flushPersistedViews(); await flushAll({ timeoutMs: 3_000 }); }
         catch (error) { throw fail(error); }
       },
       exec(command, args) {

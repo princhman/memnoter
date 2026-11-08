@@ -2,7 +2,7 @@ import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/lib/card-sync";
-import { backfillCards } from "@/lib/card-backfill";
+import { bootstrapNotes } from "@/lib/bootstrap";
 import { createRootRoute, Outlet, useNavigate, useRouter } from "@tanstack/react-router";
 import { MODULE_DELETED_REMOTELY_EVENT, startSync } from "@/lib/sync/manager";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
@@ -54,7 +54,7 @@ const RootLayout = () => {
 
   // Due counts and review include notes not opened since cards existed.
   useEffect(() => {
-    void backfillCards();
+    void bootstrapNotes();
   }, []);
 
   useEffect(() => {
