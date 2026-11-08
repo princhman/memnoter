@@ -24,7 +24,7 @@
 pub mod crypto;
 pub mod session;
 
-use crate::{db_err, delete_module_data, CommandResult, ContentUpdate, Db};
+use crate::{db_err, CommandResult, ContentUpdate, Db};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -226,6 +226,14 @@ pub fn record_file_deleted(conn: &Connection, file_id: &str) -> CommandResult<()
     };
     save_vault(conn, &doc)?;
     push_outbox(conn, VAULT_DOC, &update)?;
+    queue_file_delete(conn, file_id)
+}
+
+// The caller records the image or document tombstone before queuing deletion.
+pub(crate) fn queue_file_delete(conn: &Connection, file_id: &str) -> CommandResult<()> {
+    if !is_enabled(conn)? {
+        return Ok(());
+    }
     conn.execute(
         "insert or ignore into sync_file_deletes (file_id) values (?1)",
         [file_id],
@@ -271,7 +279,24 @@ fn remember_file_gone(conn: &Connection, file_id: &str) -> CommandResult<()> {
         [file_id],
     )
     .map_err(db_err)?;
-    record_file_deleted(conn, file_id)?;
+    let doc = load_vault(conn)?;
+    let is_document = string_entries(&doc, DOCUMENTS_MAP)
+        .iter()
+        .any(|(id, _)| id == file_id)
+        || conn
+            .query_row(
+                "select exists(select 1 from documents where id=?1)",
+                [file_id],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(db_err)?;
+    if is_document {
+        record_document(conn, file_id, true)?;
+        conn.execute("delete from sync_file_uploads where file_id=?1", [file_id])
+            .map_err(db_err)?;
+    } else {
+        record_file_deleted(conn, file_id)?;
+    }
     // The server already knows; only the vault needs the tombstone again.
     conn.execute(
         "delete from sync_file_deletes where file_id = ?1",
@@ -335,7 +360,7 @@ fn document_entries(conn: &Connection) -> CommandResult<Vec<(String, String)>> {
 }
 
 pub(crate) fn record_document(conn: &Connection, id: &str, deleted: bool) -> CommandResult<()> {
-    if !is_enabled(conn)? {
+    if !is_enabled(conn)? || (!deleted && file_gone(conn, id)?) {
         return Ok(());
     }
     let record = if deleted {
@@ -378,6 +403,7 @@ fn reconcile_documents(conn: &Connection, doc: &Doc) -> CommandResult<()> {
             continue;
         };
         if record.size < 0
+            || file_gone(conn, &id)?
             || modules.get(&record.module).is_some_and(|m| m.deleted)
             || !module_exists(conn, &record.module)?
         {
@@ -779,6 +805,9 @@ fn seed(conn: &Connection) -> CommandResult<()> {
         let map = doc.get_or_insert_map(DOCUMENTS_MAP);
         let mut txn = doc.transact_mut();
         for (id, record) in document_entries(conn)? {
+            if file_gone(conn, &id)? {
+                continue;
+            }
             map.insert(&mut txn, id, record);
         }
     }
@@ -867,7 +896,7 @@ fn delete_modules(conn: &mut Connection, files_dir: &Path, ids: &[String]) -> Co
         crate::documents::remove_local(data_dir, conn, &id)?;
     }
     for id in ids {
-        delete_module_data(conn, files_dir, id)?;
+        crate::content::delete_remote_module_data(conn, files_dir, id)?;
         conn.execute("delete from sync_docs where doc = ?1", [review_doc_id(id)])
             .map_err(db_err)?;
     }
@@ -1213,15 +1242,22 @@ fn missing_files(conn: &Connection) -> CommandResult<Vec<MissingFile>> {
         )
         .map_err(db_err)?;
     let pdfs = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(db_err)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(db_err)?;
     for (file_id, module_id) in pdfs {
         if !file_gone(conn, &file_id)?
             && !deleted_documents.contains(&file_id)
-            && !missing.iter().any(|file| file.file_id == file_id) {
-            missing.push(MissingFile { file_id, module_id, file_type: "application/pdf".into() });
+            && !missing.iter().any(|file| file.file_id == file_id)
+        {
+            missing.push(MissingFile {
+                file_id,
+                module_id,
+                file_type: "application/pdf".into(),
+            });
         }
     }
     Ok(missing)
@@ -1436,6 +1472,7 @@ pub fn sync_reconcile(data_dir: &Path, db: &Db, generation: String) -> CommandRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::delete_module_data;
     use yrs::{GetString, Text};
 
     fn db() -> (std::path::PathBuf, Connection) {
@@ -1749,6 +1786,132 @@ mod tests {
     }
 
     #[test]
+    fn pdf_deletions_wait_for_vault_ack_and_remote_cleanup_does_not_queue_deletes() {
+        for module_deletion in [false, true] {
+            let a_dir = std::env::temp_dir().join(format!("pdf-delete-{}", uuid::Uuid::new_v4()));
+            let a = crate::Core::open(&a_dir).unwrap();
+            let module = crate::create_module(&a.db, "PDFs".into()).unwrap();
+            enable(&mut a.db.lock().unwrap(), "{}").unwrap();
+            let mut ids = Vec::new();
+            for name in ["First.pdf", "Second.pdf"] {
+                ids.push(
+                    crate::add_document_bytes(
+                        &a_dir,
+                        &a.db,
+                        module.clone(),
+                        name.into(),
+                        b"%PDF-1.7".to_vec(),
+                    )
+                    .unwrap()
+                    .id,
+                );
+            }
+            let (b_dir, mut b) = db();
+            enable(&mut b, "{}").unwrap();
+            let mut seq = 0;
+            transfer(&a.db.lock().unwrap(), &mut b, &mut seq);
+            b.execute("delete from sync_outbox", []).unwrap();
+            for id in &ids {
+                store_file(
+                    &b,
+                    &b_dir.join("files"),
+                    id,
+                    &module,
+                    "application/pdf",
+                    b"%PDF-1.7",
+                )
+                .unwrap();
+            }
+            // Module deletion must also handle metadata whose file receipt is missing.
+            if module_deletion {
+                a.db.lock()
+                    .unwrap()
+                    .execute("delete from files where id=?1", [&ids[1]])
+                    .unwrap();
+                crate::delete_module(&a_dir, &a.db, module).unwrap();
+            } else {
+                for id in &ids {
+                    crate::delete_document(&a_dir, &a.db, id.clone()).unwrap();
+                }
+            }
+            let conn = a.db.lock().unwrap();
+            assert!(pending_deletes(&conn).unwrap().is_empty());
+            assert!(pending_uploads(&conn).unwrap().is_empty());
+            let vault = load_vault(&conn).unwrap();
+            assert!(string_entries(&vault, FILES_MAP).is_empty());
+            assert_eq!(deleted_documents(&vault), ids.iter().cloned().collect());
+            assert_eq!(
+                conn.query_row("select count(*) from sync_file_deletes", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+            transfer(&conn, &mut b, &mut seq);
+            let mut queued = pending_deletes(&conn).unwrap();
+            queued.sort();
+            ids.sort();
+            assert_eq!(queued, ids);
+            assert!(pending_deletes(&b).unwrap().is_empty());
+            assert_eq!(
+                b.query_row("select count(*) from sync_file_deletes", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert!(missing_files(&b).unwrap().is_empty());
+            assert!(string_entries(&load_vault(&b).unwrap(), FILES_MAP).is_empty());
+            for id in &ids {
+                assert!(!b_dir.join("files").join(id).exists());
+                assert!(!a_dir.join("files").join(id).exists());
+            }
+            drop(conn);
+            drop(a);
+            drop(b);
+            std::fs::remove_dir_all(a_dir).unwrap();
+            std::fs::remove_dir_all(b_dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn pdf_gone_stops_downloads_without_an_image_tombstone() {
+        let a_dir = std::env::temp_dir().join(format!("pdf-gone-{}", uuid::Uuid::new_v4()));
+        let a = crate::Core::open(&a_dir).unwrap();
+        let module = crate::create_module(&a.db, "PDFs".into()).unwrap();
+        let pdf = crate::add_document_bytes(
+            &a_dir,
+            &a.db,
+            module,
+            "Book.pdf".into(),
+            b"%PDF-1.7".to_vec(),
+        )
+        .unwrap();
+        enable(&mut a.db.lock().unwrap(), "{}").unwrap();
+        let (b_dir, mut b) = db();
+        enable(&mut b, "{}").unwrap();
+        let mut seq = 0;
+        transfer(&a.db.lock().unwrap(), &mut b, &mut seq);
+        assert_eq!(missing_files(&b).unwrap().len(), 1);
+        drop(b);
+        let b_db = crate::open_db(&b_dir).unwrap();
+        let epoch = generation(&b_db.lock().unwrap()).unwrap();
+        sync_file_gone(&b_db, pdf.id.clone(), epoch).unwrap();
+        let b = b_db.lock().unwrap();
+        assert!(missing_files(&b).unwrap().is_empty());
+        seed(&b).unwrap();
+        assert!(missing_files(&b).unwrap().is_empty());
+        assert!(pending_uploads(&b).unwrap().is_empty());
+        assert!(string_entries(&load_vault(&b).unwrap(), FILES_MAP).is_empty());
+        assert!(deleted_documents(&load_vault(&b).unwrap()).contains(&pdf.id));
+        b.execute("delete from sync_outbox", []).unwrap();
+        assert!(pending_deletes(&b).unwrap().is_empty());
+        drop(b);
+        drop(b_db);
+        drop(a);
+        std::fs::remove_dir_all(a_dir).unwrap();
+        std::fs::remove_dir_all(b_dir).unwrap();
+    }
+
+    #[test]
     fn pdf_metadata_precedes_bytes_and_syncs_rename_delete_and_module_deletion() {
         let a_dir = std::env::temp_dir().join(format!("pdf-sync-{}", uuid::Uuid::new_v4()));
         let a = crate::Core::open(&a_dir).unwrap();
@@ -1767,7 +1930,9 @@ mod tests {
             // Older builds read the images map, so PDFs must stay out of it.
             let conn = a.db.lock().unwrap();
             let vault = load_vault(&conn).unwrap();
-            assert!(!string_entries(&vault, FILES_MAP).iter().any(|(id, _)| *id == pdf.id));
+            assert!(!string_entries(&vault, FILES_MAP)
+                .iter()
+                .any(|(id, _)| *id == pdf.id));
             assert_eq!(pending_uploads(&conn).unwrap(), vec![pdf.id.clone()]);
         }
         let (b_dir, mut b) = db();

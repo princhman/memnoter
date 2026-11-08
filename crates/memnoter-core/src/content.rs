@@ -92,6 +92,23 @@ pub fn delete_module_data(
     files_dir: &Path,
     module_id: &str,
 ) -> CommandResult<()> {
+    delete_module_data_inner(conn, files_dir, module_id, true)
+}
+
+pub(crate) fn delete_remote_module_data(
+    conn: &mut Connection,
+    files_dir: &Path,
+    module_id: &str,
+) -> CommandResult<()> {
+    delete_module_data_inner(conn, files_dir, module_id, false)
+}
+
+fn delete_module_data_inner(
+    conn: &mut Connection,
+    files_dir: &Path,
+    module_id: &str,
+    local: bool,
+) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     // Only surviving notes can retain files; the deleted history may be corrupt.
     asset_refs::retain_all(&tx, Some(module_id))?;
@@ -119,7 +136,18 @@ pub fn delete_module_data(
         rows.collect::<Result<Vec<_>>>().map_err(db_err)?
     };
     for id in &files {
-        sync::record_file_deleted(&tx, id)?;
+        let is_pdf: bool = tx.query_row(
+            "select exists(select 1 from documents where id=?1) or exists(select 1 from files where id=?1 and file_type='application/pdf')",
+            [id], |r| r.get(0),
+        ).map_err(db_err)?;
+        if is_pdf {
+            if local {
+                sync::record_document(&tx, id, true)?;
+                sync::queue_file_delete(&tx, id)?;
+            }
+        } else {
+            sync::record_file_deleted(&tx, id)?;
+        }
     }
     let files = files
         .iter()

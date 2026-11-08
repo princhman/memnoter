@@ -106,8 +106,11 @@ pub fn add_document_bytes(
         // Not in the vault's image list: older builds would download every PDF,
         // delete it as an unused image and fetch it again on each launch.
         if sync::is_enabled(&tx)? {
-            tx.execute("insert or ignore into sync_file_uploads (file_id) values (?1)", [&id])
-                .map_err(db_err)?;
+            tx.execute(
+                "insert or ignore into sync_file_uploads (file_id) values (?1)",
+                [&id],
+            )
+            .map_err(db_err)?;
         }
         sync::record_document(&tx, &id, false)?;
         tx.commit().map_err(db_err)
@@ -215,7 +218,6 @@ pub(crate) fn remove_local(data_dir: &Path, conn: &Connection, id: &str) -> Comm
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     tx.execute("delete from documents where id=?1", [id])
         .map_err(db_err)?;
-    // TODO(#29): record the file tombstone here when the shared hook is available.
     tx.execute("delete from files where id=?1", [id])
         .map_err(db_err)?;
     tx.execute("delete from sync_file_uploads where file_id=?1", [id])
@@ -235,6 +237,7 @@ pub fn delete_document(data_dir: &Path, db: &Db, id: String) -> CommandResult<()
     // Persist the tombstone first; reconcile can retry disk cleanup after a crash.
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     sync::record_document(&tx, &id, true)?;
+    sync::queue_file_delete(&tx, &id)?;
     tx.commit().map_err(db_err)?;
     remove_local(data_dir, &conn, &id)
 }
