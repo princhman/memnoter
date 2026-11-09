@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     @Bindable var store: AppStore
@@ -30,6 +31,8 @@ struct RootView: View {
     @State private var image: PhotosPickerItem?
     @State private var drawingRequest: DrawingRequest?
     @State private var prototypeDrawingAvailable = false
+    @State private var showingPdfImporter = false
+    @State private var pdfImportModuleId: String?
     @State private var find = ""
     @State private var showingContents = false
     @State private var showingFind = false
@@ -141,7 +144,16 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, modules: store.modules, setChapterNumbering: setChapterNumbering, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory, preferences: store.preferences); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
+        .fileImporter(isPresented: $showingPdfImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true, onCompletion: importPdfs)
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
+        .onChange(of: session?.requestedModule) { _, _ in handleModuleRequest() }
+        .onChange(of: session?.requestedPdfImport) { _, _ in handlePdfImportRequest() }
+        .onChange(of: showingPdfImporter) { _, shown in
+            if !shown { handleModuleRequest(); handlePdfImportRequest() }
+        }
+        .onChange(of: busy) { _, value in
+            if !value { handleModuleRequest(); handlePdfImportRequest() }
+        }
         .onChange(of: session?.imagePreviewOpen) { _, open in
             if open == true {
                 previewColumnVisibility = columnVisibility
@@ -291,7 +303,7 @@ struct RootView: View {
                     .background(Color(uiColor: .systemBackground))
                     .overlay {
                         GeometryReader { geometry in
-                        let showBar = keyboardDocked && session.state.suppressKeyboard != true
+                        let showBar = keyboardDocked && session.state.suppressKeyboard != true && !session.pdfCoveringNote && !session.pdfFocused
                         let keyboardInset = keyboardDocked ? max(0, geometry.frame(in: .global).maxY - keyboardTop) : 0
                         Color.clear
                             .onChange(of: keyboardInset + (showBar ? 60 : 0), initial: true) { _, overlap in
@@ -342,6 +354,13 @@ struct RootView: View {
                 }
             }
             if let session, module != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
+                        .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
+                        .accessibilityValue(session.filesOpen ? "Open" : "Closed")
+                        .keyboardShortcut("d", modifiers: [.command, .shift])
+                        .disabled(busy || !session.ready)
+                }
                 ToolbarItemGroup(placement: isPhone ? .topBarTrailing : .topBarLeading) {
                     Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
                         .accessibilityLabel("Undo")
@@ -376,6 +395,7 @@ struct RootView: View {
                 .disabled(busy || !session.state.editable)
         }
         PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
+        Button { if let id = module?.id { beginPdfImport(id) } } label: { Label("Add PDF", systemImage: "doc.badge.plus") }.disabled(busy || !session.ready)
         Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }.keyboardShortcut("f")
         Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }
         if !session.saveStatus.isEmpty { Text(session.saveStatus) }
@@ -406,6 +426,63 @@ struct RootView: View {
         }
     }
 
+    private func handleModuleRequest() {
+        guard !busy, !showingPdfImporter, let destination = session?.requestedModule else { return }
+        session?.requestedModule = nil
+        // A request from a web surface that is no longer displayed must not
+        // navigate away from Home or Review after an asynchronous source lookup.
+        guard module != nil else { return }
+        guard store.modules.contains(where: { $0.id == destination }) else {
+            store.error = "This note is no longer available."
+            return
+        }
+        navigate(destination)
+    }
+    private func handlePdfImportRequest() {
+        guard !busy, !showingPdfImporter, let destination = session?.requestedPdfImport else { return }
+        session?.requestedPdfImport = nil
+        guard module?.id == destination else { return }
+        beginPdfImport(destination)
+    }
+    private func beginPdfImport(_ moduleId: String) {
+        guard !busy, store.modules.contains(where: { $0.id == moduleId }) else { return }
+        pdfImportModuleId = moduleId
+        showingPdfImporter = true
+    }
+    private func importPdfs(_ result: Result<[URL], Error>) {
+        let destination = pdfImportModuleId
+        pdfImportModuleId = nil
+        switch result {
+        case .failure(let error):
+            if let cancellation = error as? CocoaError, cancellation.code == .userCancelled { return }
+            store.error = String(describing: error)
+        case .success(let urls):
+            guard !urls.isEmpty, let destination, let client = store.client else { return }
+            busy = true
+            Task {
+                defer { busy = false }
+                var failures: [String] = []
+                var imported = false
+                for url in urls {
+                    do {
+                        guard url.isFileURL else { throw URLError(.badURL) }
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        // Rust reads and bounds the file while the security grant
+                        // is live; PDF bytes never expand into a JSON number array.
+                        try await client.write("add_document", DocumentPathArgs(moduleId: destination, path: url.path))
+                        imported = true
+                    } catch { failures.append("\(url.lastPathComponent): \(error)") }
+                }
+                if imported, let session, session.ready {
+                    do { _ = try await session.callEditor(.refreshDocuments, ["moduleId": destination], parameters: ["moduleId"]) }
+                    catch { failures.append("PDFs were imported, but the files list could not be refreshed: \(error)") }
+                }
+                await store.refresh()
+                if !failures.isEmpty { store.error = failures.joined(separator: "\n") }
+            }
+        }
+    }
     private func updateKeyboard(_ notification: Notification, hiding: Bool = false) {
         guard let window = session?.web.window,
               let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }

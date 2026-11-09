@@ -51,6 +51,7 @@
     "lucide-react": "^1.23.0",
     "markdown-it": "^15.0.3",
     "pele": "^1.13.0",
+    "pdfjs-dist": "5.4.624",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "shadcn": "^4.13.0",

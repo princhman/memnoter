@@ -101,6 +101,7 @@ impl Core {
 mod import;
 pub(crate) use import::{import_module, ImportImage};
 mod content;
+#[cfg(test)]
 pub(crate) use content::delete_module_data;
 pub(crate) use content::{
     add_update, create_module, delete_module, get_content, modules, rename_module, save_compaction,
@@ -131,6 +132,9 @@ pub struct FileType {
     pub file_type: String,
 }
 
+pub mod documents;
+pub mod pdf_annotations;
+pub use documents::*;
 mod files;
 pub(crate) use files::{cleanup_files, resolve_card_image, save_file};
 pub use files::{read_file, FileContents};

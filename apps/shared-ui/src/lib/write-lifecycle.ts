@@ -2,6 +2,22 @@ import { createStore } from "@tanstack/react-store";
 import { queryClient } from "@/lib/query-client";
 import { flushSaves, saveQueue } from "@/lib/saves";
 
+type WriteParticipant = {
+  flush: () => Promise<boolean>;
+  suspend: () => Promise<void>;
+  resume: () => void;
+  discard: () => void;
+};
+const participants = new Set<WriteParticipant>();
+// Queue owners retain this capability only for writes admitted before a drain.
+export function registerWriteParticipant(participant: WriteParticipant) {
+  participants.add(participant);
+  return async <T>(write: (permit: WritePermit) => Promise<T>): Promise<T> => {
+    assertWritable(drainPermit);
+    return write(drainPermit);
+  };
+}
+
 let exclusive = false;
 const listeners = new Set<(blocked: boolean) => void>();
 type TrackedWriteWork = {
@@ -24,13 +40,20 @@ export function watchWriteAdmission(listener: (blocked: boolean) => void) {
   return () => { listeners.delete(listener); };
 }
 
+function disposeWork(work: TrackedWriteWork) {
+  try { work.dispose?.(); }
+  catch (error) { console.error("Failed to notify image operation disposal:", error); }
+}
+
 async function runWork(work: TrackedWriteWork) {
+  work.error = undefined;
   const pending = Promise.resolve().then(work.run);
   work.pending = pending;
+  publishWork();
   try {
     const result = await pending;
     trackedWork.delete(work);
-    work.dispose?.();
+    disposeWork(work);
     return result;
   } catch (error) {
     if (work.rollbackOnFailure) trackedWork.delete(work);
@@ -83,11 +106,16 @@ export function imageFilesOperation<File, Saved>(files: readonly File[], handler
   }, { retry: true, dispose: handlers.dispose });
 }
 
+export async function retryFailedImages() {
+  assertWritable();
+  await Promise.allSettled([...trackedWork].filter(work => work.error && work.retry && !work.pending).map(runWork));
+}
+
 export function discardFailedImages() {
   if (exclusive) throw new Error("Another database operation is in progress.");
   for (const work of trackedWork) if (work.error && !work.pending) {
     trackedWork.delete(work);
-    work.dispose?.();
+    disposeWork(work);
   }
   publishWork();
 }
@@ -125,12 +153,15 @@ export async function exclusiveWrite<T>(action: () => Promise<T>, work?: Exclusi
   try {
     await settleWork(discard, work?.kind === "exit" && work.unsaved === "retry");
     if (!discard) await flushAll({ permit: drainPermit });
-    await saveQueue.suspend();
+    await Promise.all([saveQueue.suspend(), ...[...participants].map(owner => owner.suspend())]);
     suspended = true;
     await drainMutations(work?.kind === "restore" ? MUTATIONS.restoreBackup : work?.kind === "delete" ? MUTATIONS.deleteModule : undefined);
     const result = await action();
+    if (discard || work?.kind === "restore" || work?.kind === "delete") {
+      for (const owner of participants) owner.discard();
+    }
     if (discard) {
-      for (const item of trackedWork) item.dispose?.();
+      for (const item of trackedWork) disposeWork(item);
       trackedWork.clear();
       publishWork();
     }
@@ -138,7 +169,7 @@ export async function exclusiveWrite<T>(action: () => Promise<T>, work?: Exclusi
     return result;
   } finally {
     if (!completed || (work?.kind !== "restore" && work?.kind !== "exit")) {
-      if (suspended) saveQueue.resume();
+      if (suspended) { saveQueue.resume(); participants.forEach(owner => owner.resume()); }
       exclusive = false;
       listeners.forEach(listener => listener(false));
     }
@@ -182,6 +213,7 @@ export async function flushAll({ permit }: { permit?: WritePermit } = {}) {
   if (permit !== drainPermit) assertWritable();
   await settleWork();
   for (const flush of flushers.values()) await flush(permit);
+  if ((await Promise.all([...participants].map(owner => owner.flush()))).some(saved => !saved)) throw new Error("PDF annotations could not be saved. Please retry saving first.");
   if (!await flushSaves()) throw new Error("Pending edits could not be saved. Please retry saving first.");
   await drainMutations(undefined, true);
 }

@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 mod import_folder;
 mod import_anki;
+mod pdf_picker;
 #[cfg(target_os = "macos")]
 mod menu;
 #[cfg(target_os = "macos")]
@@ -135,6 +136,7 @@ pub fn run() {
             import_anki::pick_anki_package,
             import_anki::read_anki_media,
             import_anki::close_anki_package,
+            pdf_picker::pick_pdfs,
             import_folder::read_import_images
         ])
         .build(tauri::generate_context!())

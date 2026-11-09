@@ -1,4 +1,6 @@
-import { Host } from "./host";
+import { Toaster } from "@/components/ui/sonner";
+import { RouterProvider } from "@tanstack/react-router";
+import { editorRouter } from "./router";
 import { useEffect } from "react";
 import { bootstrapNotes } from "@/lib/bootstrap";
 import { onCardsChanged } from "@/lib/card-events";
@@ -26,6 +28,6 @@ function CardBackfill() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
-    <ActiveEditorProvider><CardBackfill /><Host /></ActiveEditorProvider>
+    <ActiveEditorProvider><CardBackfill /><Toaster offset={{ bottom: "calc(var(--native-bottom-inset, 0px) + 16px)" }} /><RouterProvider router={editorRouter} /></ActiveEditorProvider>
   </QueryClientProvider>,
 );
