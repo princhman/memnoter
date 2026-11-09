@@ -1591,38 +1591,79 @@ body {
 
 /* The reader owns pinch scaling; one-finger PDF scrolling remains native. */
 .pdf-viewport { touch-action: pan-x pan-y; }
+/* Touch: a title row (back, name, pane actions) above one rounded capsule
+   of reader tools, with 44px round targets and grouped controls. */
 @media (any-pointer: coarse) {
     .pdf-viewer button:not(.pdf-page button), #pdf-toolbar button {
         min-width: 44px;
         min-height: 44px;
+        border-radius: 999px;
     }
+    .pdf-viewer button:not(.pdf-page button) svg, #pdf-toolbar button svg { width: 20px; height: 20px; }
     .pdf-reader-tools {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "lead trail" "tools tools";
         height: auto;
         min-height: 52px;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 0;
-    }
-    .pdf-reader-leading { flex: none; min-height: 44px; }
-    .pdf-reader-leading:empty { display: none; }
-    .pdf-reader-controls {
-        display: flex;
-        flex: none;
         align-items: center;
-        gap: 4px;
-        min-height: 52px;
+        gap: 2px 4px;
+        padding: 4px 8px 10px;
+        border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+    }
+    .pdf-reader-leading { grid-area: lead; min-height: 44px; gap: 2px; }
+    .pdf-reader-leading > span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+    .pdf-reader-trailing { grid-area: trail; display: flex; align-items: center; gap: 2px; }
+    .pdf-reader-controls, #pdf-toolbar {
+        grid-area: tools;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        justify-self: start;
+        max-width: 100%;
+        min-height: 48px;
+        padding: 2px 4px;
+        border-radius: 999px;
+        background: color-mix(in oklch, var(--foreground) 6%, transparent);
         overflow-x: auto;
         overscroll-behavior-x: contain;
+        scrollbar-width: none;
     }
-    #pdf-toolbar { min-height: 52px; flex-wrap: nowrap; }
+    .pdf-reader-controls::-webkit-scrollbar, #pdf-toolbar::-webkit-scrollbar { display: none; }
+    #pdf-toolbar { flex-wrap: nowrap; margin: 0 8px 10px; border-bottom: 0; }
+    .pdf-tool-divider {
+        display: block;
+        flex: none;
+        width: 1px;
+        height: 20px;
+        margin: 0 4px;
+        background: color-mix(in oklch, var(--foreground) 14%, transparent);
+    }
     .pdf-reader-tools input[aria-label="Page number"], #pdf-toolbar input[aria-label="Page number"] {
         min-width: 44px;
         min-height: 44px;
+        padding: 0 4px 0 10px;
+        border-radius: 999px;
         font-size: 16px;
+        font-weight: 600;
     }
+    .pdf-viewer [aria-label="Zoom level"] { min-width: 3rem; font-size: 13px; font-weight: 500; }
+    .pdf-viewer button[aria-pressed="true"]:not(.pdf-page button), #pdf-toolbar button[aria-pressed="true"] {
+        background: var(--primary);
+        color: var(--primary-foreground);
+    }
+    /* Page markers stay small badges; ::before gives the finger its target. */
     .pdf-page button::before {
         content: "";
         position: absolute;
         inset: -12px;
     }
+    /* Floating menus and status chips. */
+    .pdf-viewer > [role="group"], .pdf-viewer [role="status"].floating-surface,
+    [data-pdf-quote-controls] > [role="status"] {
+        border-radius: 16px;
+        padding: 4px;
+    }
+    .pdf-viewer > [role="group"][aria-label] button:not(.pdf-page button) { border-radius: 12px; padding-inline: 10px; font-size: 14px; }
+    .pdf-viewer > [role="group"][aria-label] button:not(.pdf-page button) svg { width: 16px; height: 16px; }
 }
