@@ -126,16 +126,35 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-pdf-pane { display: flex; min-height: 0; min-width: 0; flex-direction: column; background: var(--background); padding-top: var(--top-inset, 0px); padding-bottom: var(--bottom-inset, 0px); }
 .native-pdf-beside { flex: 0 0 clamp(320px, 42%, 560px); border-left: 1px solid var(--border); }
 .native-pdf-cover { position: absolute; inset: 0; z-index: 10; }
-.native-pdf-heading { display: flex; flex-shrink: 0; align-items: center; gap: 4px; min-height: 44px; padding: 2px 6px; border-bottom: 1px solid var(--border); }
-.native-pdf-pane button { min-height: 44px; }
-.native-pdf-pane button[aria-label] { min-width: 44px; }
-.native-pdf-pane .h-9 { min-height: 44px; height: auto; }
+/* Page markers (quote links, annotation badges) keep their drawn size. */
+.native-pdf-pane button:not(.pdf-page button) { min-height: 44px; }
+.native-pdf-pane button[aria-label]:not(.pdf-page button) { min-width: 44px; border-radius: 999px; }
+.native-pdf-pane .h-9 { min-height: 52px; height: auto; padding-inline: 8px; }
+.native-pdf-pane li > button { border-radius: 12px; padding: 10px 12px; gap: 12px; font-size: 15px; }
 
 .native-editor-workspace [data-pdf-quote-controls] { bottom: calc(var(--bottom-inset, 0px) + 12px); }
-.native-editor-workspace [data-pdf-quote-controls] button { min-height: 44px; min-width: 44px; }
+/* Quote bar: a capsule with the source on the left, a split Insert button
+   and a small round dismiss. Buttons keep 40px of height for a finger. */
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-bar { border-radius: 999px; padding: 5px 5px 5px 18px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-bar:has([role="alert"]) { border-radius: 22px; }
+.native-editor-workspace [data-pdf-quote-controls] [role="group"] { gap: 12px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-source { font-size: 13px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-split button { min-height: 40px; font-size: 15px; font-weight: 600; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-split > :first-child { border-radius: 999px 0 0 999px; padding-left: 16px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-split > :last-child { border-radius: 0 999px 999px 0; padding: 0 12px 0 9px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-split svg { width: 16px; height: 16px; }
+.native-editor-workspace [data-pdf-quote-controls] button.pdf-menu-close {
+  width: 32px; height: 32px; min-width: 32px; min-height: 32px; margin-right: 4px; padding: 0; border-radius: 999px;
+  background: color-mix(in oklch, var(--foreground) 10%, transparent);
+}
+.native-editor-workspace [data-pdf-quote-controls] button.pdf-menu-close svg { width: 15px; height: 15px; }
 
-[data-sonner-toaster] { bottom: calc(var(--native-bottom-inset, 0px) + 16px); }
 [data-sonner-toast] button { min-height: 44px; }
+
+/* The native toolbar draws the reader's tools; the pane is just the pages,
+   on the editor's own background. */
+.native-pdf-pane, .native-pdf-pane .pdf-viewer { background: transparent; }
+
 /* Recovery actions must remain reachable on narrow phones. */
 [data-sonner-toast][data-styled="true"] { flex-wrap: wrap; }
 [data-sonner-toast][data-styled="true"] [data-content] { flex: 1 1 100%; min-width: 0; }

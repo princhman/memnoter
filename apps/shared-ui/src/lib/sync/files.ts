@@ -1,11 +1,12 @@
 // Moves images between this device and R2, encrypted, outside the log. Images
 // never change once saved, so each is uploaded once and downloaded once.
 // Uploads come from `sync_file_uploads`; downloads are the images other
-// devices announced in the vault that this one lacks.
+// devices announced in the vault that this one lacks. Server deletions wait
+// for the core to confirm that their tombstones were acknowledged.
 
 import { call as invoke } from "@/lib/backend";
 import type { FileType } from "@/lib/content";
-import { getObject, putObject, deleteObject, SyncApiError } from "./account";
+import { deleteObject, getObject, putObject, SyncApiError } from "./account";
 import { SYNC_CONTRACT } from "./protocol";
 import { decryptBlob, encryptBlob } from "./crypto";
 

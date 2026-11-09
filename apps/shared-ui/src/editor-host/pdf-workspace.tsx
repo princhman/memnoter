@@ -1,6 +1,5 @@
-import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
-import { ChevronLeft, Maximize2, X } from "lucide-react";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
 import { documentName } from "@/lib/pdf-state";
@@ -11,40 +10,26 @@ import { PdfQuoteNavigation } from "@/lib/pdf-quote-navigation";
 import { PdfQuoteControls } from "@/components/pdf-quote-controls";
 import { PdfFileList } from "@/components/pdf-file-list";
 import { PdfViewer } from "@/components/pdf-viewer";
-import { ToolButton } from "@/components/ui/tool-button";
+import { pdfReaderControls } from "@/lib/pdf-reader-controls";
 import { acceptsPdfShortcut, action, matchesShortcut } from "@/lib/shortcuts";
-import type { EditorApi } from "./protocol";
+import type { EditorApi, PdfCommand, PdfReaderState } from "./protocol";
 
-export type NativePdfActions = Pick<EditorApi, "toggleFiles" | "refreshDocuments">;
+export type NativePdfActions = Pick<EditorApi, "toggleFiles" | "refreshDocuments" | "pdfCommand">;
 
 function PdfPanel({ moduleId }: { moduleId: string }) {
   const { data: docs = [] } = useDocuments(moduleId);
   const pane = usePdfPane(moduleId);
-  const router = useRouter();
   const doc = docs.find(doc => doc.id === pane.active);
-  return doc ? <PdfViewer key={doc.id} doc={doc} leading={<>
-    <ToolButton label="All files" onClick={() => updatePdfPane(moduleId, { active: null })}><ChevronLeft /></ToolButton>
-    <span className="min-w-0 truncate text-sm">{documentName(doc.name)}</span>
-  </>} trailing={<>
-    <ToolButton label="Open full screen" onClick={() => void router.navigate({ to: "/files/$documentId", params: { documentId: doc.id } })}><Maximize2 /></ToolButton>
-    <ToolButton label="Close" onClick={() => updatePdfPane(moduleId, { open: false })}><X /></ToolButton>
-  </>} /> : <PdfFileList moduleId={moduleId} docs={docs} />;
+  return doc ? <PdfViewer key={doc.id} doc={doc} nativeTools /> : <PdfFileList moduleId={moduleId} docs={docs} hideHeader />;
 }
 
-function FullscreenPdf({ documentId, onClose }: { documentId: string; onClose: () => void }) {
+function FullscreenPdf({ documentId }: { documentId: string }) {
   const { data: docs, error } = useDocuments();
   const doc = docs?.find(doc => doc.id === documentId);
   const page = useRouterState({ select: state => state.location.search.page });
   const initialPage = typeof page === "number" && Number.isSafeInteger(page) && page > 0 ? page : undefined;
-  return <>
-    <header className="native-pdf-heading">
-      <ToolButton label="Back to note" onClick={onClose}><ChevronLeft /></ToolButton>
-      <span className="min-w-0 flex-1 truncate text-sm">{doc ? documentName(doc.name) : "PDF"}</span>
-    </header>
-    <div id="pdf-toolbar" className="native-pdf-heading overflow-x-auto" />
-    {doc ? <div className="min-h-0 flex-1"><PdfViewer key={`${doc.id}:${initialPage ?? "saved"}`} doc={doc} fullscreen initialPage={initialPage} /></div>
-      : <p role={error ? "alert" : "status"} className="p-4 text-sm text-muted-foreground">{error?.message ?? (docs ? "Source PDF is no longer available. Your saved quote is still available." : "Loading PDF…")}</p>}
-  </>;
+  return doc ? <div className="min-h-0 flex-1"><PdfViewer key={`${doc.id}:${initialPage ?? "saved"}`} doc={doc} fullscreen nativeTools initialPage={initialPage} /></div>
+    : <p role={error ? "alert" : "status"} className="p-4 text-sm text-muted-foreground">{error?.message ?? (docs ? "Source PDF is no longer available. Your saved quote is still available." : "Loading PDF…")}</p>;
 }
 
 /** The note stays mounted, with the native host's original scroll container. */
@@ -87,10 +72,41 @@ export function NativePdfWorkspace({ moduleId, actions, children }: { moduleId: 
     if (documentId) showNote();
     else updatePdfPane(moduleId, { open: !pane.open });
   };
-  useImperativeHandle(actions, () => ({ toggleFiles, async refreshDocuments(id) {
+  // The native toolbar draws the reader's controls from this state.
+  const { data: allDocs = [] } = useDocuments();
+  const controls = useSyncExternalStore(pdfReaderControls.subscribe, pdfReaderControls.get);
+  const activeId = documentId ?? (pane.open ? pane.active : null);
+  const files = allDocs.filter(doc => doc.moduleId === moduleId);
+  const activeDoc = allDocs.find(doc => doc.id === activeId);
+  const view = controls && controls.documentId === activeId ? controls.state : null;
+  const reader: PdfReaderState | null = open && moduleId ? {
+    moduleId, activeId: activeDoc ? activeDoc.id : null, title: activeDoc ? documentName(activeDoc.name) : "Files", fullscreen: !!documentId,
+    files: files.map(doc => ({ id: doc.id, name: documentName(doc.name) })),
+    page: view?.page ?? 0, pageCount: view?.pageCount ?? 0, zoom: view?.zoom ?? 100,
+    selecting: view?.selecting ?? false, annotating: view?.annotating ?? false, canSelect: view?.canSelect ?? false,
+    canAnnotate: view?.canAnnotate ?? false, canZoomIn: view?.canZoomIn ?? false, canZoomOut: view?.canZoomOut ?? false,
+  } : null;
+  const readerJson = JSON.stringify(reader);
+  useEffect(() => { postNativeEvent("pdfReader", JSON.parse(readerJson)); }, [readerJson]);
+  const pdfCommand = (command: PdfCommand, value?: string | number | null) => {
+    const reader = pdfReaderControls.get()?.actions;
+    switch (command) {
+      case "showFiles": if (documentId) showNote(); if (moduleId) updatePdfPane(moduleId, { open: true, active: null }); break;
+      case "openFile": if (moduleId && typeof value === "string") { if (documentId) void router.navigate({ to: "/files/$documentId", params: { documentId: value } }); else updatePdfPane(moduleId, { open: true, active: value }); } break;
+      case "zoomIn": reader?.zoomIn(); break;
+      case "zoomOut": reader?.zoomOut(); break;
+      case "toggleSelect": reader?.toggleSelect(); break;
+      case "toggleAnnotate": reader?.toggleAnnotate(); break;
+      case "goToPage": if (typeof value === "number") reader?.goToPage(value); break;
+      case "openFullscreen": if (activeId) void router.navigate({ to: "/files/$documentId", params: { documentId: activeId } }); break;
+      case "openBeside": reader?.openBeside(); break;
+      case "backToNote": showNote(); break;
+    }
+  };
+  useImperativeHandle(actions, () => ({ toggleFiles, pdfCommand, async refreshDocuments(id) {
     await queryClient.invalidateQueries({ queryKey: documentsKey });
     if (id === current.current.moduleId) updatePdfPane(id, { open: true, active: null });
-  } }), [moduleId, pane.open, documentId]);
+  } }));
   useEffect(() => {
     const toggle = (event: KeyboardEvent) => {
       if (!moduleId || !matchesShortcut(event, action("pdf.toggle-pane").keys) || !acceptsPdfShortcut(event, [host.current])) return;
@@ -105,7 +121,7 @@ export function NativePdfWorkspace({ moduleId, actions, children }: { moduleId: 
       if (coveringNote && router.state.location === location && current.current.moduleId === moduleId && current.current.pdf === (documentId ?? pane.active)) showNote();
     }} /></>}
     {open && <aside aria-label="Files" className={`native-pdf-pane ${coveringNote ? "native-pdf-cover" : "native-pdf-beside"}`}>
-      {documentId ? <FullscreenPdf documentId={documentId} onClose={showNote} /> : moduleId && <PdfPanel moduleId={moduleId} />}
+      {documentId ? <FullscreenPdf documentId={documentId} /> : moduleId && <PdfPanel moduleId={moduleId} />}
     </aside>}
   </div>;
 }

@@ -426,8 +426,8 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
          isCurrent: @escaping @MainActor (UUID) -> Bool,
          onFile: @escaping @MainActor (String, String) async throws -> Void,
          onError: @escaping @MainActor (Error) -> Void) {
-        self.command = command; self.object = object; self.isCurrent = isCurrent
-        self.onFile = onFile; self.onError = onError; self.deleteObject = deleteObject
+        self.command = command; self.object = object; self.deleteObject = deleteObject; self.isCurrent = isCurrent
+        self.onFile = onFile; self.onError = onError
     }
     func reset() { policy = SyncFilePolicy(); awaitingUpload.removeAll() }
     private func attempt(_ id: String, fileId: String, generation: String, owner: UUID, transfer: () async throws -> Void) async throws {
@@ -442,8 +442,8 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
             if let failure = error as? SyncHTTPFailure, failure.status == 410 {
                 guard isCurrent(owner) else { return }
                 _ = try await command("sync_file_gone", ["fileId": fileId, "generation": generation])
-                policy.completed(id: id)
                 awaitingUpload.removeValue(forKey: id)
+                policy.completed(id: id)
                 return
             }
             // The note and its immutable assets travel independently. A new
@@ -466,7 +466,7 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         let deletes = try await command("sync_pending_deletes", ["generation": databaseGeneration]) as? [String] ?? []
         let downloads = try await command("sync_missing_files", ["generation": databaseGeneration]) as? [[String: String]] ?? []
         guard isCurrent(owner) && !Task.isCancelled else { return }
-        let pending = Set(deletes.map { "delete:" + $0 } + uploads.map { "upload:" + $0 } + downloads.compactMap { file in
+        let pending = Set(uploads.map { "upload:" + $0 } + deletes.map { "delete:" + $0 } + downloads.compactMap { file in
             file["fileId"].map { "download:" + $0 }
         })
         policy.retain(pending: Array(pending))

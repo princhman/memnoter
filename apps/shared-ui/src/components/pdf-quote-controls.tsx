@@ -95,20 +95,28 @@ export function PdfQuoteControls({ moduleId, onInserted }: { moduleId: string; o
   const sourceName = (source?.name ?? "PDF").split(/[\\/]/).pop() || "PDF";
   const waiting = pending.status === "draft" && !active;
   return <div data-pdf-quote-controls className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-end">
-    <div className="pointer-events-auto min-w-0 max-w-sm overflow-y-auto rounded-lg floating-surface p-1 text-xs shadow-md" role="status">
-      <div role="group" aria-label={pending.kind === "image" ? "Image quote actions" : "Text quote actions"} className="flex min-w-0 items-center gap-1" onMouseDown={event => { if (event.button === 0) event.preventDefault(); }}>
-        <span className="min-w-0 truncate px-1 text-muted-foreground" title={waiting ? "Waiting for this module’s editable note" : `${sourceName}, page ${source?.page ?? ""}`}>
-          {waiting ? "Waiting for note…" : `${sourceName}, page ${source?.page ?? ""}`}
+    <div className="pdf-quote-bar pointer-events-auto min-w-0 max-w-md overflow-y-auto rounded-2xl floating-surface p-1 pl-3 text-xs shadow-md" role="status">
+      <div role="group" aria-label={pending.kind === "image" ? "Image quote actions" : "Text quote actions"} className="flex min-w-0 items-center gap-2" onMouseDown={event => { if (event.button === 0) event.preventDefault(); }}>
+        <span className="pdf-quote-source flex min-w-0 flex-col leading-tight" title={waiting ? "Waiting for this module’s editable note" : `${sourceName}, page ${source?.page ?? ""}`}>
+          {waiting ? <span className="truncate text-muted-foreground">Waiting for note…</span> : <>
+            <span className="truncate font-medium text-foreground">{sourceName.replace(/\.pdf$/i, "")}</span>
+            <span className="truncate text-muted-foreground">Page {source?.page ?? ""}</span>
+          </>}
         </span>
-        <IconTooltip label="Insert at cursor" hint={formatKeys(action("pdf.quote.insert").keys)}>
-          <Button size="sm" aria-keyshortcuts="Meta+Enter Control+Enter" disabled={!active || pending.status !== "draft"} onClick={handleInsertQuote}>
-            {pending.status === "saving" ? "Saving quote…" : "Insert at cursor"}
-          </Button>
-        </IconTooltip>
-        <ToolButton size="icon-sm" label="Choose section" disabled={!active || pending.status !== "draft"} onClick={openSectionPicker}>
-          <ChevronDown />
-        </ToolButton>
-        <ToolButton size="icon-sm" label="Dismiss quote" disabled={pending.status !== "draft"} onClick={() => {
+        {/* One split button: insert here, or pick a section from the chevron. */}
+        <div className="pdf-quote-split flex shrink-0 items-stretch">
+          <IconTooltip label="Insert at cursor" hint={formatKeys(action("pdf.quote.insert").keys)}>
+            <Button size="sm" className="rounded-r-none pr-2.5" aria-keyshortcuts="Meta+Enter Control+Enter" disabled={!active || pending.status !== "draft"} onClick={handleInsertQuote}>
+              {pending.status === "saving" ? "Saving quote…" : "Insert at cursor"}
+            </Button>
+          </IconTooltip>
+          <IconTooltip label="Choose section">
+            <Button size="sm" className="rounded-l-none border-l border-l-primary-foreground/25 px-1.5" aria-label="Choose section" disabled={!active || pending.status !== "draft"} onClick={openSectionPicker}>
+              <ChevronDown />
+            </Button>
+          </IconTooltip>
+        </div>
+        <ToolButton size="icon-sm" className="pdf-menu-close shrink-0" label="Dismiss quote" disabled={pending.status !== "draft"} onClick={() => {
           setChoosing(false);
           pendingPdfQuote.setState(() => null);
         }}><X /></ToolButton>

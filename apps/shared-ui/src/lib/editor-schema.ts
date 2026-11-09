@@ -31,7 +31,7 @@ import { Flashcards } from "@/lib/flashcards";
 
 type NoteExtensionOptions = {
   document: Y.Doc;
-  ui?: { mermaidView?: AnyExtension; pdfTextQuote?: typeof PdfTextQuote; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
+  ui?: { pdfTextQuote?: typeof PdfTextQuote; mermaidView?: AnyExtension; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
   insertImages?: (editor: Editor, files: File[], position: number) => void;
   scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;

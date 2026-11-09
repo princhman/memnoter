@@ -93,11 +93,21 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
     await page.evaluate(() => window.memnoterEditor.toggleFiles());
     const files = page.getByRole('complementary', { name: 'Files', exact: true });
     await files.getByText('No PDFs in this module yet', { exact: false }).waitFor();
-    await files.getByRole('button', { name: 'Add PDF', exact: true }).click();
+    // The native toolbar owns the reader's controls; the web pane draws none.
+    const pdfCommand = (command, value = null) => page.evaluate(([command, value]) => window.memnoterEditor.pdfCommand(command, value), [command, value]);
+    const readerIs = check => page.waitForFunction(check => {
+      const reader = window.nativeMessages.filter(m => m.event === 'pdfReader').at(-1)?.payload;
+      return !!reader && Object.entries(check).every(([key, value]) => reader[key] === value);
+    }, check, { timeout: 3000 });
+    await readerIs({ moduleId: 'one', activeId: null, title: 'Files' });
+    assert.equal(await files.getByRole('button', { name: 'Close', exact: true }).count(), 0, 'the native Files button closes the pane');
+    await files.getByRole('button', { name: 'Add one', exact: true }).click();
     assert.equal(await page.evaluate(() => window.nativeMessages.filter(m => m.event === 'pickPdfs').at(-1).payload.moduleId), 'one');
     documents = [{ id: 'text-pdf', moduleId: 'one', moduleName: 'One', name: 'Selection.pdf', size: 1000, pageCount: 3, createdAt: 0, available: true }];
     await page.evaluate(() => window.memnoterEditor.refreshDocuments('one'));
     await files.getByRole('button', { name: /Selection/ }).click();
+    await readerIs({ activeId: 'text-pdf', title: 'Selection', fullscreen: false, page: 1, pageCount: 3 });
+    assert.equal(await files.locator('.pdf-reader-tools').count(), 0, 'no web toolbar inside the native pane');
     const span = files.locator('[data-pdf-page="1"] .textLayer span').filter({ hasText: 'Page 1 first line' });
     await span.waitFor();
     assert.equal(await note.evaluate(element => element === window.originalNoteElement), true);
@@ -119,7 +129,7 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
     const quoteActions = page.getByRole('group', { name: 'Text quote actions', exact: true });
     const actionsBox = await quoteActions.boundingBox();
     assert.ok(actionsBox.y + actionsBox.height <= 650, 'quote actions stay above the native keyboard');
-    assert.ok((await files.locator('.pdf-reader-tools').boundingBox()).y >= 60, 'reader tools stay below the native top inset');
+    assert.ok((await files.locator('.pdf-viewport').boundingBox()).y >= 60, 'pages stay below the native top inset');
     await page.evaluate(() => { window.memnoterEditor.setTopInset(0); window.memnoterEditor.setBottomInset(0); });
     await page.getByRole('button', { name: 'Insert at cursor', exact: true }).click();
     await files.waitFor({ state: 'detached' });
@@ -135,7 +145,8 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
     assert.equal(await note.locator('.ProseMirror-selectednode').count(), 1, 'source marker reveals the saved quote in its note');
     await note.getByRole('button', { name: 'Selection.pdf, page 1', exact: true }).first().click();
     await files.waitFor(); await span.waitFor();
-    await files.getByRole('button', { name: 'Select region', exact: true }).click();
+    await pdfCommand('toggleSelect');
+    await readerIs({ selecting: true });
     const region = files.getByLabel('Drag a region on this PDF page').first(); await region.waitFor();
     const box = await region.boundingBox();
     await page.mouse.move(box.x + box.width * .25, box.y + box.height * .25); await page.mouse.down();
@@ -155,14 +166,15 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
     assert.ok((await note.textContent()).includes('Page 1 first line'), 'the native core boundary rehydrates the inserted quote');
     await note.getByRole('button', { name: 'Selection.pdf, page 1', exact: true }).first().click();
     await files.waitFor(); await span.waitFor();
-    await files.getByRole('button', { name: 'Open full screen', exact: true }).click();
-    await page.getByRole('button', { name: 'Back to note', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Open beside note', exact: true }).click();
-    await files.getByRole('button', { name: 'All files', exact: true }).waitFor();
+    await pdfCommand('openFullscreen');
+    await readerIs({ activeId: 'text-pdf', fullscreen: true });
+    await pdfCommand('openBeside');
+    await readerIs({ activeId: 'text-pdf', fullscreen: false });
     await span.waitFor();
-    await files.getByRole('button', { name: /^Zoom in/ }).click();
-    await page.waitForFunction(() => document.querySelector('[aria-label="Zoom level"]').textContent === '110%');
-    await files.getByLabel('Page number').fill('2'); await files.getByLabel('Page number').press('Enter');
+    await pdfCommand('zoomIn');
+    await readerIs({ zoom: 110 });
+    await pdfCommand('goToPage', 2);
+    await readerIs({ page: 2 });
     await page.waitForFunction(() => window.nativeMessages.some(m => m.event === 'pdfViewState' && m.payload.page === 2 && m.payload.zoom === 1.1), null, { timeout: 3000 });
     const savedPdfView = await page.evaluate(() => window.nativeMessages.filter(m => m.event === 'pdfViewState').at(-1).payload);
     await page.addInitScript(saved => {
@@ -174,9 +186,12 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
     await openNote();
     await page.evaluate(() => window.memnoterEditor.refreshDocuments('one'));
     await files.getByRole('button', { name: /Selection/ }).click();
-    await page.waitForFunction(() => document.querySelector('[aria-label="Page number"]').value === '2' && document.querySelector('[aria-label="Zoom level"]').textContent === '110%');
+    await readerIs({ activeId: 'text-pdf', page: 2, zoom: 110 });
+    await pdfCommand('showFiles');
+    await readerIs({ activeId: null, title: 'Files' });
     await page.evaluate(() => window.memnoterEditor.toggleFiles());
     await files.waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(() => window.nativeMessages.filter(m => m.event === 'pdfReader').at(-1).payload), null, 'closing the pane clears the native tools');
     await page.evaluate(() => window.memnoterEditor.open('two'));
     await page.evaluate(() => window.memnoterEditor.refreshDocuments('one'));
     assert.equal(await files.count(), 0, 'late imports into another module do not open the current note’s panel');

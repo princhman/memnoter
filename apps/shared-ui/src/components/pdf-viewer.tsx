@@ -28,6 +28,7 @@ import { ToolButton } from "./ui/tool-button";
 import { PdfRegionSelection } from "./pdf-region-selection";
 import { cropPdfCanvas, type PdfRegion } from "@/lib/pdf-quote";
 import { readPdfTextSelection } from "@/lib/pdf-text-selection";
+import { pdfReaderControls, type PdfReaderActions } from "@/lib/pdf-reader-controls";
 import { pendingPdfQuote } from "@/lib/pending-pdf-quote";
 import { useSelector } from "@tanstack/react-store";
 import { Button } from "./ui/button";
@@ -90,13 +91,14 @@ function ReaderTools({ children, fullscreen, leading, trailing }: { children: Re
   useLayoutEffect(() => { if (fullscreen) setTarget(document.getElementById("pdf-toolbar")); }, [fullscreen]);
   if (fullscreen) return target && createPortal(children, target);
   return <div className="pdf-reader-tools flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
-    <div className="pdf-reader-leading flex min-w-0 flex-1 items-center gap-1">{leading}</div><div className="pdf-reader-controls contents">{children}{trailing}</div>
+    <div className="pdf-reader-leading flex min-w-0 flex-1 items-center gap-1">{leading}</div><div className="pdf-reader-controls contents">{children}</div>{trailing && <div className="pdf-reader-trailing contents">{trailing}</div>}
   </div>;
 }
 
 const sameList = (a: number[], b: number[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 
-export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number }) {
+/** With `nativeTools`, the host draws the reader's tools (pdfReaderControls). */
+export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage, nativeTools = false }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number; nativeTools?: boolean }) {
   const client = useQueryClient();
   const quoteRegions = usePdfQuoteRegions(doc.moduleId, doc.id);
   const navigateToQuote = usePdfQuoteNavigation(doc.moduleId);
@@ -628,8 +630,33 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const activeSet = useMemo(() => new Set(active), [active]);
 
   // The backdrop matches the app header, so the page sits on one surface.
+  const toggleAnnotate = () => { setAnnotationEditor(null); setAnnotationArea(value => !value); setSelecting(!annotationArea); };
+  const nativeActions = useRef<PdfReaderActions | null>(null);
+  nativeActions.current = {
+    zoomIn: () => changeZoom((finishPinch.current?.() ?? zoom) + 0.1),
+    zoomOut: () => changeZoom((finishPinch.current?.() ?? zoom) - 0.1),
+    toggleSelect: toggleSelection,
+    toggleAnnotate,
+    goToPage: page => { if (pages.length) jump(Math.max(1, Math.min(pages.length, Math.round(page)))); },
+    openBeside,
+  };
+  const canSelect = !pending && !cropping && !!pdf;
+  const nativeState = nativeTools ? JSON.stringify({
+    page: current, pageCount: pages.length || doc.pageCount || 0, zoom: Math.round(zoom * 100),
+    selecting: selecting && !annotationArea, annotating: annotationArea,
+    canSelect, canAnnotate: canSelect && annotations.ready && !writeBlocked, canZoomIn: zoom < 3, canZoomOut: zoom > 0.25,
+  }) : null;
+  useEffect(() => {
+    if (!nativeState) return;
+    const actions: PdfReaderActions = {
+      zoomIn: () => nativeActions.current?.zoomIn(), zoomOut: () => nativeActions.current?.zoomOut(),
+      toggleSelect: () => nativeActions.current?.toggleSelect(), toggleAnnotate: () => nativeActions.current?.toggleAnnotate(),
+      goToPage: page => nativeActions.current?.goToPage(page), openBeside: () => nativeActions.current?.openBeside(),
+    };
+    return pdfReaderControls.set({ documentId: doc.id, state: JSON.parse(nativeState), actions });
+  }, [nativeState, doc.id]);
   return <div ref={root} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
-    {textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
+    {textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
       <div className="flex items-center gap-0.5 overflow-x-auto">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
         <Button size="xs" variant="ghost" className="px-1.5" title={`Highlight (${formatKeys(action("text.highlight").keys)})`} aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button>
@@ -640,12 +667,17 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       </div>
       {showHighlightColors && <div className="mt-1 px-1"><PdfHighlightColors color={highlightColor} disabled={!annotations.ready || writeBlocked} onChange={color => { chooseHighlightColor(color); annotateText("highlight", color); }} /></div>}
     </div>}
-    {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="absolute z-30 flex w-64 max-w-[calc(100%-1rem)] flex-wrap items-center gap-0.5 rounded-lg floating-surface p-1 text-foreground shadow-md" style={annotationEditor}>
-      <Button size="xs" variant="ghost" aria-label="Highlight area" disabled={!annotations.ready || writeBlocked} onClick={() => highlightArea()}><Highlighter aria-hidden="true" />Highlight</Button>
-      <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onClick={() => setShowHighlightColors(value => !value)}><ChevronDown /></ToolButton>
-      <Button size="xs" variant="ghost" aria-label="Comment on area" disabled={!annotations.ready || writeBlocked} onClick={() => setAnnotationEditor({ ...annotationEditor, kind: "new" })}><MessageSquare aria-hidden="true" />Comment</Button>
-      <ToolButton size="icon-xs" label="Cancel area annotation" onClick={() => setAnnotationEditor(null)}><X /></ToolButton>
-      {showHighlightColors && <div className="mt-1 basis-full px-1"><PdfHighlightColors color={highlightColor} disabled={!annotations.ready || writeBlocked} onChange={color => { chooseHighlightColor(color); highlightArea(color); }} /></div>}
+    {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={annotationEditor}>
+      <div className="flex items-center gap-0.5">
+        <Button size="xs" variant="ghost" className="px-1.5" aria-label="Highlight area" disabled={!annotations.ready || writeBlocked} onClick={() => highlightArea()}><Highlighter aria-hidden="true" />Highlight</Button>
+        <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onClick={() => setShowHighlightColors(value => !value)}>
+          <span className="size-2 rounded-full" style={{ backgroundColor: pdfHighlightColors[highlightColor].value }} /><ChevronDown className="size-3" />
+        </ToolButton>
+        <Button size="xs" variant="ghost" className="px-1.5" aria-label="Comment on area" disabled={!annotations.ready || writeBlocked} onClick={() => setAnnotationEditor({ ...annotationEditor, kind: "new" })}><MessageSquare aria-hidden="true" />Comment</Button>
+        <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-border" />
+        <ToolButton size="icon-xs" className="pdf-menu-close" label="Cancel area annotation" onClick={() => setAnnotationEditor(null)}><X /></ToolButton>
+      </div>
+      {showHighlightColors && <div className="mt-1 px-1"><PdfHighlightColors color={highlightColor} disabled={!annotations.ready || writeBlocked} onChange={color => { chooseHighlightColor(color); highlightArea(color); }} /></div>}
     </div>}
     {annotationEditor && annotationEditor.kind !== "area" && (() => {
       const existing = annotationEditor.kind === "existing" ? annotations.annotations.find(annotation => annotation.id === annotationEditor.id) : undefined;
@@ -664,24 +696,26 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       {annotations.error || (annotations.saving ? "Saving annotations…" : "Loading annotations…")}
       {annotations.error && <button type="button" className="ml-2 underline" disabled={writeBlocked} onClick={() => { try { annotations.retry(); } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); } }}>Retry annotations</button>}
     </div>}
-    <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
+    {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
       <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
+      <span aria-hidden="true" className="pdf-tool-divider hidden" />
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
       <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
       <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn /></ToolButton>
+      <span aria-hidden="true" className="pdf-tool-divider hidden" />
       <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Select region" pressed={selecting && !annotationArea} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>
-      <ToolButton label="Annotate area" pressed={annotationArea} disabled={!!pending || cropping || !pdf || !annotations.ready || writeBlocked} onClick={() => { setAnnotationEditor(null); setAnnotationArea(value => !value); setSelecting(!annotationArea); }}><Highlighter /></ToolButton>
+      <ToolButton label="Annotate area" pressed={annotationArea} disabled={!!pending || cropping || !pdf || !annotations.ready || writeBlocked} onClick={toggleAnnotate}><Highlighter /></ToolButton>
       {fullscreen && <ToolButton label="Open beside note" hint={formatKeys(action("pdf.open-beside").keys)} onClick={openBeside}>
         {/* The small arrow says this moves the PDF into the note's side panel. */}
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
       </ToolButton>}
-    </ReaderTools>
+    </ReaderTools>}
     {(selecting || cropping || quoteError || (fullscreen && pending?.moduleId === doc.moduleId)) && <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-center">
-      <div className="pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
-        {selecting && !pending && <>{annotationArea ? "Drag to highlight or comment on an area" : "Drag to select a quote"}<ToolButton label="Exit selection" onClick={cancelSelection}><X /></ToolButton></>}
+      <div className="pdf-hint pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
+        {selecting && !pending && <><span className="min-w-0 flex-1">{annotationArea ? "Drag to highlight or comment on an area" : "Drag to select a quote"}</span><ToolButton size="icon-xs" className="pdf-menu-close" label="Exit selection" onClick={cancelSelection}><X /></ToolButton></>}
         {cropping && "Preparing quote"}{quoteError && <span role="alert">{quoteError}</span>}
         {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" title={`Insert at cursor (${formatKeys(action("pdf.quote.insert").keys)})`} aria-keyshortcuts="Meta+Enter Control+Enter" disabled={pending.status !== "draft"} onClick={showCursorAction}>Insert at cursor</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current?.id === pending.id && current.status === "draft" ? null : current)}>Discard</Button>}</>}
       </div>
