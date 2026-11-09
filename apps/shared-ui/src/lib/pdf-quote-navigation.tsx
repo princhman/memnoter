@@ -68,7 +68,7 @@ export function usePdfQuoteNavigation(moduleId: string): (quoteId: string) => vo
   }, [moduleId, router]);
 }
 
-export function PdfQuoteNavigation({ moduleId }: { moduleId: string }) {
+export function PdfQuoteNavigation({ moduleId, onReveal }: { moduleId: string; onReveal?: () => void }) {
   const target = useSelector(pending, state => state);
   const { activeEditor } = useActiveEditor();
   const router = useRouter();
@@ -98,15 +98,23 @@ export function PdfQuoteNavigation({ moduleId }: { moduleId: string }) {
     if (covering.size) tr.setMeta(headingFoldKey, { type: "set", ids: (headingFoldKey.getState(state)?.folded ?? []).filter(id => !covering.has(id)) });
     tr.setSelection(NodeSelection.create(state.doc, resolvedPosition));
     editor.view.dispatch(tr);
-    // Focus without letting the browser scroll the PDF or the outer window.
-    editor.view.dom.focus({ preventScroll: true });
-    const node = editor.view.nodeDOM(resolvedPosition);
-    const container = editor.view.dom.closest(".app-scroll-container");
-    if (node instanceof HTMLElement && container instanceof HTMLElement) {
-      const bounds = node.getBoundingClientRect();
-      const viewport = container.getBoundingClientRect();
-      container.scrollTop += bounds.top - viewport.top - Math.max(16, (viewport.height - bounds.height) / 2);
-    }
-  }, [target, activeEditor, moduleId, router]);
+    onReveal?.();
+    const reveal = () => {
+      if (editor.isDestroyed || !editor.view.dom.isConnected || !router.state.matches.some(match => "moduleId" in match.params && match.params.moduleId === moduleId)) return;
+      const selection = editor.state.selection;
+      if (!(selection instanceof NodeSelection) || (selection.node.attrs.quoteId ?? selection.node.attrs.imageId) !== target.quoteId) return;
+      // Focus without letting the browser scroll the PDF or the outer window.
+      editor.view.dom.focus({ preventScroll: true });
+      const node = editor.view.nodeDOM(selection.from);
+      const container = editor.view.dom.closest(".app-scroll-container");
+      if (node instanceof HTMLElement && container instanceof HTMLElement) {
+        const bounds = node.getBoundingClientRect();
+        const viewport = container.getBoundingClientRect();
+        container.scrollTop += bounds.top - viewport.top - Math.max(16, (viewport.height - bounds.height) / 2);
+      }
+    };
+    // The native compact workspace first removes the pane covering this note.
+    if (onReveal) requestAnimationFrame(reveal); else reveal();
+  }, [target, activeEditor, moduleId, router, onReveal]);
   return null;
 }

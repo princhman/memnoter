@@ -1,4 +1,5 @@
-import { Host } from "./host";
+import { RouterProvider } from "@tanstack/react-router";
+import { editorRouter } from "./router";
 import { useEffect } from "react";
 import { bootstrapNotes } from "@/lib/bootstrap";
 import { dueCountsKey } from "@/lib/card-sync";
@@ -38,6 +39,6 @@ function CardBackfill() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
-    <ActiveEditorProvider><CardBackfill /><Host /></ActiveEditorProvider>
+    <ActiveEditorProvider><CardBackfill /><RouterProvider router={editorRouter} /></ActiveEditorProvider>
   </QueryClientProvider>,
 );

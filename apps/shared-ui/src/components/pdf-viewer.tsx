@@ -18,7 +18,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
 import { fileUrl } from "@/lib/backend";
-import { parsePage, readPdfView, visiblePages } from "@/lib/pdf-state";
+import { parsePage, readPdfView, writePdfView, visiblePages } from "@/lib/pdf-state";
 import { documentsKey } from "@/lib/use-documents";
 import { requestSyncedFile } from "@/lib/sync/file-requests";
 import { openPdfPane, pdfPageRequest } from "@/lib/pdf-pane";
@@ -88,8 +88,8 @@ function ReaderTools({ children, fullscreen, leading, trailing }: { children: Re
   const [target, setTarget] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => { if (fullscreen) setTarget(document.getElementById("pdf-toolbar")); }, [fullscreen]);
   if (fullscreen) return target && createPortal(children, target);
-  return <div className="flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
-    <div className="flex min-w-0 flex-1 items-center gap-1">{leading}</div>{children}{trailing}
+  return <div className="pdf-reader-tools flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
+    <div className="pdf-reader-leading flex min-w-0 flex-1 items-center gap-1">{leading}</div><div className="pdf-reader-controls contents">{children}{trailing}</div>
   </div>;
 }
 
@@ -244,6 +244,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     const element = container.current;
     if (!element || pinchActive.current) return;
     const rows = latestHeights.current;
+    if (!rows.length) return;
     const next = visiblePages(rows, element.scrollTop, element.clientHeight);
     setActive(previous => sameList(previous, next) ? previous : next);
     let offset = 0; let page = 1;
@@ -276,8 +277,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     // Re-measure when the layout changes size, not on every page arrival.
   }, [pages.length, zoom]);
   useEffect(() => {
-    try { localStorage.setItem(`pdf-view:${doc.id}`, JSON.stringify({ page: current, zoom })); } catch { /* Storage may be unavailable. */ }
-  }, [doc.id, current, zoom]);
+    if (!pdf || !restored.current || current !== shownPage.current) return;
+    writePdfView(doc.id, { page: current, zoom });
+  }, [doc.id, current, zoom, pdf]);
   function anchorAt(clientX?: number, clientY?: number): ZoomAnchor | null {
     const element = container.current;
     if (!element || !content.current) return null;
@@ -295,9 +297,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     previewPages.current = [];
     if (content.current) content.current.style.pointerEvents = "";
   }
-  useLayoutEffect(() => {
-    clearPreview();
-    const anchor = zoomAnchor.current;
+  function restoreZoomAnchor(anchor: ZoomAnchor | null) {
     const element = container.current;
     const page = anchor && content.current?.children[anchor.page];
     if (element && anchor && page) {
@@ -306,6 +306,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       element.scrollTop += bounds.top + bounds.height * anchor.y - anchor.clientY;
       measure();
     }
+  }
+  useLayoutEffect(() => {
+    clearPreview();
+    restoreZoomAnchor(zoomAnchor.current);
     zoomAnchor.current = null;
   }, [zoom]);
   function changeZoom(next: number) {
@@ -331,26 +335,36 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     let native = false;
     let nativeBase = preview;
     let ignoreWheelUntil = 0;
+    let ignoreNativeUntil = 0;
+    let suppressNativeGesture = false;
+    let panX = 0, panY = 0;
+    let touch: { ids: [number, number]; distance: number; base: number; x: number; y: number } | null = null;
+    let touchBlocked = false;
+    let releaseTouchTargets: (() => void)[] = [];
+    const clearTouchTargets = () => { releaseTouchTargets.forEach(release => release()); releaseTouchTargets = []; };
     function finish() {
       if (!anchor) return zoomValue.current;
       clearTimeout(timer);
       cancelAnimationFrame(previewFrame); previewFrame = 0;
       pinchActive.current = false;
+      if (touch) {
+        touch = null; touchBlocked = true;
+        ignoreNativeUntil = ignoreWheelUntil = performance.now() + 250;
+      }
       if (native) { native = false; ignoreWheelUntil = performance.now() + 250; }
       if (preview !== zoomValue.current) {
         zoomAnchor.current = anchor;
         setZoom(preview);
-      } else clearPreview();
+      } else { clearPreview(); restoreZoomAnchor(anchor); }
       anchor = null;
       setPinching(false);
       return preview;
     }
     finishPinch.current = finish;
-    const show = (value: number, event: Event) => {
+    const show = (value: number, point: { clientX?: number; clientY?: number }) => {
       if (!anchor) {
-        const x = "clientX" in event && typeof event.clientX === "number" ? event.clientX : undefined;
-        const y = "clientY" in event && typeof event.clientY === "number" ? event.clientY : undefined;
-        anchor = captureAnchor.current(x, y);
+        panX = 0; panY = 0;
+        anchor = captureAnchor.current(point.clientX, point.clientY);
         if (!anchor) return;
         const selection = window.getSelection();
         if (selection?.anchorNode && grid.contains(selection.anchorNode)) selection.removeAllRanges();
@@ -370,35 +384,100 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       preview = clampZoom(value);
       if (!previewFrame) previewFrame = requestAnimationFrame(() => {
         previewFrame = 0;
-        for (const page of previewPages.current) page.style.transform = `scale(${preview / zoomValue.current})`;
+        for (const page of previewPages.current) page.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${preview / zoomValue.current})`;
       });
       clearTimeout(timer);
       // A pause is not the end of a native gesture. Keep its preview until
       // gestureend; a longer watchdog recovers a lost end event.
-      timer = setTimeout(finish, native ? 2000 : 240);
+      timer = touch ? undefined : setTimeout(finish, native ? 2000 : 240);
     };
     function wheel(event: WheelEvent) {
       if (!event.ctrlKey) return;
       event.preventDefault();
-      if (native || performance.now() < ignoreWheelUntil) return;
+      if (touch || touchBlocked || native || performance.now() < ignoreWheelUntil) return;
       const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportHeight() : 1);
       show((anchor ? preview : zoomValue.current) * Math.exp(-delta * 0.01), event);
     }
     function gesture(event: Event) {
       event.preventDefault();
+      if (event.type === "gesturestart") suppressNativeGesture = !!touch || touchBlocked || performance.now() < ignoreNativeUntil;
+      if (suppressNativeGesture) { if (event.type === "gestureend") suppressNativeGesture = false; return; }
+      if (touch || touchBlocked || performance.now() < ignoreNativeUntil) return;
       if (event.type === "gesturestart") {
         native = true;
         // Discard a leading wheel preview if WebKit sends both protocols.
         clearTimeout(timer); cancelAnimationFrame(previewFrame); previewFrame = 0; clearPreview(); anchor = null;
         nativeBase = zoomValue.current;
       }
-      if ("scale" in event && typeof event.scale === "number" && Number.isFinite(event.scale) && event.scale > 0) show(nativeBase * event.scale, event);
+      if ("scale" in event && typeof event.scale === "number" && Number.isFinite(event.scale) && event.scale > 0) show(nativeBase * event.scale, { clientX: "clientX" in event && typeof event.clientX === "number" ? event.clientX : undefined, clientY: "clientY" in event && typeof event.clientY === "number" ? event.clientY : undefined });
       if (event.type === "gestureend") { native = false; ignoreWheelUntil = performance.now() + 250; finish(); }
     }
+    const ownTouch = (contact: Touch) => contact.target instanceof Node && element.contains(contact.target);
+    const beginTouch = (event: TouchEvent) => {
+      if (touchBlocked || event.touches.length < 2) return;
+      if (event.touches.length !== 2) {
+        if (touch) { event.preventDefault(); finish(); touch = null; touchBlocked = true; }
+        return;
+      }
+      const first = event.touches[0], second = event.touches[1];
+      if (touch || !ownTouch(first) || !ownTouch(second)) return;
+      const distance = Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+      if (!distance) return;
+      event.preventDefault();
+      clearTimeout(timer); cancelAnimationFrame(previewFrame); previewFrame = 0; clearPreview(); anchor = null; native = false; suppressNativeGesture = true;
+      touch = { ids: [first.identifier, second.identifier], distance, base: zoomValue.current,
+        x: (first.clientX + second.clientX) / 2, y: (first.clientY + second.clientY) / 2 };
+      show(touch.base, { clientX: touch.x, clientY: touch.y });
+      clearTouchTargets();
+      // TouchEvents retain their original target. Cancelling a crop removes
+      // that overlay, so also track its remaining events on the detached node.
+      for (const target of new Set([first.target, second.target])) {
+        const forward = (event: Event) => {
+          if (!(target instanceof Node) || target.isConnected || !(event instanceof TouchEvent)) return;
+          if (event.type === "touchmove") moveTouch(event); else endTouch(event);
+        };
+        for (const type of ["touchmove", "touchend", "touchcancel"]) target.addEventListener(type, forward, { passive: false });
+        releaseTouchTargets.push(() => { for (const type of ["touchmove", "touchend", "touchcancel"]) target.removeEventListener(type, forward); });
+      }
+    };
+    const moveTouch = (event: TouchEvent) => {
+      if (touchBlocked) { event.preventDefault(); return; }
+      if (!touch) return;
+      event.preventDefault();
+      const contacts = Array.from(event.touches);
+      const first = contacts.find(contact => contact.identifier === touch?.ids[0]);
+      const second = contacts.find(contact => contact.identifier === touch?.ids[1]);
+      if (!first || !second || contacts.length !== 2) return;
+      const x = (first.clientX + second.clientX) / 2, y = (first.clientY + second.clientY) / 2;
+      const value = touch.base * Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY) / touch.distance;
+      show(value, { clientX: x, clientY: y });
+      panX = x - touch.x; panY = y - touch.y;
+      if (anchor) anchor = { ...anchor, clientX: x, clientY: y };
+    };
+    const endTouch = (event: TouchEvent) => {
+      if (!touch && !touchBlocked) return;
+      event.preventDefault();
+      if (event.touches.length >= 2 && event.type !== "touchcancel") return;
+      if (event.type === "touchcancel") {
+        clearTimeout(timer); cancelAnimationFrame(previewFrame); previewFrame = 0;
+        clearPreview(); anchor = null; pinchActive.current = false; setPinching(false);
+      } else finish();
+      touch = null; touchBlocked = event.touches.length > 0;
+      if (!touchBlocked) clearTouchTargets();
+      ignoreNativeUntil = ignoreWheelUntil = performance.now() + 250;
+    };
+    element.addEventListener("touchstart", beginTouch, { capture: true, passive: false });
+    element.addEventListener("touchmove", moveTouch, { capture: true, passive: false });
+    element.addEventListener("touchend", endTouch, { capture: true, passive: false });
+    element.addEventListener("touchcancel", endTouch, { capture: true, passive: false });
     element.addEventListener("wheel", wheel, { passive: false });
     for (const type of ["gesturestart", "gesturechange", "gestureend"]) element.addEventListener(type, gesture, { passive: false });
     return () => {
-      clearTimeout(timer); cancelAnimationFrame(previewFrame); pinchActive.current = false; finishPinch.current = null; clearPreview();
+      clearTimeout(timer); cancelAnimationFrame(previewFrame); clearTouchTargets(); pinchActive.current = false; finishPinch.current = null; clearPreview();
+      element.removeEventListener("touchstart", beginTouch, true);
+      element.removeEventListener("touchmove", moveTouch, true);
+      element.removeEventListener("touchend", endTouch, true);
+      element.removeEventListener("touchcancel", endTouch, true);
       element.removeEventListener("wheel", wheel);
       for (const type of ["gesturestart", "gesturechange", "gestureend"]) element.removeEventListener(type, gesture);
     };
@@ -503,7 +582,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   }, [pdf]);
   const openBeside = useCallback(() => {
     const finalZoom = finishPinch.current?.() ?? zoomValue.current;
-    try { localStorage.setItem(`pdf-view:${doc.id}`, JSON.stringify({ page: shownPage.current, zoom: finalZoom })); } catch { /* Storage may be unavailable. */ }
+    writePdfView(doc.id, { page: shownPage.current, zoom: finalZoom });
     openPdfPane(doc.moduleId, doc.id);
     void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error)));
   }, [doc.id, doc.moduleId, navigate]);
@@ -547,7 +626,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const activeSet = useMemo(() => new Set(active), [active]);
 
   // The backdrop matches the app header, so the page sits on one surface.
-  return <div ref={root} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="relative flex h-full min-h-0 min-w-0 flex-col bg-background">
+  return <div ref={root} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
     {textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
       <div className="flex items-center gap-0.5 overflow-x-auto">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
@@ -584,9 +663,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       {annotations.error && <button type="button" className="ml-2 underline" disabled={writeBlocked} onClick={() => { try { annotations.retry(); } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); } }}>Retry annotations</button>}
     </div>}
     <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
-      <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onChange={event => setInput(event.target.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
+      <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
-        const page = parsePage(input, pages.length); if (page !== null) jump(page); else setInput(String(current));
+        const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
       <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
@@ -605,7 +684,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" title={`Insert at cursor (${formatKeys(action("pdf.quote.insert").keys)})`} aria-keyshortcuts="Meta+Enter Control+Enter" disabled={pending.status !== "draft"} onClick={showCursorAction}>Insert at cursor</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current?.id === pending.id && current.status === "draft" ? null : current)}>Discard</Button>}</>}
       </div>
     </div>}
-    {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>
+    {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="pdf-viewport min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF</p>}
       <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} annotations={annotations.annotations} onAnnotationOpen={openAnnotation} quoteRegions={quoteRegions.get(index + 1)} onQuoteNavigate={navigateToQuote} quoteNavigationDisabled={selecting || cropping || pinching} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
     </div>}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCommand } from "@/lib/commands";
-import { call, isTauri } from "@/lib/backend";
+import { call, isNativeHost, isTauri, postNativeEvent } from "@/lib/backend";
 import { addDocumentBytes } from "@/lib/documents";
 import { useDocuments, documentsKey } from "@/lib/use-documents";
 import { useModules } from "@/lib/modules";
@@ -17,6 +17,7 @@ export function dropPdfs(files: File[], moduleId?: string) {
 const PICK_PDFS_EVENT = "memnoter:pick-pdfs";
 // Opens the file picker for a module, or asks which module first.
 export function pickPdfs(moduleId?: string) {
+  if (isNativeHost() && moduleId) { postNativeEvent("pickPdfs", { moduleId }); return; }
   window.dispatchEvent(new CustomEvent(PICK_PDFS_EVENT, { detail: { moduleId } }));
 }
 export function AddPdf() {

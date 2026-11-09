@@ -13,7 +13,7 @@ import { IconTooltip } from "./ui/icon-tooltip";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 
-export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
+export function PdfQuoteControls({ moduleId, onInserted }: { moduleId: string; onInserted?: () => void }) {
   const pending = useSelector(pendingPdfQuote, state => state);
   const { activeEditor } = useActiveEditor();
   const [choosing, setChoosing] = useState(false);
@@ -54,7 +54,7 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
     if (draft.kind === "text") {
       try {
         active.insertTextQuote(active.editor, draft.parts, target);
-        if (pendingPdfQuote.state?.id === draft.id) pendingPdfQuote.setState(() => null);
+        if (pendingPdfQuote.state?.id === draft.id) { pendingPdfQuote.setState(() => null); onInserted?.(); }
       } catch (error) {
         pendingPdfQuote.setState(current => current?.id === draft.id ? {
           ...current, status: "draft", error: error instanceof Error ? error.message : "Could not insert the quote. Try again.",
@@ -63,7 +63,7 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
       return;
     }
     void active.insertQuote(active.editor, draft, target,
-      () => { if (pendingPdfQuote.state?.id === draft.id) pendingPdfQuote.setState(() => null); },
+      () => { if (pendingPdfQuote.state?.id === draft.id) { pendingPdfQuote.setState(() => null); onInserted?.(); } },
       () => { if (pendingPdfQuote.state?.id === draft.id) pendingPdfQuote.setState(() => ({ ...draft, status: "draft", error: undefined })); },
     ).catch(error => {
       pendingPdfQuote.setState(current => current?.id === draft.id ? {
@@ -94,7 +94,7 @@ export function PdfQuoteControls({ moduleId }: { moduleId: string }) {
   const source = pending.kind === "image" ? pending.source : pending.parts[0]?.source;
   const sourceName = (source?.name ?? "PDF").split(/[\\/]/).pop() || "PDF";
   const waiting = pending.status === "draft" && !active;
-  return <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-end">
+  return <div data-pdf-quote-controls className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-end">
     <div className="pointer-events-auto min-w-0 max-w-sm overflow-y-auto rounded-lg floating-surface p-1 text-xs shadow-md" role="status">
       <div role="group" aria-label={pending.kind === "image" ? "Image quote actions" : "Text quote actions"} className="flex min-w-0 items-center gap-1" onMouseDown={event => { if (event.button === 0) event.preventDefault(); }}>
         <span className="min-w-0 truncate px-1 text-muted-foreground" title={waiting ? "Waiting for this module’s editable note" : `${sourceName}, page ${source?.page ?? ""}`}>

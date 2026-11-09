@@ -18,6 +18,7 @@ struct NumberingArgs: Encodable, Sendable { let moduleId: String; let enabled: B
 struct SearchArgs: Encodable, Sendable { let query: String; let limit: Int = 50 }
 struct CountArgs: Encodable, Sendable { let now: Int64; let dayEnd: Int64; var createdAtCutoff: Int64? = nil }
 struct FileArgs: Encodable, Sendable { let moduleId: String; let bytes: [UInt8]; let mimeType: String }
+struct DocumentPathArgs: Encodable, Sendable { let moduleId: String; let path: String }
 struct BackupArgs: Encodable, Sendable { let id: String }
 
 private final class SyncOutboxObserver: OutboxObserver, @unchecked Sendable {

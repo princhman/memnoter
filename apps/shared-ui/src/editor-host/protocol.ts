@@ -99,6 +99,10 @@ export interface NativeEvents {
   state: EditorState & { moduleId: string };
   ready: { protocolVersion: number };
   imagePreview: { open: boolean };
+  pickPdfs: { moduleId: string };
+  openModule: { moduleId: string };
+  pdfViewState: { documentId: string; page: number; zoom: number };
+  pdfState: { moduleId: string | null; open: boolean; coveringNote: boolean; focused: boolean };
   error: { moduleId: string | null; message: string };
   saveStatus: { pending: number; failing: boolean; imageErrors: string[] };
   scrollDebug: { time: number; reason: string; [key: string]: unknown };
@@ -113,6 +117,8 @@ export interface EditorApi {
   open(moduleId: string): Promise<void>;
   flush(): Promise<void>;
   refreshModules(): Promise<void>;
+  toggleFiles(): void;
+  refreshDocuments(moduleId: string): Promise<void>;
   exec(command: ExecCommand, args?: Record<string, unknown>): boolean;
   setOutlineTracking(enabled: boolean): void;
   focus(): boolean;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { browserHarness, installTestBridge } from './support/browser.mjs';
 import { pdfBytes } from './browser/pdf-region-selection-pdf.mjs';
 
@@ -9,7 +9,9 @@ test('reader zoom preserves the reading point, scroll, crop and gesture lifecycl
   const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   try {
-    await server.listen(); browser = await chromium.launch({ headless: true });
+    await server.listen();
+    const engine = process.env.PDF_ZOOM_BROWSER === "webkit" ? webkit : chromium;
+    browser = await engine.launch({ headless: true });
     const page = await browser.newPage({ deviceScaleFactor: 2, viewport: { width: 1000, height: 1000 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => { if (command === 'get_content') return { state: [], updates: [], files: [] }; if (command === 'document_path') return '/selection.pdf'; throw new Error(command); } } });`);

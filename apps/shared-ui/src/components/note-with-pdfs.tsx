@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, FileText, Maximize2, Plus, X } from "lucide-react";
+import { ChevronLeft, Maximize2, X } from "lucide-react";
 import { useDocuments } from "@/lib/use-documents";
 import { documentName } from "@/lib/pdf-state";
-import { openPdfPane, updatePdfPane, usePdfPane } from "@/lib/pdf-pane";
+import { updatePdfPane, usePdfPane } from "@/lib/pdf-pane";
 import { acceptsPdfShortcut, action, matchesShortcut } from "@/lib/shortcuts";
 import { registerCommand } from "@/lib/commands";
-import { isTauri } from "@/lib/backend";
-import type { DocumentRecord } from "@/lib/documents";
-import { pickPdfs } from "./add-pdf";
+import { PdfFileList } from "./pdf-file-list";
 import { PdfViewer } from "./pdf-viewer";
 import { PdfQuoteNavigation } from "@/lib/pdf-quote-navigation";
 import { PdfQuoteControls } from "./pdf-quote-controls";
@@ -16,30 +14,6 @@ import { ToolButton } from "./ui/tool-button";
 
 const clampWidth = (width: number) => Math.max(320, Math.min(1000, width));
 const paneWidth = (width: number) => `min(${width}px, max(320px, 65vw))`;
-
-// The module's files, as the right panel shows them before one is picked.
-function FileList({ moduleId, docs }: { moduleId: string; docs: DocumentRecord[] }) {
-  const canAdd = isTauri();
-  return <>
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
-      <span className="min-w-0 flex-1 truncate px-1.5 text-sm font-medium">Files</span>
-      {canAdd && <ToolButton label="Add PDF" onClick={() => pickPdfs(moduleId)}><Plus /></ToolButton>}
-      <ToolButton label="Close" onClick={() => updatePdfPane(moduleId, { open: false })}><X /></ToolButton>
-    </div>
-    <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {docs.length ? <ul className="grid gap-0.5">{docs.map(doc => <li key={doc.id}>
-        <button type="button" onClick={() => openPdfPane(moduleId, doc.id)}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none">
-          <FileText className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate">{documentName(doc.name)}</span>
-          <span className="shrink-0 text-xs text-muted-foreground">{!doc.available ? "Downloading" : doc.pageCount === null ? "PDF" : `${doc.pageCount} pages`}</span>
-        </button>
-      </li>)}</ul> : <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-        No PDFs in this module yet{canAdd && <>. <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => pickPdfs(moduleId)}>Add one</button></>}.
-      </p>}
-    </div>
-  </>;
-}
 
 export function NoteWithPdfs({ moduleId, children }: { moduleId: string; children: ReactNode }) {
   const { data: docs = [] } = useDocuments(moduleId);
@@ -133,7 +107,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
           trailing={<>
             <ToolButton label="Open full screen" onClick={() => void navigate({ to: "/files/$documentId", params: { documentId: active.id } })}><Maximize2 /></ToolButton>
             <ToolButton label="Close" onClick={() => updatePdfPane(moduleId, { open: false })}><X /></ToolButton>
-          </>} /></div> : <FileList moduleId={moduleId} docs={docs} />}
+          </>} /></div> : <PdfFileList moduleId={moduleId} docs={docs} />}
       </aside>
     </>}
   </div></div>;
