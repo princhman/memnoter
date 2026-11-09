@@ -87,7 +87,7 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
     await openNote();
     const note = page.locator('.tiptap');
     await note.click(); await page.keyboard.type('Before after');
-    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowLeft');
+    await note.evaluate(element => element.editor.commands.setTextSelection(8));
     await page.evaluate(() => window.memnoterEditor.flush());
     await note.evaluate(element => { window.originalNoteElement = element; });
     await page.evaluate(() => window.memnoterEditor.toggleFiles());
