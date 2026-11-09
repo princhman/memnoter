@@ -3,6 +3,7 @@ pub struct Db {
     pub(crate) data_dir: PathBuf,
     pub(crate) conn: Mutex<Connection>,
     pub(crate) unavailable: AtomicBool,
+    pub(crate) annotation_generation: Mutex<String>,
     pub(crate) outbox_callback: Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 
@@ -201,6 +202,7 @@ pub(crate) fn open_db(app_dir: &Path) -> CommandResult<Db> {
         data_dir: app_dir.to_path_buf(),
         conn: Mutex::new(conn),
         unavailable: AtomicBool::new(false),
+        annotation_generation: Mutex::new(Uuid::new_v4().to_string()),
         outbox_callback: Mutex::new(None),
     })
 }
@@ -278,6 +280,8 @@ const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] = &[
     migrate_unversioned,
     migrate_update_ids,
     migrate_sidebar_items,
+    documents::migrate,
+    pdf_annotations::migrate,
 ];
 
 fn migrate_sidebar_items(conn: &Connection) -> CommandResult<()> {

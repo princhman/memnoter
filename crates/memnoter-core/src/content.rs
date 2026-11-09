@@ -92,6 +92,23 @@ pub fn delete_module_data(
     files_dir: &Path,
     module_id: &str,
 ) -> CommandResult<()> {
+    delete_module_data_inner(conn, files_dir, module_id, true)
+}
+
+pub(crate) fn delete_remote_module_data(
+    conn: &mut Connection,
+    files_dir: &Path,
+    module_id: &str,
+) -> CommandResult<()> {
+    delete_module_data_inner(conn, files_dir, module_id, false)
+}
+
+fn delete_module_data_inner(
+    conn: &mut Connection,
+    files_dir: &Path,
+    module_id: &str,
+    local: bool,
+) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     // Only surviving notes can retain files; the deleted history may be corrupt.
     asset_refs::retain_all(&tx, Some(module_id))?;
@@ -101,7 +118,7 @@ pub fn delete_module_data(
     tx.execute(
         "update files set module_id = (select min(module_id) from shared_image_refs
          where file_id = files.id and module_id <> ?1)
-         where module_id = ?1 and exists(select 1 from shared_image_refs
+         where module_id = ?1 and file_type <> 'application/pdf' and exists(select 1 from shared_image_refs
          where file_id = files.id and module_id <> ?1)",
         [module_id],
     )
@@ -111,13 +128,28 @@ pub fn delete_module_data(
     sync::publish_file_owners(&tx)?;
     let files = {
         let mut stmt = tx
-            .prepare("select id from files where module_id = ?1")
+            .prepare("select id from files where module_id = ?1 union select id from documents where module_id = ?1")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([module_id], |row| row.get::<_, String>(0))
             .map_err(db_err)?;
         rows.collect::<Result<Vec<_>>>().map_err(db_err)?
     };
+    for id in &files {
+        let is_pdf: bool = tx.query_row(
+            "select exists(select 1 from documents where id=?1) or exists(select 1 from files where id=?1 and file_type='application/pdf')",
+            [id], |r| r.get(0),
+        ).map_err(db_err)?;
+        if is_pdf {
+            crate::pdf_annotations::retire(&tx, id)?;
+            if local {
+                sync::record_document(&tx, id, true)?;
+                sync::queue_file_delete(&tx, id)?;
+            }
+        } else {
+            sync::record_file_deleted(&tx, id)?;
+        }
+    }
     let files = files
         .iter()
         .map(|id| files::assets::path(files_dir.parent().ok_or("Invalid files directory")?, id))

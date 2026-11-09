@@ -3,6 +3,7 @@ import { useEditorHost } from "@/lib/editor-host-context";
 import { CardNavigationGuard } from "./card-navigation-guard";
 import { MathBlockView } from "@/lib/editor-schema/math-block-view";
 import { useNoteDocument } from "@/lib/note-document";
+import { PdfTextQuote } from "./pdf-text-quote";
 import { SavedImage as ImageWithView, InlineImage as InlineImageWithView } from "./saved-image";
 import { InlineMathView } from "./inline-math-view";
 import { SlashCommand } from "./slash-menu";
@@ -47,7 +48,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   const element = useRef<HTMLDivElement>(null);
   const { data: modules } = useModules();
   const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
-  const { yDoc, editorRef, isSuccess, filesContext, insertImages } = useNoteDocument(moduleId);
+  const { yDoc, editorRef, isSuccess, filesContext, insertImages, insertQuote, insertTextQuote } = useNoteDocument(moduleId);
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
   const { setActiveEditor } = useActiveEditor();
@@ -65,6 +66,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         document: yDoc,
         scrollContainer: () => element.current ? host.scrollContainer(element.current) : null,
         ui: {
+          pdfTextQuote: PdfTextQuote,
           savedImage: ImageWithView,
           inlineImage: InlineImageWithView,
           inlineMath: InlineMathView,
@@ -168,14 +170,14 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   useEffect(() => {
     if (!editor) return;
 
-    setActiveEditor({ moduleId, editor, isReady: isSuccess });
+    setActiveEditor({ moduleId, editor, isReady: isSuccess, insertQuote, insertTextQuote });
 
     return () => {
       setActiveEditor((current) =>
         current?.editor === editor ? null : current,
       );
     };
-  }, [editor, moduleId, isSuccess, setActiveEditor]);
+  }, [editor, moduleId, isSuccess, setActiveEditor, insertQuote, insertTextQuote]);
 
   const drawingFilesContext = useMemo(() => ({ ...filesContext, ...(capabilities.macDrawing && editor ? {
     editDrawing: (imageId: string, sourceId: string | null) => { void launchDrawing(editor, { imageId, sourceId }); },

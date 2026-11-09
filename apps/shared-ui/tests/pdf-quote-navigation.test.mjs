@@ -1,0 +1,100 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+import { browserHarness, installTestBridge } from './support/browser.mjs';
+
+// Real hooks/components, router and editor transactions protect the handoff;
+// PDF source coverage exercises the opposite direction and cannot catch this.
+test('PDF quote navigation reveals stable images only in the intended ready note', async () => {
+  const { createServer } = browserHarness(import.meta.url);
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.addInitScript(`(${installTestBridge.toString()})({tauri:{invoke:async command=>{if(command==='list_documents')return [];throw new Error(command)}}});`);
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-quote-navigation.html`);
+    await page.waitForFunction(() => window.quoteTest?.editor && document.querySelector('.tiptap'));
+    const state = () => page.evaluate(() => {
+      const { editor, getFoldedIds, getFocusedSectionRange } = window.quoteTest;
+      return { imageId: editor.state.selection.node?.attrs.imageId, folds: getFoldedIds(editor.state), focus: getFocusedSectionRange(editor.state), scroll: document.querySelector('.app-scroll-container').scrollTop, focused: editor.view.hasFocus(), doc: editor.getJSON() };
+    });
+    const initialHistoryLength = await page.evaluate(() => window.quoteRouter.history.length);
+    await page.getByRole('button', { name: 'Find block quote', exact: true }).click();
+    assert.equal((await state()).imageId, undefined, 'wait for saved view readiness');
+    const initialPosition = await page.evaluate(() => { let pos; window.quoteTest.editor.state.doc.descendants((node, at) => { if (node.attrs.imageId === "quote-block") pos = at; }); return pos; });
+    const preparedDoc = await page.evaluate(() => {
+      const { editor, setReady } = window.quoteTest;
+      editor.commands.insertContentAt(1, 'Moved prefix ');
+      editor.commands.setFolds(['Outer', 'Inner']);
+      editor.commands.showSection(0);
+      setReady(true);
+      return editor.getJSON();
+    });
+    await page.waitForFunction(() => window.quoteTest.editor.state.selection.node?.attrs.imageId === 'quote-block', null, { timeout: 5000 });
+    const revealed = await state();
+    assert.equal(await page.evaluate(() => window.quoteRouter.history.length), initialHistoryLength, "same-note reveal does not navigate");
+    assert.ok(await page.evaluate(() => window.quoteTest.editor.state.selection.from) > initialPosition, "lookup uses the position after the intervening edit");
+    assert.deepEqual(revealed.doc, preparedDoc, "revealing never edits the note");
+    assert.deepEqual(revealed.folds, [], 'all enclosing headings unfold');
+    assert.equal(revealed.focus, null, 'outside focused section becomes visible');
+    assert.ok(revealed.scroll > 0, 'note scroll container reveals target');
+    assert.equal(revealed.focused, true);
+    assert.equal(await page.evaluate(() => window.scrollY), 0);
+    await page.evaluate(() => {
+      const { editor } = window.quoteTest;
+      let heading;
+      editor.state.doc.descendants((node, pos) => { if (node.attrs['data-toc-id'] === 'Outer') heading = pos; });
+      editor.commands.showSection(heading);
+      editor.commands.setFolds(['Other']);
+    });
+    const focusedBefore = (await state()).focus;
+    await page.getByRole('button', { name: 'Find inline quote', exact: true }).click();
+    await page.waitForFunction(() => window.quoteTest.editor.state.selection.node?.attrs.imageId === 'quote-inline');
+    assert.deepEqual((await state()).doc, revealed.doc, 'navigation never changes note content');
+    assert.deepEqual((await state()).focus, focusedBefore, 'keep a section that already contains the quote');
+    assert.deepEqual((await state()).folds, ['Other'], 'unrelated folded sections stay folded');
+    await page.evaluate(() => window.quoteTest.setReady(false));
+    await page.getByRole('button', { name: 'Find block quote', exact: true }).click();
+    await page.evaluate(() => {
+      const { editor, setReady } = window.quoteTest;
+      let target;
+      editor.state.doc.descendants((node, pos) => { if (node.attrs.imageId === 'quote-block') target = { from: pos, to: pos + node.nodeSize }; });
+      editor.commands.deleteRange(target);
+      setReady(true);
+    });
+    await page.getByText('This quote is no longer available in the note.', { exact: true }).waitFor();
+    assert.equal((await state()).imageId, 'quote-inline', 'missing id never selects an arbitrary image');
+    await page.evaluate(() => window.quoteRouter.navigate({ to: '/files/$documentId', params: { documentId: 'pdf-one' } }));
+    await page.getByText('Fullscreen PDF', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Find block quote', exact: true }).click();
+    await page.waitForFunction(() => window.quoteRouter.state.location.pathname === '/module-one');
+    await page.waitForFunction(() => window.quoteTest.editor && !window.quoteTest.editor.isDestroyed && document.querySelector('.tiptap'));
+    assert.equal((await state()).imageId, undefined);
+    await page.evaluate(() => window.quoteTest.setReady(true));
+    await page.waitForFunction(() => window.quoteTest.editor.state.selection.node?.attrs.imageId === 'quote-block', null, { timeout: 5000 });
+    await page.evaluate(() => window.quoteTest.setReady(false));
+    await page.getByRole('button', { name: 'Find inline quote', exact: true }).click();
+    await page.evaluate(() => window.quoteRouter.navigate({ to: '/$moduleId', params: { moduleId: 'module-two' } }));
+    await page.waitForFunction(() => window.quoteRouter.state.location.pathname === '/module-two');
+    await page.evaluate(() => window.quoteRouter.navigate({ to: '/$moduleId', params: { moduleId: 'module-one' } }));
+    await page.evaluate(() => window.quoteTest.setReady(true));
+    await page.waitForTimeout(100);
+    assert.notEqual((await state()).imageId, 'quote-inline', 'stale request never replays on return');
+    await page.evaluate(() => window.quoteRouter.navigate({ to: '/files/$documentId', params: { documentId: 'pdf-one' } }));
+    await page.evaluate(() => window.setQuoteBlocked(true));
+    await page.getByRole('button', { name: 'Find block quote', exact: true }).click();
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => window.quoteRouter.state.location.pathname), '/files/pdf-one');
+    await page.evaluate(() => window.setQuoteBlocked(false));
+    await page.evaluate(() => window.quoteRouter.navigate({ to: '/$moduleId', params: { moduleId: 'module-one' } }));
+    await page.evaluate(() => window.quoteTest.setReady(true));
+    await page.waitForTimeout(100);
+    assert.notEqual((await state()).imageId, 'quote-block', 'cancelled blocker never leaves a late target');
+    await page.evaluate(() => window.quoteRouter.navigate({ to: '/files/$documentId', params: { documentId: 'pdf-one' } }));
+    await page.evaluate(() => window.setQuoteRouteError(true));
+    await page.getByRole('button', { name: 'Find block quote', exact: true }).click();
+    await page.getByText('Could not open the note. Try again.', { exact: true }).waitFor();
+  } finally { await browser?.close(); await server.close(); }
+});

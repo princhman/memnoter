@@ -48,3 +48,18 @@ test("Rust menu dispatch IDs and accelerators match the shared action table", ()
   }));
   assert.deepEqual(native.sort((a, b) => a.id.localeCompare(b.id)), expected.sort((a, b) => a.id.localeCompare(b.id)));
 });
+
+
+test("PDF actions accept their public bindings without conflicting with other app actions", () => {
+  for (const [id, key, shiftKey] of [
+    ["pdf.toggle-pane", "d", true],
+    ["pdf.open-beside", "o", true],
+    ["pdf.select-region", "x", true],
+    ["pdf.quote.insert", "Enter", false],
+  ]) {
+    for (const modifiers of [{ metaKey: true, ctrlKey: false }, { metaKey: false, ctrlKey: true }]) {
+      const event = { key, code: key === "Enter" ? "Enter" : `Key${key.toUpperCase()}`, altKey: false, shiftKey, ...modifiers };
+      assert.deepEqual(SHORTCUTS.filter(entry => entry.keys && matchesShortcut(event, entry.keys)).map(entry => entry.id), [id]);
+    }
+  }
+});

@@ -6,6 +6,8 @@ import type { Grade } from "../lib/fsrs";
 
 export const BRIDGE_VERSION = 1;
 export const FILE_SCHEME = "memnoter-file";
+export const PDF_CHUNK_COMMAND = "read_pdf_chunk";
+export const PDF_CHUNK_BYTES = 1048576;
 export const APP_SCHEME = "memnoter-app";
 export const EDITOR_ENTRY = "editor.html";
 export const REVIEW_ENTRY = "review-native.html";
@@ -104,6 +106,10 @@ export interface NativeEvents {
   ready: { protocolVersion: number };
   imagePreview: { open: boolean };
   editDrawing: { moduleId: string; imageId: string; sourceId: string | null };
+  pickPdfs: { moduleId: string };
+  openModule: { moduleId: string };
+  pdfViewState: { documentId: string; page: number; zoom: number };
+  pdfState: { moduleId: string | null; open: boolean; coveringNote: boolean; focused: boolean };
   error: { moduleId: string | null; message: string };
   saveStatus: { pending: number; failing: boolean; imageErrors: string[] };
   scrollDebug: { time: number; reason: string; [key: string]: unknown };
@@ -118,6 +124,8 @@ export interface EditorApi {
   open(moduleId: string): Promise<void>;
   flush(): Promise<void>;
   refreshModules(): Promise<void>;
+  toggleFiles(): void;
+  refreshDocuments(moduleId: string): Promise<void>;
   exec(command: ExecCommand, args?: Record<string, unknown>): boolean;
   setOutlineTracking(enabled: boolean): void;
   focus(): boolean;

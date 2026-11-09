@@ -3,6 +3,24 @@ import WebKit
 import UniformTypeIdentifiers
 import ImageIO
 
+private func validPdfDocumentId(_ value: String) -> Bool {
+    !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && value.utf8.count <= 256
+}
+
+private struct PdfViewStateRecord: Codable {
+    let page: Int
+    let zoom: Double
+    init?(_ value: Any) {
+        guard let object = value as? [String: Any], JSONSerialization.isValidJSONObject(object),
+              let bytes = try? JSONSerialization.data(withJSONObject: object),
+              let decoded = try? JSONDecoder().decode(Self.self, from: bytes),
+              decoded.page > 0, decoded.page <= 9_007_199_254_740_991,
+              decoded.zoom.isFinite, (0.25...3).contains(decoded.zoom) else { return nil }
+        self = decoded
+    }
+    var payload: [String: Any] { ["page": page, "zoom": zoom] }
+}
+
 /// Paths are decoded once by URLComponents and confined to one bundle/data child.
 @MainActor final class ResourceHandler: NSObject, WKURLSchemeHandler {
     let root: URL
@@ -20,7 +38,7 @@ import ImageIO
             task.didFailWithError(URLError(.noPermissionsToReadFile)); return
         }
         let file = parts.reduce(root) { $0.appendingPathComponent($1) }
-        // Core image files have UUID names, so determine image type from bytes.
+        // Core assets have UUID names, so determine their type from bytes.
         let key = ObjectIdentifier(task)
         pending[key] = Task {
           defer { pending[key] = nil }
@@ -29,14 +47,15 @@ import ImageIO
             guard !Task.isCancelled else { return }
             let mime: String
             if images {
-                if let source = CGImageSourceCreateWithData(data as CFData, nil), let type = CGImageSourceGetType(source), let detected = UTType(type as String)?.preferredMIMEType { mime = detected }
+                if data.starts(with: Array("%PDF-".utf8)) { mime = "application/pdf" }
+                else if let source = CGImageSourceCreateWithData(data as CFData, nil), let type = CGImageSourceGetType(source), let detected = UTType(type as String)?.preferredMIMEType { mime = detected }
                 else if data.starts(with: [0x89, 0x50, 0x4e, 0x47]) { mime = "image/png" }
                 else if data.starts(with: [0xff, 0xd8]) { mime = "image/jpeg" }
                 else if data.starts(with: Array("GIF".utf8)) { mime = "image/gif" }
                 else if data.count > 12 && String(decoding: data[8..<12], as: UTF8.self) == "WEBP" { mime = "image/webp" }
                 else { mime = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream" }
             } else {
-                mime = ["js": "text/javascript", "css": "text/css", "html": "text/html" ][file.pathExtension] ?? UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+                mime = ["js": "text/javascript", "mjs": "text/javascript", "wasm": "application/wasm", "css": "text/css", "html": "text/html" ][file.pathExtension] ?? UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
             }
             task.didReceive(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil))
             task.didReceive(data); task.didFinish()
@@ -89,6 +108,11 @@ import ImageIO
     var reviewState = ReviewState()
     var imagePreviewOpen = false
     var drawingToEdit: DrawingOpenEvent?
+    var filesOpen = false
+    var pdfCoveringNote = false
+    var pdfFocused = false
+    var requestedPdfImport: String?
+    var requestedModule: String?
     var ready = false
     var headings: [Heading] = []
     var allHeadings: [Heading] = []
@@ -109,6 +133,13 @@ import ImageIO
     var onReady: (() -> Void)?
     let client: CoreClient
     private let preferences: UserDefaults
+    private func storedPdfViewStates() -> [String: PdfViewStateRecord] {
+        var result: [String: PdfViewStateRecord] = [:]
+        for (id, value) in preferences.dictionary(forKey: "pdfViewState") ?? [:] {
+            if validPdfDocumentId(id), let state = PdfViewStateRecord(value) { result[id] = state }
+        }
+        return result
+    }
     private var moduleId: String?
     private var generation = UUID()
     private var barrier: Task<Void, Error>?
@@ -124,6 +155,14 @@ import ImageIO
         config.userContentController.addUserScript(WKUserScript(
             source: "window.__memnoterViewState = \(savedView);",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let pdfViewScript: String
+        do {
+            let json = try JSONEncoder().encode(storedPdfViewStates())
+            let literal = try JSONEncoder().encode(String(decoding: json, as: UTF8.self))
+            pdfViewScript = "window.__memnoterPdfViewState = JSON.parse(\(String(decoding: literal, as: UTF8.self)));"
+        } catch { pdfViewScript = "window.__memnoterPdfViewState = {};" }
+        config.userContentController.addUserScript(WKUserScript(
+            source: pdfViewScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.setURLSchemeHandler(ResourceHandler(root: directory, images: true), forURLScheme: BridgeProtocol.fileScheme)
         config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: BridgeProtocol.appScheme)
         let editorWeb = EditorWebView(frame: .zero, configuration: config)
@@ -231,6 +270,14 @@ import ImageIO
     func execute(_ command: ExecCommand, _ args: [String: Any] = [:]) async throws -> Any? {
         try await callEditor(.exec, ["command": command.rawValue, "args": args], parameters: ["command", "args"])
     }
+    func toggleFiles() {
+        guard ready, let target = moduleId else { return }
+        Task {
+            guard ready, target == moduleId else { return }
+            do { _ = try await callEditor(.toggleFiles) }
+            catch { self.error = String(describing: error) }
+        }
+    }
     private func serialized(_ method: EditorApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws {
         let previous = barrier
         let next = Task { @MainActor in
@@ -247,6 +294,8 @@ import ImageIO
         if moduleId != id {
             moduleId = id
             state = EditorState(); headings = []; allHeadings = []; currentHeadingId = nil
+            filesOpen = false; pdfCoveringNote = false; pdfFocused = false
+            requestedPdfImport = nil; requestedModule = nil
         }
         try await serialized(.open, ["id": id], parameters: ["id"])
     }
@@ -255,6 +304,8 @@ import ImageIO
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         generation = UUID(); ready = false; reportedViewport = []
+        filesOpen = false; pdfCoveringNote = false; pdfFocused = false
+        requestedPdfImport = nil; requestedModule = nil
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
@@ -269,7 +320,14 @@ import ImageIO
             Task {
                 do {
                     let bytes = try JSONSerialization.data(withJSONObject: body["args"] ?? [:])
-                    let result = try await client.raw(command, json: String(decoding: bytes, as: UTF8.self))
+                    let result: String
+                    if command == BridgeProtocol.pdfChunkCommand {
+                        let args = try JSONDecoder().decode(PdfChunkArgs.self, from: bytes)
+                        let reply = try await client.readPdfChunk(args)
+                        result = String(decoding: try JSONEncoder().encode(reply), as: UTF8.self)
+                    } else {
+                        result = try await client.raw(command, json: String(decoding: bytes, as: UTF8.self))
+                    }
                     guard token == generation else { return }
                     let value = try JSONSerialization.jsonObject(with: Data(result.utf8), options: [.fragmentsAllowed])
                     _ = try await run("window.__memnoterBridge.resolve(id, value)", ["id": id, "value": value])
@@ -290,6 +348,12 @@ import ImageIO
                 case .viewState:
                     let data = try JSONSerialization.data(withJSONObject: payload)
                     preferences.set(String(decoding: data, as: UTF8.self), forKey: "editorViewState")
+                case .pdfViewState:
+                    guard let id = payload["documentId"] as? String, validPdfDocumentId(id),
+                          let state = PdfViewStateRecord(payload) else { return }
+                    var states = storedPdfViewStates()
+                    states[id] = state
+                    preferences.set(states.mapValues { $0.payload }, forKey: "pdfViewState")
                 case .ready:
                     guard payload["protocolVersion"] as? Int == BridgeProtocol.version else {
                         throw NSError(domain: "BridgeProtocol", code: 1, userInfo: [NSLocalizedDescriptionKey: "Incompatible web bridge protocol version"])
@@ -315,6 +379,17 @@ import ImageIO
                 case .editDrawing:
                     guard payload["moduleId"] as? String == moduleId else { return }
                     drawingToEdit = try JSONDecoder().decode(DrawingOpenEvent.self, from: JSONSerialization.data(withJSONObject: payload))
+                case .pickPdfs:
+                    guard ready, let destination = payload["moduleId"] as? String, destination == moduleId else { return }
+                    requestedPdfImport = destination
+                case .openModule:
+                    guard ready, moduleId != nil, let destination = payload["moduleId"] as? String, !destination.isEmpty else { return }
+                    requestedModule = destination
+                case .pdfState:
+                    guard ready, let currentModule = moduleId, payload["moduleId"] as? String == currentModule else { return }
+                    filesOpen = payload["open"] as? Bool == true
+                    pdfCoveringNote = filesOpen && (payload["coveringNote"] as? Bool == true)
+                    pdfFocused = filesOpen && (payload["focused"] as? Bool == true)
                 case .outlineCurrent:
                     guard payload["moduleId"] as? String == moduleId else { return }
                     currentHeadingId = payload["currentHeadingId"] as? String

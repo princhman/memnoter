@@ -85,7 +85,7 @@ const until = async predicate => {
   for (let i = 0; i < 200; i++) { if (predicate()) return; await new Promise(r => setTimeout(r, 5)); }
   assert.fail('operation did not progress');
 };
-for (const kind of ['upload', 'blob-body']) {
+for (const kind of ['upload', 'delete', 'blob-body']) {
   test(`restore cancels stalled ${kind}, retains pending work and restarts`, async () => {
     let signal;
     let requested = false;
@@ -103,9 +103,11 @@ for (const kind of ['upload', 'blob-body']) {
         case 'sync_reconcile': return { updates: [], deleted: [] };
         case 'sync_outbox': return [];
         case 'sync_pending_uploads': return !pending || kind !== 'upload' ? [] : ['image'];
+        case 'sync_pending_deletes': return pending && kind === 'delete' ? ['image'] : [];
         case 'sync_missing_files': return [];
         case 'read_file': return { bytes: [42] };
-        case 'sync_upload_done': done++; pending = false; return;
+        case 'sync_upload_done':
+        case 'sync_delete_done': done++; pending = false; return;
         case 'sync_ack': done++; return;
         case 'sync_apply': done++; cursor = args.cursor; return { updates: [], deleted: [] };
         case 'sync_set_cursor': cursor = args.cursor; return;
@@ -118,14 +120,15 @@ for (const kind of ['upload', 'blob-body']) {
       requested = true;
       signal = init.signal;
       if (release) return new Response();
-      if (kind === 'upload') return new Promise((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
+      if (kind === 'delete') assert.equal(init.method, 'DELETE');
+      if (kind !== 'blob-body') return new Promise((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
       return new Response(new ReadableStream({ start() {} }));
     };
     const count = Socket.instances.length;
     await retrySync();
     await until(() => Socket.instances.length > count);
     await tick();
-    if (kind === 'upload') globalThis.requestFile('image');
+    if (kind !== 'blob-body') globalThis.requestFile('image');
     else Socket.instances.at(-1).onmessage({ data: JSON.stringify({ t: 'entries', entries: [{ seq: 9, doc: 'note', data: btoa(String.fromCharCode(2) + 'a'.repeat(32)) }] }) });
     await until(() => requested);
     let deadline;
@@ -137,7 +140,7 @@ for (const kind of ['upload', 'blob-body']) {
     assert.equal(done, 0, 'cancelled work must remain pending');
     assert.equal(cursor, 0, 'a held blob must not advance the cursor');
     assert.equal(Socket.instances.length, count + 2, 'sync restarts after restore');
-    if (kind === 'upload') {
+    if (kind !== 'blob-body') {
       assert.equal(pending, true);
       release = true;
       globalThis.requestFile('image');

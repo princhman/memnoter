@@ -1,0 +1,91 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+import { browserHarness, installTestBridge } from './support/browser.mjs';
+import { textPdfBytes } from './browser/pdf-text-selection-pdf.mjs';
+
+test('native PDF text selections quote only on demand, with per-page sources and reader lifecycle guards', async () => {
+  const { createServer } = browserHarness(import.meta.url);
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen(); browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ deviceScaleFactor: 2, viewport: { width: 1000, height: 1200 } });
+    const errors = []; page.on('pageerror', error => errors.push(error.message));
+    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => { if (command === 'get_content') return { state: [], updates: [], files: [] }; if (command === 'document_path') return '/text.pdf'; throw new Error(command); } } });`);
+    await page.route('**/text.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-text-selection.html`);
+    const viewer = page.locator('#viewer'), action = viewer.getByRole('button', { name: 'Quote text', exact: true });
+    const first = viewer.locator('[data-pdf-page="1"] .textLayer span').filter({ hasText: 'Page 1 first line' });
+    const second = viewer.locator('[data-pdf-page="2"] .textLayer span').filter({ hasText: 'Second line <plain>.' });
+    await first.waitFor(); await second.waitFor();
+    const draft = async () => JSON.parse(await page.locator('#text-draft').textContent());
+    const clear = () => page.getByRole('button', { name: 'Clear quote', exact: true }).click();
+    async function select(from = first, to = first) {
+      await from.hover();
+      const a = await from.boundingBox(), b = await to.boundingBox();
+      await page.mouse.move(a.x + .5, a.y + a.height / 2); await page.mouse.down();
+      await page.mouse.move(b.x + b.width - .5, b.y + b.height / 2, { steps: 20 }); await page.mouse.up();
+      await action.waitFor();
+    }
+    await select();
+    assert.equal(await draft(), null, 'selection alone must not stage');
+    const nativeText = await page.evaluate(() => window.getSelection().toString());
+    await page.evaluate(() => { window.copyCount = 0; document.addEventListener('copy', () => window.copyCount++); });
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+c' : 'Control+c');
+    assert.equal(await page.evaluate(() => window.copyCount), 1);
+    assert.equal(await page.evaluate(() => window.getSelection().toString()), nativeText);
+    assert.equal(await draft(), null);
+    await page.keyboard.press('Shift+ArrowLeft'); await action.waitFor();
+    await action.click();
+    let quote = await draft();
+    assert.equal(quote.kind, 'text'); assert.match(quote.id, /^[0-9a-f-]{36}$/);
+    assert.equal(quote.parts.length, 1); assert.equal(quote.parts[0].text, 'Page 1 first lin');
+    const stableId = quote.id;
+    // Selecting again while either draft kind is pending must never overwrite it.
+    const a = await first.boundingBox(); await page.mouse.move(a.x, a.y + a.height / 2); await page.mouse.down(); await page.mouse.move(a.x + a.width, a.y + a.height / 2); await page.mouse.up();
+    assert.equal(await action.count(), 0); assert.equal((await draft()).id, stableId);
+    await clear();
+    await select(first, second); await action.click(); quote = await draft();
+    assert.deepEqual(quote.parts.map(part => part.text), ['Page 1 first line\nSecond line <plain>.', 'Page 2 first line\nSecond line <plain>.']);
+    assert.deepEqual(quote.parts.map(part => part.source.page), [1, 2]);
+    assert.ok(quote.parts.every(part => part.source.documentId === 'text-pdf'));
+    const region = quote.parts[0].source.region;
+    assert.ok(Math.abs(region.x - .1) < .005); assert.ok(region.height > .1 && region.height < .14);
+    assert.equal(await viewer.locator('.textLayer plain').count(), 0);
+    await clear();
+    await viewer.getByRole('button', { name: /^Zoom in/ }).click();
+    await viewer.locator('.overflow-auto').evaluate(element => { element.scrollTop = 0; });
+    await first.waitFor();
+    await select(); await action.click(); quote = await draft();
+    assert.ok(Math.abs(quote.parts[0].source.region.x - region.x) < .005);
+    assert.equal(quote.parts[0].text, 'Page 1 first line'); await clear();
+    await select(); await page.keyboard.press('Escape'); await action.waitFor({ state: 'detached' });
+    await select(); await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    assert.equal(await action.count(), 0); assert.equal(await draft(), null);
+    await viewer.getByRole('button', { name: 'Exit selection', exact: true }).click();
+    await page.locator('#outside').evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); });
+    await page.waitForTimeout(50); assert.equal(await action.count(), 0);
+    await select();
+    await viewer.evaluate(element => { element.style.height = '700px'; });
+    await action.waitFor({ state: 'detached' }); assert.equal(await draft(), null);
+    await select();
+    const gesture = type => viewer.locator('.overflow-auto').evaluate((element, type) => {
+      const event = new Event(type, { cancelable: true }); Object.defineProperty(event, 'scale', { value: 1 }); element.dispatchEvent(event);
+    }, type);
+    await gesture('gesturestart');
+    await action.waitFor({ state: 'detached' }); assert.equal(await draft(), null);
+    await gesture('gestureend');
+    await page.waitForTimeout(250);
+    await viewer.locator('.overflow-auto').evaluate(element => { element.scrollTop = 0; });
+    await select();
+    await page.getByRole('button', { name: 'Stage image', exact: true }).click();
+    await action.waitFor({ state: 'detached' });
+    assert.equal((await draft()).kind, 'image');
+    await clear();
+    await select();
+    await page.getByRole('button', { name: 'Replace document', exact: true }).click();
+    await action.waitFor({ state: 'detached' }); assert.equal(await draft(), null);
+    assert.deepEqual(errors, []);
+  } finally { await browser?.close(); await server.close(); }
+});

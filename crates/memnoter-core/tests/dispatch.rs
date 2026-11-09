@@ -649,3 +649,35 @@ fn drawing_source_and_preview_survive_a_second_device_edit_and_restart() {
     .unwrap();
     assert_eq!(bytes["bytes"], json!(source_bytes));
 }
+
+#[test]
+fn document_commands_keep_typed_frontend_payloads_and_local_availability() {
+    let f = Fixture::new();
+    let module = f.call("create_module", json!({"name":"PDFs"}));
+    let document = f.call(
+        "add_document_bytes",
+        json!({"moduleId":module,"name":"Book.pdf","bytes":b"%PDF-1.7".to_vec()}),
+    );
+    assert_eq!(document["moduleName"], "PDFs");
+    assert_eq!(document["available"], true);
+    assert_eq!(document["pageCount"], Value::Null);
+    assert_eq!(f.call("list_documents", json!({})), json!([document]));
+    let id = &document["id"];
+    assert_eq!(
+        f.call("rename_document", json!({"id":id,"name":"New.pdf"})),
+        Value::Null
+    );
+    assert_eq!(
+        f.call("set_document_page_count", json!({"id":id,"pageCount":4})),
+        Value::Null
+    );
+    let path = f.call("document_path", json!({"id":id}));
+    std::fs::remove_file(path.as_str().unwrap()).unwrap();
+    let listed = f.call("list_documents", json!({"moduleId":module}));
+    assert_eq!(listed[0]["available"], false);
+    assert_eq!(listed[0]["pageCount"], 4);
+    assert_eq!(listed[0]["name"], "New.pdf");
+    assert!(dispatch(&f.core, "document_path", &json!({"id":id}).to_string()).is_err());
+    assert_eq!(f.call("delete_document", json!({"id":id})), Value::Null);
+    assert_eq!(f.call("list_documents", json!({})), json!([]));
+}

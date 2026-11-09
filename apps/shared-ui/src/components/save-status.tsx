@@ -1,6 +1,7 @@
 import { toast } from "sonner";
+import { pdfAnnotationSaveStatusStore, retryPdfAnnotationSaves } from "@/lib/pdf-annotation-store";
 import { capabilities } from "@/lib/backend";
-import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
+import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, retryFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { call as invoke } from "../lib/backend.ts";
@@ -49,6 +50,7 @@ async function confirmExitAfterRestore(discard = false, retryImages = false) {
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and
 // the queue keeps retrying in the background.
 const SaveStatus = () => {
+  const annotations = useSelector(pdfAnnotationSaveStatusStore, state => state);
   const imageErrors = useSelector(imageStatusStore, state => state.errors);
   const [exitError, setExitError] = useState("");
   const [retrying, setRetrying] = useState(false);
@@ -58,6 +60,14 @@ const SaveStatus = () => {
   const lastError = useSelector(saveStatusStore, (state) => state.lastError);
   const [confirmClose, setConfirmClose] = useState(false);
 
+  useEffect(() => {
+    const id = "pdf-annotation-saves";
+    if (!annotations.pending) { toast.dismiss(id); return; }
+    const message = annotations.failing ? "PDF annotations not saved" : "Saving PDF annotations…";
+    toast(message, { id, duration: Infinity, description: annotations.lastError ?? undefined,
+      action: annotations.failing ? { label: "Retry annotations", onClick: event => { event.preventDefault(); if (!blocked) retryPdfAnnotationSaves(); } } : undefined });
+  }, [annotations, blocked]);
+
   // Both messages stay for as long as the problem does. Their actions keep
   // the toast open (preventDefault): it goes away only when the cause does.
   useEffect(() => {
@@ -66,6 +76,7 @@ const SaveStatus = () => {
       id: IMAGE_ERRORS_TOAST,
       description: <>{imageErrors.map((error, index) => <p key={index}>{error}</p>)}</>,
       duration: Infinity,
+      cancel: { label: "Retry images", onClick: event => { event.preventDefault(); if (!blocked) void retryFailedImages(); } },
       action: { label: "Discard failed image operations", onClick: event => { event.preventDefault(); if (!blocked) discardFailedImages(); } },
     });
   }, [imageErrors, blocked]);

@@ -1020,7 +1020,7 @@ body {
     position: fixed;
     z-index: var(--z-sticky);
     top: 50%;
-    right: 1.25rem;
+    right: calc(1.25rem + var(--pdf-pane-width, 0px));
     transform: translateY(-50%);
 }
 
@@ -1715,3 +1715,50 @@ body {
 .note-image-block[data-loading] .note-image-host { opacity: 0.45; }
 .note-image-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; pointer-events: none; font-size: 14px; color: var(--foreground); }
 .note-image-loading > span { padding: 4px 8px; border-radius: 6px; background: var(--background); }
+/* Pages have explicit dimensions; isolate their text layers during sidebar
+   resizing and let the browser skip off-screen content. */
+.pdf-page {
+    color-scheme: light;
+    contain: strict;
+    content-visibility: auto;
+}
+.pdf-page .textLayer { user-select: text; }
+
+
+/* The reader owns pinch scaling; one-finger PDF scrolling remains native. */
+.pdf-viewport { touch-action: pan-x pan-y; }
+@media (any-pointer: coarse) {
+    .pdf-viewer button:not(.pdf-page button), #pdf-toolbar button {
+        min-width: 44px;
+        min-height: 44px;
+    }
+    .pdf-reader-tools {
+        height: auto;
+        min-height: 52px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+    }
+    .pdf-reader-leading { flex: none; min-height: 44px; }
+    .pdf-reader-leading:empty { display: none; }
+    .pdf-reader-controls {
+        display: flex;
+        flex: none;
+        align-items: center;
+        gap: 4px;
+        min-height: 52px;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+    }
+    #pdf-toolbar { min-height: 52px; flex-wrap: nowrap; }
+    .pdf-reader-tools input[aria-label="Page number"], #pdf-toolbar input[aria-label="Page number"] {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 16px;
+    }
+    .pdf-page button::before {
+        content: "";
+        position: absolute;
+        inset: -12px;
+    }
+}
