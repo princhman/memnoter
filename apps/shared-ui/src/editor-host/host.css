@@ -133,7 +133,21 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-pdf-pane li > button { border-radius: 12px; padding: 10px 12px; gap: 12px; font-size: 15px; }
 
 .native-editor-workspace [data-pdf-quote-controls] { bottom: calc(var(--bottom-inset, 0px) + 12px); }
-.native-editor-workspace [data-pdf-quote-controls] button { min-height: 44px; min-width: 44px; border-radius: 12px; }
+/* Quote bar: a capsule with the source on the left, a split Insert button
+   and a small round dismiss. Buttons keep 40px of height for a finger. */
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-bar { border-radius: 999px; padding: 5px 5px 5px 18px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-bar:has([role="alert"]) { border-radius: 22px; }
+.native-editor-workspace [data-pdf-quote-controls] [role="group"] { gap: 12px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-source { font-size: 13px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-split button { min-height: 40px; font-size: 15px; font-weight: 600; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-split > :first-child { border-radius: 999px 0 0 999px; padding-left: 16px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-split > :last-child { border-radius: 0 999px 999px 0; padding: 0 12px 0 9px; }
+.native-editor-workspace [data-pdf-quote-controls] .pdf-quote-split svg { width: 16px; height: 16px; }
+.native-editor-workspace [data-pdf-quote-controls] button.pdf-menu-close {
+  width: 32px; height: 32px; min-width: 32px; min-height: 32px; margin-right: 4px; padding: 0; border-radius: 999px;
+  background: color-mix(in oklch, var(--foreground) 10%, transparent);
+}
+.native-editor-workspace [data-pdf-quote-controls] button.pdf-menu-close svg { width: 15px; height: 15px; }
 
 [data-sonner-toast] button { min-height: 44px; }
 
