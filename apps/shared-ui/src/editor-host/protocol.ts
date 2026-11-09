@@ -14,6 +14,7 @@ export const REVIEW_ENTRY = "review-native.html";
 
 // true means the command can run while content writes are paused.
 export const EXEC_COMMANDS = {
+  insertFoldableBlock: false,
   insertTable: false,
   addRowBefore: false,
   addRowAfter: false,

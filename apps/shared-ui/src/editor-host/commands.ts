@@ -81,6 +81,7 @@ export function editorState(editor: Editor): EditorState {
 export function execEditor(editor: Editor, command: ExecCommand, args: Record<string, unknown> = {}): boolean {
   const commands = editor.commands;
   switch (command) {
+    case "insertFoldableBlock": return commands.insertFoldableBlock();
     case "insertTable": return editor.isActive("table") ? false : commands.insertTable({ rows: 3, cols: 3, withHeaderRow: true });
     case "addRowBefore": return commands.addRowBefore();
     case "addRowAfter": return commands.addRowAfter();

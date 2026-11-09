@@ -130,6 +130,14 @@ const ITEMS: InsertItem[] = [
   },
   {
     group: "Blocks",
+    title: "Foldable block",
+    keywords: ["fold", "foldable", "toggle", "example", "collapse", "details"],
+    hint: "",
+    run: (editor, range) =>
+      editor.chain().focus().deleteRange(range).insertFoldableBlock().run(),
+  },
+  {
+    group: "Blocks",
     title: "Image",
     keywords: ["image", "picture", "photo", "upload", "file"],
     hint: "",

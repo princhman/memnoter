@@ -190,6 +190,8 @@ struct FormattingBar: View {
         } label: { Image(systemName: "tablecells") }
             .buttonStyle(FormatButtonStyle(active: session.state.inTable))
             .accessibilityLabel("Table")
+        Button { session.exec(.insertFoldableBlock) } label: { Image(systemName: "rectangle.expand.vertical") }
+            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Insert foldable block")
         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
             .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
     }
