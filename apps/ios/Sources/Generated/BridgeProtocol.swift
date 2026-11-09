@@ -11,6 +11,10 @@ enum NativeEventName: String, Codable {
     case state = "state"
     case ready = "ready"
     case imagePreview = "imagePreview"
+    case pickPdfs = "pickPdfs"
+    case openModule = "openModule"
+    case pdfViewState = "pdfViewState"
+    case pdfState = "pdfState"
     case error = "error"
     case saveStatus = "saveStatus"
     case scrollDebug = "scrollDebug"
@@ -72,6 +76,8 @@ enum EditorApiMethod: String, Codable {
     case open = "open"
     case flush = "flush"
     case refreshModules = "refreshModules"
+    case toggleFiles = "toggleFiles"
+    case refreshDocuments = "refreshDocuments"
     case exec = "exec"
     case setOutlineTracking = "setOutlineTracking"
     case focus = "focus"
@@ -160,6 +166,9 @@ enum BridgeProtocol {
     static let appScheme = "memnoter-app"
     static let editorEntry = "editor.html"
     static let reviewEntry = "review-native.html"
+    static let pdfChunkCommand = "read_pdf_chunk"
+    static let pdfChunkBytes = 1048576
+    static let maxPdfBytes = 52428800
     static let highlightColors = ["yellow", "green", "blue", "pink", "purple"]
     static let homeShortcuts: [(keys: String, action: String)] = [
         ("/", "Insert a block"),

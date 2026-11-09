@@ -1,3 +1,4 @@
+import { NoteWithPdfs } from "@/components/note-with-pdfs";
 import { openReview } from "@/components/card-navigation-guard";
 import { useCommand } from "@/lib/commands";
 import Tiptap from "@/components/Tiptap";
@@ -13,5 +14,5 @@ function RouteComponent() {
   useCommand({ id: "review.module", title: "Review this module", keywords: ["flashcards"],
     run: () => openReview(() => navigate({ to: "/review", search: { module: moduleId } })),
   });
-  return <Tiptap key={moduleId} moduleId={moduleId} />;
+  return <NoteWithPdfs key={moduleId} moduleId={moduleId}><Tiptap moduleId={moduleId} /></NoteWithPdfs>;
 }

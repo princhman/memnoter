@@ -67,6 +67,8 @@ pub(crate) mod assets {
     pub fn referenced_by(conn: &Connection, id: &str) -> CommandResult<bool> {
         conn.query_row(
             "select exists(select 1 from shared_image_refs where file_id = ?1)
+            or exists(select 1 from documents where id = ?1)
+            or exists(select 1 from files where id = ?1 and file_type = 'application/pdf')
             or exists(select 1 from cards where kind = 'occlusion'
             and (json_extract(front, '$.fileId') = ?1 or json_extract(back, '$.fileId') = ?1))",
             [id],
@@ -103,7 +105,7 @@ pub(crate) mod assets {
             }
             let exists: bool = conn
                 .query_row(
-                    "select exists(select 1 from files where id = ?1)",
+                    "select exists(select 1 from files where id = ?1) or exists(select 1 from documents where id = ?1)",
                     [&id],
                     |r| r.get(0),
                 )
@@ -220,7 +222,8 @@ pub fn cleanup_files(
     expected_state: Vec<u8>,
     expected_update_id: i64,
 ) -> CommandResult<Vec<String>> {
-    let conn = db.lock()?;
+    let mut guard = db.lock()?;
+    let conn = guard.transaction().map_err(db_err)?;
     let module_id = module_id.as_str();
     let file_ids = &file_ids;
     let expected_state = expected_state.as_slice();
@@ -269,7 +272,9 @@ pub fn cleanup_files(
             params![id, module_id],
         )
         .map_err(db_err)?;
+        crate::sync::record_file_deleted(&conn, id)?;
         deleted.push(id.clone());
     }
+    conn.commit().map_err(db_err)?;
     Ok(deleted)
 }

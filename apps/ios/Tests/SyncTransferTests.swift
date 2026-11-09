@@ -37,6 +37,37 @@ final class SyncTransferTests: XCTestCase {
 }
 
 final class SyncFileTransferTests: XCTestCase {
+    @MainActor func testGoneFilesAreRecordedPermanentlyForUploadsAndDownloads() async throws {
+        for upload in [false, true] {
+            let account = SyncAccount(server: "https://mock.local", email: "a@example.com", userId: "a", token: "token", key: Array(repeating: 17, count: 32))
+            var pending = true
+            var attempts = 0
+            var gone = 0
+            let files = SyncFileTransfers(command: { name, args in
+                switch name {
+                case "sync_status": return ["generation": "epoch"]
+                case "sync_pending_deletes": return [String]()
+                case "sync_pending_uploads": return upload && pending ? ["image"] : [String]()
+                case "sync_missing_files": return !upload && pending ? [["fileId": "image", "moduleId": "note"]] : [[String: String]]()
+                case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]
+                case "sync_file_gone":
+                    XCTAssertEqual(args["fileId"] as? String, "image")
+                    XCTAssertEqual(args["generation"] as? String, "epoch")
+                    pending = false; gone += 1; return NSNull()
+                default: XCTFail("Unexpected command: \(name)"); return NSNull()
+                }
+            }, object: { _, _, _ in
+                attempts += 1
+                throw SyncHTTPFailure(status: 410, message: "Gone")
+            }, deleteObject: { _, _ in XCTFail("Unexpected deletion") }, isCurrent: { _ in true }, onFile: { _, _ in XCTFail("Gone image stored") }, onError: { XCTFail("Unexpected error: \($0)") })
+            let owner = UUID()
+            try await files.run(account: account, owner: owner)
+            try await files.run(account: account, owner: owner)
+            XCTAssertEqual(gone, 1)
+            XCTAssertEqual(attempts, 1)
+        }
+    }
+
     @MainActor func testFileCompletionKeepsGenerationCapturedBeforeNetworkWait() async throws {
         let account = SyncAccount(server: "https://mock.local", email: "a@example.com", userId: "a", token: "token", key: Array(repeating: 17, count: 32))
         var epoch = "before-restore"
@@ -44,6 +75,7 @@ final class SyncFileTransferTests: XCTestCase {
         let files = SyncFileTransfers(command: { name, args in
             switch name {
             case "sync_status": return ["generation": epoch]
+            case "sync_pending_deletes": return [String]()
             case "sync_pending_uploads": return ["image"]
             case "sync_missing_files": return [[String: String]]()
             case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]
@@ -53,7 +85,7 @@ final class SyncFileTransferTests: XCTestCase {
         }, object: { _, _, _ in
             epoch = "after-restore"
             return Data()
-        }, isCurrent: { _ in true }, onFile: { _, _ in }, onError: { XCTFail("Unexpected error: \($0)") })
+        }, deleteObject: { _, _ in XCTFail("Unexpected deletion") }, isCurrent: { _ in true }, onFile: { _, _ in }, onError: { XCTFail("Unexpected error: \($0)") })
         try await files.run(account: account, owner: UUID())
         XCTAssertEqual(completionEpoch, "before-restore", "Core must see the original generation and reject a stale completion")
     }
@@ -66,6 +98,7 @@ final class SyncFileTransferTests: XCTestCase {
         let files = SyncFileTransfers(command: { name, _ in
             switch name {
             case "sync_status": return ["generation": "test-epoch"]
+            case "sync_pending_deletes": return [String]()
             case "sync_pending_uploads": return pending
             case "sync_missing_files": return pending.map { ["fileId": $0, "moduleId": "note"] }
             case "read_file": return ["bytes": [UInt8](arrayLiteral: 42)]
@@ -74,7 +107,7 @@ final class SyncFileTransferTests: XCTestCase {
         }, object: { id, _, _ in
             attempted.insert(id)
             throw SyncHTTPFailure(status: 404, message: "Missing image")
-        }, isCurrent: { _ in true }, onFile: { _, _ in XCTFail("Failed download was stored") }, onError: { XCTFail("Unexpected error: \($0)") })
+        }, deleteObject: { _, _ in XCTFail("Unexpected deletion") }, isCurrent: { _ in true }, onFile: { _, _ in XCTFail("Failed download was stored") }, onError: { XCTFail("Unexpected error: \($0)") })
         let owner = UUID()
         try await files.run(account: account, owner: owner)
         XCTAssertEqual(attempted, Set(ids))
@@ -112,7 +145,7 @@ final class SyncFileTransferTests: XCTestCase {
             requests.append(id)
             if id == missing { throw SyncHTTPFailure(status: 404, message: "Not uploaded yet") }
             return try syncCrypt(key: Data(account.key), doc: "file:" + id, bytes: payload, decrypt: false)
-        }, isCurrent: { _ in true }, onFile: { _, json in
+        }, deleteObject: { _, _ in XCTFail("Unexpected deletion") }, isCurrent: { _ in true }, onFile: { _, json in
             let file = try JSONDecoder().decode(SavedFile.self, from: Data(json.utf8))
             stored.append(file.id)
         }, onError: { XCTFail("404 should remain pending: \($0)") })

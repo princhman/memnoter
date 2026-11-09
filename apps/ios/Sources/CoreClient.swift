@@ -18,6 +18,10 @@ struct NumberingArgs: Encodable, Sendable { let moduleId: String; let enabled: B
 struct SearchArgs: Encodable, Sendable { let query: String; let limit: Int = 50 }
 struct CountArgs: Encodable, Sendable { let now: Int64; let dayEnd: Int64; var createdAtCutoff: Int64? = nil }
 struct FileArgs: Encodable, Sendable { let moduleId: String; let bytes: [UInt8]; let mimeType: String }
+struct DocumentPathArgs: Encodable, Sendable { let moduleId: String; let path: String }
+struct PdfChunkArgs: Codable, Sendable { let documentId: String; let offset: Int; let length: Int }
+struct PdfChunkReply: Codable, Sendable { let offset: Int; let total: Int; let data: String }
+private struct DocumentIdArgs: Encodable, Sendable { let id: String }
 struct BackupArgs: Encodable, Sendable { let id: String }
 
 private final class SyncOutboxObserver: OutboxObserver, @unchecked Sendable {
@@ -45,6 +49,35 @@ actor CoreClient {
     }
     func write<A: Encodable & Sendable>(_ command: String, _ args: A) throws {
         _ = try raw(command, json: String(decoding: JSONEncoder().encode(args), as: UTF8.self))
+    }
+    func readPdfChunk(_ args: PdfChunkArgs) throws -> PdfChunkReply {
+        guard !args.documentId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, args.documentId.utf8.count <= 256,
+              args.offset >= 0, args.offset <= BridgeProtocol.maxPdfBytes,
+              args.length > 0, args.length <= BridgeProtocol.pdfChunkBytes else {
+            throw NSError(domain: "PDFReader", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid PDF read request."])
+        }
+        // Resolve every request against the live documents table. The web caller
+        // supplies an ID, never an arbitrary filesystem path or cached receipt.
+        let path: String = try call("document_path", DocumentIdArgs(id: args.documentId))
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+        defer { try? handle.close() }
+        let size = try handle.seekToEnd()
+        guard size > 0, size <= UInt64(BridgeProtocol.maxPdfBytes) else {
+            throw NSError(domain: "PDFReader", code: 2, userInfo: [NSLocalizedDescriptionKey: "PDF must be between 1 byte and 50 MB."])
+        }
+        guard UInt64(args.offset) <= size else {
+            throw NSError(domain: "PDFReader", code: 3, userInfo: [NSLocalizedDescriptionKey: "PDF read offset is outside the file."])
+        }
+        try handle.seek(toOffset: UInt64(args.offset))
+        let count = min(args.length, Int(size) - args.offset)
+        var bytes = Data()
+        while bytes.count < count {
+            guard let next = try handle.read(upToCount: count - bytes.count), !next.isEmpty else {
+                throw NSError(domain: "PDFReader", code: 4, userInfo: [NSLocalizedDescriptionKey: "PDF changed while it was being read. Reopen it and try again."])
+            }
+            bytes.append(next)
+        }
+        return PdfChunkReply(offset: args.offset, total: Int(size), data: bytes.base64EncodedString())
     }
     func dailyBackup() throws { try core.dailyBackup() }
 }

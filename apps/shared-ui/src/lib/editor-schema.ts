@@ -26,11 +26,12 @@ import { Arrows } from "@/lib/arrows";
 import { MoveLines } from "@/lib/move-lines";
 import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
+import { PdfTextQuote } from "./editor-schema/pdf-text-quotes";
 import { Flashcards } from "@/lib/flashcards";
 
 type NoteExtensionOptions = {
   document: Y.Doc;
-  ui?: { mermaidView?: AnyExtension; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
+  ui?: { pdfTextQuote?: typeof PdfTextQuote; mermaidView?: AnyExtension; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
   insertImages?: (editor: Editor, files: File[], position: number) => void;
   scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;
@@ -67,6 +68,7 @@ export function noteExtensions({
     ui.inlineMath ?? InlineMath,
     ui.mathBlock ?? MathBlock,
     Flashcards,
+    ui.pdfTextQuote ?? PdfTextQuote,
     HeadingHieararchy,
     SectionFocus,
     Sections,

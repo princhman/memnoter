@@ -47,7 +47,9 @@ for (const type of ['Heading', 'SectionCrumb', 'FocusableSection', 'EditorState'
   output += '}\n';
 }
 output += 'enum BridgeProtocol {\n';
-for (const [key, field] of Object.entries({BRIDGE_VERSION: 'version', FILE_SCHEME: 'fileScheme', APP_SCHEME: 'appScheme', EDITOR_ENTRY: 'editorEntry', REVIEW_ENTRY: 'reviewEntry'})) output += `    static let ${field} = ${constants.get(key).getText(source)}\n`;
+for (const [key, field] of Object.entries({BRIDGE_VERSION: 'version', FILE_SCHEME: 'fileScheme', APP_SCHEME: 'appScheme', EDITOR_ENTRY: 'editorEntry', REVIEW_ENTRY: 'reviewEntry', PDF_CHUNK_COMMAND: 'pdfChunkCommand', PDF_CHUNK_BYTES: 'pdfChunkBytes'})) output += `    static let ${field} = ${constants.get(key).getText(source)}\n`;
+const syncContract = JSON.parse(readFileSync(new URL("apps/sync/test/fixtures/protocol.json", root), "utf8"));
+output += `    static let maxPdfBytes = ${syncContract.MAX_FILE_BYTES}\n`;
 const highlight = parse('apps/shared-ui/src/lib/highlight.ts');
 const colors = highlight.statements.filter(ts.isVariableStatement).flatMap(s => [...s.declarationList.declarations]).find(d => d.name.getText(highlight) === 'HIGHLIGHT_COLORS').initializer.expression;
 output += `    static let highlightColors = [${colors.elements.map(v => JSON.stringify(v.text)).join(', ')}]\n`;

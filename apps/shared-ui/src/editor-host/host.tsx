@@ -1,6 +1,7 @@
 import { editorHost } from "@/lib/editor-host";
 import { settled } from "@/lib/async-work";
 import { EditorHostProvider } from "@/lib/editor-host-context";
+import { pdfAnnotationSaveStatusStore } from "@/lib/pdf-annotation-store";
 import { BRIDGE_VERSION, EXEC_COMMANDS } from "./protocol";
 import { onRemote, onFileStored } from "@/lib/sync/apply-remote";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -9,7 +10,10 @@ import { blockIdOf } from "@/lib/cards";
 import { sectionFocusKey } from "@/lib/section-focus";
 import { observeCardInfo } from "./card-info";
 import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop } from "./scroll";
+import { useRouter, useRouterState } from "@tanstack/react-router";
+import { NativePdfWorkspace, type NativePdfActions } from "./pdf-workspace";
 import Tiptap from "@/components/Tiptap";
+import SaveStatus from "@/components/save-status";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
 import { queryClient } from "@/lib/query-client";
@@ -24,6 +28,12 @@ import { editorOutline, editorOutlines, editorState, execEditor } from "./comman
 const TYPING_SETTLE_MS = 300;
 
 export function Host() {
+  const router = useRouter();
+  const requestedModule = useRouterState({ select: state => {
+    const match = state.matches.find(match => "moduleId" in match.params);
+    return match && "moduleId" in match.params ? match.params.moduleId : null;
+  } });
+  const pdfActions = useRef<NativePdfActions>(null);
   const [moduleId, setModuleId] = useState<string | null>(null);
   const { activeEditor } = useActiveEditor();
   const active = useRef(activeEditor);
@@ -32,6 +42,10 @@ export function Host() {
   const refreshOutline = useRef(() => {});
   const opening = useRef<{ moduleId: string; resolve(): void; reject(error: Error): void } | null>(null);
   useLayoutEffect(() => { active.current = activeEditor; }, [activeEditor]);
+
+  useEffect(() => {
+    if (requestedModule && requestedModule !== moduleId && !opening.current) postNativeEvent("openModule", { moduleId: requestedModule });
+  }, [requestedModule, moduleId]);
 
   useEffect(() => {
     const stopCardInfo = container.current ? observeCardInfo(container.current) : () => {};
@@ -48,6 +62,8 @@ export function Host() {
     };
     let queue = Promise.resolve();
     window.memnoterEditor = {
+      toggleFiles() { getEditor(true); pdfActions.current?.toggleFiles(); },
+      async refreshDocuments(id) { await pdfActions.current?.refreshDocuments(id); },
       setOutlineTracking(enabled) { outlineTracking.current = enabled; refreshOutline.current(); },
       async refreshModules() { await queryClient.invalidateQueries({ queryKey: ["modules"] }); },
       applyRemote: onRemote,
@@ -59,6 +75,7 @@ export function Host() {
         if (!element || element.dataset.topInset === String(px)) return;
         element.dataset.topInset = String(px);
         element.style.setProperty("--top-inset", `${px}px`);
+        element.parentElement?.style.setProperty("--top-inset", `${px}px`);
       },
       setBottomInset(px) {
         traceScroll("bottomInset", { px });
@@ -67,18 +84,23 @@ export function Host() {
         if (!element || element.dataset.bottomInset === String(px)) return;
         element.dataset.bottomInset = String(px);
         element.style.setProperty("--bottom-inset", `${px}px`);
+        element.parentElement?.style.setProperty("--bottom-inset", `${px}px`);
+        document.documentElement.style.setProperty("--native-bottom-inset", `${px}px`);
         const editor = active.current?.editor;
         if (!hasSectionAnchor(element) && editor && !editor.isDestroyed) requestAnimationFrame(() => { if (!editor.isDestroyed) revealCaret(editor.view, "inset"); });
       },
       open(id) {
         const operation = queue.then(async () => {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
-          if (active.current?.moduleId === id && active.current.isReady) return;
+          if (active.current?.moduleId === id && active.current.isReady) {
+            await router.navigate({ to: "/$moduleId", params: { moduleId: id } }); return;
+          }
           flushPersistedViews();
           await flushAll();
           await new Promise<void>((resolve, reject) => {
             opening.current = { moduleId: id, resolve, reject };
             setModuleId(id);
+            void router.navigate({ to: "/$moduleId", params: { moduleId: id } }).catch(reject);
           });
         }).catch(error => { throw fail(error); });
         queue = settled(operation);
@@ -111,12 +133,17 @@ export function Host() {
     const stopMutations = queryClient.getMutationCache().subscribe(event => {
       if (event.type === "updated" && event.action.type === "error") fail(event.mutation.state.error);
     });
-    const saveStatus = () => postNativeEvent("saveStatus", { ...saveStatusStore.state, imageErrors: imageStatusStore.state.errors });
+    const saveStatus = () => postNativeEvent("saveStatus", {
+      pending: saveStatusStore.state.pending + pdfAnnotationSaveStatusStore.state.pending,
+      failing: saveStatusStore.state.failing || pdfAnnotationSaveStatusStore.state.failing,
+      imageErrors: imageStatusStore.state.errors,
+    });
     const stopSaves = saveStatusStore.subscribe(saveStatus);
     const stopImages = imageStatusStore.subscribe(saveStatus);
+    const stopAnnotations = pdfAnnotationSaveStatusStore.subscribe(saveStatus);
     saveStatus();
     postNativeEvent("ready", { protocolVersion: BRIDGE_VERSION });
-    return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); };
+    return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); stopAnnotations.unsubscribe(); };
   }, []);
 
   useEffect(() => {
@@ -220,5 +247,5 @@ export function Host() {
     };
   }, [activeEditor]);
 
-  return <EditorHostProvider value={editorHost}><main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} />}</main></EditorHostProvider>;
+  return <EditorHostProvider value={editorHost}><NativePdfWorkspace moduleId={moduleId} actions={pdfActions}><SaveStatus /><main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} />}</main></NativePdfWorkspace></EditorHostProvider>;
 }

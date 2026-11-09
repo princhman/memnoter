@@ -52,9 +52,10 @@ test("highlight picker, syntax and old-schema compatibility", async () => {
     assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "yellow");
     assert.equal(await page.locator(".tiptap mark").getAttribute("style"), null);
     await page.evaluate(() => editor.chain().focus().setTextSelection({ from: 1, to: 7 }).run());
-    await page.keyboard.press("Meta+Shift+h");
+    const highlightShortcut = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta+Shift+h" : "Control+Shift+h");
+    await page.keyboard.press(highlightShortcut);
     assert.equal(await page.locator(".tiptap mark").count(), 0);
-    await page.keyboard.press("Meta+Shift+h");
+    await page.keyboard.press(highlightShortcut);
     assert.equal(await page.locator(".tiptap mark").getAttribute("data-color"), "yellow");
     // Highlighted inline math and cloze text use the same semantic colour in
     // the editor and the shared face mounted by native review.

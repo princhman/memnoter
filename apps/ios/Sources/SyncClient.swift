@@ -129,6 +129,8 @@ struct SyncKeychain {
             try await command($0, $1)
         }, object: { [unowned self] id, account, data in
             try await object("files", id, account: account, put: data)
+        }, deleteObject: { [unowned self] id, account in
+            _ = try await request(server: account.server, path: SyncConfiguration.path("files") + id, token: account.token, method: "DELETE")
         }, isCurrent: { [unowned self] in $0 == generation }, onFile: { [unowned self] in
             try await onFile?($0, $1)
         }, onError: { [weak self] in self?.error = $0.localizedDescription })
@@ -406,6 +408,7 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
 @MainActor final class SyncFileTransfers {
     private let command: @MainActor (String, [String: Any]) async throws -> Any
     private let object: @MainActor (String, SyncAccount, Data?) async throws -> Data
+    private let deleteObject: @MainActor (String, SyncAccount) async throws -> Void
     private let isCurrent: @MainActor (UUID) -> Bool
     private let onFile: @MainActor (String, String) async throws -> Void
     private let onError: @MainActor (Error) -> Void
@@ -414,14 +417,15 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
     var nextDelay: UInt64? { policy.nextDelay(nowMs: now) }
     init(command: @escaping @MainActor (String, [String: Any]) async throws -> Any,
          object: @escaping @MainActor (String, SyncAccount, Data?) async throws -> Data,
+         deleteObject: @escaping @MainActor (String, SyncAccount) async throws -> Void,
          isCurrent: @escaping @MainActor (UUID) -> Bool,
          onFile: @escaping @MainActor (String, String) async throws -> Void,
          onError: @escaping @MainActor (Error) -> Void) {
-        self.command = command; self.object = object; self.isCurrent = isCurrent
+        self.command = command; self.object = object; self.deleteObject = deleteObject; self.isCurrent = isCurrent
         self.onFile = onFile; self.onError = onError
     }
     func reset() { policy = SyncFilePolicy() }
-    private func attempt(_ id: String, transfer: () async throws -> Void) async throws {
+    private func attempt(_ id: String, fileId: String, generation: String, owner: UUID, transfer: () async throws -> Void) async throws {
         guard policy.ready(id: id, nowMs: now) else { return }
         do {
             try await transfer()
@@ -429,6 +433,12 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         } catch {
             try Task.checkCancellation()
             if let failure = error as? SyncHTTPFailure, failure.status == 401 { throw failure }
+            if let failure = error as? SyncHTTPFailure, failure.status == 410 {
+                guard isCurrent(owner) else { return }
+                _ = try await command("sync_file_gone", ["fileId": fileId, "generation": generation])
+                policy.completed(id: id)
+                return
+            }
             policy.failed(id: id, nowMs: now)
             // A 404 means the announcing device has not uploaded the image yet.
             if (error as? SyncHTTPFailure)?.status != 404 { onError(error) }
@@ -438,15 +448,16 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         let state = try await command("sync_status", [:]) as? [String: Any] ?? [:]
         let databaseGeneration = state["generation"] as? String ?? ""
         let uploads = try await command("sync_pending_uploads", ["generation": databaseGeneration]) as? [String] ?? []
+        let deletes = try await command("sync_pending_deletes", ["generation": databaseGeneration]) as? [String] ?? []
         let downloads = try await command("sync_missing_files", ["generation": databaseGeneration]) as? [[String: String]] ?? []
         guard isCurrent(owner) && !Task.isCancelled else { return }
-        let pending = Set(uploads.map { "upload:" + $0 } + downloads.compactMap { file in
+        let pending = Set(uploads.map { "upload:" + $0 } + deletes.map { "delete:" + $0 } + downloads.compactMap { file in
             file["fileId"].map { "download:" + $0 }
         })
         policy.retain(pending: Array(pending))
         for id in uploads {
             guard isCurrent(owner) && !Task.isCancelled else { return }
-            try await attempt("upload:" + id) {
+            try await attempt("upload:" + id, fileId: id, generation: databaseGeneration, owner: owner) {
                 let file = try await command("read_file", ["moduleId": "", "fileId": id]) as? [String: Any] ?? [:]
                 guard let bytes = file["bytes"] as? [UInt8] else { throw SyncFailure(message: "Core returned no bytes for image \(id)") }
                 _ = try await object(id, account, Data(nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: bytes, decrypt: false)))
@@ -454,10 +465,18 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
                 _ = try await command("sync_upload_done", ["fileId": id, "generation": databaseGeneration])
             }
         }
+        for id in deletes {
+            guard isCurrent(owner) && !Task.isCancelled else { return }
+            try await attempt("delete:" + id, fileId: id, generation: databaseGeneration, owner: owner) {
+                try await deleteObject(id, account)
+                guard isCurrent(owner) && !Task.isCancelled else { return }
+                _ = try await command("sync_delete_done", ["fileId": id, "generation": databaseGeneration])
+            }
+        }
         for file in downloads {
             guard isCurrent(owner) && !Task.isCancelled else { return }
             guard let id = file["fileId"], let module = file["moduleId"] else { throw SyncFailure(message: "Invalid missing-image record from core") }
-            try await attempt("download:" + id) {
+            try await attempt("download:" + id, fileId: id, generation: databaseGeneration, owner: owner) {
                 let blob = try await object(id, account, nil)
                 let bytes = try nativeCrypt(key: account.key, doc: SyncConfiguration.text("fileAadPrefix") + id, bytes: Array(blob), decrypt: true)
                 guard isCurrent(owner) && !Task.isCancelled else { return }

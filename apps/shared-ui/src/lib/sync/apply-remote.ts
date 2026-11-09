@@ -1,4 +1,5 @@
 import { cardsChanged } from "../card-events";
+import { refreshPdfAnnotations } from "@/lib/pdf-annotation-store";
 import { appendSavedUpdate, contentKey, patchContent, type ContentUpdate, type FileType } from "@/lib/content";
 import { dueCountsKey, isModuleOpen } from "@/lib/card-sync";
 import { refreshDerived } from "@/lib/note-index";
@@ -7,6 +8,7 @@ import { queryClient } from "@/lib/query-client";
 import { forgetModule } from "@/lib/store";
 import { saveQueue } from "@/lib/saves";
 import { syncedFileArrived } from "./file-requests";
+import { documentsKey } from "@/lib/use-documents";
 // Dispatched on window with the module id when another device deleted it.
 export const MODULE_DELETED_REMOTELY_EVENT = "memnoter:module-deleted-remotely";
 
@@ -18,6 +20,7 @@ export type ApplyResult = {
   deleted: string[];
   reviewsChanged: boolean;
   filesChanged: boolean;
+  annotationsChanged?: string[];
 };
 
 const reindexTimers = new Map<string, number>();
@@ -45,6 +48,7 @@ function scheduleReindex(moduleId: string) {
 }
 
 export function onRemote(result: ApplyResult) {
+  refreshPdfAnnotations(result.annotationsChanged ?? []);
   for (const { moduleId, update } of result.updates) {
     // The same path as a local save: an open editor applies the update from
     // the cache, and compaction then includes it.
@@ -66,7 +70,8 @@ export function onRemote(result: ApplyResult) {
     // Card schedules are under the due counts' key too.
     void queryClient.invalidateQueries({ queryKey: dueCountsKey });
   }
-
+  // PDF names and deletions arrive in the vault; the list is a cheap local query.
+  void queryClient.invalidateQueries({ queryKey: documentsKey });
 }
 
 export function onFileStored(moduleId: string, file: FileType) {

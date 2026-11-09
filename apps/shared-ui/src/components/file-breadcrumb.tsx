@@ -1,3 +1,5 @@
+import { useDocuments } from "@/lib/use-documents";
+import { documentName } from "@/lib/pdf-state";
 import { useModules } from "@/lib/modules";
 import { IconTooltip } from "@/components/icon-tooltip";
 import {
@@ -11,7 +13,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "./ui/sidebar";
-import { useMatchRoute } from "@tanstack/react-router";
+import { Link, useMatchRoute } from "@tanstack/react-router";
 import { useEditorState } from "@tiptap/react";
 import { getFocusedSectionPath } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
@@ -42,8 +44,12 @@ export function FileBreadcrumb() {
   // These pages also match the module id pattern.
   const isSettings = !!matchRoute({ to: "/settings" });
   const isReview = !!matchRoute({ to: "/review" });
+  const isFiles = !!matchRoute({ to: "/files", fuzzy: true });
+  const reader = matchRoute({ to: "/files/$documentId" });
+  const { data: documents = [] } = useDocuments();
+  const pdf = reader ? documents.find(doc => doc.id === reader.documentId) : undefined;
   const match = matchRoute({ to: "/$moduleId" });
-  const moduleId = match && !isSettings && !isReview ? match.moduleId : null;
+  const moduleId = match && !isSettings && !isReview && !isFiles ? match.moduleId : null;
   const moduleName = modules.find((module) => module.id === moduleId)?.name;
   const { activeEditor } = useActiveEditor();
   const editor =
@@ -87,8 +93,17 @@ export function FileBreadcrumb() {
       <div className={cn("shrink-0 md:hidden", TOOLBAR_OFFSET)} />
       <div className="min-w-0">
         <Breadcrumb>
-          <BreadcrumbList className={isReview ? "flex-nowrap" : undefined}>
-            {isReview ? (
+          <BreadcrumbList className={isReview || isFiles ? "flex-nowrap" : undefined}>
+            {isFiles ? (<>
+              {/* Like Review: the module scope first, then the page. */}
+              <BreadcrumbItem className="min-w-0"><ReviewScopeMenu page="files" current={pdf?.moduleId} /></BreadcrumbItem>
+              <BreadcrumbSeparator>/</BreadcrumbSeparator>
+              {pdf ? <>
+                <BreadcrumbItem className="shrink-0"><BreadcrumbLink render={<Link to="/files" search={{ module: pdf.moduleId }} />}>Files</BreadcrumbLink></BreadcrumbItem>
+                <BreadcrumbSeparator>›</BreadcrumbSeparator>
+                <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate whitespace-nowrap">{documentName(pdf.name)}</BreadcrumbPage></BreadcrumbItem>
+              </> : <BreadcrumbItem className="shrink-0"><BreadcrumbPage data-tauri-drag-region="deep">Files</BreadcrumbPage></BreadcrumbItem>}
+            </>) : isReview ? (
               <>
                 {/* The module under review comes first, as it will for a module's other pages. */}
                 <BreadcrumbItem className="min-w-0">
