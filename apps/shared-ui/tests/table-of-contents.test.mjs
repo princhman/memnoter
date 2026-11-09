@@ -130,7 +130,7 @@ test("popup can be entered and a hidden descendant click navigates", async () =>
   assert.equal(await popup().count(), 1);
   await child.click();
   await page.waitForFunction(() => document.querySelector("main").scrollTop > 100);
-  assert.equal(await popup().count(), 0);
+  await popup().waitFor({ state: "detached" });
 });
 
 test("keyboard moves between dashes, enters children, and Escape closes and restores focus", async () => {
@@ -145,7 +145,7 @@ test("keyboard moves between dashes, enters children, and Escape closes and rest
   await page.keyboard.press("End");
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), example(2, 1));
   await page.keyboard.press("Escape");
-  assert.equal(await popup().count(), 0);
+  await popup().waitFor({ state: "detached" });
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), topic(2, 1));
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector("main").scrollTop > 100);
@@ -160,7 +160,7 @@ test("touch first tap opens, second tap navigates; native host still omits the T
   assert.equal(await touch.locator("main").evaluate(el => el.scrollTop), 0);
   await target.tap();
   await touch.waitForFunction(() => document.querySelector("main").scrollTop > 100);
-  assert.equal(await touch.locator(".toc-popup").count(), 0);
+  await touch.locator(".toc-popup").waitFor({ state: "detached" });
   await touch.close();
   const native = await browser.newPage();
   await native.addInitScript(() => { window.installTestBridge({ native: function() {} }); });
@@ -246,7 +246,7 @@ test("descendants preserve relative indentation and render inline math", async (
   }));
   assert.ok(indentation[0] < indentation[1] && indentation[1] < indentation[2]);
   await popup().getByRole("button", { name: "1.1.1 Detail", exact: true }).click();
-  assert.equal(await popup().count(), 0);
+  await popup().waitFor({ state: "detached" });
   await waitNames('.toc-dash[data-related="true"]', []);
 });
 
