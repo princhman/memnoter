@@ -1,6 +1,7 @@
 import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
-import { ChevronLeft, Maximize2, X } from "lucide-react";
+import { ChevronLeft, Maximize2 } from "lucide-react";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
 import { documentName } from "@/lib/pdf-state";
@@ -22,13 +23,11 @@ function PdfPanel({ moduleId }: { moduleId: string }) {
   const pane = usePdfPane(moduleId);
   const router = useRouter();
   const doc = docs.find(doc => doc.id === pane.active);
-  return doc ? <PdfViewer key={doc.id} doc={doc} leading={<>
+  // The native toolbar's Files button hides the pane, so it needs no close.
+  return doc ? <PdfViewer key={doc.id} doc={doc} compact leading={<>
     <ToolButton label="All files" onClick={() => updatePdfPane(moduleId, { active: null })}><ChevronLeft /></ToolButton>
     <span className="min-w-0 truncate text-sm">{documentName(doc.name)}</span>
-  </>} trailing={<>
-    <ToolButton label="Open full screen" onClick={() => void router.navigate({ to: "/files/$documentId", params: { documentId: doc.id } })}><Maximize2 /></ToolButton>
-    <ToolButton label="Close" onClick={() => updatePdfPane(moduleId, { open: false })}><X /></ToolButton>
-  </>} /> : <PdfFileList moduleId={moduleId} docs={docs} />;
+  </>} menu={close => <DropdownMenuItem onClick={() => { close(); void router.navigate({ to: "/files/$documentId", params: { documentId: doc.id } }); }}><Maximize2 />Open full screen</DropdownMenuItem>} /> : <PdfFileList moduleId={moduleId} docs={docs} />;
 }
 
 function FullscreenPdf({ documentId, onClose }: { documentId: string; onClose: () => void }) {
@@ -40,9 +39,9 @@ function FullscreenPdf({ documentId, onClose }: { documentId: string; onClose: (
     <header className="native-pdf-heading">
       <ToolButton label="Back to note" onClick={onClose}><ChevronLeft /></ToolButton>
       <span className="min-w-0 flex-1 truncate text-sm">{doc ? documentName(doc.name) : "PDF"}</span>
+      <div id="pdf-toolbar" className="native-pdf-tools" />
     </header>
-    <div id="pdf-toolbar" className="native-pdf-heading overflow-x-auto" />
-    {doc ? <div className="min-h-0 flex-1"><PdfViewer key={`${doc.id}:${initialPage ?? "saved"}`} doc={doc} fullscreen initialPage={initialPage} /></div>
+    {doc ? <div className="min-h-0 flex-1"><PdfViewer key={`${doc.id}:${initialPage ?? "saved"}`} doc={doc} fullscreen compact initialPage={initialPage} /></div>
       : <p role={error ? "alert" : "status"} className="p-4 text-sm text-muted-foreground">{error?.message ?? (docs ? "Source PDF is no longer available. Your saved quote is still available." : "Loading PDF…")}</p>}
   </>;
 }
