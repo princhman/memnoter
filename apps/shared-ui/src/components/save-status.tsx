@@ -2,7 +2,7 @@ import { toast } from "sonner";
 import { pdfAnnotationSaveStatusStore, retryPdfAnnotationSaves } from "@/lib/pdf-annotation-store";
 import { capabilities } from "@/lib/backend";
 import { exclusiveWrite, isRestoring, imageStatusStore, discardFailedImages, retryFailedImages, watchWriteAdmission } from "@/lib/write-lifecycle";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { call as invoke } from "../lib/backend.ts";
 import { listen } from "../lib/backend.ts";
@@ -52,6 +52,7 @@ async function confirmExitAfterRestore(discard = false, retryImages = false) {
 const SaveStatus = () => {
   const annotations = useSelector(pdfAnnotationSaveStatusStore, state => state);
   const imageErrors = useSelector(imageStatusStore, state => state.errors);
+  const showingImageError = useRef(false);
   const [exitError, setExitError] = useState("");
   const [retrying, setRetrying] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -71,7 +72,12 @@ const SaveStatus = () => {
   // Both messages stay for as long as the problem does. Their actions keep
   // the toast open (preventDefault): it goes away only when the cause does.
   useEffect(() => {
-    if (!imageErrors.length) { toast.dismiss(IMAGE_ERRORS_TOAST); return; }
+    if (!imageErrors.length) {
+      if (showingImageError.current) toast.dismiss(IMAGE_ERRORS_TOAST);
+      showingImageError.current = false;
+      return;
+    }
+    showingImageError.current = true;
     toast.error("Image changes could not be saved", {
       id: IMAGE_ERRORS_TOAST,
       description: <>{imageErrors.map((error, index) => <p key={index}>{error}</p>)}</>,

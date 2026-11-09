@@ -231,19 +231,24 @@ test("wide tables scroll inside the note in light and dark themes", async () => 
   }
 });
 
-test("legacy schemas delete unsupported tables from the synced Yjs XML", async () => {
+test("schemas without tables preserve unsupported content and open read-only", async () => {
   await insert();
   const result = await page.evaluate(async () => {
     const clone = cloneEditor(true);
+    const original = clone.initialBytes;
     await new Promise(resolve => setTimeout(resolve, 40));
     const beforeEdit = clone.document.getXmlFragment("default").toString();
     clone.editor.commands.insertContent("legacy edit");
     const afterEdit = clone.document.getXmlFragment("default").toString();
+    const bytes = Array.from(Y.encodeStateAsUpdate(clone.document));
+    const editable = clone.editor.isEditable;
     clone.editor.destroy(); clone.document.destroy();
-    return { beforeEdit, afterEdit };
+    return { beforeEdit, afterEdit, original, bytes, editable };
   });
-  assert.equal(result.beforeEdit.includes("<table>"), false);
-  assert.equal(result.afterEdit.includes("<table>"), false);
+  assert.equal(result.beforeEdit.includes("<table>"), true);
+  assert.equal(result.afterEdit, result.beforeEdit);
+  assert.deepEqual(result.bytes, result.original);
+  assert.equal(result.editable, false);
 });
 
 test("arrows leave a table and images round-trip within cells", async () => {

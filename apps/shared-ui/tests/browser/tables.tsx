@@ -38,11 +38,12 @@ function TablesEditor() {
       cloneEditor: (legacy = false) => {
         const clone = new Y.Doc();
         Y.applyUpdate(clone, Y.encodeStateAsUpdate(document));
+        const initialBytes = Array.from(Y.encodeStateAsUpdate(clone));
         const extensions = noteExtensions({ document: clone });
         const other = new Editor({ extensions: legacy
-          ? extensions.filter(extension => !["table", "tableRow", "tableCell", "tableHeader"].includes(extension.name))
+          ? extensions.filter(extension => !["table", "tableRow", "tableCell", "tableHeader", "details", "detailsSummary", "detailsContent"].includes(extension.name))
           : extensions });
-        return { editor: other, document: clone };
+        return { editor: other, document: clone, initialBytes };
       },
     });
   } });
