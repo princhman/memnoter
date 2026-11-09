@@ -1,5 +1,7 @@
 import { TAP_DURATION_MS, TAP_MOVEMENT_PX, DOUBLE_TAP_MS, DOUBLE_TAP_DISTANCE_PX } from "@/lib/pointer-gestures";
 import { useEditorHost } from "@/lib/editor-host-context";
+import { parsePdfSource } from "@/lib/pdf-quote";
+import { PdfSourceCaption } from "./pdf-source-caption";
 import { ToolButton } from "./ui/tool-button";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { SavedImage as ImageSchema, InlineImage as InlineImageSchema } from "@/lib/editor-schema/images";
@@ -407,7 +409,14 @@ export function SavedImageView(props: NodeViewProps) {
       const shownWidth = (node.attrs.width as number | null) || image.current?.offsetWidth || 0;
       const width = shownWidth ? Math.max(1, Math.round(shownWidth * crop.width)) : null;
       const height = width ? Math.max(1, Math.round(width * canvas.height / canvas.width)) : null;
-      updateAttributes({ fileId: saved.id, src: null, width, height, masks: [] });
+      const provenance = parsePdfSource(node.attrs.pdfSource);
+      const pdfSource = provenance ? { ...provenance, region: {
+        x: provenance.region.x + crop.x * provenance.region.width,
+        y: provenance.region.y + crop.y * provenance.region.height,
+        width: provenance.region.width * crop.width,
+        height: provenance.region.height * crop.height,
+      } } : null;
+      updateAttributes({ fileId: saved.id, src: null, width, height, masks: [], pdfSource });
       setCropOpen(false);
     } finally {
       URL.revokeObjectURL(sourceUrl);
@@ -424,6 +433,7 @@ export function SavedImageView(props: NodeViewProps) {
       {(!src || failed) && !loading && (drawing
         ? <Button variant="outline" onClick={openDrawing}>{canEditDrawing ? "Open drawing" : "Drawing (edit on iPad)"}</Button>
         : <span className="text-sm text-muted-foreground">Image unavailable</span>)}
+      {node.attrs.pdfSource && <PdfSourceCaption value={node.attrs.pdfSource} />}
       {selected && editor.isEditable && (
         <div className="note-image-controls" aria-label="Image controls" contentEditable={false}>
           <div className="note-image-toolbar">

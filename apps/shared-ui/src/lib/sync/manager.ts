@@ -79,6 +79,7 @@ function tauriStore(generation: string): SyncStore {
     },
     async ackOutbox(maxId) {
       await invoke("sync_ack", { maxId, generation });
+      fileSync?.kick();
     },
     async applyRemote(entries, cursor) {
       writesAllowed();

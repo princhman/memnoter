@@ -270,7 +270,9 @@ final class DrawingCanvas: PKCanvasView {
         ink = DrawingInk(rawValue: preferences.string(forKey: "drawing.ink") ?? "") ?? .black
         let width = preferences.object(forKey: "drawing.width") as? Double ?? 3
         inkWidth = width.isFinite ? min(10, max(1, width)) : 3
-        fingerDrawing = preferences.bool(forKey: "drawing.finger")
+        fingerDrawing = preferences.object(forKey: "drawing.finger") == nil
+            ? UIDevice.current.userInterfaceIdiom == .phone
+            : preferences.bool(forKey: "drawing.finger")
         baseSourceId = request.sourceId
         drafts = DrawingDraftStore(directory: directory, moduleId: "\(request.module.id)/\(request.imageId)")
         prototype = DrawingDraftStore(directory: directory, moduleId: request.module.id)

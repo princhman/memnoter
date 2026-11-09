@@ -56,7 +56,7 @@ test("a grade finishing after a scope change leaves the new review alone", async
         if (command === "due_cards") return cards.filter((c) => !args.moduleId || c.moduleId === args.moduleId);
         // The grade's write waits until the test lets it finish.
         if (command === "review_card") return new Promise((resolve) => window.__grades.push(resolve));
-        if (["due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes", "card_schedules"].includes(command)) return [];
+        if (["list_documents", "due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes", "card_schedules"].includes(command)) return [];
         return null;
       } } });
 
@@ -105,7 +105,7 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
         }
         if (command === "review_card") Object.assign(cards.find((c) => c.id === args.cardId), args.card);
         if (command === "undo_review") Object.assign(cards.find((c) => c.id === args.cardId), args.previous);
-        if (["due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes", "card_schedules"].includes(command)) return [];
+        if (["list_documents", "due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes", "card_schedules"].includes(command)) return [];
         return null;
       } } });
 

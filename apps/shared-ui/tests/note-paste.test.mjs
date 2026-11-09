@@ -86,11 +86,12 @@ test("keyboard copy and paste replaces a selected whole note", async () => {
     editor.commands.setContent('<h1>Keyboard source</h1><p>Question :: {{Answer}}</p>');
     editor.commands.focus();
   });
-  await page.keyboard.press("Meta+a");
-  await page.keyboard.press("Meta+c");
+  const modifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta" : "Control");
+  await page.keyboard.press(`${modifier}+a`);
+  await page.keyboard.press(`${modifier}+c`);
   await page.evaluate(() => { editor.commands.setContent('<h1>Target</h1><p>old</p>'); editor.commands.focus(); });
-  await page.keyboard.press("Meta+a");
-  await page.keyboard.press("Meta+v");
+  await page.keyboard.press(`${modifier}+a`);
+  await page.keyboard.press(`${modifier}+v`);
   assert.ok((await page.evaluate(() => editor.getText())).includes("Keyboard source"));
   assert.ok(!(await page.evaluate(() => editor.getText())).includes("old"));
 });

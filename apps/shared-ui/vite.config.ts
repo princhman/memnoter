@@ -1,3 +1,4 @@
+import { pdfAssets } from "./pdf-assets.mjs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -16,6 +17,7 @@ export default defineConfig(async () => ({
       autoCodeSplitting: true,
     }),
     react(),
+    pdfAssets(),
     tailwindcss(),
   ],
   build: {

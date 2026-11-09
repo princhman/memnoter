@@ -12,6 +12,11 @@ enum NativeEventName: String, Codable {
     case ready = "ready"
     case imagePreview = "imagePreview"
     case editDrawing = "editDrawing"
+    case pickPdfs = "pickPdfs"
+    case openModule = "openModule"
+    case pdfViewState = "pdfViewState"
+    case pdfState = "pdfState"
+    case pdfReader = "pdfReader"
     case error = "error"
     case saveStatus = "saveStatus"
     case scrollDebug = "scrollDebug"
@@ -68,6 +73,18 @@ enum ExecCommand: String, Codable {
     case scrollToHeading = "scrollToHeading"
     case find = "find"
 }
+enum PdfCommand: String, Codable {
+    case showFiles = "showFiles"
+    case openFile = "openFile"
+    case zoomIn = "zoomIn"
+    case zoomOut = "zoomOut"
+    case toggleSelect = "toggleSelect"
+    case toggleAnnotate = "toggleAnnotate"
+    case goToPage = "goToPage"
+    case openFullscreen = "openFullscreen"
+    case openBeside = "openBeside"
+    case backToNote = "backToNote"
+}
 enum EditorApiMethod: String, Codable {
     case applyRemote = "applyRemote"
     case fileStored = "fileStored"
@@ -77,6 +94,9 @@ enum EditorApiMethod: String, Codable {
     case open = "open"
     case flush = "flush"
     case refreshModules = "refreshModules"
+    case toggleFiles = "toggleFiles"
+    case refreshDocuments = "refreshDocuments"
+    case pdfCommand = "pdfCommand"
     case exec = "exec"
     case setOutlineTracking = "setOutlineTracking"
     case focus = "focus"
@@ -159,12 +179,35 @@ struct ReviewState: Codable {
     var cardId: String? = nil
     var error: String? = nil
 }
+struct PdfReaderFile: Codable, Identifiable, Equatable {
+    var id: String = ""
+    var name: String = ""
+}
+struct PdfReaderState: Codable, Equatable {
+    var moduleId: String = ""
+    var activeId: String? = nil
+    var title: String = ""
+    var fullscreen: Bool = false
+    var files: [PdfReaderFile] = []
+    var page: Int = 0
+    var pageCount: Int = 0
+    var zoom: Int = 0
+    var selecting: Bool = false
+    var annotating: Bool = false
+    var canSelect: Bool = false
+    var canAnnotate: Bool = false
+    var canZoomIn: Bool = false
+    var canZoomOut: Bool = false
+}
 enum BridgeProtocol {
     static let version = 1
     static let fileScheme = "memnoter-file"
     static let appScheme = "memnoter-app"
     static let editorEntry = "editor.html"
     static let reviewEntry = "review-native.html"
+    static let pdfChunkCommand = "read_pdf_chunk"
+    static let pdfChunkBytes = 1048576
+    static let maxPdfBytes = 52428800
     static let highlightColors = ["yellow", "green", "blue", "pink", "purple"]
     static let homeShortcuts: [(keys: String, action: String)] = [
         ("/", "Insert a block"),

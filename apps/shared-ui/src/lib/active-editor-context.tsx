@@ -9,7 +9,7 @@ import {
 } from "react";
 
 // isReady: the content has loaded and the saved view has been restored.
-type ActiveEditor = { moduleId: string; editor: Editor; isReady: boolean };
+type ActiveEditor = { moduleId: string; editor: Editor; isReady: boolean; insertQuote: ReturnType<typeof import("./note-document").useNoteDocument>["insertQuote"]; insertTextQuote: ReturnType<typeof import("./note-document").useNoteDocument>["insertTextQuote"] };
 
 const Context = createContext<{
   activeEditor: ActiveEditor | null;

@@ -1,3 +1,4 @@
+import { parsePdfSource } from "../pdf-quote";
 import Image from "@tiptap/extension-image";
 import { mergeAttributes } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
@@ -16,6 +17,10 @@ export const SavedImage = Image.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
+      pdfSource: { default: null,
+        parseHTML: el => { try { return parsePdfSource(JSON.parse(el.getAttribute("data-pdf-source") || "null")); } catch { return null; } },
+        renderHTML: attrs => { const source = parsePdfSource(attrs.pdfSource); return source ? { "data-pdf-source": JSON.stringify(source) } : {}; },
+      },
       fileId: { default: null, parseHTML: el => el.getAttribute("data-file-id"), renderHTML: attrs => attrs.fileId ? { "data-file-id": attrs.fileId } : {} },
       imageId: { default: null, parseHTML: el => el.getAttribute("data-image-id"), renderHTML: attrs => attrs.imageId ? { "data-image-id": attrs.imageId } : {} },
       drawing: { default: null, parseHTML: el => { try { return JSON.parse(el.getAttribute("data-drawing") || "null"); } catch { return null; } }, renderHTML: attrs => attrs.drawing ? { "data-drawing": JSON.stringify(attrs.drawing) } : {} },

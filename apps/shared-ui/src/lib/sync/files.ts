@@ -1,11 +1,12 @@
 // Moves images between this device and R2, encrypted, outside the log. Images
 // never change once saved, so each is uploaded once and downloaded once.
 // Uploads come from `sync_file_uploads`; downloads are the images other
-// devices announced in the vault that this one lacks.
+// devices announced in the vault that this one lacks. Server deletions wait
+// for the core to confirm that their tombstones were acknowledged.
 
 import { call as invoke } from "@/lib/backend";
 import type { FileType } from "@/lib/content";
-import { getObject, putObject, SyncApiError } from "./account";
+import { deleteObject, getObject, putObject, SyncApiError } from "./account";
 import { SYNC_CONTRACT } from "./protocol";
 import { decryptBlob, encryptBlob } from "./crypto";
 
@@ -77,11 +78,17 @@ export function createFileSync({ generation, signal, server, token, key, onStore
 
   async function pass() {
     let failed = false;
-    const attempt = async (task: () => Promise<void>) => {
+    const attempt = async (fileId: string, task: () => Promise<void>) => {
       try {
         await task();
       } catch (error) {
         if (!running || controller.signal.aborted) return;
+        if (error instanceof SyncApiError && error.status === 410) {
+          await invoke("sync_file_gone", { fileId, generation });
+          wanted.delete(fileId);
+          notYet.delete(fileId);
+          return;
+        }
         if (error instanceof SyncApiError && error.status === 401) {
           running = false;
           onUnauthorized();
@@ -94,7 +101,15 @@ export function createFileSync({ generation, signal, server, token, key, onStore
 
     for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
       if (!running) return;
-      await attempt(() => upload(fileId));
+      await attempt(fileId, () => upload(fileId));
+    }
+    for (const fileId of await invoke<string[]>("sync_pending_deletes", { generation })) {
+      if (!running) return;
+      await attempt(fileId, async () => {
+        await deleteObject(server, token, fileId, controller.signal);
+        if (!running) return;
+        await invoke("sync_delete_done", { fileId, generation });
+      });
     }
     notYet.clear();
     const missing = await invoke<MissingFile[]>("sync_missing_files", { generation });
@@ -103,7 +118,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     missing.sort((a, b) => Number(wanted.has(b.fileId)) - Number(wanted.has(a.fileId)));
     for (const file of missing) {
       if (!running) return;
-      await attempt(() => download(file));
+      await attempt(file.fileId, () => download(file));
     }
     if (running && (failed || notYet.size > 0)) {
       window.clearTimeout(retryTimer);

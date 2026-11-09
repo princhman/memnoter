@@ -6,6 +6,8 @@ import type { Grade } from "../lib/fsrs";
 
 export const BRIDGE_VERSION = 1;
 export const FILE_SCHEME = "memnoter-file";
+export const PDF_CHUNK_COMMAND = "read_pdf_chunk";
+export const PDF_CHUNK_BYTES = 1048576;
 export const APP_SCHEME = "memnoter-app";
 export const EDITOR_ENTRY = "editor.html";
 export const REVIEW_ENTRY = "review-native.html";
@@ -65,6 +67,40 @@ export const EXEC_COMMANDS = {
 } as const;
 export type ExecCommand = keyof typeof EXEC_COMMANDS;
 
+/** Native toolbar commands for the iPad PDF reader (see PdfReaderState). */
+export const PDF_COMMANDS = {
+  showFiles: true,
+  openFile: true,
+  zoomIn: true,
+  zoomOut: true,
+  toggleSelect: true,
+  toggleAnnotate: true,
+  goToPage: true,
+  openFullscreen: true,
+  openBeside: true,
+  backToNote: true,
+} as const;
+export type PdfCommand = keyof typeof PDF_COMMANDS;
+export interface PdfReaderFile { id: string; name: string; }
+/** What the native toolbar shows while the PDF pane is open. `activeId` is
+ * null on the file list; `zoom` is a whole percentage. */
+export interface PdfReaderState {
+  moduleId: string;
+  activeId: string | null;
+  title: string;
+  fullscreen: boolean;
+  files: PdfReaderFile[];
+  page: number;
+  pageCount: number;
+  zoom: number;
+  selecting: boolean;
+  annotating: boolean;
+  canSelect: boolean;
+  canAnnotate: boolean;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
+}
+
 export interface Heading { id: string; level: number; text: string; pos: number; folded: boolean; number: string | null; }
 export interface SectionCrumb { id: string; level: number; title: string; }
 export interface FocusableSection { pos: number; id: string; title: string; level: number; }
@@ -104,6 +140,11 @@ export interface NativeEvents {
   ready: { protocolVersion: number };
   imagePreview: { open: boolean };
   editDrawing: { moduleId: string; imageId: string; sourceId: string | null };
+  pickPdfs: { moduleId: string };
+  openModule: { moduleId: string };
+  pdfViewState: { documentId: string; page: number; zoom: number };
+  pdfState: { moduleId: string | null; open: boolean; coveringNote: boolean; focused: boolean };
+  pdfReader: PdfReaderState | null;
   error: { moduleId: string | null; message: string };
   saveStatus: { pending: number; failing: boolean; imageErrors: string[] };
   scrollDebug: { time: number; reason: string; [key: string]: unknown };
@@ -118,6 +159,9 @@ export interface EditorApi {
   open(moduleId: string): Promise<void>;
   flush(): Promise<void>;
   refreshModules(): Promise<void>;
+  toggleFiles(): void;
+  refreshDocuments(moduleId: string): Promise<void>;
+  pdfCommand(command: PdfCommand, value?: string | number | null): void;
   exec(command: ExecCommand, args?: Record<string, unknown>): boolean;
   setOutlineTracking(enabled: boolean): void;
   focus(): boolean;

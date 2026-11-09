@@ -2,7 +2,7 @@
 import { TOKEN_TTL_MS, signToken, verifyToken, type Claims } from "./token";
 import type { Env } from "./env";
 import type { KeyInfo } from "./vault";
-import { blobKey, fileKey } from "./storage";
+import { blobKey, fileKey, goneKey } from "./storage";
 import {
   AUTH_PROTOCOL_PREFIX,
   MAX_FILE_BYTES,
@@ -77,6 +77,15 @@ async function route(request: Request, env: Env): Promise<Response> {
     const valid = kind === "files" ? isValidFileId(id) : isValidBlobId(id);
     if (!valid) return json({ error: "Invalid id" }, 400);
     const key = kind === "files" ? fileKey(claims.sub, id) : blobKey(claims.sub, id);
+    if (kind === "files" && method === "DELETE") {
+      // Publish permanence before removing bytes, including when deletion is retried.
+      await env.FILES.put(goneKey(claims.sub, id), new Uint8Array());
+      await env.FILES.delete(key);
+      return json({ ok: true });
+    }
+    if (kind === "files" && (method === "GET" || method === "PUT") && await env.FILES.head(goneKey(claims.sub, id))) {
+      return json({ error: "File permanently deleted" }, 410);
+    }
     if (method === "PUT") return putObject(request, env, key, kind === "files" ? MAX_FILE_BYTES : MAX_LARGE_BLOB_BYTES);
     if (method === "GET") {
       const stored = await env.FILES.get(key);

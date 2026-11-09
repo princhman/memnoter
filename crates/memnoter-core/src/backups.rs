@@ -213,7 +213,13 @@ fn maintenance(result: CommandResult<()>) {
     }
 }
 
-fn stage_restore(source: &Path, app_dir: &Path, account: Option<&str>) -> CommandResult<PathBuf> {
+fn stage_restore(
+    source: &Path,
+    app_dir: &Path,
+    account: Option<&str>,
+    gone: &[String],
+    annotation_deleted: &[String],
+) -> CommandResult<PathBuf> {
     let staging = app_dir.join(RESTORE_STAGING);
     remove_if_exists(&staging)?;
     std::fs::create_dir_all(&staging).map_err(db_err)?;
@@ -230,6 +236,13 @@ fn stage_restore(source: &Path, app_dir: &Path, account: Option<&str>) -> Comman
     // Reconcile before the swap so failure leaves the live database untouched.
     let staged = open_db(&staging)?;
     let mut conn = staged.lock()?;
+    // Restored deleted files stay readable locally, but must never be announced or uploaded.
+    let snapshot_gone = super::sync::deleted_file_ids(&conn)?;
+    super::sync::retain_deleted_files(&conn, &snapshot_gone)?;
+    super::sync::retain_deleted_files(&conn, gone)?;
+    for id in annotation_deleted {
+        crate::pdf_annotations::retire(&conn, id)?;
+    }
     super::sync::reconcile_restored_account(&mut conn, account)?;
     Ok(staging)
 }
@@ -260,7 +273,15 @@ pub fn restore(
     // Keep the current data restorable in case this restore was a mistake.
     create(conn, app_dir, now)?;
     let account = super::sync::status(conn)?.account;
-    let staging = match stage_restore(&source, app_dir, account.as_deref()) {
+    let gone = super::sync::deleted_file_ids(conn)?;
+    let annotation_deleted = crate::pdf_annotations::tombstones(conn)?;
+    let staging = match stage_restore(
+        &source,
+        app_dir,
+        account.as_deref(),
+        &gone,
+        &annotation_deleted,
+    ) {
         Ok(staging) => staging,
         Err(error) => {
             maintenance(remove_if_exists(&app_dir.join(RESTORE_STAGING)));
@@ -321,6 +342,9 @@ pub fn restore_backup(
     let dir = data_dir;
     let mut conn = db.lock()?;
     let result = restore(&mut conn, dir, &id, Utc::now()).map_err(crate::CoreError::from);
+    if result.is_ok() {
+        *db.annotation_generation.lock().map_err(db_err)? = Uuid::new_v4().to_string();
+    }
     if result
         .as_ref()
         .is_err_and(|error| matches!(error, crate::CoreError::Unavailable))
@@ -488,6 +512,56 @@ mod tests {
         // Same millisecond: still two distinct snapshots.
         create(&conn, &dir.0, at(24)).unwrap();
         assert_eq!(ids(&dir.0).len(), 3);
+    }
+
+    #[test]
+    fn restore_keeps_deleted_image_bytes_without_reannouncing() {
+        for confirmed in [false, true] {
+            let dir = TempDir::new();
+            let db = open_db(&dir.0).unwrap();
+            let image = Uuid::new_v4().to_string();
+            let path = dir.0.join("files").join(&image);
+            std::fs::write(&path, b"retained image").unwrap();
+            {
+                let conn = db.lock().unwrap();
+                conn.execute_batch("insert into modules (id, name) values ('m', 'M'); insert into contents values ('m', X'');").unwrap();
+                conn.execute(
+                    "insert into files values (?1, 'm', ?2, 'image/png')",
+                    params![image, path.to_str().unwrap()],
+                )
+                .unwrap();
+            }
+            super::super::sync::sync_enable(&db, "{}".into()).unwrap();
+            let backup = create(&db.lock().unwrap(), &dir.0, at(0)).unwrap();
+            if confirmed {
+                let epoch = serde_json::to_value(super::super::sync::sync_status(&db).unwrap())
+                    .unwrap()["generation"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                super::super::sync::sync_file_gone(&db, image.clone(), epoch).unwrap();
+            } else {
+                super::super::sync::record_file_deleted(&db.lock().unwrap(), &image).unwrap();
+            }
+            restore(&mut db.lock().unwrap(), &dir.0, &backup.id, at(1)).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"retained image");
+            assert_eq!(
+                db.lock()
+                    .unwrap()
+                    .query_row("select count(*) from files", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            assert!(!super::super::sync::publish_file_owners(&db.lock().unwrap()).unwrap());
+            let epoch = serde_json::to_value(super::super::sync::sync_status(&db).unwrap())
+                .unwrap()["generation"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            assert!(super::super::sync::sync_pending_uploads(&db, epoch)
+                .unwrap()
+                .is_empty());
+        }
     }
 
     #[test]

@@ -1,10 +1,12 @@
 import { isShowingModule } from "@/lib/open-module";
+import { AddPdf } from "@/components/add-pdf";
+import { FilesPanelButton, PdfHeaderActions } from "@/components/pdf-header-actions";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/components/card-navigation-guard";
 import { bootstrapNotes } from "@/lib/bootstrap";
-import { createRootRoute, Outlet, useNavigate, useRouter } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { startSync } from "@/lib/sync/manager";
 import { MODULE_DELETED_REMOTELY_EVENT } from "@/lib/sync/apply-remote";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
@@ -27,13 +29,15 @@ import { IconTooltip } from "@/components/icon-tooltip";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
 import SaveStatus from "@/components/save-status";
-import { Toaster } from "@/components/ui/sonner";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useCommand } from "@/lib/commands";
 import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/app-events";
 
 const RootLayout = () => {
   const isFullscreen = useIsFullscreen();
+  const path = useRouterState({ select: state => state.location.pathname });
+  const isPdfReader = /^\/files\/[^/]+/.test(path);
+  const ownScroll = isPdfReader || !["/", "/files", "/files/", "/review", "/settings"].includes(path);
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   const navigate = useNavigate();
   const router = useRouter();
@@ -96,14 +100,15 @@ const RootLayout = () => {
           onOpenChange={setSidebarOpen}
           // Fills the body, which keeps clear of the iPad's status bar.
           className="relative h-full min-h-0 overflow-hidden overscroll-none"
-          style={
-            toolbarWidth === null
-              ? undefined
-              : ({ "--toolbar-width": `${toolbarWidth}px` } as CSSProperties)
-          }
+          // Avoid resizing and recentering PDF canvases on every animation frame.
+          style={{
+            ...(toolbarWidth === null ? {} : { "--toolbar-width": `${toolbarWidth}px` }),
+            ...(isPdfReader ? { "--sidebar-motion-duration": "0ms" } : {}),
+          } as CSSProperties}
         >
           <AppSidebar />
           <CreateModule />
+          <AddPdf />
 
           <SidebarInset className="min-h-0 overflow-hidden">
             {/* Tauri's deep region includes noninteractive breadcrumb wrappers,
@@ -113,13 +118,15 @@ const RootLayout = () => {
                 <FileBreadcrumb />
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-2 pr-3">
+                <PdfHeaderActions />
                 {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} current={reviewCurrent} /> : <ModuleReviewButton />}
+                <FilesPanelButton />
               </div>
             </header>
 
             <FindBar />
 
-            <main className="app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">
+            <main className={ownScroll ? "min-h-0 flex-1 overflow-hidden" : "app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8"}>
               <Outlet />
             </main>
           </SidebarInset>
@@ -137,7 +144,6 @@ const RootLayout = () => {
       </ActiveEditorProvider>
 
       <SaveStatus />
-      <Toaster />
 
       <TanStackRouterDevtools />
     </>

@@ -24,6 +24,8 @@ macro_rules! commands {
     }
 }
 commands! { core;
+    load_annotations(document_id: String) => crate::pdf_annotations::load_annotations(&core.db, document_id);
+    save_annotation_update(document_id: String, bytes: Vec<u8>, generation: String) => crate::pdf_annotations::save_annotation_update(&core.db, document_id, bytes, generation);
     set_module_numbering(module_id: String, enabled: bool) => crate::set_module_numbering(&core.db, module_id, enabled);
     import_module(name: String, bytes: Vec<u8>, images: Vec<ImportImage>) => crate::import_module(core.data_dir(), &core.db, name, bytes, images);
     create_module(name: String) => crate::create_module(&core.db, name);
@@ -35,6 +37,13 @@ commands! { core;
     get_content(module_id: String) => crate::get_content(&core.db, module_id);
     add_update(module_id: String, bytes: Vec<u8>) => crate::add_update(&core.db, module_id, bytes);
     save_compaction(module_id: String, new_state: Vec<u8>, update_id: i64) => crate::save_compaction(&core.db, module_id, new_state, update_id);
+    add_document(module_id: String, path: String) => crate::add_document(core.data_dir(), &core.db, module_id, path);
+    add_document_bytes(module_id: String, name: String, bytes: Vec<u8>) => crate::add_document_bytes(core.data_dir(), &core.db, module_id, name, bytes);
+    list_documents(module_id: Option<String>) => crate::list_documents(core.data_dir(), &core.db, module_id);
+    rename_document(id: String, name: String) => crate::rename_document(&core.db, id, name);
+    set_document_page_count(id: String, page_count: i64) => crate::set_document_page_count(&core.db, id, page_count);
+    delete_document(id: String) => crate::delete_document(core.data_dir(), &core.db, id);
+    document_path(id: String) => crate::document_path(core.data_dir(), &core.db, id);
     save_file(module_id: String, bytes: Vec<u8>, mime_type: String) => crate::save_file(core.data_dir(), &core.db, module_id, bytes, mime_type);
     read_file(module_id: String, file_id: String) => crate::read_file(core.data_dir(), &core.db, module_id, file_id);
     resolve_card_image(file_id: String) => crate::resolve_card_image(core.data_dir(), &core.db, file_id);
@@ -63,6 +72,9 @@ commands! { core;
     sync_apply(entries: Vec<RemoteEntry>, cursor: i64, generation: String) => crate::sync::sync_apply(core.data_dir(), &core.db, entries, cursor, generation);
     sync_snapshot(doc: String, generation: String) => crate::sync::sync_snapshot(&core.db, doc, generation);
     sync_missing_files(generation: String) => crate::sync::sync_missing_files(&core.db, generation);
+    sync_pending_deletes(generation: String) => crate::sync::sync_pending_deletes(&core.db, generation);
+    sync_file_gone(file_id: String, generation: String) => crate::sync::sync_file_gone(&core.db, file_id, generation);
+    sync_delete_done(file_id: String, generation: String) => crate::sync::sync_delete_done(&core.db, file_id, generation);
     sync_pending_uploads(generation: String) => crate::sync::sync_pending_uploads(&core.db, generation);
     sync_upload_done(file_id: String, generation: String) => crate::sync::sync_upload_done(&core.db, file_id, generation);
     sync_store_file(file_id: String, module_id: String, file_type: String, bytes: Vec<u8>, generation: String) => crate::sync::sync_store_file(core.data_dir(), &core.db, file_id, module_id, file_type, bytes, generation);

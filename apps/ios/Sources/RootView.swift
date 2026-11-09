@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     @Bindable var store: AppStore
@@ -30,6 +31,8 @@ struct RootView: View {
     @State private var image: PhotosPickerItem?
     @State private var drawingRequest: DrawingRequest?
     @State private var prototypeDrawingAvailable = false
+    @State private var showingPdfImporter = false
+    @State private var pdfImportModuleId: String?
     @State private var find = ""
     @State private var showingContents = false
     @State private var showingFind = false
@@ -141,7 +144,16 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, modules: store.modules, setChapterNumbering: setChapterNumbering, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory, preferences: store.preferences); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
+        .fileImporter(isPresented: $showingPdfImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true, onCompletion: importPdfs)
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
+        .onChange(of: session?.requestedModule) { _, _ in handleModuleRequest() }
+        .onChange(of: session?.requestedPdfImport) { _, _ in handlePdfImportRequest() }
+        .onChange(of: showingPdfImporter) { _, shown in
+            if !shown { handleModuleRequest(); handlePdfImportRequest() }
+        }
+        .onChange(of: busy) { _, value in
+            if !value { handleModuleRequest(); handlePdfImportRequest() }
+        }
         .onChange(of: session?.imagePreviewOpen) { _, open in
             if open == true {
                 previewColumnVisibility = columnVisibility
@@ -291,7 +303,7 @@ struct RootView: View {
                     .background(Color(uiColor: .systemBackground))
                     .overlay {
                         GeometryReader { geometry in
-                        let showBar = keyboardDocked && session.state.suppressKeyboard != true
+                        let showBar = keyboardDocked && session.state.suppressKeyboard != true && !session.pdfCoveringNote && !session.pdfFocused
                         let keyboardInset = keyboardDocked ? max(0, geometry.frame(in: .global).maxY - keyboardTop) : 0
                         Color.clear
                             .onChange(of: keyboardInset + (showBar ? 60 : 0), initial: true) { _, overlap in
@@ -342,6 +354,37 @@ struct RootView: View {
                 }
             }
             if let session, module != nil {
+                // The open PDF's tools sit in their own glass group, above the pane.
+                if let reader = session.pdfReader {
+                    ToolbarItem(placement: .primaryAction) {
+                        PdfFileMenu(session: session, reader: reader) { if let id = module?.id { beginPdfImport(id) } }
+                    }
+                    if reader.activeId != nil {
+                        ToolbarItem(placement: .primaryAction) { PdfPageButton(session: session, reader: reader) }
+                        ToolbarItem(placement: .primaryAction) {
+                            Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
+                                Label("Select region", systemImage: "rectangle.dashed")
+                            }
+                            .disabled(!reader.canSelect && !reader.selecting)
+                        }
+                        ToolbarItem(placement: .primaryAction) {
+                            Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
+                                Label("Annotate area", systemImage: "highlighter")
+                            }
+                            .disabled(!reader.canAnnotate && !reader.annotating)
+                        }
+                        ToolbarItem(placement: .primaryAction) { PdfViewMenu(session: session, reader: reader) }
+                        if reader.fullscreen {
+                            ToolbarItem(placement: .primaryAction) {
+                                Button { session.pdfCommand(.openBeside) } label: { Label("Exit full screen", systemImage: "arrow.down.right.and.arrow.up.left") }
+                            }
+                        }
+                    }
+                    if #available(iOS 26.0, *) {
+                        ToolbarSpacer(.fixed, placement: .primaryAction)
+                    }
+                }
+
                 ToolbarItemGroup(placement: isPhone ? .topBarTrailing : .topBarLeading) {
                     Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
                         .accessibilityLabel("Undo")
@@ -364,6 +407,14 @@ struct RootView: View {
                     .accessibilityLabel("Note actions")
                     .accessibilityValue(session.saveStatus)
                 }
+                // Far right, mirroring the sidebar toggle at the far left.
+                ToolbarItem(placement: .primaryAction) {
+                    Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
+                        .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
+                        .accessibilityValue(session.filesOpen ? "Open" : "Closed")
+                        .keyboardShortcut("d", modifiers: [.command, .shift])
+                        .disabled(busy || !session.ready)
+                }
             }
         }
     }
@@ -376,6 +427,7 @@ struct RootView: View {
                 .disabled(busy || !session.state.editable)
         }
         PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
+        Button { if let id = module?.id { beginPdfImport(id) } } label: { Label("Add PDF", systemImage: "doc.badge.plus") }.disabled(busy || !session.ready)
         Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }.keyboardShortcut("f")
         Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }
         if !session.saveStatus.isEmpty { Text(session.saveStatus) }
@@ -406,6 +458,63 @@ struct RootView: View {
         }
     }
 
+    private func handleModuleRequest() {
+        guard !busy, !showingPdfImporter, let destination = session?.requestedModule else { return }
+        session?.requestedModule = nil
+        // A request from a web surface that is no longer displayed must not
+        // navigate away from Home or Review after an asynchronous source lookup.
+        guard module != nil else { return }
+        guard store.modules.contains(where: { $0.id == destination }) else {
+            store.error = "This note is no longer available."
+            return
+        }
+        navigate(destination)
+    }
+    private func handlePdfImportRequest() {
+        guard !busy, !showingPdfImporter, let destination = session?.requestedPdfImport else { return }
+        session?.requestedPdfImport = nil
+        guard module?.id == destination else { return }
+        beginPdfImport(destination)
+    }
+    private func beginPdfImport(_ moduleId: String) {
+        guard !busy, store.modules.contains(where: { $0.id == moduleId }) else { return }
+        pdfImportModuleId = moduleId
+        showingPdfImporter = true
+    }
+    private func importPdfs(_ result: Result<[URL], Error>) {
+        let destination = pdfImportModuleId
+        pdfImportModuleId = nil
+        switch result {
+        case .failure(let error):
+            if let cancellation = error as? CocoaError, cancellation.code == .userCancelled { return }
+            store.error = String(describing: error)
+        case .success(let urls):
+            guard !urls.isEmpty, let destination, let client = store.client else { return }
+            busy = true
+            Task {
+                defer { busy = false }
+                var failures: [String] = []
+                var imported = false
+                for url in urls {
+                    do {
+                        guard url.isFileURL else { throw URLError(.badURL) }
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        // Rust reads and bounds the file while the security grant
+                        // is live; PDF bytes never expand into a JSON number array.
+                        try await client.write("add_document", DocumentPathArgs(moduleId: destination, path: url.path))
+                        imported = true
+                    } catch { failures.append("\(url.lastPathComponent): \(error)") }
+                }
+                if imported, let session, session.ready {
+                    do { _ = try await session.callEditor(.refreshDocuments, ["moduleId": destination], parameters: ["moduleId"]) }
+                    catch { failures.append("PDFs were imported, but the files list could not be refreshed: \(error)") }
+                }
+                await store.refresh()
+                if !failures.isEmpty { store.error = failures.joined(separator: "\n") }
+            }
+        }
+    }
     private func updateKeyboard(_ notification: Notification, hiding: Bool = false) {
         guard let window = session?.web.window,
               let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
@@ -491,6 +600,103 @@ struct RootView: View {
                 if isPhone { phoneColumn = .detail }
                 await store.refresh()
             } catch { store.error = String(describing: error) }
+        }
+    }
+}
+
+/// The PDF's name; its menu switches files, returns to the list or adds one.
+private struct PdfFileMenu: View {
+    let session: WebSession
+    let reader: PdfReaderState
+    let addPdf: () -> Void
+
+    var body: some View {
+        Menu {
+            if reader.fullscreen {
+                Button { session.pdfCommand(.backToNote) } label: { Label("Back to note", systemImage: "chevron.backward") }
+            }
+            Section {
+                ForEach(reader.files) { file in
+                    Button { session.pdfCommand(.openFile, file.id) } label: {
+                        if file.id == reader.activeId { Label(file.name, systemImage: "checkmark") } else { Text(file.name) }
+                    }
+                }
+            }
+            if reader.activeId != nil {
+                Button { session.pdfCommand(.showFiles) } label: { Label("All files", systemImage: "list.bullet") }
+            }
+            Button(action: addPdf) { Label("Add PDF", systemImage: "doc.badge.plus") }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text")
+                Text(reader.title).lineLimit(1).truncationMode(.middle).frame(maxWidth: 200)
+                Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 4)
+            .accessibilityHidden(true)
+        }
+        .accessibilityLabel("PDF file")
+        .accessibilityValue(reader.title)
+    }
+}
+
+/// "3 / 12"; tapping asks for a page to jump to.
+private struct PdfPageButton: View {
+    let session: WebSession
+    let reader: PdfReaderState
+    @State private var asking = false
+    @State private var text = ""
+
+    var body: some View {
+        Button {
+            text = ""
+            asking = true
+        } label: {
+            HStack(spacing: 3) {
+                Text("\(reader.page)").fontWeight(.semibold)
+                Text("/ \(reader.pageCount)").foregroundStyle(.secondary)
+            }
+            .monospacedDigit()
+            .padding(.horizontal, 4)
+            .accessibilityHidden(true)
+        }
+        .disabled(reader.pageCount == 0)
+        .accessibilityLabel("Page \(reader.page) of \(reader.pageCount)")
+        .accessibilityHint("Go to page")
+        .alert("Go to Page", isPresented: $asking) {
+            TextField("Page", text: $text).keyboardType(.numberPad)
+            Button("Cancel", role: .cancel) { }
+            Button("Go") {
+                guard let page = Int(text) else { return }
+                session.pdfCommand(.goToPage, max(1, min(reader.pageCount, page)))
+            }
+            .keyboardShortcut(.defaultAction)
+        } message: {
+            Text("1 to \(reader.pageCount)")
+        }
+    }
+}
+
+/// Zoom and where the PDF is shown; pinching still zooms too.
+private struct PdfViewMenu: View {
+    let session: WebSession
+    let reader: PdfReaderState
+
+    var body: some View {
+        Menu {
+            Section("Zoom \(reader.zoom)%") {
+                Button { session.pdfCommand(.zoomIn) } label: { Label("Zoom in", systemImage: "plus.magnifyingglass") }
+                    .disabled(!reader.canZoomIn)
+                    .menuActionDismissBehavior(.disabled)
+                Button { session.pdfCommand(.zoomOut) } label: { Label("Zoom out", systemImage: "minus.magnifyingglass") }
+                    .disabled(!reader.canZoomOut)
+                    .menuActionDismissBehavior(.disabled)
+            }
+            if !reader.fullscreen {
+                Button { session.pdfCommand(.openFullscreen) } label: { Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right") }
+            }
+        } label: {
+            Label("More PDF actions", systemImage: "ellipsis")
         }
     }
 }
