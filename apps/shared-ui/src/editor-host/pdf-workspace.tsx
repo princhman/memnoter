@@ -1,3 +1,6 @@
+import type { Editor } from "@tiptap/core";
+import { beginHostNavigation, editorHost } from "@/lib/editor-host";
+import { revealCaret } from "./scroll";
 import { useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { useActiveEditor } from "@/lib/active-editor-context";
@@ -43,10 +46,19 @@ export function NativePdfWorkspace({ moduleId, actions, children }: { moduleId: 
   } });
   const { activeEditor } = useActiveEditor();
   const host = useRef<HTMLDivElement>(null);
+  const [insertedEditor, setInsertedEditor] = useState<Editor | null>(null);
   const [wide, setWide] = useState(false);
   const [focused, setFocused] = useState(false);
   const open = !!documentId || !!moduleId && pane.open;
   const coveringNote = open && (!!documentId || !wide);
+  useEffect(() => {
+    if (coveringNote || !insertedEditor) return;
+    const frame = requestAnimationFrame(() => {
+      if (activeEditor?.editor === insertedEditor) revealCaret(insertedEditor.view, "insertion");
+      setInsertedEditor(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [coveringNote, insertedEditor, activeEditor?.editor]);
   const current = useRef({ moduleId, pdf: documentId ?? pane.active });
   current.current = { moduleId, pdf: documentId ?? pane.active };
   useEffect(() => {
@@ -118,6 +130,10 @@ export function NativePdfWorkspace({ moduleId, actions, children }: { moduleId: 
   return <div ref={host} data-pdf-note={moduleId ?? undefined} data-covering-note={coveringNote} data-wide={wide} className="native-editor-workspace" onFocusCapture={event => setFocused(!!(event.target instanceof Element && event.target.closest(".native-pdf-pane")))} onPointerDownCapture={event => setFocused(!!(event.target instanceof Element && event.target.closest(".native-pdf-pane")))}>
     {children}
     {moduleId && <><PdfQuoteNavigation moduleId={moduleId} onReveal={() => { if (coveringNote) showNote(); }} /><PdfQuoteControls moduleId={moduleId} onInserted={() => {
+      const editor = activeEditor?.editor;
+      const container = editor && editorHost.scrollContainer(editor.view.dom);
+      if (container) beginHostNavigation(container);
+      setInsertedEditor(editor ?? null);
       if (coveringNote && router.state.location === location && current.current.moduleId === moduleId && current.current.pdf === (documentId ?? pane.active)) showNote();
     }} /></>}
     {open && <aside aria-label="Files" className={`native-pdf-pane ${coveringNote ? "native-pdf-cover" : "native-pdf-beside"}`}>

@@ -395,6 +395,29 @@ fn sidebar_table_is_added_to_existing_version_3_database() {
 }
 
 #[test]
+fn synced_module_with_files_deletes_after_upgrading_a_version_6_database() {
+    let f = Fixture::new();
+    let module = f.call("create_module", json!({"name":"Drawings"}));
+    f.call(
+        "save_file",
+        json!({"moduleId":module,"bytes":[1,2,3],"mimeType":"image/png"}),
+    );
+    f.call("sync_enable", json!({"account":"{}"}));
+    // A database that reached version 6 before these sync tables existed.
+    f.core
+        .db
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "drop table sync_files_gone; drop table sync_file_deletes; PRAGMA user_version = 6;",
+        )
+        .unwrap();
+    let upgraded = Core::open(&f.dir).unwrap();
+    dispatch(&upgraded, "delete_module", &json!({"moduleId":module}).to_string()).unwrap();
+    assert_eq!(dispatch(&upgraded, "modules", "{}").unwrap(), "[]");
+}
+
+#[test]
 fn sidebar_changes_sync_including_seeded_folders_and_deletion() {
     let source = Fixture::new();
     let target = Fixture::new();

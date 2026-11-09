@@ -59,7 +59,8 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
   const dragged = dragging ? items.find(item => item.id === dragging.id) : undefined;
   const draggedModule = dragged ? modules.find(module => module.id === dragged.id) : undefined;
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const save = (next: SidebarItem[]) => {
+  const save = (next: SidebarItem[], onSuccess?: () => void) => {
+    next = [...items.filter(item => !next.some(entry => entry.id === item.id)), ...next];
     const changed = next.filter(item => JSON.stringify(item) !== JSON.stringify(query.data?.find(saved => saved.id === item.id)));
     // Show the new layout in the same tick as the drop. Dropping clears the drag offsets at
     // once, so waiting for the write and the refetch would snap rows back and then jump them.
@@ -73,7 +74,7 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
       }
       return merged;
     });
-    mutation.mutate(changed, { onError: () => queryClient.setQueryData(sidebarKey, previous) });
+    mutation.mutate(changed, { onSuccess, onError: () => queryClient.setQueryData(sidebarKey, previous) });
   };
   const edit = (item: SidebarItem | 'new') => { setEditing(item); setName(item === 'new' ? '' : item.name ?? ''); };
   const row = (item: SidebarItem): ReactNode => {
@@ -153,7 +154,7 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
         event.preventDefault();
         if (!name.trim() || mutation.isPending) return;
         const item: SidebarItem = editing === 'new' ? { id: `folder-${crypto.randomUUID()}`, name: name.trim(), folder_id: null, sort_order: Math.max(-1, ...items.map(item => item.sort_order)) + 1, collapsed: false, deleted: false } : { ...editing!, name: name.trim() };
-        mutation.mutate([item], { onSuccess: () => setEditing(null) });
+        save([item], () => setEditing(null));
       }}>
         <DialogHeader><DialogTitle>{editing === 'new' ? 'New folder' : 'Rename folder'}</DialogTitle></DialogHeader>
         <FieldGroup className="pb-2 pt-4">

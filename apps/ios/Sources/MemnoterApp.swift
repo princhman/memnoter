@@ -23,6 +23,8 @@ import SwiftUI
     var client: CoreClient?
     var sync: SyncClient?
     var modules: [NoteModule] = []
+    var savedSidebar: [SidebarItem] = []
+    var sidebarItems: [SidebarItem] { SidebarLayout.items(modules: modules, saved: savedSidebar) }
     var counts: [DueCount] = []
     let preferences: UserDefaults
     private let uiTesting: Bool
@@ -72,10 +74,23 @@ import SwiftUI
         guard let client else { return }
         do {
             modules = try await client.call("modules", Empty())
+            savedSidebar = try await client.call("sidebar_items", Empty())
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             let end = Int64(Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date()))!.timeIntervalSince1970 * 1000)
             counts = try await client.call("due_counts", CountArgs(now: now, dayEnd: end, createdAtCutoff: preferences.bool(forKey: "skipCardsCreatedToday") ? Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000) : nil))
         } catch { self.error = String(describing: error) }
+    }
+    /// Saves the rows that differ from the stored layout, showing them at once
+    /// and restoring the previous layout if the write fails.
+    func saveSidebar(_ next: [SidebarItem]) async {
+        // Freeze computed module positions before a new row can shift their fallback order.
+        let items = sidebarItems.filter { item in !next.contains { $0.id == item.id } } + next
+        let changed = SidebarLayout.changed(items, from: savedSidebar)
+        guard let client, !changed.isEmpty else { return }
+        let previous = savedSidebar
+        savedSidebar = previous.filter { item in !changed.contains { $0.id == item.id } } + changed
+        do { try await client.write("save_sidebar_items", SidebarItemsArgs(items: changed)) }
+        catch { savedSidebar = previous; self.error = String(describing: error) }
     }
     func perform(_ body: () async throws -> Void) async {
         do { try await body(); await refresh() } catch { self.error = String(describing: error) }

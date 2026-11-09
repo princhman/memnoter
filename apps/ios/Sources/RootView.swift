@@ -11,6 +11,8 @@ struct RootView: View {
     @State private var previewColumnVisibility: NavigationSplitViewVisibility?
     @State private var phoneColumn: NavigationSplitViewColumn = .sidebar
     private let isPhone = UIDevice.current.userInterfaceIdiom == .phone
+    private var phoneSplitLayout: Bool { isPhone && horizontalSizeClass == .regular }
+    private var canToggleSidebar: Bool { !isPhone || horizontalSizeClass == .regular }
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @AppStorage("selectedDestination") private var savedDestination = "home"
     private var selected: String? {
@@ -33,16 +35,22 @@ struct RootView: View {
     @State private var prototypeDrawingAvailable = false
     @State private var showingPdfImporter = false
     @State private var pdfImportModuleId: String?
+    @State private var filesModuleFilter: String?
     @State private var find = ""
     @State private var showingContents = false
     @State private var showingFind = false
     @FocusState private var findFocused: Bool
     @State private var keyboardDocked = false
-    @State private var keyboardTop: CGFloat = 0
+    @State private var keyboardFrame: CGRect = .null
     @State private var deleting: NoteModule?
+    @State private var editingFolder = false
+    @State private var folder: SidebarItem?
+    @State private var folderName = ""
+    @State private var deletingFolder: SidebarItem?
+    @State private var sidebarEditMode: EditMode = .inactive
     @State private var detailWidth: CGFloat = 0
     var module: NoteModule? { store.modules.first { $0.id == selected } }
-    var body: some View {
+    private var navigationWithPresentations: some View {
         navigation
         .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { notification in
             guard let result = notification.object as? SyncApplyResult else { return }
@@ -52,7 +60,7 @@ struct RootView: View {
                         _ = try await session.callEditor(.applyRemote, ["result": try JSONSerialization.jsonObject(with: Data(result.json.utf8))], parameters: ["result"])
                     }
                     await store.refresh()
-                    if let selected, selected != "home", selected != "review", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
+                    if let selected, selected != "home", selected != "review", selected != "files", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
                 } catch { store.error = error.localizedDescription }
             }
         }
@@ -68,6 +76,7 @@ struct RootView: View {
                         _ = try await session.callEditor(.fileStored, ["module": module, "file": try JSONSerialization.jsonObject(with: Data(json.utf8))], parameters: ["module", "file"])
                     }
                     await store.refresh()
+                    NotificationCenter.default.post(name: .coreDidWrite, object: nil)
                 }
                 restored.onReady = { [weak restored] in
                     guard let restored, let selected, store.modules.contains(where: { $0.id == selected }) else { return }
@@ -86,6 +95,24 @@ struct RootView: View {
             }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) {}
         }
+        .alert(folder == nil ? "New folder" : "Rename folder", isPresented: $editingFolder) {
+            TextField("Name", text: $folderName)
+            Button("Save") {
+                let trimmed = folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let items = store.sidebarItems
+                let next = folder.map { [SidebarItem(id: $0.id, name: trimmed, folder_id: nil, sort_order: $0.sort_order, collapsed: $0.collapsed, deleted: false)] }
+                    ?? [SidebarItem(id: "folder-\(UUID().uuidString.lowercased())", name: trimmed, folder_id: nil,
+                                    sort_order: (items.map(\.sort_order).max() ?? -1) + 1, collapsed: false, deleted: false)]
+                Task { await store.saveSidebar(next) }
+            }.disabled(folderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Delete folder?", isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } }), titleVisibility: .visible) {
+            Button("Delete folder", role: .destructive) {
+                if var item = deletingFolder { item.deleted = true; Task { await store.saveSidebar([item]) } }
+                deletingFolder = nil
+            }
+        } message: { Text("Its modules move to the top level. No notes are deleted.") }
         .confirmationDialog("Delete module and its notes?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("Delete", role: .destructive) {
                 if let deleting { Task {
@@ -145,6 +172,10 @@ struct RootView: View {
         }
         .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, modules: store.modules, setChapterNumbering: setChapterNumbering, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory, preferences: store.preferences); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
         .fileImporter(isPresented: $showingPdfImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true, onCompletion: importPdfs)
+    }
+
+    var body: some View {
+        navigationWithPresentations
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
         .onChange(of: session?.requestedModule) { _, _ in handleModuleRequest() }
         .onChange(of: session?.requestedPdfImport) { _, _ in handlePdfImportRequest() }
@@ -186,6 +217,8 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { updateKeyboard($0) }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { updateKeyboard($0) }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { updateKeyboard($0, hiding: true) }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidChangeFrameNotification)) { updateKeyboard($0) }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { updateKeyboard($0, hiding: true) }
         .onReceive(NotificationCenter.default.publisher(for: .cardsDidChange)) { _ in Task { await store.refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: .coreDidWrite)) { _ in store.sync?.nudge() }
         .onChange(of: skipCardsCreatedToday) { _, _ in Task { await store.refresh(); await session?.updateCardPreference() } }
@@ -193,7 +226,10 @@ struct RootView: View {
             if phase != .active {
                 backgroundWork?.cancel()
                 let task = UIApplication.shared.beginBackgroundTask(withName: "Save note") {
-                    Task { @MainActor in backgroundWork?.cancel(); store.sync?.pause() }
+                    Task { @MainActor in
+                        guard scenePhase != .active else { return }
+                        backgroundWork?.cancel(); store.sync?.pause()
+                    }
                 }
                 backgroundWork = Task {
                     defer {
@@ -216,6 +252,14 @@ struct RootView: View {
             } detail: {
                 detail
             }
+            .onChange(of: horizontalSizeClass) { previous, current in
+                // Keep the selected destination visible when the two-column phone layout
+                // collapses. Do not rebuild the split view or the editor on rotation.
+                if isPhone, previous == .regular, current == .compact,
+                   selected != "home" || columnVisibility == .detailOnly {
+                    phoneColumn = .detail
+                }
+            }
         } else {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebar
@@ -226,18 +270,41 @@ struct RootView: View {
     }
 
     private var sidebar: some View {
-        List(selection: Binding(get: { selected }, set: { if let destination = $0 { if destination == "review" { reviewModule = nil }; navigate(destination) } })) {
+        List(selection: Binding(get: { selected }, set: { if let destination = $0, isDestination(destination) { if destination == "review" { reviewModule = nil }; if destination == "files" { filesModuleFilter = nil }; navigate(destination) } })) {
             destinationLink("home") { Label("Home", systemImage: "house") }
             destinationLink("review") {
                 Label("Review", systemImage: "rectangle.stack").badge(store.counts.reduce(0) { $0 + $1.count })
             }
-            Section("Modules") {
-                ForEach(store.modules) { module in
-                    destinationLink(module.id) {
-                        Text(module.name).badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
+            destinationLink("files") { Label("Files", systemImage: "doc.text") }
+            Section {
+                let rows = SidebarLayout.rows(items: store.sidebarItems, modules: store.modules)
+                ForEach(rows) { row in
+                    switch row {
+                    case .folder(let item): folderRow(item)
+                    case .module(let item, let module): moduleRow(module, inFolder: item.folder_id != nil)
                     }
-                    .contextMenu { moduleActions(module) }
-                    .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
+                }
+                .onMove { source, destination in
+                    let items = store.sidebarItems
+                    Task { await store.saveSidebar(SidebarLayout.move(items: items, rows: rows, from: source, to: destination)) }
+                }
+            } header: {
+                HStack {
+                    Text("Modules")
+                    Spacer()
+                    Button {
+                        withAnimation { sidebarEditMode = sidebarEditMode.isEditing ? .inactive : .active }
+                    } label: {
+                        Image(systemName: sidebarEditMode.isEditing ? "checkmark" : "pencil")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            // Trailing-aligned so the glyph lines up with the row badges and chevrons.
+                            .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(sidebarEditMode.isEditing ? "Done editing" : "Edit modules")
+                    .disabled(store.modules.isEmpty)
                 }
             }
             if !search.isEmpty {
@@ -249,10 +316,13 @@ struct RootView: View {
             }
         }
         .listStyle(.sidebar)
+        .refreshable { await manualSync() }
+        .environment(\.editMode, $sidebarEditMode)
         .searchable(text: $search, isPresented: $showSearch, prompt: "Search notes")
         .background {
             Button("Search modules") { if isPhone { phoneColumn = .sidebar }; columnVisibility = .all; showSearch = true }
                 .keyboardShortcut("k").hidden().accessibilityHidden(true)
+            Button("New module", action: newModule).keyboardShortcut("n").hidden().accessibilityHidden(true)
         }
         .task(id: search) {
             guard let client = store.client else { return }
@@ -263,22 +333,65 @@ struct RootView: View {
         .navigationBarTitleDisplayMode(isPhone ? .inline : .automatic)
         .toolbar(removing: .sidebarToggle)
         .toolbar {
+            // Keep separate native items for sidebar transitions. Inset the glyphs toward
+            // each other because the system toolbar retains its minimum item spacing.
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button(action: newModule) { Image(systemName: "plus") }.keyboardShortcut("n")
-                    .accessibilityLabel("New module")
-                if !isPhone {
+                Menu {
+                    Button("New module", systemImage: "doc.badge.plus", action: newModule)
+                    Button("New folder", systemImage: "folder.badge.plus") { folder = nil; folderName = ""; editingFolder = true }
+                } label: { Image(systemName: "plus").offset(x: isPhone ? 0 : 6) }
+                    .accessibilityLabel("Add")
+                if canToggleSidebar {
                     Button {
-                        withAnimation { columnVisibility = .detailOnly }
-                    } label: { Image(systemName: "sidebar.left") }
+                        withAnimation {
+                            if isPhone { phoneColumn = .detail }
+                            columnVisibility = .detailOnly
+                        }
+                    } label: { Image(systemName: "sidebar.left").offset(x: -6) }
                     .accessibilityLabel("Hide Sidebar")
                 }
             }
-            ToolbarItemGroup(placement: .bottomBar) {
-                Spacer()
-                Button { showSettings = true } label: { Label("Settings", systemImage: "gear") }.disabled(busy)
+            if !phoneSplitLayout {
+                ToolbarItemGroup(placement: .bottomBar) {
+                    Spacer()
+                    sidebarBottomControls
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if phoneSplitLayout {
+                // The short, regular-width phone sidebar lets the floating native
+                // toolbar cover rows. Reserve a footer outside the scrollable list.
+                HStack {
+                    Spacer()
+                    HStack(spacing: 20) { sidebarBottomControls }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 20)
+                        .frame(height: 44)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(uiColor: .secondarySystemBackground))
             }
         }
         .disabled(busy)
+    }
+
+    @ViewBuilder private var sidebarBottomControls: some View {
+        if let sync = store.sync, sync.account != nil {
+            Button { Task { await manualSync() } } label: {
+                if sync.isSyncingNow { ProgressView().offset(x: phoneSplitLayout ? 0 : 6).accessibilityLabel("Syncing") }
+                else { Label("Sync now", systemImage: "arrow.triangle.2.circlepath").offset(x: phoneSplitLayout ? 0 : 6) }
+            }
+            .disabled(sync.isSyncingNow)
+            .accessibilityLabel("Sync now")
+            .accessibilityValue(sync.accessibilityStatus)
+        }
+        Button { showSettings = true } label: {
+            Label("Settings", systemImage: "gear").offset(x: !phoneSplitLayout && store.sync?.account != nil ? -6 : 0)
+        }.disabled(busy)
     }
 
     private var detail: some View {
@@ -286,6 +399,8 @@ struct RootView: View {
             if selected == "review", let client = store.client {
                 ReviewView(client: client, directory: store.directory, moduleId: reviewModule, preferences: store.preferences, editCard: editReviewCard)
                     .id(reviewModule ?? "all")
+            } else if selected == "files", let client = store.client {
+                FilesView(client: client, modules: store.modules, moduleFilter: $filesModuleFilter, busy: busy, open: openLibraryDocument, addPdf: beginPdfImport)
             } else if module != nil, let session {
                 if showingFind {
                     if isPhone {
@@ -303,10 +418,16 @@ struct RootView: View {
                     .background(Color(uiColor: .systemBackground))
                     .overlay {
                         GeometryReader { geometry in
-                        let showBar = keyboardDocked && session.state.suppressKeyboard != true && !session.pdfCoveringNote && !session.pdfFocused
-                        let keyboardInset = keyboardDocked ? max(0, geometry.frame(in: .global).maxY - keyboardTop) : 0
+                        // WebKit can hide the keyboard while selecting text. Keep
+                        // formatting available for the retained selection, also
+                        // when an iPad hardware keyboard has no onscreen frame.
+                        let showBar = (keyboardDocked || session.state.hasSelection) && session.state.suppressKeyboard != true && !session.pdfCoveringNote && !session.pdfFocused
+                        let editorFrame = geometry.frame(in: .global)
+                        // Also keep the caret above an undocked/floating keyboard
+                        // when it overlaps this editor column.
+                        let keyboardInset = editorFrame.intersects(keyboardFrame) ? max(0, editorFrame.maxY - keyboardFrame.minY) : 0
                         Color.clear
-                            .onChange(of: keyboardInset + (showBar ? 60 : 0), initial: true) { _, overlap in
+                            .onChange(of: keyboardInset + (showBar ? 76 : 0), initial: true) { _, overlap in
                                 session.bottomInset = overlap
                             }
                         if showBar {
@@ -329,17 +450,21 @@ struct RootView: View {
         .ignoresSafeArea(.container, edges: session?.imagePreviewOpen == true ? .all : [])
         .toolbar(session?.imagePreviewOpen == true ? .hidden : .automatic, for: .navigationBar)
         .statusBarHidden(session?.imagePreviewOpen == true)
-        .navigationTitle(selected == "review" && detailWidth < 500 ? "" : (module?.name ?? (selected == "review" ? "Review" : "Home")))
+        // PDF controls own the iPad bar; a competing title can collapse to just an ellipsis.
+        .navigationTitle(phoneSplitLayout || (!isPhone && module != nil && session?.pdfReader != nil) || (selected == "review" && detailWidth < 500) ? "" : (module?.name ?? (selected == "review" ? "Review" : selected == "files" ? "Files" : "Home")))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if selected != "review" || detailWidth >= 500 {
-                ToolbarItem(placement: .principal) {
-                    if isPhone, let module, let session {
+            if (isPhone || module == nil || session?.pdfReader == nil) && (selected != "review" || detailWidth >= 500) {
+                ToolbarItem(placement: phoneSplitLayout ? .topBarLeading : .principal) {
+                    if isPhone, module != nil, let reader = session?.pdfReader {
+                        Text(reader.title).lineLimit(1).truncationMode(.middle)
+                            .accessibilityIdentifier("module.title")
+                    } else if isPhone, let module, let session {
                         PhoneNoteTitle(session: session, moduleName: module.name) { showingContents = true }
                     } else {
                         Text(module != nil && session?.state.focusedSectionId != nil
                              ? session?.state.focusedSectionPath.last?.title ?? module?.name ?? "Section"
-                             : module?.name ?? (selected == "review" ? "Review" : "Home"))
+                             : module?.name ?? (selected == "review" ? "Review" : selected == "files" ? "Files" : "Home"))
                             .lineLimit(1).truncationMode(.tail)
                             .accessibilityIdentifier("module.title")
                     }
@@ -347,7 +472,7 @@ struct RootView: View {
             }
         }
         .toolbar {
-            if !isPhone && columnVisibility == .detailOnly && (selected != "review" || horizontalSizeClass != .compact) {
+            if canToggleSidebar && columnVisibility == .detailOnly && (selected != "review" || horizontalSizeClass != .compact) {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
                         .accessibilityLabel("Show Sidebar")
@@ -355,25 +480,48 @@ struct RootView: View {
             }
             if let session, module != nil {
                 // The open PDF's tools sit in their own glass group, above the pane.
-                if let reader = session.pdfReader {
-                    ToolbarItem(placement: .primaryAction) {
-                        PdfFileMenu(session: session, reader: reader) { if let id = module?.id { beginPdfImport(id) } }
+                if isPhone, let reader = session.pdfReader {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { session.pdfCommand(.backToNote) } label: {
+                            Label("Note", systemImage: "xmark")
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .accessibilityLabel("Back to note")
                     }
                     if reader.activeId != nil {
-                        ToolbarItem(placement: .primaryAction) { PdfPageButton(session: session, reader: reader) }
-                        ToolbarItem(placement: .primaryAction) {
-                            Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
-                                Label("Select region", systemImage: "rectangle.dashed")
-                            }
-                            .disabled(!reader.canSelect && !reader.selecting)
+                        ToolbarItem(placement: .topBarTrailing) {
+                            PdfPageButton(session: session, reader: reader)
+                                .font(.subheadline)
+                                .fixedSize()
                         }
-                        ToolbarItem(placement: .primaryAction) {
-                            Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
-                                Label("Annotate area", systemImage: "highlighter")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            compactPdfActions(session, reader: reader)
+                        } label: { Label("PDF actions", systemImage: "ellipsis.circle") }
+                        .accessibilityLabel("PDF actions")
+                    }
+                } else if let reader = session.pdfReader {
+                    ToolbarItem(placement: .primaryAction) {
+                        PdfFileMenu(session: session, reader: reader, iconOnly: detailWidth < 900) { if let id = module?.id { beginPdfImport(id) } }
+                    }
+                    if reader.activeId != nil {
+                        if detailWidth >= 700 {
+                            ToolbarItem(placement: .primaryAction) { PdfPageButton(session: session, reader: reader) }
+                            ToolbarItem(placement: .primaryAction) {
+                                Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
+                                    Label("Select region", systemImage: "rectangle.dashed")
+                                }
+                                .disabled(!reader.canSelect && !reader.selecting)
                             }
-                            .disabled(!reader.canAnnotate && !reader.annotating)
+                            ToolbarItem(placement: .primaryAction) {
+                                Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
+                                    Label("Annotate area", systemImage: "highlighter")
+                                }
+                                .disabled(!reader.canAnnotate && !reader.annotating)
+                            }
                         }
-                        ToolbarItem(placement: .primaryAction) { PdfViewMenu(session: session, reader: reader) }
+                        ToolbarItem(placement: .primaryAction) { PdfViewMenu(session: session, reader: reader, compactTools: detailWidth < 700) }
                         if reader.fullscreen {
                             ToolbarItem(placement: .primaryAction) {
                                 Button { session.pdfCommand(.openBeside) } label: { Label("Exit full screen", systemImage: "arrow.down.right.and.arrow.up.left") }
@@ -385,41 +533,86 @@ struct RootView: View {
                     }
                 }
 
-                ToolbarItemGroup(placement: isPhone ? .topBarTrailing : .topBarLeading) {
-                    Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
-                        .accessibilityLabel("Undo")
-                    Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
-                        .accessibilityLabel("Redo")
-                }
-                if !isPhone {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button { showingContents.toggle() } label: { Label("Contents", systemImage: "list.bullet.indent") }
-                            .accessibilityLabel("Contents")
-                            .popover(isPresented: $showingContents) {
-                                ContentsPopover(session: session, moduleName: module?.name ?? "Note") { showingContents = false }
-                            }
+                if !isPhone || session.pdfReader == nil {
+                    ToolbarItemGroup(placement: isPhone ? .topBarTrailing : .topBarLeading) {
+                        Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
+                            .accessibilityLabel("Undo")
+                        Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                            .accessibilityLabel("Redo")
                     }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        noteActions(session)
-                    } label: { Image(systemName: "ellipsis") }
-                    .accessibilityLabel("Note actions")
-                    .accessibilityValue(session.saveStatus)
-                }
-                // Far right, mirroring the sidebar toggle at the far left.
-                ToolbarItem(placement: .primaryAction) {
-                    Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
-                        .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
-                        .accessibilityValue(session.filesOpen ? "Open" : "Closed")
-                        .keyboardShortcut("d", modifiers: [.command, .shift])
-                        .disabled(busy || !session.ready)
+                    if !isPhone {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button { showingContents.toggle() } label: { Label("Contents", systemImage: "list.bullet.indent") }
+                                .accessibilityLabel("Contents")
+                                .popover(isPresented: $showingContents) {
+                                    ContentsPopover(session: session, moduleName: module?.name ?? "Note") { showingContents = false }
+                                }
+                        }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu {
+                            noteActions(session)
+                        } label: { Image(systemName: "ellipsis") }
+                        .accessibilityLabel("Note actions")
+                        .accessibilityValue(session.saveStatus)
+                    }
+                    // Far right, mirroring the sidebar toggle at the far left.
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
+                            .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
+                            .accessibilityValue(session.filesOpen ? "Open" : "Closed")
+                            .keyboardShortcut("d", modifiers: [.command, .shift])
+                            .disabled(busy || !session.ready)
+                    }
                 }
             }
         }
     }
 
-    @ViewBuilder private func noteActions(_ session: WebSession) -> some View {
+    private func manualSync() async {
+        guard let sync = store.sync, sync.account != nil else { return }
+        do { try await session?.flush(); try await sync.syncNow(); await store.refresh() }
+        catch { store.error = error.localizedDescription }
+    }
+
+    @ViewBuilder private func compactPdfActions(_ session: WebSession, reader: PdfReaderState) -> some View {
+        Section("Document") {
+            PdfFileMenu(session: session, reader: reader) { if let id = module?.id { beginPdfImport(id) } }.actions
+        }
+        if reader.activeId != nil {
+            Section("Tools") {
+                Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
+                    Label("Select region", systemImage: "rectangle.dashed")
+                }.disabled(!reader.canSelect && !reader.selecting)
+                Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
+                    Label("Annotate area", systemImage: "highlighter")
+                }.disabled(!reader.canAnnotate && !reader.annotating)
+            }
+            PdfViewMenu(session: session, reader: reader).actions
+            if reader.fullscreen {
+                Button { session.pdfCommand(.openBeside) } label: { Label("Exit full screen", systemImage: "arrow.down.right.and.arrow.up.left") }
+            }
+        }
+        // With a file open, the menu is only about that file; "× Note" leads back to the note.
+        if reader.activeId == nil {
+            Menu {
+                Button { session.exec(.undo) } label: { Label("Undo", systemImage: "arrow.uturn.backward") }.disabled(!session.state.canUndo)
+                Button { session.exec(.redo) } label: { Label("Redo", systemImage: "arrow.uturn.forward") }.disabled(!session.state.canRedo)
+                noteActions(session, includePdf: false)
+            } label: { Label("Note actions", systemImage: "square.and.pencil") }
+            Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
+                .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
+                .disabled(busy || !session.ready)
+        }
+    }
+
+    @ViewBuilder private func noteActions(_ session: WebSession, includePdf: Bool = true) -> some View {
+        if session.state.inTable {
+            Menu {
+                TableEditingActions(session: session)
+            } label: { Label("Table actions", systemImage: "tablecells") }
+            .disabled(!session.state.editable)
+        }
         Button { newDrawing() } label: { Label("Insert drawing", systemImage: "pencil.tip.crop.circle") }
             .disabled(busy || !session.state.editable)
         if prototypeDrawingAvailable {
@@ -427,7 +620,9 @@ struct RootView: View {
                 .disabled(busy || !session.state.editable)
         }
         PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
-        Button { if let id = module?.id { beginPdfImport(id) } } label: { Label("Add PDF", systemImage: "doc.badge.plus") }.disabled(busy || !session.ready)
+        if includePdf {
+            Button { if let id = module?.id { beginPdfImport(id) } } label: { Label("Add PDF", systemImage: "doc.badge.plus") }.disabled(busy || !session.ready)
+        }
         Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }.keyboardShortcut("f")
         Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }
         if !session.saveStatus.isEmpty { Text(session.saveStatus) }
@@ -437,7 +632,7 @@ struct RootView: View {
     // iPad keeps its existing selection-driven NavigationLinks.
     @ViewBuilder private func destinationLink<Content: View>(_ destination: String, @ViewBuilder label: () -> Content) -> some View {
         if isPhone {
-            Button { if destination == "review" { reviewModule = nil }; navigate(destination) } label: { label() }
+            Button { if destination == "review" { reviewModule = nil }; if destination == "files" { filesModuleFilter = nil }; navigate(destination) } label: { label() }
                 .foregroundStyle(.primary)
         } else {
             NavigationLink(value: destination, label: label)
@@ -511,6 +706,7 @@ struct RootView: View {
                     catch { failures.append("PDFs were imported, but the files list could not be refreshed: \(error)") }
                 }
                 await store.refresh()
+                if imported { NotificationCenter.default.post(name: .coreDidWrite, object: nil) }
                 if !failures.isEmpty { store.error = failures.joined(separator: "\n") }
             }
         }
@@ -529,7 +725,7 @@ struct RootView: View {
         }
         if !hiding { session?.hideEditorInputAssistant() }
         // One destination frame drives visibility and placement, including the
-        // hardware shortcut strip. Floating keyboards do not obscure the bottom.
+        // hardware shortcut strip, with a separate occlusion frame for floating keyboards.
         withAnimation(animation) {
             let docked = localFrame.minY < window.bounds.maxY
                 && localFrame.maxY >= window.bounds.maxY && localFrame.width >= window.bounds.width * 0.9
@@ -537,7 +733,7 @@ struct RootView: View {
             // Keep our row at the bottom while the editor is first responder.
             let hardware = localFrame.minY >= window.bounds.maxY && session?.editorFirstResponder != nil
             keyboardDocked = !hiding && (docked || hardware)
-            keyboardTop = hiding ? window.bounds.maxY : min(localFrame.minY, window.bounds.maxY)
+            keyboardFrame = hiding ? .null : localFrame
         }
     }
     func newModule() {
@@ -545,9 +741,70 @@ struct RootView: View {
         name = ""
         editingName = true
     }
+    /// Folder rows are tagged by the List's ForEach too; only pages and modules navigate.
+    private func isDestination(_ id: String) -> Bool {
+        ["home", "review", "files"].contains(id) || store.modules.contains { $0.id == id }
+    }
+    @ViewBuilder private func folderRow(_ item: SidebarItem) -> some View {
+        Button {
+            var next = item
+            next.collapsed.toggle()
+            Task { await store.saveSidebar([next]) }
+        } label: {
+            Label {
+                Text(item.name ?? "")
+            } icon: {
+                Image(systemName: item.collapsed ? "folder" : "folder.fill")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .trailing) {
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(item.collapsed ? 0 : 90))
+            }
+            .contentShape(Rectangle())
+        }
+        .foregroundStyle(.primary)
+        .accessibilityValue(item.collapsed ? "Collapsed" : "Expanded")
+        .selectionDisabled()
+        .contextMenu {
+            Button("Rename") { folder = item; folderName = item.name ?? ""; editingFolder = true }
+            Button("Delete folder", role: .destructive) { deletingFolder = item }
+        }
+        .swipeActions {
+            Button("Delete", role: .destructive) { deletingFolder = item }
+            Button("Rename") { folder = item; folderName = item.name ?? ""; editingFolder = true }
+        }
+    }
+    @ViewBuilder private func moduleRow(_ module: NoteModule, inFolder: Bool) -> some View {
+        destinationLink(module.id) {
+            Text(module.name).badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
+                .padding(.leading, inFolder ? 20 : 0)
+        }
+        .contextMenu { moduleActions(module) }
+        .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
+    }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {
         Button("Rename") { rename = module; name = module.name; editingName = true }
         Button("Review") { reviewModule = module.id; navigate("review") }
+        Button("Files", systemImage: "doc.text") { filesModuleFilter = module.id; navigate("files") }
+        Button("Add PDF…", systemImage: "doc.badge.plus") { beginPdfImport(module.id) }
+        let items = store.sidebarItems
+        let folders = items.filter(\.isFolder)
+        let current = items.first { $0.id == module.id }?.folder_id
+        if !folders.isEmpty {
+            Menu("Move to") {
+                if current != nil {
+                    Button("Top level", systemImage: "arrow.up.to.line") {
+                        Task { await store.saveSidebar(SidebarLayout.move(items: items, module: module.id, into: nil)) }
+                    }
+                }
+                ForEach(folders.filter { $0.id != current }) { folder in
+                    Button(folder.name ?? "", systemImage: "folder") {
+                        Task { await store.saveSidebar(SidebarLayout.move(items: items, module: module.id, into: folder.id)) }
+                    }
+                }
+            }
+        }
         Button("Delete", role: .destructive) { deleting = module }
     }
     private func setChapterNumbering(_ moduleId: String, _ enabled: Bool) async throws {
@@ -580,6 +837,35 @@ struct RootView: View {
             } catch { store.error = String(describing: error) }
         }
     }
+    private func openLibraryDocument(_ document: LibraryDocument) {
+        guard !busy, let session, store.modules.contains(where: { $0.id == document.moduleId }) else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                try await session.flush()
+                if session.ready {
+                    try await revealLibraryDocument(document, in: session)
+                } else {
+                    session.onReady = { [weak session] in
+                        guard let session else { return }
+                        Task {
+                            do { try await revealLibraryDocument(document, in: session) }
+                            catch { store.error = error.localizedDescription }
+                        }
+                    }
+                }
+                store.recordOpenedModule(document.moduleId)
+                selected = document.moduleId
+                if isPhone { phoneColumn = .detail }
+            } catch { store.error = error.localizedDescription }
+        }
+    }
+    private func revealLibraryDocument(_ document: LibraryDocument, in session: WebSession) async throws {
+        try await session.open(document.moduleId)
+        _ = try await session.callEditor(.refreshDocuments, ["moduleId": document.moduleId], parameters: ["moduleId"])
+        _ = try await session.callEditor(.pdfCommand, ["command": PdfCommand.openFile.rawValue, "value": document.id], parameters: ["command", "value"])
+    }
     func navigate(_ destination: String) {
         guard !busy else { return }
         busy = true
@@ -608,17 +894,35 @@ struct RootView: View {
 private struct PdfFileMenu: View {
     let session: WebSession
     let reader: PdfReaderState
+    var iconOnly = false
     let addPdf: () -> Void
 
     var body: some View {
         Menu {
+            actions
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text")
+                if !iconOnly {
+                    Text(reader.title).lineLimit(1).truncationMode(.middle).frame(maxWidth: 180)
+                }
+                Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 4)
+            .frame(maxWidth: iconOnly ? nil : 220)
+            .accessibilityHidden(true)
+        }
+        .accessibilityLabel("PDF file")
+        .accessibilityValue(reader.title)
+    }
+    @ViewBuilder var actions: some View {
             if reader.fullscreen {
                 Button { session.pdfCommand(.backToNote) } label: { Label("Back to note", systemImage: "chevron.backward") }
             }
             Section {
                 ForEach(reader.files) { file in
                     Button { session.pdfCommand(.openFile, file.id) } label: {
-                        if file.id == reader.activeId { Label(file.name, systemImage: "checkmark") } else { Text(file.name) }
+                        Label(file.name, systemImage: file.id == reader.activeId ? "checkmark" : "doc.text")
                     }
                 }
             }
@@ -626,17 +930,6 @@ private struct PdfFileMenu: View {
                 Button { session.pdfCommand(.showFiles) } label: { Label("All files", systemImage: "list.bullet") }
             }
             Button(action: addPdf) { Label("Add PDF", systemImage: "doc.badge.plus") }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.text")
-                Text(reader.title).lineLimit(1).truncationMode(.middle).frame(maxWidth: 200)
-                Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 4)
-            .accessibilityHidden(true)
-        }
-        .accessibilityLabel("PDF file")
-        .accessibilityValue(reader.title)
     }
 }
 
@@ -644,6 +937,7 @@ private struct PdfFileMenu: View {
 private struct PdfPageButton: View {
     let session: WebSession
     let reader: PdfReaderState
+    var compact = false
     @State private var asking = false
     @State private var text = ""
 
@@ -652,13 +946,17 @@ private struct PdfPageButton: View {
             text = ""
             asking = true
         } label: {
-            HStack(spacing: 3) {
-                Text("\(reader.page)").fontWeight(.semibold)
-                Text("/ \(reader.pageCount)").foregroundStyle(.secondary)
+            if compact {
+                Label("Page \(reader.page) of \(reader.pageCount) · Go to page", systemImage: "doc.text")
+            } else {
+                HStack(spacing: 3) {
+                    Text("\(reader.page)").fontWeight(.semibold)
+                    Text("/ \(reader.pageCount)").foregroundStyle(.secondary)
+                }
+                .monospacedDigit()
+                .padding(.horizontal, 4)
+                .accessibilityHidden(true)
             }
-            .monospacedDigit()
-            .padding(.horizontal, 4)
-            .accessibilityHidden(true)
         }
         .disabled(reader.pageCount == 0)
         .accessibilityLabel("Page \(reader.page) of \(reader.pageCount)")
@@ -681,9 +979,27 @@ private struct PdfPageButton: View {
 private struct PdfViewMenu: View {
     let session: WebSession
     let reader: PdfReaderState
+    var compactTools = false
 
     var body: some View {
         Menu {
+            actions
+        } label: {
+            Label("More PDF actions", systemImage: "ellipsis")
+        }
+    }
+    @ViewBuilder var actions: some View {
+            if compactTools {
+                PdfPageButton(session: session, reader: reader, compact: true)
+                Section("Tools") {
+                    Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
+                        Label("Select region", systemImage: "rectangle.dashed")
+                    }.disabled(!reader.canSelect && !reader.selecting)
+                    Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
+                        Label("Annotate area", systemImage: "highlighter")
+                    }.disabled(!reader.canAnnotate && !reader.annotating)
+                }
+            }
             Section("Zoom \(reader.zoom)%") {
                 Button { session.pdfCommand(.zoomIn) } label: { Label("Zoom in", systemImage: "plus.magnifyingglass") }
                     .disabled(!reader.canZoomIn)
@@ -695,8 +1011,5 @@ private struct PdfViewMenu: View {
             if !reader.fullscreen {
                 Button { session.pdfCommand(.openFullscreen) } label: { Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right") }
             }
-        } label: {
-            Label("More PDF actions", systemImage: "ellipsis")
-        }
     }
 }

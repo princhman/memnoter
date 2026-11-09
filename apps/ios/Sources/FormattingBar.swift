@@ -27,13 +27,21 @@ struct FormattingBar: View {
     private let isPhone = UIDevice.current.userInterfaceIdiom == .phone
 
     private var rowWidth: CGFloat { max(36, maximumWidth - 8) }
+    private var pinnedWidth: CGFloat { session.state.inTable ? 94 : 44 }
 
     var body: some View {
         HStack(spacing: 0) {
             TouchScrollingRow {
                 buttons.fixedSize(horizontal: true, vertical: false)
             }
+            .frame(width: max(0, rowWidth - pinnedWidth))
             divider
+            // Keep table editing visible even on a narrow phone, independently
+            // of the formatting row's current horizontal scroll position.
+            if session.state.inTable {
+                tableMenu
+                divider
+            }
             Button { session.web.endEditing(true) } label: { Image(systemName: "keyboard.chevron.compact.down") }
                 .buttonStyle(FormatButtonStyle()).accessibilityLabel("Hide keyboard")
         }
@@ -172,28 +180,23 @@ struct FormattingBar: View {
             .popover(isPresented: $editingLink) {
                 linkEditor.padding().presentationCompactAdaptation(.popover)
             }
-        Menu {
-            if session.state.inTable {
-                Button("Add row above") { session.exec(.addRowBefore) }
-                Button("Add row below") { session.exec(.addRowAfter) }
-                Button("Add column left") { session.exec(.addColumnBefore) }
-                Button("Add column right") { session.exec(.addColumnAfter) }
-                Button("Toggle header row") { session.exec(.toggleHeaderRow) }
-                Button("Merge cells") { session.exec(.mergeCells) }.disabled(!session.state.canMergeCells)
-                Button("Split cell") { session.exec(.splitCell) }.disabled(!session.state.canSplitCell)
-                Button("Delete row", role: .destructive) { session.exec(.deleteRow) }
-                Button("Delete column", role: .destructive) { session.exec(.deleteColumn) }
-                Button("Delete table", role: .destructive) { session.exec(.deleteTable) }
-            } else {
-                Button("Insert table") { session.exec(.insertTable) }
-            }
-        } label: { Image(systemName: "tablecells") }
-            .buttonStyle(FormatButtonStyle(active: session.state.inTable))
-            .accessibilityLabel("Table")
+        if !session.state.inTable { tableMenu }
         Button { session.exec(.insertFoldableBlock) } label: { Image(systemName: "rectangle.expand.vertical") }
             .buttonStyle(FormatButtonStyle()).accessibilityLabel("Insert foldable block")
         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
             .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
+    }
+
+    private var tableMenu: some View {
+        Menu {
+            if session.state.inTable {
+                TableEditingActions(session: session)
+            } else {
+                Button("Insert table") { session.exec(.insertTable) }
+            }
+        } label: { Image(systemName: "tablecells").frame(minWidth: 38, minHeight: 30) }
+        .buttonStyle(FormatButtonStyle(active: session.state.inTable))
+        .accessibilityLabel(session.state.inTable ? "Table actions" : "Insert table")
     }
 
     @ViewBuilder private var sectionGroup: some View {
@@ -309,5 +312,38 @@ private final class RowController<Content: View>: UIViewController {
             host.view.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
         ])
         host.didMove(toParent: self)
+    }
+}
+
+// Shared by the keyboard bar and note menu. Commands use the retained web
+// selection without focusing the editor, so a hidden keyboard stays hidden.
+struct TableEditingActions: View {
+    @Bindable var session: WebSession
+
+    var body: some View {
+        Group {
+            Button("Add row above") { session.exec(.addRowBefore) }
+                .disabled(!session.state.canAddRowBefore)
+            Button("Add row below") { session.exec(.addRowAfter) }
+                .disabled(!session.state.canAddRowAfter)
+            Button("Add column left") { session.exec(.addColumnBefore) }
+                .disabled(!session.state.canAddColumnBefore)
+            Button("Add column right") { session.exec(.addColumnAfter) }
+                .disabled(!session.state.canAddColumnAfter)
+            Button("Toggle header row") { session.exec(.toggleHeaderRow) }
+                .disabled(!session.state.canToggleHeaderRow)
+            Button("Merge cells") { session.exec(.mergeCells) }
+                .disabled(!session.state.canMergeCells)
+            Button("Split cell") { session.exec(.splitCell) }
+                .disabled(!session.state.canSplitCell)
+            Divider()
+            Button("Delete row", role: .destructive) { session.exec(.deleteRow) }
+                .disabled(!session.state.canDeleteRow)
+            Button("Delete column", role: .destructive) { session.exec(.deleteColumn) }
+                .disabled(!session.state.canDeleteColumn)
+            Button("Delete table", role: .destructive) { session.exec(.deleteTable) }
+                .disabled(!session.state.canDeleteTable)
+        }
+        .disabled(!session.state.editable)
     }
 }

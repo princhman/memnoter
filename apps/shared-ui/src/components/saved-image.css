@@ -1,0 +1,28 @@
+/* A saved pixel width must not contribute to the cell's intrinsic width.
+   Give block images a definite containing width before resolving max-width. */
+.tiptap :is(td, th) .note-image-block:not([data-inline]) {
+  contain: inline-size;
+  width: 100%;
+  float: none;
+}
+.tiptap :is(td, th) .note-image-block[data-inline] {
+  max-width: calc(100% - 0.3em);
+}
+.tiptap :is(td, th) .note-image-host,
+.tiptap :is(td, th) .note-image-host [data-resize-container],
+.tiptap :is(td, th) .note-image-host [data-resize-wrapper] {
+  min-width: 0;
+  max-width: 100%;
+}
+/* Above the portaled table edge bars and cell toolbar (z-index 39/40). */
+.note-image-controls[data-floating] {
+  position: fixed;
+  z-index: var(--z-popup);
+  top: 0;
+  left: 0;
+  margin: 0;
+  transform: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  visibility: hidden;
+}

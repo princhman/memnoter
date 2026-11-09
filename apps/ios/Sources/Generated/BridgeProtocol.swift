@@ -17,6 +17,7 @@ enum NativeEventName: String, Codable {
     case pdfViewState = "pdfViewState"
     case pdfState = "pdfState"
     case pdfReader = "pdfReader"
+    case pdfSelectionChanged = "pdfSelectionChanged"
     case error = "error"
     case saveStatus = "saveStatus"
     case scrollDebug = "scrollDebug"
@@ -86,6 +87,11 @@ enum PdfCommand: String, Codable {
     case openBeside = "openBeside"
     case backToNote = "backToNote"
 }
+enum PdfSelectionAction: String, Codable {
+    case quote = "quote"
+    case highlight = "highlight"
+    case comment = "comment"
+}
 enum EditorApiMethod: String, Codable {
     case applyRemote = "applyRemote"
     case fileStored = "fileStored"
@@ -97,6 +103,7 @@ enum EditorApiMethod: String, Codable {
     case refreshModules = "refreshModules"
     case toggleFiles = "toggleFiles"
     case refreshDocuments = "refreshDocuments"
+    case pdfSelectionAction = "pdfSelectionAction"
     case pdfCommand = "pdfCommand"
     case exec = "exec"
     case setOutlineTracking = "setOutlineTracking"
@@ -144,6 +151,14 @@ struct EditorState: Codable {
     var inTable: Bool = false
     var canMergeCells: Bool = false
     var canSplitCell: Bool = false
+    var canAddRowBefore: Bool = false
+    var canAddRowAfter: Bool = false
+    var canAddColumnBefore: Bool = false
+    var canAddColumnAfter: Bool = false
+    var canDeleteRow: Bool = false
+    var canDeleteColumn: Bool = false
+    var canDeleteTable: Bool = false
+    var canToggleHeaderRow: Bool = false
     var canIndent: Bool = false
     var canOutdent: Bool = false
     var canMakeCard: Bool = false
@@ -199,6 +214,13 @@ struct PdfReaderState: Codable, Equatable {
     var canAnnotate: Bool = false
     var canZoomIn: Bool = false
     var canZoomOut: Bool = false
+}
+struct PdfSelectionState: Codable {
+    var active: Bool = false
+    var canQuote: Bool = false
+    var canHighlight: Bool = false
+    var canComment: Bool = false
+    var lastColor: String = ""
 }
 enum BridgeProtocol {
     static let version = 1

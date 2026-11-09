@@ -82,6 +82,15 @@ export const PDF_COMMANDS = {
   backToNote: true,
 } as const;
 export type PdfCommand = keyof typeof PDF_COMMANDS;
+export const PDF_SELECTION_ACTIONS = { quote: true, highlight: true, comment: true } as const;
+export type PdfSelectionAction = keyof typeof PDF_SELECTION_ACTIONS;
+export interface PdfSelectionState {
+  active: boolean;
+  canQuote: boolean;
+  canHighlight: boolean;
+  canComment: boolean;
+  lastColor: string;
+}
 export interface PdfReaderFile { id: string; name: string; }
 /** What the native toolbar shows while the PDF pane is open. `activeId` is
  * null on the file list; `zoom` is a whole percentage. */
@@ -116,6 +125,10 @@ export interface EditorState {
   headingLevel: number | null;
   bulletList: boolean; orderedList: boolean; blockquote: boolean;
   inTable: boolean; canMergeCells: boolean; canSplitCell: boolean;
+  canAddRowBefore: boolean; canAddRowAfter: boolean;
+  canAddColumnBefore: boolean; canAddColumnAfter: boolean;
+  canDeleteRow: boolean; canDeleteColumn: boolean; canDeleteTable: boolean;
+  canToggleHeaderRow: boolean;
   canIndent: boolean; canOutdent: boolean;
   canMakeCard: boolean; inCloze: boolean; canJoinClozes: boolean;
   folded: boolean; canFold: boolean;
@@ -146,6 +159,7 @@ export interface NativeEvents {
   pdfViewState: { documentId: string; page: number; zoom: number };
   pdfState: { moduleId: string | null; open: boolean; coveringNote: boolean; focused: boolean };
   pdfReader: PdfReaderState | null;
+  pdfSelectionChanged: PdfSelectionState;
   error: { moduleId: string | null; message: string };
   saveStatus: { pending: number; failing: boolean; imageErrors: string[] };
   scrollDebug: { time: number; reason: string; [key: string]: unknown };
@@ -162,6 +176,7 @@ export interface EditorApi {
   refreshModules(): Promise<void>;
   toggleFiles(): void;
   refreshDocuments(moduleId: string): Promise<void>;
+  pdfSelectionAction(action: PdfSelectionAction, color?: string | null): void;
   pdfCommand(command: PdfCommand, value?: string | number | null): void;
   exec(command: ExecCommand, args?: Record<string, unknown>): boolean;
   setOutlineTracking(enabled: boolean): void;

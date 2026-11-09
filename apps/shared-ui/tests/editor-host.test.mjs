@@ -39,6 +39,224 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
         queueMicrotask(() => window.__memnoterBridge.resolve(id, result));
       } });
     });
+    // Exercise real DOM input/selection and the public native occlusion bridge.
+    // These cases own visibility and minimum movement, rather than scroll internals.
+    for (const [name, scenario] of [
+      ['typing, Enter, deletion and paste stay minimally above keyboard plus bar', 'typing'],
+      ['formatting bar toggles and growing floating keyboard occlusion preserve the caret', 'insets'],
+      ['word selection leaves a visible middle word still and minimally reveals a hidden end', 'selection'],
+      ['inserting a final paragraph reveals it without centering', 'paragraph'],
+      ['PDF quote insertion at the note end reveals immediately with ordinary motion enabled', 'quote'],
+    ]) await t.test(name, async () => {
+      const scrollPage = await context.newPage();
+      try {
+        await scrollPage.setViewportSize({ width: 430, height: 932 });
+        await scrollPage.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+        await scrollPage.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+        const moduleId = 'scroll-' + scenario;
+        await scrollPage.evaluate(id => window.memnoterEditor.open(id), moduleId);
+        await scrollPage.locator('.tiptap').click();
+        await scrollPage.keyboard.insertText(('Middle word selection stays here. '.repeat(4) + '\n').repeat(45) + 'Final line');
+        const settle = () => scrollPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const geometry = () => scrollPage.evaluate(() => {
+          const selection = getSelection();
+          const range = selection.getRangeAt(0).cloneRange();
+          range.collapse(selection.focusNode === range.startContainer && selection.focusOffset === range.startOffset);
+          let rect = range.getBoundingClientRect();
+          // WebKit gives an empty paragraph's collapsed range no box.
+          if (!rect.height) rect = (selection.focusNode.nodeType === Node.ELEMENT_NODE ? selection.focusNode : selection.focusNode.parentElement).getBoundingClientRect();
+          const container = document.querySelector('.app-scroll-container');
+          return { scroll: container.scrollTop, top: rect.top, bottom: rect.bottom,
+            visibleBottom: container.getBoundingClientRect().bottom - Number(container.dataset.bottomInset || 0) };
+        });
+        const visible = async (previous, label) => {
+          await scrollPage.waitForFunction(() => {
+            const selection = getSelection();
+            const rect = selection.getRangeAt(0).getBoundingClientRect();
+            const container = document.querySelector('.app-scroll-container');
+            return !rect.height || rect.bottom <= container.getBoundingClientRect().bottom - Number(container.dataset.bottomInset || 0) - 23;
+          });
+          await settle();
+          const next = await geometry();
+          assert.ok(next.bottom <= next.visibleBottom - 24 + 1, `${label}: hidden caret ${JSON.stringify(next)}`);
+          if (previous && next.scroll > previous.scroll + 1) {
+            assert.ok(next.bottom >= next.visibleBottom - 27, `${label}: centered instead of minimum reveal ${JSON.stringify({ previous, next })}`);
+          }
+          return next;
+        };
+        await scrollPage.evaluate(() => window.memnoterEditor.setBottomInset(336 + 76));
+        await scrollPage.waitForTimeout(150);
+        await visible(null, 'keyboard opening');
+        if (scenario === 'typing') {
+          // Put the final caret at the visibility boundary before individual input.
+          await scrollPage.evaluate(() => {
+            const rect = getSelection().getRangeAt(0).getBoundingClientRect();
+            const container = document.querySelector('.app-scroll-container');
+            container.scrollTop += rect.bottom - (container.getBoundingClientRect().bottom - 412 - 24);
+          });
+          let previous = await geometry();
+          for (const [index, character] of [...'abcdefghijklmnopqrstuvwxyz0123456789'].entries()) {
+            await scrollPage.keyboard.type(character);
+            previous = await visible(previous, `keystroke ${index}`);
+            if (index % 6 === 5) {
+              await scrollPage.keyboard.press('Enter');
+              previous = await visible(previous, `Enter ${index}`);
+            }
+          }
+          await scrollPage.keyboard.press('Backspace');
+          previous = await visible(previous, 'Backspace');
+          await scrollPage.keyboard.insertText('Pasted text '.repeat(25));
+          await visible(previous, 'paste');
+        } else if (scenario === 'insets') {
+          for (const inset of [336, 412, 336, 180, 480, 412]) {
+            const previous = await geometry();
+            await scrollPage.evaluate(inset => window.memnoterEditor.setBottomInset(inset), inset);
+            await visible(previous, `occlusion ${inset}`);
+            await scrollPage.keyboard.type('x');
+            await visible(null, 'typing after inset');
+          }
+        } else if (scenario === 'selection') {
+          const paragraph = scrollPage.locator('.tiptap p').nth(20);
+          await paragraph.evaluate(node => {
+            const container = node.closest('.app-scroll-container');
+            container.scrollTop += node.getBoundingClientRect().top - 220;
+          });
+          await settle();
+          const before = await geometry();
+          await paragraph.dblclick({ position: { x: 40, y: 12 } });
+          await settle();
+          assert.ok((await scrollPage.evaluate(() => getSelection().toString())).length > 0);
+          assert.ok(Math.abs((await geometry()).scroll - before.scroll) < 1, 'Double-click jumped away from the middle word');
+          // Selection can change under an existing keyboard (e.g. drag handles).
+          await paragraph.evaluate(node => {
+            const container = node.closest('.app-scroll-container');
+            container.scrollTop += node.getBoundingClientRect().top - 560;
+            const range = document.createRange();
+            const text = document.createTreeWalker(node, NodeFilter.SHOW_TEXT).nextNode();
+            range.setStart(text, 0); range.setEnd(text, 6);
+            getSelection().removeAllRanges(); getSelection().addRange(range);
+          });
+          const hidden = await geometry();
+          await settle();
+          const after = await geometry();
+          const expected = hidden.bottom - (hidden.visibleBottom - 24);
+          assert.ok(Math.abs(after.scroll - hidden.scroll - expected) <= 2, `Hidden selection must reveal minimally: ${JSON.stringify({ hidden, after, expected })}`);
+        } else if (scenario === 'quote') {
+          await scrollPage.emulateMedia({ reducedMotion: 'no-preference' });
+          await scrollPage.evaluate(async moduleId => {
+            const { pendingPdfQuote } = await import('/src/lib/pending-pdf-quote.ts');
+            pendingPdfQuote.setState(() => ({ id: 'scroll-quote', moduleId, kind: 'text', status: 'draft',
+              parts: [{ text: 'Inserted quote at the very end of the long note. '.repeat(5),
+                source: { documentId: 'source-pdf', name: 'Source.pdf', page: 1, region: { x: 0, y: 0, width: 1, height: 1 } } }] }));
+          }, moduleId);
+          await scrollPage.evaluate(() => { document.querySelector('.app-scroll-container').scrollTop -= 120; });
+          await scrollPage.getByRole('button', { name: 'Insert at cursor', exact: true }).click();
+          await settle();
+          const quote = await scrollPage.locator('.tiptap .node-pdfTextQuote').boundingBox();
+          const after = await geometry();
+          assert.ok(quote && quote.y >= 0 && quote.y + quote.height <= after.visibleBottom - 23, `Inserted quote hidden: ${JSON.stringify({ quote, after })}`);
+          const position = after.scroll;
+          await scrollPage.waitForTimeout(180);
+          assert.ok(Math.abs((await geometry()).scroll - position) < 1, 'Quote reveal continued animating');
+        } else {
+          await scrollPage.evaluate(() => { document.querySelector('.app-scroll-container').scrollTop -= 120; });
+          const previous = await geometry();
+          await scrollPage.keyboard.press('Enter');
+          await scrollPage.keyboard.insertText('Inserted final paragraph');
+          await visible(previous, 'final insertion');
+        }
+      } finally { await scrollPage.close(); }
+    });
+    for (const gesture of ['touch', 'wheel']) await t.test(`${gesture} reading and momentum ignore stale selections and inset reveals`, async () => {
+      const reader = await context.newPage();
+      try {
+        await reader.setViewportSize({ width: 430, height: 932 });
+        await reader.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+        await reader.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+        await reader.evaluate(() => window.memnoterEditor.open('finger-' + Date.now()));
+        await reader.locator('.tiptap').click();
+        await reader.keyboard.insertText(Array.from({ length: 100 }, (_, i) => `Field observation ${i}: the river path remains open after the rain.`).join('\n'));
+        await reader.waitForTimeout(400);
+        const result = await reader.evaluate(async gesture => {
+          const c = document.querySelector('.app-scroll-container');
+          const editor = document.querySelector('.tiptap');
+          // A retained word selection is valid even with the keyboard dismissed.
+          const r = document.createRange(); r.selectNodeContents(editor.querySelector('p'));
+          getSelection().removeAllRanges(); getSelection().addRange(r); editor.blur();
+          await new Promise(resolve => setTimeout(resolve, 200));
+          const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+          const writes = [], positions = [];
+          const original = c.scrollTo;
+          Object.defineProperty(c, 'scrollTop', { configurable: true, get() { return descriptor.get.call(this); }, set(value) { writes.push(value); descriptor.set.call(this, value); } });
+          c.scrollTo = function(...args) { writes.push(args); return original.apply(this, args); };
+          try {
+            if (gesture === 'touch') c.dispatchEvent(new Event('touchstart', { bubbles: true }));
+            for (let i = 0; i < 18; i++) {
+              if (gesture === 'wheel') c.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 35 }));
+              // Stand in for WebKit's compositor scroll, bypassing the writer probe.
+              descriptor.set.call(c, 400 + i * 35);
+              c.dispatchEvent(new Event('scroll'));
+              if (i === 4 && gesture === 'touch') {
+                c.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerType: 'touch' }));
+                document.dispatchEvent(new Event('touchend', { bubbles: true }));
+              }
+              window.memnoterEditor.setBottomInset(i % 2 ? 0 : 76);
+              document.dispatchEvent(new Event('selectionchange'));
+              window.dispatchEvent(new Event('resize'));
+              await new Promise(resolve => setTimeout(resolve, 35));
+              positions.push(c.scrollTop);
+            }
+            await new Promise(resolve => setTimeout(resolve, 450));
+            positions.push(c.scrollTop);
+            return { writes, positions };
+          } finally { delete c.scrollTop; c.scrollTo = original; }
+        }, gesture);
+        assert.deepEqual(result.writes, [], `Reader gesture triggered programmatic writes: ${JSON.stringify(result)}`);
+        assert.ok(result.positions.every((value, i, values) => i === 0 || value >= values[i - 1]), `Reading reversed direction: ${result.positions}`);
+      } finally { await reader.close(); }
+    });
+    await t.test('late Mermaid rendering above the viewport preserves the reading line through momentum', async () => {
+      const reader = await context.newPage();
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      try {
+        await reader.setViewportSize({ width: 430, height: 932 });
+        await reader.route(/pele/, async route => { await gate; await route.continue(); });
+        await reader.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+        await reader.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+        await reader.evaluate(() => window.memnoterEditor.open('lazy-finger'));
+        await reader.locator('.tiptap').click();
+        // The public editor receives a real rich clipboard document.
+        await reader.evaluate(() => {
+          const clipboardData = new DataTransfer();
+          clipboardData.setData('text/html', '<p>Trail survey</p><pre><code class="language-mermaid">graph TD\nA[Trailhead] --&gt; B[River]\nB --&gt; C[Bridge]\nC --&gt; D[Camp]\nD --&gt; E[Summit]</code></pre>' + Array.from({ length: 90 }, (_, i) => `<p>Reading anchor ${i}: water levels and route observations.</p>`).join(''));
+          document.querySelector('.tiptap').dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+        });
+        await reader.locator('.mermaid-block').waitFor();
+        await reader.evaluate(() => {
+          document.querySelector('.tiptap').blur();
+          const c = document.querySelector('.app-scroll-container');
+          c.dispatchEvent(new Event('touchstart', { bubbles: true }));
+          c.scrollTop = 650;
+          window.readingAnchor = [...document.querySelectorAll('.tiptap p')].find(p => p.getBoundingClientRect().top > 100);
+          window.anchorBefore = window.readingAnchor.getBoundingClientRect().top;
+          document.dispatchEvent(new Event('touchend', { bubbles: true }));
+        });
+        release();
+        // Continue momentum while the renderer completes; layout must stay still.
+        const samples = [];
+        for (let i = 0; i < 15; i++) {
+          samples.push(await reader.evaluate(() => {
+            document.querySelector('.app-scroll-container').dispatchEvent(new Event('scroll'));
+            return window.readingAnchor.getBoundingClientRect().top - window.anchorBefore;
+          }));
+          await reader.waitForTimeout(40);
+        }
+        await reader.locator('.mermaid-preview svg').waitFor();
+        samples.push(await reader.evaluate(() => window.readingAnchor.getBoundingClientRect().top - window.anchorBefore));
+        assert.ok(samples.every(delta => Math.abs(delta) <= 1), `Lazy diagram shifted the reading line: ${samples}`);
+      } finally { release(); await reader.close(); }
+    });
     // Saved native preferences are untrusted across app upgrades. A bad caret
     // or missing heading must not turn a successful content read into failure.
     for (const saved of [
@@ -60,6 +278,160 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       assert.equal(view.focusedSection, null);
       assert.deepEqual(view.foldedSections, []);
       await recovery.close();
+    }
+    await t.test('touch focus cannot reveal a retained caret before the delayed tap hit-test', async () => {
+      const tapPage = await context.newPage();
+      try {
+        await tapPage.setViewportSize({ width: 414, height: 896 });
+        await tapPage.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+        await tapPage.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+        await tapPage.evaluate(() => window.memnoterEditor.open('delayed-tap'));
+        await tapPage.locator('.tiptap').click();
+        await tapPage.keyboard.insertText(Array.from({ length: 70 }, (_, i) => `Line ${i + 1} keyboard opening verification`).join('\n'));
+        await tapPage.evaluate(() => {
+          document.activeElement.blur();
+          document.querySelector('.app-scroll-container').scrollTop = 0;
+        });
+        await tapPage.waitForTimeout(150);
+        const target = await tapPage.evaluate(() => {
+          const editor = document.querySelector('.tiptap');
+          const container = editor.closest('.app-scroll-container');
+          // Standalone WebKit may pan on HTMLElement.focus itself. Establish
+          // focus before the reader position; inject iOS's later notification
+          // separately so this case isolates our reveal writers.
+          editor.focus({ preventScroll: true });
+          container.scrollTop = 0;
+          const line = [...editor.querySelectorAll('p')].find(p => {
+            const r = p.getBoundingClientRect(); return r.top > innerHeight * 0.75 && r.bottom < innerHeight - 30;
+          });
+          const range = document.createRange();
+          range.setStart(line.firstChild, 16); range.setEnd(line.firstChild, 17);
+          const box = range.getBoundingClientRect();
+          const x = box.left + 1, y = box.top + box.height / 2;
+          const hit = document.caretRangeFromPoint(x, y);
+          // iOS emits focus between pointerup and compatibility mouse/click
+          // events, while the DOM still contains the old offscreen selection.
+          // Reproduce that observed ordering; leave final placement to WebKit.
+          const before = container.scrollTop;
+          editor.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', clientX: x, clientY: y }));
+          editor.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch', clientX: x, clientY: y }));
+          editor.dispatchEvent(new FocusEvent('focus'));
+          return { x, y, text: hit.startContainer.textContent, offset: hit.startOffset, scroll: before };
+        });
+        await tapPage.waitForTimeout(60);
+        assert.equal(await tapPage.locator('.app-scroll-container').evaluate(c => c.scrollTop), target.scroll,
+          'focus must not move content before WebKit resolves the tap');
+        await tapPage.mouse.click(target.x, target.y);
+        const readSelection = () => tapPage.evaluate(() => ({ text: getSelection().focusNode.textContent, offset: getSelection().focusOffset }));
+        assert.deepEqual(await readSelection(), { text: target.text, offset: target.offset }, 'WebKit must hit the original character');
+        for (const inset of [80, 180, 336, 412]) {
+          await tapPage.evaluate(inset => window.memnoterEditor.setBottomInset(inset), inset);
+          await tapPage.waitForTimeout(30);
+        }
+        await tapPage.waitForTimeout(250);
+        assert.deepEqual(await readSelection(), { text: target.text, offset: target.offset }, 'inset reveal preserves the tapped character');
+        const geometry = await tapPage.evaluate(() => {
+          const c = document.querySelector('.app-scroll-container');
+          return { bottom: getSelection().getRangeAt(0).getBoundingClientRect().bottom,
+            limit: c.getBoundingClientRect().bottom - 412 - 24 };
+        });
+        assert.ok(Math.abs(geometry.bottom - geometry.limit) <= 2, `tap reveals minimally: ${JSON.stringify(geometry)}`);
+        // Repeated focus notifications must preserve an already placed selection.
+        await tapPage.evaluate(() => {
+          const editor = document.querySelector('.tiptap');
+          editor.dispatchEvent(new FocusEvent('focus'));
+          editor.dispatchEvent(new FocusEvent('focus'));
+        });
+        await tapPage.waitForTimeout(60);
+        assert.deepEqual(await readSelection(), { text: target.text, offset: target.offset });
+      } finally { await tapPage.close(); }
+    });
+    // A blurred editor can retain a completely different model caret. Start
+    // at the actual scroll limit and use taps before native reports occlusion.
+    for (const [device, width, height, keyboard] of [['iPhone 11', 414, 896, 336], ['iPad', 820, 1180, 400]]) {
+      for (const scenario of ['last caret', 'bar-only line', 'last word', 'below end', 'stepped opening', 'late opening', 'visible line']) {
+        await t.test(`${device}: hidden keyboard tap ${scenario} reveals once with trailing room`, async () => {
+          const tapPage = await context.newPage();
+          try {
+            await tapPage.setViewportSize({ width, height });
+            await tapPage.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+            await tapPage.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+            await tapPage.evaluate(() => window.memnoterEditor.open('tap-opening'));
+            await tapPage.locator('.tiptap').click();
+            await tapPage.keyboard.insertText(Array.from({ length: 70 }, (_, i) => `Line ${i + 1} keyboard opening verification`).join('\n'));
+            // Retain a stale caret at the start before dismissing the keyboard.
+            await tapPage.keyboard.press('Control+Home');
+            await tapPage.evaluate(() => {
+              document.activeElement.blur();
+              window.memnoterEditor.setBottomInset(0);
+              const container = document.querySelector('.app-scroll-container');
+              container.scrollTop = container.scrollHeight;
+            });
+            await tapPage.waitForTimeout(100);
+            const target = await tapPage.evaluate(({ scenario, height, keyboard }) => {
+              const container = document.querySelector('.app-scroll-container');
+              let line = document.querySelector('.tiptap p:last-child');
+              if (scenario === 'bar-only line' || scenario === 'visible line') {
+                line = [...document.querySelectorAll('.tiptap p')].find(p => {
+                  const r = p.getBoundingClientRect();
+                  return scenario === 'bar-only line' ? r.top > height - keyboard - 76 && r.bottom < height - keyboard - 24
+                    : r.top > height - keyboard - 180 && r.bottom < height - keyboard - 120;
+                });
+              }
+              const range = document.createRange();
+              range.selectNodeContents(line);
+              const box = range.getClientRects()[0];
+              const y = scenario === 'below end' ? document.querySelector('.tiptap').getBoundingClientRect().bottom + 8 : box.top + box.height / 2;
+              window.tapScrolls = [container.scrollTop];
+              container.addEventListener('scroll', () => {
+                if (container.scrollTop !== window.tapScrolls.at(-1)) window.tapScrolls.push(container.scrollTop);
+              });
+              const x = box.left + 65;
+              const hit = document.caretRangeFromPoint(x, y);
+              return { x, y, hitText: hit.startContainer.textContent,
+                before: container.scrollTop, max: container.scrollHeight - container.clientHeight };
+            }, { scenario, height, keyboard });
+            assert.ok(Math.abs(target.before - target.max) <= 1, 'reader starts at max scroll');
+            if (scenario === 'last word') await tapPage.mouse.dblclick(target.x, target.y);
+            else await tapPage.touchscreen.tap(target.x, target.y);
+            const placed = await tapPage.evaluate(() => ({ text: getSelection().focusNode.textContent, offset: getSelection().focusOffset }));
+            if (scenario === 'late opening') await tapPage.waitForTimeout(450);
+            const steps = scenario === 'stepped opening' ? [80, 180, keyboard, keyboard + 76] : [keyboard + 76];
+            for (const inset of steps) {
+              await tapPage.evaluate(inset => window.memnoterEditor.setBottomInset(inset), inset);
+              await tapPage.waitForTimeout(30);
+            }
+            await tapPage.waitForTimeout(250);
+            const result = await tapPage.evaluate(() => {
+              const container = document.querySelector('.app-scroll-container');
+              const selection = getSelection();
+              const range = selection.rangeCount ? selection.getRangeAt(0) : null;
+              const rect = range?.getClientRects()[0];
+              return { focused: document.activeElement === document.querySelector('.tiptap'),
+                text: selection.toString(), node: (selection.focusNode?.parentElement?.closest('p') ?? selection.focusNode)?.textContent,
+                end: selection.focusOffset, collapsed: selection.isCollapsed,
+                bottom: rect?.bottom, limit: container.getBoundingClientRect().bottom - Number(container.dataset.bottomInset) - 24,
+                max: container.scrollHeight - container.clientHeight, scroll: container.scrollTop, movements: window.tapScrolls };
+            });
+            assert.equal(result.focused, true, `tap must focus editor: ${JSON.stringify(result)}`);
+            assert.ok(result.node?.includes(['bar-only line', 'visible line'].includes(scenario) ? 'keyboard opening' : 'Line 70'), `tap must retain intended line: ${JSON.stringify(result)}`);
+            if (!['last word', 'below end'].includes(scenario)) {
+              assert.equal(result.node, target.hitText, 'tap must hit the original text');
+              // Touch hit-testing can snap to a word boundary rather than the
+              // nearest glyph. Preserve WebKit's placed offset through layout.
+              assert.equal(result.end, placed.offset, 'occlusion must preserve WebKit’s placed character');
+              assert.equal(result.node, placed.text);
+            }
+            if (scenario === 'last word') assert.ok(result.text.length > 0, 'double tap selects word');
+            if (scenario === 'below end') assert.equal(result.end, result.node.length, 'blank area places caret at note end');
+            assert.ok(result.bottom <= result.limit + 1, `caret is covered: ${JSON.stringify(result)}`);
+            if (scenario !== 'visible line') assert.ok(result.bottom >= result.limit - 2, `reveal must be minimal: ${JSON.stringify(result)}`);
+            assert.ok(result.max > target.max, 'occlusion must grow trailing scroll range');
+            assert.ok(result.movements.length <= (scenario === 'visible line' ? 1 : 2), `one tap must move at most once: ${JSON.stringify(result)}`);
+            assert.ok(result.movements.every((v, i, values) => i === 0 || v >= values[i - 1]), 'no reverse correction');
+          } finally { await tapPage.close(); }
+        });
+      }
     }
     await t.test('numbering in the note and native outline follows module preferences and the whole document', async () => {
       const numbered = await context.newPage();
@@ -215,7 +587,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.ok(Math.abs(await page.locator('.app-scroll-container').evaluate(node => node.scrollTop) - visibleScroll) < 1);
     // Reuse this page/browser: Enter at the end of a long note must keep a
-    // visible caret still, and reveal an occluded caret to the visible midpoint.
+    // visible caret still, and reveal an occluded caret to the visible edge with clearance.
     const settleScroll = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const caretGeometry = () => page.evaluate(() => {
       const range = window.getSelection().getRangeAt(0).cloneRange();
@@ -224,7 +596,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       const container = document.querySelector('.app-scroll-container');
       const top = container.getBoundingClientRect().top + container.clientTop + Number(container.dataset.topInset ?? 0);
       const bottom = container.getBoundingClientRect().top + container.clientTop + container.clientHeight - Number(container.dataset.bottomInset ?? 0);
-      return { scroll: container.scrollTop, caret: (rect.top + rect.bottom) / 2, midpoint: (top + bottom) / 2 };
+      return { scroll: container.scrollTop, caret: (rect.top + rect.bottom) / 2, bottom: rect.bottom, visibleBottom: bottom, top };
     });
     await page.evaluate(() => window.memnoterEditor.setTopInset(60));
     await page.locator('.tiptap p').filter({ hasText: 'Tail ' }).evaluate(node => {
@@ -254,7 +626,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.keyboard.press('Enter');
     await settleScroll();
     const revealed = await caretGeometry();
-    assert.ok(Math.abs(revealed.caret - revealed.midpoint) < 20, JSON.stringify(revealed));
+    assert.ok(revealed.bottom <= revealed.visibleBottom - 23 && revealed.bottom >= revealed.visibleBottom - 27, JSON.stringify(revealed));
     await page.evaluate(() => window.memnoterEditor.setTopInset(0));
     await page.evaluate(() => window.memnoterEditor.setBottomInset(0));
     const focus = await page.evaluate(() => {

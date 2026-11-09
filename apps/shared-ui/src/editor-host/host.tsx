@@ -1,4 +1,5 @@
-import { editorHost } from "@/lib/editor-host";
+import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
+import { beginHostNavigation, editorHost } from "@/lib/editor-host";
 import { settled } from "@/lib/async-work";
 import { EditorHostProvider } from "@/lib/editor-host-context";
 import { pdfAnnotationSaveStatusStore } from "@/lib/pdf-annotation-store";
@@ -23,9 +24,6 @@ import { flushPersistedViews } from "@/lib/view-persistence";
 import { headingMathLabel } from "@/lib/heading-label";
 import { headingNumbers, headingNumberingKey } from "@/lib/heading-numbering";
 import { editorOutline, editorOutlines, editorState, execEditor } from "./commands";
-
-// How long after typing the caret may not be revealed upward.
-const TYPING_SETTLE_MS = 300;
 
 export function Host() {
   const router = useRouter();
@@ -64,6 +62,7 @@ export function Host() {
     window.memnoterEditor = {
       toggleFiles() { getEditor(true); pdfActions.current?.toggleFiles(); },
       async refreshDocuments(id) { await pdfActions.current?.refreshDocuments(id); },
+      pdfSelectionAction(action, color) { pdfSelectionControls.run(action, color); },
       pdfCommand(command, value) { pdfActions.current?.pdfCommand(command, value); },
       setOutlineTracking(enabled) { outlineTracking.current = enabled; refreshOutline.current(); },
       async refreshModules() { await queryClient.invalidateQueries({ queryKey: ["modules"] }); },
@@ -77,6 +76,8 @@ export function Host() {
         element.dataset.topInset = String(px);
         element.style.setProperty("--top-inset", `${px}px`);
         element.parentElement?.style.setProperty("--top-inset", `${px}px`);
+        const editor = active.current?.editor;
+        if (!hasSectionAnchor(element) && editor && !editor.isDestroyed) revealCaret(editor.view, "inset");
       },
       setBottomInset(px) {
         traceScroll("bottomInset", { px });
@@ -88,7 +89,7 @@ export function Host() {
         element.parentElement?.style.setProperty("--bottom-inset", `${px}px`);
         document.documentElement.style.setProperty("--native-bottom-inset", `${px}px`);
         const editor = active.current?.editor;
-        if (!hasSectionAnchor(element) && editor && !editor.isDestroyed) requestAnimationFrame(() => { if (!editor.isDestroyed) revealCaret(editor.view, "inset"); });
+        if (!hasSectionAnchor(element) && editor && !editor.isDestroyed) revealCaret(editor.view, "inset");
       },
       open(id) {
         const operation = queue.then(async () => {
@@ -112,7 +113,16 @@ export function Host() {
         catch (error) { throw fail(error); }
       },
       exec(command, args) {
-        try { return execEditor(getEditor(EXEC_COMMANDS[command] === true), command, args); }
+        try {
+          const editor = getEditor(EXEC_COMMANDS[command] === true);
+          const result = execEditor(editor, command, args);
+          if (result && command === "insertImage") {
+            const element = editorHost.scrollContainer(editor.view.dom);
+            if (element) beginHostNavigation(element);
+            requestAnimationFrame(() => revealCaret(editor.view, "insertion"));
+          }
+          return result;
+        }
         catch (error) { fail(error); return false; }
       },
       revealCard(moduleId, cardId) { requestCardReveal({ moduleId, blockId: blockIdOf(cardId) }); },
@@ -202,39 +212,69 @@ export function Host() {
     }
     let frame = 0;
     let inputScroll: number | undefined;
-    let lastInput = Number.NEGATIVE_INFINITY;
     const element = container.current;
     const reveal = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         if (editor.isDestroyed) return;
-        // WebKit may reveal the selection during input even when ProseMirror's
-        // scrolling is handled. Apply our visibility rule from the reader's
-        // pre-input position, rather than from WebKit's unsolicited scroll.
-        if (element && inputScroll !== undefined) element.scrollTop = inputScroll;
+        revealCaret(editor.view, inputScroll === undefined ? "selection" : "input", inputScroll);
         inputScroll = undefined;
-        // Selection, update and focus events can trail the input by several
-        // frames, while WebKit's layout is still settling.
-        revealCaret(editor.view, performance.now() - lastInput < TYPING_SETTLE_MS ? "input" : "selection");
       });
     };
     const beforeInput = (event: Event) => {
       // Undo and redo jump to wherever the change was, so they may need to scroll.
       const history = event instanceof InputEvent && event.inputType.startsWith("history");
       if (!history) {
-        lastInput = performance.now();
         if (element && inputScroll === undefined) inputScroll = element.scrollTop;
       }
       reveal();
     };
     const keydown = (event: KeyboardEvent) => { if (event.key === "Enter") beforeInput(event); };
+    let pointerSelecting = false;
+    let selectionPending = false;
+    const selecting = () => {
+      pointerSelecting = true;
+      selectionPending = false;
+      inputScroll = undefined;
+    };
+    const selectionChanged = () => {
+      if (pointerSelecting) selectionPending = true;
+      else reveal();
+    };
+    const selected = (event: Event) => {
+      if (event instanceof PointerEvent && event.type === "pointerup" && event.pointerType === "touch") return;
+      const wasSelecting = pointerSelecting;
+      pointerSelecting = false;
+      // Retry focus/inset reveals skipped during the gesture, using only the
+      // selection WebKit has now placed. Native insets still coalesce this.
+      if (selectionPending || wasSelecting) reveal();
+      selectionPending = false;
+    };
+    // A cancelled pointer usually means a scroll gesture. Do not reveal an
+    // unchanged caret when the reader finishes panning through a long note.
+    const cancelled = () => { pointerSelecting = false; selectionPending = false; };
+    element?.addEventListener("pointerdown", selecting, true);
+    // WebKit can update its selection before ProseMirror publishes a transaction.
+    document.addEventListener("selectionchange", selectionChanged);
+    document.addEventListener("pointerup", selected);
+    document.addEventListener("click", selected);
+    document.addEventListener("pointercancel", cancelled);
     element?.addEventListener("beforeinput", beforeInput, true);
     element?.addEventListener("keydown", keydown, true);
+    // Native reports keyboard occlusion. Window resize only schedules the same
+    // manager for viewport size changes, never another reveal policy.
+    window.addEventListener("resize", reveal);
     editor.on("transaction", publish);
     editor.on("selectionUpdate", reveal);
     editor.on("update", reveal);
     editor.on("focus", reveal);
     return () => {
+      element?.removeEventListener("pointerdown", selecting, true);
+      document.removeEventListener("selectionchange", selectionChanged);
+      document.removeEventListener("pointerup", selected);
+      document.removeEventListener("click", selected);
+      document.removeEventListener("pointercancel", cancelled);
+      window.removeEventListener("resize", reveal);
       element?.removeEventListener("beforeinput", beforeInput, true);
       element?.removeEventListener("keydown", keydown, true);
       clearTimeout(scrollTimer);

@@ -51,7 +51,10 @@ test('desktop WebKit displays an iPad drawing and retains its editable reference
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     await page.addInitScript(() => {
       window.installTestBridge({ tauri: { invoke: (command, args) => {
-        if (command === "resolve_card_image" && args.fileId === "png-preview") return Promise.resolve(localStorage.getItem("drawing-preview"));
+        if (command === "resolve_card_image" && args.fileId === "png-preview-2" && document.querySelector(".note-image-host img")?.naturalWidth === 200) return new Promise(resolve => {
+          window.releasePreview = () => resolve(localStorage.getItem(args.fileId));
+        });
+        if (command === "resolve_card_image" && args.fileId.startsWith("png-preview")) return Promise.resolve(localStorage.getItem(args.fileId));
         return Promise.reject(new Error(`Unexpected command: ${command}`));
       } } });
     });
@@ -64,7 +67,9 @@ test('desktop WebKit displays an iPad drawing and retains its editable reference
       const canvas = document.createElement('canvas'); canvas.width = 200; canvas.height = 100;
       const context = canvas.getContext('2d'); context.fillStyle = 'white'; context.fillRect(0, 0, 200, 100);
       context.fillStyle = '#713ac7'; context.fillRect(20, 30, 160, 4);
-      localStorage.setItem("drawing-preview", canvas.toDataURL());
+      localStorage.setItem("png-preview", canvas.toDataURL());
+      canvas.width = 240;
+      localStorage.setItem("png-preview-2", canvas.toDataURL());
       const ipad = window.ipadDocument = new Y.Doc();
       const image = new Y.XmlElement('image');
       for (const [key, value] of Object.entries({ fileId: reference.previewId, drawing: reference, imageId: 'drawing-id', alt: 'Synced drawing', src: null })) image.setAttribute(key, value);
@@ -78,6 +83,32 @@ test('desktop WebKit displays an iPad drawing and retains its editable reference
     await page.locator('.tiptap p').filter({ hasText: 'iPad explanation' }).click();
     await page.keyboard.press('End');
     await page.keyboard.type(' edited on Mac');
+    const caret = await page.evaluate(() => {
+      const desktop = editor.extensionManager.extensions.find(extension => extension.name === 'collaboration').options.document;
+      Y.applyUpdate(window.ipadDocument, Y.encodeStateAsUpdate(desktop));
+      window.previewElement = document.querySelector('.note-image-host img');
+      return editor.state.selection.toJSON();
+    });
+    await page.evaluate(() => {
+      const image = window.ipadDocument.getXmlFragment('default').toArray().find(node => node.nodeName === 'image');
+      window.ipadDocument.transact(() => {
+        image.setAttribute('fileId', 'png-preview-2');
+        image.setAttribute('drawing', { version: 1, sourceId: 'native-source-2', previewId: 'png-preview-2' });
+      });
+      const desktop = editor.extensionManager.extensions.find(extension => extension.name === 'collaboration').options.document;
+      Y.applyUpdate(desktop, Y.encodeStateAsUpdate(window.ipadDocument));
+    });
+    await page.waitForFunction(() => !!window.releasePreview);
+    assert.equal(await page.locator('.note-image-loading').isVisible(), true);
+    assert.equal(await page.locator('.note-image-host img').evaluate(img => img.naturalWidth), 200, 'keep the old preview while downloading');
+    await page.evaluate(() => window.releasePreview());
+    await page.waitForFunction(() => document.querySelector('.note-image-host img')?.naturalWidth === 240);
+    assert.equal(await page.evaluate(() => window.previewElement === document.querySelector('.note-image-host img')), true, 'preview updates must keep the mounted image DOM');
+    assert.equal(await page.evaluate(() => document.activeElement === editor.view.dom), true, 'preview arrival must retain DOM focus');
+    assert.deepEqual(await page.evaluate(() => editor.state.selection.toJSON()), caret, 'peer drawing revision must preserve the text caret');
+    await page.keyboard.type(' after sync');
+    assert.match(await page.locator('.tiptap').textContent(), /edited on Mac after sync/);
+    Object.assign(reference, { sourceId: 'native-source-2', previewId: 'png-preview-2' });
     const returned = await page.evaluate(async () => {
       const Y = window.Y;
       const desktop = editor.extensionManager.extensions.find(extension => extension.name === 'collaboration').options.document;
@@ -96,7 +127,7 @@ test('desktop WebKit displays an iPad drawing and retains its editable reference
       const desktop = editor.extensionManager.extensions.find(extension => extension.name === 'collaboration').options.document;
       Y.applyUpdate(desktop, new Uint8Array(update));
     }, returned.update);
-    await page.waitForFunction(() => document.querySelector('.note-image-host img')?.naturalWidth === 200);
+    await page.waitForFunction(() => document.querySelector('.note-image-host img')?.naturalWidth === 240);
     assert.deepEqual(await page.evaluate(() => editor.getJSON().content.find(node => node.type === 'image').attrs.drawing), reference);
     assert.match(await page.locator('.tiptap').textContent(), /edited on Mac/);
   } finally { await browser?.close(); await server.close(); }
@@ -111,6 +142,7 @@ test('Mac drawing sessions preserve existing draft slots, clean only new slots, 
     await page.addInitScript(() => {
       window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command === 'edit_drawing') {
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           if (window.outcome === 'save') editor.commands.setContent('<p>Removed by peer</p>');
           return { status: window.outcome, asCopy: false, hasChanges: false, expectedSourceId: null,
             source: { id: 'saved-source', path: '/source', file_type: 'json' }, preview: { id: 'saved-preview', path: '/preview', file_type: 'png' } };
@@ -132,6 +164,16 @@ test('Mac drawing sessions preserve existing draft slots, clean only new slots, 
       }, { existing, status });
       assert.deepEqual(ids, existing ? ['peer-slot'] : [], `${status}: only a slot created by this session may be automatically removed`);
     }
+    await page.evaluate(async () => {
+      editor.commands.setContent('<p>Resume typing</p>');
+      editor.view.focus();
+      window.outcome = 'cancel';
+      const { openMacDrawing } = await import('/src/lib/mac-drawing.ts');
+      await openMacDrawing(editor, 'note');
+    });
+    assert.equal(await page.evaluate(() => document.activeElement === editor.view.dom), true, 'closing the native canvas must leave the editor ready for typing');
+    await page.keyboard.type('continued');
+    assert.match(await page.locator('.tiptap').textContent(), /continued/);
     const recovered = await page.evaluate(async () => {
       editor.commands.setContent({ type: 'doc', content: [{ type: 'image', attrs: { imageId: 'peer-slot', drawing: { version: 1, sourceId: null, previewId: null } } }, { type: 'paragraph' }] });
       window.outcome = 'save';

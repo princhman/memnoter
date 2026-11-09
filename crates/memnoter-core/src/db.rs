@@ -282,6 +282,8 @@ const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] = &[
     migrate_sidebar_items,
     documents::migrate,
     pdf_annotations::migrate,
+    // Sync tables added after databases had already passed version 2.
+    crate::sync::migrate,
 ];
 
 fn migrate_sidebar_items(conn: &Connection) -> CommandResult<()> {
