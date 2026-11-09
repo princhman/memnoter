@@ -181,9 +181,10 @@ test("popup renders numbered titles", async () => {
 
 test("menu aim protects diagonal travel, releases outside the triangle, and expires when still", async () => {
   await load();
-  await page.clock.install();
-  await page.clock.pauseAt(new Date());
+  // Pause ahead of the browser's clock rather than racing the host's wall clock.
+  await page.clock.install({ time: 0 });
   try {
+  await page.clock.pauseAt(60_000);
   const first = await dash(root(1)).boundingBox();
   const second = await dash(topic(1, 1)).boundingBox();
   const start = { x: first.x + first.width - 1, y: first.y + first.height / 2 };

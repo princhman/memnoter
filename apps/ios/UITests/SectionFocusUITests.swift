@@ -24,7 +24,10 @@ final class SectionFocusUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: editor)], timeout: 20), .completed)
         editor.tap()
         editor.typeText("# Parent\nOutside sentinel\n## Child\nInside sentinel\n### Grandchild\nDeep sentinel\n# Other\nOther sentinel")
-        if app.buttons["Hide keyboard"].exists { app.buttons["Hide keyboard"].tap() }
+        XCTAssertTrue(app.webViews.staticTexts["Other sentinel"].waitForExistence(timeout: 5), "Complete the note before dismissing the keyboard")
+        // iPad exposes both the system key and the formatting-bar dismiss button.
+        let dismissKeyboard = app.buttons["Hide keyboard"].firstMatch
+        if dismissKeyboard.exists { dismissKeyboard.tap() }
 
         openContents(app)
         XCTAssertTrue(app.collectionViews.buttons["Parent"].waitForExistence(timeout: 5))

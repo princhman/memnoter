@@ -70,7 +70,9 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
     await drag(row('0'), folder);
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar')).some(item => item.id === '0' && item.folder_id));
     await inFolder('0', true);
-    await folder.click();
+    // dnd-kit keeps its document click guard for 50ms after a drop. A normal
+    // pointer press lets that cleanup finish before this separate click.
+    await folder.click({ delay: 60 });
     await page.getByRole('button', { name: 'Study', exact: true, expanded: false }).waitFor();
     assert.equal(await row('0').count(), 0);
     await page.getByRole('button', { name: 'Actions for Study', exact: true }).click({ force: true });
