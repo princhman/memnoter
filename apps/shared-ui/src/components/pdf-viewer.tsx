@@ -90,7 +90,7 @@ function ReaderTools({ children, fullscreen, leading, trailing }: { children: Re
   useLayoutEffect(() => { if (fullscreen) setTarget(document.getElementById("pdf-toolbar")); }, [fullscreen]);
   if (fullscreen) return target && createPortal(children, target);
   return <div className="pdf-reader-tools flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
-    <div className="pdf-reader-leading flex min-w-0 flex-1 items-center gap-1">{leading}</div><div className="pdf-reader-controls contents">{children}{trailing}</div>
+    <div className="pdf-reader-leading flex min-w-0 flex-1 items-center gap-1">{leading}</div><div className="pdf-reader-controls contents">{children}</div>{trailing && <div className="pdf-reader-trailing contents">{trailing}</div>}
   </div>;
 }
 
@@ -669,9 +669,11 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         if (event.key !== "Enter") return;
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
+      <span aria-hidden="true" className="pdf-tool-divider hidden" />
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
       <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
       <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn /></ToolButton>
+      <span aria-hidden="true" className="pdf-tool-divider hidden" />
       <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Select region" pressed={selecting && !annotationArea} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>
       <ToolButton label="Annotate area" pressed={annotationArea} disabled={!!pending || cropping || !pdf || !annotations.ready || writeBlocked} onClick={() => { setAnnotationEditor(null); setAnnotationArea(value => !value); setSelecting(!annotationArea); }}><Highlighter /></ToolButton>
       {fullscreen && <ToolButton label="Open beside note" hint={formatKeys(action("pdf.open-beside").keys)} onClick={openBeside}>

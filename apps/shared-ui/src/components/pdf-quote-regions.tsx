@@ -59,13 +59,13 @@ export const PdfQuoteRegions = memo(function PdfQuoteRegions({ regions, onNaviga
     {regions.map(region => {
       const key = regionKey(region);
       const label = `Show quote in note${region.uses.length > 1 ? ` (${region.uses.length} uses)` : ""}`;
-      const control = "pointer-events-auto absolute right-0 top-0 flex size-6 items-center justify-center rounded-sm bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
-      return <div key={key} className="pointer-events-none absolute border border-primary/80 bg-primary/5"
+      const control = "pdf-marker pointer-events-auto absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
+      return <div key={key} className="pointer-events-none absolute rounded-[3px] border border-primary/60 bg-primary/5"
         style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%` }}>
         {!disabled && onNavigate && region.uses.length > 0 && (region.uses.length === 1
-          ? <button type="button" className={control} aria-label={label} title={label} onClick={() => activate(region)}><ArrowUpRight aria-hidden="true" className="size-4" /></button>
+          ? <button type="button" className={control} aria-label={label} title={label} onClick={() => activate(region)}><ArrowUpRight aria-hidden="true" className="size-3" strokeWidth={2.5} /></button>
           : <DropdownMenu open={open === key} onOpenChange={value => { if (value) navigating.current = false; setOpen(value ? key : null); }}>
-            <DropdownMenuTrigger className={control} aria-label={label} title={label}><ArrowUpRight aria-hidden="true" className="size-4" /></DropdownMenuTrigger>
+            <DropdownMenuTrigger className={control} aria-label={label} title={label}><ArrowUpRight aria-hidden="true" className="size-3" strokeWidth={2.5} /></DropdownMenuTrigger>
             <DropdownMenuContent className="max-w-72" finalFocus={() => !navigating.current}>
               {region.uses.map(use => <DropdownMenuItem key={use.quoteId} onClick={() => { navigating.current = true; setOpen(null); onNavigate(use.quoteId); }}>{use.label}</DropdownMenuItem>)}
             </DropdownMenuContent>

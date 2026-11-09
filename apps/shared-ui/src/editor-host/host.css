@@ -126,12 +126,15 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-pdf-pane { display: flex; min-height: 0; min-width: 0; flex-direction: column; background: var(--background); padding-top: var(--top-inset, 0px); padding-bottom: var(--bottom-inset, 0px); }
 .native-pdf-beside { flex: 0 0 clamp(320px, 42%, 560px); border-left: 1px solid var(--border); }
 .native-pdf-cover { position: absolute; inset: 0; z-index: 10; }
-.native-pdf-heading { display: flex; flex-shrink: 0; align-items: center; gap: 4px; min-height: 44px; padding: 2px 6px; border-bottom: 1px solid var(--border); }
-.native-pdf-pane button { min-height: 44px; }
-.native-pdf-pane button[aria-label] { min-width: 44px; }
-.native-pdf-pane .h-9 { min-height: 44px; height: auto; }
+.native-pdf-heading { display: flex; flex-shrink: 0; align-items: center; gap: 2px; min-height: 52px; padding: 4px 8px; }
+.native-pdf-heading > span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+/* Page markers (quote links, annotation badges) keep their drawn size. */
+.native-pdf-pane button:not(.pdf-page button) { min-height: 44px; }
+.native-pdf-pane button[aria-label]:not(.pdf-page button) { min-width: 44px; border-radius: 999px; }
+.native-pdf-pane .h-9 { min-height: 52px; height: auto; padding-inline: 8px; }
+.native-pdf-pane li > button { border-radius: 12px; padding: 10px 12px; gap: 12px; font-size: 15px; }
 
 .native-editor-workspace [data-pdf-quote-controls] { bottom: calc(var(--bottom-inset, 0px) + 12px); }
-.native-editor-workspace [data-pdf-quote-controls] button { min-height: 44px; min-width: 44px; }
+.native-editor-workspace [data-pdf-quote-controls] button { min-height: 44px; min-width: 44px; border-radius: 12px; }
 
 [data-sonner-toast] button { min-height: 44px; }
