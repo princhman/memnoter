@@ -27,8 +27,11 @@ fn table_exists(conn: &Connection, name: &str) -> CommandResult<bool> {
     .map_err(db_err)
 }
 
+/// A collection's decks as (id, `::` path) and its note types by id.
+type Meta = (Vec<(i64, String)>, HashMap<i64, NoteType>);
+
 /// Decks and note types of the legacy collection, kept as JSON in `col`.
-fn legacy_meta(conn: &Connection) -> CommandResult<(Vec<(i64, String)>, HashMap<i64, NoteType>)> {
+fn legacy_meta(conn: &Connection) -> CommandResult<Meta> {
     let (decks, models): (String, String) = conn
         .query_row("select decks, models from col", [], |row| {
             Ok((row.get(0)?, row.get(1)?))
@@ -70,7 +73,7 @@ fn legacy_meta(conn: &Connection) -> CommandResult<(Vec<(i64, String)>, HashMap<
 }
 
 /// Decks and note types of the latest collection, kept in tables.
-fn latest_meta(conn: &Connection) -> CommandResult<(Vec<(i64, String)>, HashMap<i64, NoteType>)> {
+fn latest_meta(conn: &Connection) -> CommandResult<Meta> {
     let decks = conn
         .prepare("select id, name from decks")
         .map_err(db_err)?

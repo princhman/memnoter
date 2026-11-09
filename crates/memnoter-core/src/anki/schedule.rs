@@ -23,10 +23,11 @@ fn db_err(error: rusqlite::Error) -> String {
     format!("The Anki collection could not be read: {error}")
 }
 
-/// Every card, ordered by note and template, and the review log by card.
-pub fn read(
-    conn: &Connection,
-) -> CommandResult<(Vec<RawCard>, HashMap<i64, Vec<AnkiReview>>, i64)> {
+/// Every card, ordered by note and template, the review log by card id, and
+/// the collection's creation time.
+type Cards = (Vec<RawCard>, HashMap<i64, Vec<AnkiReview>>, i64);
+
+pub fn read(conn: &Connection) -> CommandResult<Cards> {
     // Review dates count from creation day; rollover/creationOffset may shift this by hours.
     let created: i64 = conn
         .query_row("select crt from col", [], |row| row.get(0))

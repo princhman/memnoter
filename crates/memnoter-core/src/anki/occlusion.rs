@@ -56,7 +56,9 @@ fn pairs(text: &str) -> Vec<(f64, f64)> {
         .filter_map(|part| part.parse().ok())
         .collect();
     values
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0], pair[1]))
         .collect()
 }
