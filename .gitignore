@@ -42,5 +42,6 @@ plan.md
 .sync-dev/
 
 /apps/ios/Version.xcconfig
+/apps/desktop/native/*.dylib
 /apps/ios/MemnoterCore/.build/
 .tanstack/tmp/

@@ -221,3 +221,63 @@ test("native previews accept every primary pointer in read-only notes and signal
     assert.equal(await page.evaluate(() => messages.filter(m => m.event === "imagePreview").at(-1)?.payload.open), false);
   } finally { await browser?.close(); await server.close(); }
 });
+
+test("a drawing keeps its previous preview and shows progress until the replacement decodes", async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen(); browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.installTestBridge({ tauri: { invoke: (command, args) => {
+        if (command === "resolve_card_image") {
+          if (args.fileId === "missing-file") return Promise.reject(new Error("Not downloaded"));
+          if (args.fileId === "preview-broken") return Promise.resolve("data:image/png;base64,invalid");
+          if (args.fileId.startsWith("preview-next")) return new Promise(resolve => { window.releasePreview = resolve; });
+          return Promise.resolve(window.firstPreview);
+        }
+        return Promise.resolve(null);
+      } } });
+    });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/images.html`);
+    await page.waitForFunction(() => "editor" in window);
+    const sources = await page.evaluate(() => {
+      const image = (color) => { const canvas = document.createElement("canvas"); canvas.width = 200; canvas.height = 100; const context = canvas.getContext("2d"); context.fillStyle = color; context.fillRect(0, 0, 200, 100); return canvas.toDataURL(); };
+      window.firstPreview = image("blue");
+      const second = image("red");
+      editor.commands.setContent({ type: "doc", content: [{ type: "image", attrs: { imageId: crypto.randomUUID(), fileId: "preview-first", width: 200, height: 100, drawing: { version: 1, sourceId: "source-first", previewId: "preview-first" } } }] });
+      return [window.firstPreview, second];
+    });
+    const preview = page.locator(".note-image-host img");
+    await page.waitForFunction(() => document.querySelector(".note-image-host img")?.naturalWidth > 0);
+    await page.evaluate(() => { editor.commands.setNodeSelection(0); editor.commands.updateAttributes("image", { fileId: "preview-next", drawing: { version: 1, sourceId: "source-next", previewId: "preview-next" } }); });
+    await page.getByRole("status").waitFor();
+    assert.equal(await preview.getAttribute("src"), sources[0]);
+    await page.waitForFunction(() => typeof window.releasePreview === "function");
+    await page.evaluate(source => window.releasePreview(source), sources[1]);
+    await page.getByRole("status").waitFor({ state: "hidden" });
+    assert.equal(await preview.getAttribute("src"), sources[1]);
+    await page.evaluate(() => editor.commands.updateAttributes("image", { fileId: "preview-broken", drawing: { version: 1, sourceId: "source-broken", previewId: "preview-broken" } }));
+    await page.getByRole("button", { name: "Drawing (edit on iPad)", exact: true }).waitFor({ timeout: 3000 });
+    assert.equal(await page.getByRole("status").count(), 0, "Decode failures must stop progress and expose the fallback");
+    await page.evaluate(() => {
+      window.releasePreview = undefined;
+      editor.commands.updateAttributes("image", { fileId: "preview-next-2", drawing: { version: 1, sourceId: "source-next-2", previewId: "preview-next-2" } });
+    });
+    await page.getByRole("status").waitFor({ timeout: 3000 });
+    await page.waitForFunction(() => typeof window.releasePreview === "function");
+    await page.evaluate(source => window.releasePreview(source), sources[1]);
+    await page.waitForFunction(source => {
+      const image = document.querySelector(".note-image-host img");
+      return image?.getAttribute("src") === source && image.complete && image.naturalWidth > 0;
+    }, sources[1]);
+    await page.getByRole("status").waitFor({ state: "hidden" });
+    assert.equal(await preview.getAttribute("src"), sources[1], "An earlier decode error must not hide progress for a newer revision");
+    await page.evaluate(() => editor.commands.updateAttributes("image", { drawing: null, fileId: "preview-broken" }));
+    await page.getByText("Image unavailable", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("status").count(), 0, "Ordinary broken images must retain their unavailable state");
+    await page.evaluate(() => editor.commands.updateAttributes("image", { fileId: "missing-file", src: null }));
+    await page.getByText("Image unavailable", { exact: true }).waitFor({ timeout: 3000 });
+    assert.equal(await preview.count(), 0, "An unavailable ordinary image must not retain another image's preview");
+  } finally { await browser?.close(); await server.close(); }
+});

@@ -1,6 +1,7 @@
 import { queryClient } from "./query-client.ts";
 import { call as invoke } from "./backend.ts";
 import * as Y from "yjs";
+import { drawingReference } from "./drawing";
 
 export type ContentUpdate = {
   id: number;
@@ -60,6 +61,9 @@ export async function loadContent(
       if (node instanceof Y.XmlElement) {
         const fileId = node.getAttribute("fileId");
         if (typeof fileId === "string") referenced.add(fileId);
+        const drawing = drawingReference(node.getAttribute("drawing"));
+        if (drawing?.sourceId) referenced.add(drawing.sourceId);
+        if (drawing?.previewId) referenced.add(drawing.previewId);
       }
     }
     const fileIds = content.files

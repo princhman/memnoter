@@ -28,6 +28,8 @@ struct RootView: View {
     @State private var name = ""
     @State private var busy = false
     @State private var image: PhotosPickerItem?
+    @State private var drawingRequest: DrawingRequest?
+    @State private var prototypeDrawingAvailable = false
     @State private var find = ""
     @State private var showingContents = false
     @State private var showingFind = false
@@ -98,6 +100,44 @@ struct RootView: View {
         .sheet(isPresented: Binding(get: { isPhone && showingContents }, set: { if isPhone { showingContents = $0 } })) {
             if let session {
                 ContentsSheet(session: session, moduleName: module?.name ?? "Note") { showingContents = false }
+            }
+        }
+        .fullScreenCover(item: $drawingRequest) { target in
+            if let client = store.client {
+                DrawingEditor(request: target, directory: store.directory, client: client, preferences: store.preferences) { imageId, sourceId, previewId, expected, asCopy in
+                    guard selected == target.module.id, let session,
+                          store.modules.contains(where: { $0.id == target.module.id }) else { throw CocoaError(.userCancelled) }
+                    if asCopy {
+                        guard try await session.execute(.beginDrawing, ["imageId": imageId]) as? Bool == true else { throw CocoaError(.fileWriteUnknown) }
+                    }
+                    guard try await session.execute(.commitDrawing, ["imageId": imageId, "sourceId": sourceId, "previewId": previewId,
+                                                                    "expectedSourceId": expected as Any? ?? NSNull()]) as? Bool == true else { throw DrawingFailure.changed }
+                    try await session.flush()
+                } discard: {
+                    guard selected == target.module.id, let session else { return }
+                    _ = try await session.execute(.discardEmptyDrawing, ["imageId": target.imageId])
+                    try await session.flush()
+                }
+            }
+        }
+        .task(id: module?.id) {
+            prototypeDrawingAvailable = false
+            guard let id = module?.id else { return }
+            let draft = try? await DrawingDraftStore(directory: store.directory, moduleId: id).load()
+            if module?.id == id { prototypeDrawingAvailable = draft != nil }
+        }
+        .onChange(of: session?.drawingToEdit) { _, event in
+            guard let event, let target = module, event.moduleId == target.id, drawingRequest == nil else { return }
+            session?.drawingToEdit = nil
+            Task {
+                do {
+                    try await session?.flush()
+                    guard selected == target.id, let session else { return }
+                    session.web.endEditing(true)
+                    _ = try await session.execute(.clearImageSelection)
+                    guard selected == target.id else { return }
+                    drawingRequest = DrawingRequest(module: target, imageId: event.imageId, sourceId: event.sourceId)
+                } catch { store.error = error.localizedDescription }
             }
         }
         .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, modules: store.modules, setChapterNumbering: setChapterNumbering, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory, preferences: store.preferences); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
@@ -329,6 +369,12 @@ struct RootView: View {
     }
 
     @ViewBuilder private func noteActions(_ session: WebSession) -> some View {
+        Button { newDrawing() } label: { Label("Insert drawing", systemImage: "pencil.tip.crop.circle") }
+            .disabled(busy || !session.state.editable)
+        if prototypeDrawingAvailable {
+            Button { newDrawing(importPrototype: true) } label: { Label("Import scratchpad", systemImage: "square.and.arrow.down") }
+                .disabled(busy || !session.state.editable)
+        }
         PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
         Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }.keyboardShortcut("f")
         Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }
@@ -343,6 +389,20 @@ struct RootView: View {
                 .foregroundStyle(.primary)
         } else {
             NavigationLink(value: destination, label: label)
+        }
+    }
+
+    private func newDrawing(importPrototype: Bool = false) {
+        guard let target = module, let session else { return }
+        let imageId = UUID().uuidString
+        Task {
+            do {
+                guard try await session.execute(.beginDrawing, ["imageId": imageId]) as? Bool == true else { throw CocoaError(.fileWriteUnknown) }
+                try await session.flush()
+                guard selected == target.id else { return }
+                session.web.endEditing(true)
+                drawingRequest = DrawingRequest(module: target, imageId: imageId, sourceId: nil, importPrototype: importPrototype, isNew: true)
+            } catch { store.error = error.localizedDescription }
         }
     }
 

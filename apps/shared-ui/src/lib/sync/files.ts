@@ -43,6 +43,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
   const wanted = new Set<string>();
   // Downloads the server did not have yet; another device is still uploading.
   const notYet = new Set<string>();
+  const notYetAttempts = new Map<string, number>();
 
   async function upload(fileId: string) {
     const contents = await invoke<{ bytes: number[] }>("read_file", { moduleId: "", fileId });
@@ -57,6 +58,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     if (!running) return;
     if (!blob) {
       notYet.add(file.fileId);
+      notYetAttempts.set(file.fileId, Math.min(5, (notYetAttempts.get(file.fileId) ?? 0) + 1));
       return;
     }
     const bytes = await decryptBlob(key, fileDoc(file.fileId), blob);
@@ -68,6 +70,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
       fileType: file.fileType,
       bytes: Array.from(bytes),
     });
+    notYetAttempts.delete(file.fileId);
     wanted.delete(file.fileId);
     onStored(file.moduleId, stored);
   }
@@ -95,6 +98,8 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     }
     notYet.clear();
     const missing = await invoke<MissingFile[]>("sync_missing_files", { generation });
+    const pending = new Set(missing.map(file => file.fileId));
+    for (const id of notYetAttempts.keys()) if (!pending.has(id)) notYetAttempts.delete(id);
     missing.sort((a, b) => Number(wanted.has(b.fileId)) - Number(wanted.has(a.fileId)));
     for (const file of missing) {
       if (!running) return;
@@ -102,7 +107,10 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     }
     if (running && (failed || notYet.size > 0)) {
       window.clearTimeout(retryTimer);
-      retryTimer = window.setTimeout(() => void run(), RETRY_MS);
+      const delay = notYet.size > 0
+        ? Math.min(...[...notYet].map(id => Math.min(RETRY_MS, 2_000 * 2 ** ((notYetAttempts.get(id) ?? 1) - 1))))
+        : RETRY_MS;
+      retryTimer = window.setTimeout(() => void run(), delay);
     }
   }
 

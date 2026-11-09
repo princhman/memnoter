@@ -64,7 +64,7 @@ test("opening a long edit history publishes only the complete document and prese
   }
 });
 
-test("startup cleanup respects saved updates, duplicate references, and later loads", async () => {
+test("startup cleanup respects drawing sources, saved updates, duplicate references, and later loads", async () => {
   const doc = new Y.Doc();
   const root = doc.getXmlFragment("default");
   const quote = new Y.XmlElement("blockquote");
@@ -75,10 +75,12 @@ test("startup cleanup respects saved updates, duplicate references, and later lo
   doc.on("update", (bytes) => updates.push({ id: updates.length + 1, bytes: Array.from(bytes) }));
   doc.transact(() => {
     root.delete(0, 2);
-    root.insert(0, [image("new")]);
+    const drawing = image("new");
+    drawing.setAttribute("drawing", { version: 1, sourceId: "drawing-source", previewId: "drawing-preview" });
+    root.insert(0, [drawing]);
   });
 
-  let content = { state, updates: [...updates], files: files("removed", "shared", "new", "abandoned") };
+  let content = { state, updates: [...updates], files: files("removed", "shared", "new", "drawing-source", "drawing-preview", "abandoned") };
   const cleanups = [];
   mockIPC((command, args) => {
     if (command === "core") { command = args.command; args = args.args; }
@@ -96,7 +98,7 @@ test("startup cleanup respects saved updates, duplicate references, and later lo
     expectedState: state,
     expectedUpdateId: 1,
   }]);
-  assert.deepEqual(loaded.files.map((file) => file.id), ["shared", "new", "abandoned"]);
+  assert.deepEqual(loaded.files.map((file) => file.id), ["shared", "new", "drawing-source", "drawing-preview", "abandoned"]);
 
   root.delete(0, root.length);
   content = { ...loaded, updates: [...updates] };

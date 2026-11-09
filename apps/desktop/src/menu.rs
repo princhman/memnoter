@@ -93,6 +93,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 pub fn handle_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     let id = event.id().as_ref();
     if CUSTOM_ITEMS.contains(&id) {
+        if crate::drawing::handle_menu(app, id) {
+            return;
+        }
         if let Err(error) = app.emit(MENU_EVENT, id) {
             eprintln!("Failed to send menu event {id}: {error}");
         }

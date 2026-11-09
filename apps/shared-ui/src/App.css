@@ -663,9 +663,28 @@ body {
 }
 .note-image-toolbar {
     display: flex;
-    flex-wrap: wrap;
+    min-width: 0;
+    align-items: center;
+    gap: 0.25rem;
+}
+.note-image-toolbar-scroll {
+    display: flex;
+    min-width: 0;
     align-items: center;
     gap: 0.125rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.note-image-toolbar-scroll > * {
+    flex-shrink: 0;
+}
+.note-image-toolbar-actions {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.125rem;
+    padding-left: 0.25rem;
+    border-left: 1px solid var(--border);
 }
 .note-image-toolbar [aria-pressed="true"] {
     background: var(--accent);
@@ -1690,3 +1709,9 @@ body {
   fill: var(--control-accent);
   stroke: var(--control-accent);
 }
+
+/* Keep the previous revision visible while its replacement downloads. */
+.note-image-block[data-loading] { position: relative; min-height: 96px; }
+.note-image-block[data-loading] .note-image-host { opacity: 0.45; }
+.note-image-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; pointer-events: none; font-size: 14px; color: var(--foreground); }
+.note-image-loading > span { padding: 4px 8px; border-radius: 6px; background: var(--background); }
