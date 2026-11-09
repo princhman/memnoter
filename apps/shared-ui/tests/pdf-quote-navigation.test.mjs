@@ -87,8 +87,9 @@ test('PDF quote navigation reveals stable images only in the intended ready note
     await page.getByRole('button', { name: 'Find block quote', exact: true }).click();
     await page.waitForTimeout(100);
     assert.equal(await page.evaluate(() => window.quoteRouter.state.location.pathname), '/files/pdf-one');
-    await page.evaluate(() => window.setQuoteBlocked(false));
-    await page.evaluate(() => window.quoteRouter.navigate({ to: '/$moduleId', params: { moduleId: 'module-one' } }));
+    await page.evaluate(() => { window.setQuoteBlocked(false); return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
+    await page.evaluate(() => { void window.quoteRouter.navigate({ to: '/$moduleId', params: { moduleId: 'module-one' } }); });
+    await page.waitForFunction(() => window.quoteRouter.state.location.pathname === '/module-one');
     await page.evaluate(() => window.quoteTest.setReady(true));
     await page.waitForTimeout(100);
     assert.notEqual((await state()).imageId, 'quote-block', 'cancelled blocker never leaves a late target');

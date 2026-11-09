@@ -37,7 +37,7 @@ function Root() {
   const [blocked, setBlocked] = useState(false);
   useBlocker({ shouldBlockFn: () => blocked });
   useEffect(() => { Object.assign(window, { setQuoteBlocked: setBlocked }); }, []);
-  return <QueryClientProvider client={client}><ActiveEditorProvider><Toaster /><Controls /><div style={{ height: 360 }}><Outlet /></div></ActiveEditorProvider></QueryClientProvider>;
+  return <QueryClientProvider client={client}><ActiveEditorProvider><Controls /><div style={{ height: 360 }}><Outlet /></div></ActiveEditorProvider></QueryClientProvider>;
 }
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const root = createRootRoute({ component: Root });
@@ -47,4 +47,4 @@ const noteRoute = createRoute({ getParentRoute: () => root, path: "/$moduleId/",
 const files = createRoute({ getParentRoute: () => root, path: "/files/$documentId", component: () => <p>Fullscreen PDF</p> });
 const router = createRouter({ routeTree: root.addChildren([noteRoute, files]), history: createMemoryHistory({ initialEntries: ["/module-one"] }) });
 Object.assign(window, { quoteRouter: router });
-createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);
+createRoot(document.getElementById("root")!).render(<><Toaster /><RouterProvider router={router} /></>);

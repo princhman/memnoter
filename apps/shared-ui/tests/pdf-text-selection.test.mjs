@@ -36,6 +36,11 @@ test('native PDF text selections quote only on demand, with per-page sources and
     assert.equal(await page.evaluate(() => window.copyCount), 1);
     assert.equal(await page.evaluate(() => window.getSelection().toString()), nativeText);
     assert.equal(await draft(), null);
+    // Normalize drag direction before asking the keyboard to shrink its end.
+    await page.evaluate(() => {
+      const selection = window.getSelection(), range = selection.getRangeAt(0);
+      selection.setBaseAndExtent(range.startContainer, range.startOffset, range.endContainer, range.endOffset);
+    });
     await page.keyboard.press('Shift+ArrowLeft'); await action.waitFor();
     await action.click();
     let quote = await draft();

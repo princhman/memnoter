@@ -1,3 +1,4 @@
+import { Toaster } from "@/components/ui/sonner";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
@@ -26,6 +27,7 @@ declare module "@tanstack/react-router" {
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
+      <Toaster />
       <RouterProvider router={router} />
     </QueryClientProvider>
   </React.StrictMode>,

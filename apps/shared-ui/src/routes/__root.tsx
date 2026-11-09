@@ -29,7 +29,6 @@ import { IconTooltip } from "@/components/icon-tooltip";
 import { useSelector } from "@tanstack/react-store";
 import { appStore, setSidebarOpen } from "@/lib/store";
 import SaveStatus from "@/components/save-status";
-import { Toaster } from "@/components/ui/sonner";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useCommand } from "@/lib/commands";
 import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/app-events";
@@ -145,7 +144,6 @@ const RootLayout = () => {
       </ActiveEditorProvider>
 
       <SaveStatus />
-      <Toaster />
 
       <TanStackRouterDevtools />
     </>

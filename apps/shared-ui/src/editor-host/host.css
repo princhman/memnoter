@@ -136,3 +136,7 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 
 [data-sonner-toaster] { bottom: calc(var(--native-bottom-inset, 0px) + 16px); }
 [data-sonner-toast] button { min-height: 44px; }
+/* Recovery actions must remain reachable on narrow phones. */
+[data-sonner-toast][data-styled="true"] { flex-wrap: wrap; }
+[data-sonner-toast][data-styled="true"] [data-content] { flex: 1 1 100%; min-width: 0; }
+[data-sonner-toast][data-styled="true"] [data-button] { max-width: 100%; height: auto; white-space: normal; }
