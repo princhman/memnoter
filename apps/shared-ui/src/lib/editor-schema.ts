@@ -28,6 +28,7 @@ import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
 import { PdfTextQuote } from "./editor-schema/pdf-text-quotes";
 import { Flashcards } from "@/lib/flashcards";
+import { FoldableBlock } from "@/lib/foldable-block";
 
 type NoteExtensionOptions = {
   document: Y.Doc;
@@ -69,6 +70,7 @@ export function noteExtensions({
     ui.mathBlock ?? MathBlock,
     Flashcards,
     ui.pdfTextQuote ?? PdfTextQuote,
+    ...FoldableBlock,
     HeadingHieararchy,
     SectionFocus,
     Sections,

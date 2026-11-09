@@ -1,10 +1,11 @@
 import { useEditorHost } from "@/lib/editor-host-context";
 import { beginHostNavigation, editorHost } from "@/lib/editor-host";
-import { TOC_ID_ATTRIBUTE } from "../lib/outline.ts";
+import { TOC_ID_ATTRIBUTE, outlineBlocks } from "../lib/outline.ts";
 import { pointInTriangle, type Point } from "@/lib/menu-aim";
 import { headingNumbers } from "@/lib/heading-numbering";
 import {
   type CSSProperties,
+  Fragment,
   useEffect,
   useLayoutEffect,
   useId,
@@ -25,6 +26,7 @@ import { groupMathScripts } from "@/lib/latex-render";
 import { ChevronRight, Maximize2, Scan } from "lucide-react";
 import { getFocusedSectionRange } from "@/lib/section-focus";
 import { getFoldedRanges } from "@/lib/heading-fold";
+import { appStore } from "@/lib/store";
 
 export type TocStore = ReturnType<typeof createTocStore>;
 
@@ -69,7 +71,8 @@ function DesktopTableOfContents({
   store: TocStore;
   numbered?: boolean;
 }) {
-  const doc = useEditorState({ editor, selector: ({ editor }) => numbered ? editor?.state.doc : null, equalityFn: Object.is });
+  const showBlocks = useSelector(appStore, (state) => state.foldableBlocksInOutline);
+  const doc = useEditorState({ editor, selector: ({ editor }) => numbered || showBlocks ? editor?.state.doc : null, equalityFn: Object.is });
   const numberMap = useMemo(() => numbered && doc ? headingNumbers(doc) : new Map<number, string>(), [doc, numbered]);
   const numberAt = (pos: number) => numbered ? `${numberMap.get(pos) ?? ""} ` : "";
   const allItems = useSelector(store, (state) => state);
@@ -106,6 +109,13 @@ function DesktopTableOfContents({
         && !(range && item.pos >= range.from && item.pos < range.to);
     });
   }, [allItems, focusRange, folded]);
+  const blocks = useMemo(() => {
+    if (!showBlocks || !doc) return [];
+    const [from, to] = focusRange?.split(":").map(Number) ?? [];
+    return outlineBlocks(doc).filter(block =>
+      (!focusRange || (block.pos >= from && block.pos < to)) &&
+      !folded.some(range => block.pos >= range.from && block.pos < range.to));
+  }, [showBlocks, doc, focusRange, folded]);
   const shallowLevels = useMemo(() => [...new Set(items.map(item => item.originalLevel))].sort((a, b) => a - b).slice(0, 2), [items]);
   const minLevel = shallowLevels[0];
   const roots = useMemo(() => items.filter(item => item.originalLevel === minLevel), [items, minLevel]);
@@ -298,6 +308,24 @@ function DesktopTableOfContents({
     </div>;
   }
 
+  // A block belongs to the heading above it, up to the next heading.
+  function renderBlockRows(item: TableOfContentDataItem) {
+    const level = Math.max(0, item.originalLevel - hovered!.originalLevel) + 1;
+    return blocks.filter((block) => block.headingPos === item.pos).map((block) =>
+      <button key={`block:${block.pos}`} type="button" className="toc-item toc-block"
+        aria-label={block.title.textContent || "Untitled block"}
+        style={{ paddingLeft: `${0.5 + level * 0.625}rem` }}
+        onMouseDown={event => event.preventDefault()}
+        onClick={() => {
+          const element = editor?.view.nodeDOM(block.pos);
+          if (element instanceof Element) element.scrollIntoView({ behavior: "smooth", block: "start" });
+          closePopup();
+        }}>
+        <span className="toc-item-title"><ChevronRight className="toc-block-icon" aria-hidden="true" />
+          {block.title.childCount ? <HeadingTitle node={block.title} /> : "Untitled block"}</span>
+      </button>);
+  }
+
   if (!editor || !items.length) return null;
   return <nav ref={navRef} className="toc" aria-label="Table of contents"
     onKeyDown={event => {
@@ -329,8 +357,10 @@ function DesktopTableOfContents({
           event.preventDefault(); returnToDash();
         }
       }}>
-      {renderRow(hovered)}
-      {descendants.map(renderRow)}
+      {[hovered, ...descendants].map(item => <Fragment key={item.id}>
+        {renderRow(item)}
+        {renderBlockRows(item)}
+      </Fragment>)}
     </div>}
     <div className="toc-rail" style={{ "--toc-rows": railItems.length } as CSSProperties}>
       {railItems.map((item, index) => <button key={item.id} type="button" className="toc-dash"

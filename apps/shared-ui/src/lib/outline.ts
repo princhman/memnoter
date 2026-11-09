@@ -42,3 +42,20 @@ export function outline(doc: Node): readonly OutlineHeading[] {
   cache.set(doc, headings);
   return headings;
 }
+
+
+// Blocks are outline annotations, never sections: only direct document children
+// belong to the heading immediately before them. Nested blocks stay local.
+export function outlineBlocks(doc: Node) {
+  const headings = outline(doc);
+  const blocks: { pos: number; title: Node; headingPos: number | null }[] = [];
+  let index = 0;
+  let headingPos: number | null = null;
+  doc.forEach((node, pos) => {
+    while (index < headings.length && headings[index].pos < pos) headingPos = headings[index++].pos;
+    if (node.type.name === "details" && node.firstChild) {
+      blocks.push({ pos, title: node.firstChild, headingPos });
+    }
+  });
+  return blocks;
+}

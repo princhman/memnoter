@@ -23,6 +23,7 @@ enum NativeEventName: String, Codable {
     case scrollDebug = "scrollDebug"
 }
 enum ExecCommand: String, Codable {
+    case insertFoldableBlock = "insertFoldableBlock"
     case insertTable = "insertTable"
     case addRowBefore = "addRowBefore"
     case addRowAfter = "addRowAfter"

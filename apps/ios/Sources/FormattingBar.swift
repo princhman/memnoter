@@ -181,6 +181,8 @@ struct FormattingBar: View {
                 linkEditor.padding().presentationCompactAdaptation(.popover)
             }
         if !session.state.inTable { tableMenu }
+        Button { session.exec(.insertFoldableBlock) } label: { Image(systemName: "rectangle.expand.vertical") }
+            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Insert foldable block")
         PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
             .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
     }
