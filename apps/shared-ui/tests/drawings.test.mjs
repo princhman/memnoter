@@ -49,6 +49,12 @@ test('desktop WebKit displays an iPad drawing and retains its editable reference
     await server.listen();
     browser = await webkit.launch();
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    await page.addInitScript(() => {
+      window.installTestBridge({ tauri: { invoke: (command, args) => {
+        if (command === "resolve_card_image" && args.fileId === "png-preview") return Promise.resolve(localStorage.getItem("drawing-preview"));
+        return Promise.reject(new Error(`Unexpected command: ${command}`));
+      } } });
+    });
     const url = `http://localhost:${server.httpServer.address().port}/tests/browser/images.html`;
     await page.goto(url);
     await page.waitForFunction(() => !!window.editor);
@@ -58,9 +64,10 @@ test('desktop WebKit displays an iPad drawing and retains its editable reference
       const canvas = document.createElement('canvas'); canvas.width = 200; canvas.height = 100;
       const context = canvas.getContext('2d'); context.fillStyle = 'white'; context.fillRect(0, 0, 200, 100);
       context.fillStyle = '#713ac7'; context.fillRect(20, 30, 160, 4);
+      localStorage.setItem("drawing-preview", canvas.toDataURL());
       const ipad = window.ipadDocument = new Y.Doc();
       const image = new Y.XmlElement('image');
-      for (const [key, value] of Object.entries({ fileId: reference.previewId, drawing: reference, imageId: 'drawing-id', alt: 'Synced drawing', src: canvas.toDataURL() })) image.setAttribute(key, value);
+      for (const [key, value] of Object.entries({ fileId: reference.previewId, drawing: reference, imageId: 'drawing-id', alt: 'Synced drawing', src: null })) image.setAttribute(key, value);
       const paragraph = new Y.XmlElement('paragraph'); const text = new Y.XmlText(); text.insert(0, 'iPad explanation'); paragraph.insert(0, [text]);
       ipad.getXmlFragment('default').insert(0, [image, paragraph]);
       editor.commands.clearContent();
