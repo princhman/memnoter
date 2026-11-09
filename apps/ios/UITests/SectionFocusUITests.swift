@@ -23,8 +23,18 @@ final class SectionFocusUITests: XCTestCase {
         let ready = NSPredicate(format: "exists == true AND enabled == true")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: editor)], timeout: 20), .completed)
         editor.tap()
-        editor.typeText("# Parent\nOutside sentinel\n## Child\nInside sentinel\n### Grandchild\nDeep sentinel\n# Other\nOther sentinel")
-        XCTAssertTrue(app.webViews.staticTexts["Other sentinel"].waitForExistence(timeout: 5), "Complete the note before dismissing the keyboard")
+        // XCTest can finish injecting a long string before WebKit consumes its
+        // keyboard events on CI. Let each paragraph render before sending more.
+        let paragraphs = [
+            ("# Parent", "Parent"), ("Outside sentinel", "Outside sentinel"),
+            ("## Child", "Child"), ("Inside sentinel", "Inside sentinel"),
+            ("### Grandchild", "Grandchild"), ("Deep sentinel", "Deep sentinel"),
+            ("# Other", "Other"), ("Other sentinel", "Other sentinel"),
+        ]
+        for (input, rendered) in paragraphs {
+            editor.typeText(input + "\n")
+            XCTAssertTrue(app.webViews.staticTexts[rendered].waitForExistence(timeout: 10), "Finish typing \(rendered) before continuing")
+        }
         // iPad exposes both the system key and the formatting-bar dismiss button.
         let dismissKeyboard = app.buttons["Hide keyboard"].firstMatch
         if dismissKeyboard.exists { dismissKeyboard.tap() }
