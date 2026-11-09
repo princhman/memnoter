@@ -14,7 +14,7 @@ import { traceScroll } from "@/editor-host/scroll";
 import { headingNumberingKey } from "@/lib/heading-numbering";
 import { watchWriteAdmission } from "@/lib/write-lifecycle";
 import { suppressesTextInput } from "@/lib/editor-input";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 import { capabilities } from "@/lib/backend";
@@ -29,6 +29,8 @@ import { useActiveEditor } from "@/lib/active-editor-context";
 import { usePersistedView } from "@/lib/view-persistence";
 import { useSearchIndexing } from "@/lib/search-index";
 import { FilesContext } from "@/components/saved-image";
+import { isSchemaReadOnly } from "@/lib/guarded-collaboration";
+import { NEWER_VERSION_MESSAGE } from "@/lib/schema-compatibility";
 import { noteExtensions } from "@/lib/editor-schema";
 
 import { useCardSchedules, useCardSync } from "@/lib/card-sync";
@@ -141,6 +143,8 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     [yDoc],
   );
 
+  const newerVersion = useEditorState({ editor, selector: ({ editor }) => isSchemaReadOnly(editor) }) ?? false;
+
   useLayoutEffect(() => {
     if (editor) editor.view.dispatch(editor.state.tr.setMeta(headingNumberingKey, numbered));
   }, [editor, numbered]);
@@ -160,9 +164,9 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   }, editor);
 
   usePersistedView(editor, moduleId, isSuccess);
-  useSearchIndexing(editor, moduleId, isSuccess);
+  useSearchIndexing(editor, moduleId, isSuccess && !newerVersion);
 
-  useCardSync(editor, moduleId, isSuccess);
+  useCardSync(editor, moduleId, isSuccess && !newerVersion);
   useCardSchedules(editor, moduleId, isSuccess);
   useCardReveal(editor, moduleId, isSuccess);
 
@@ -190,6 +194,8 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         <DialogContent><DialogTitle>Drawing</DialogTitle><p>{drawingError}</p></DialogContent>
       </Dialog>
       {!host.isNative && <CardNavigationGuard editor={editor} ready={isSuccess} />}
+      {newerVersion && <div role="status" className="sticky top-0 z-10 bg-background p-3 text-sm">{NEWER_VERSION_MESSAGE}</div>}
+      <div hidden={newerVersion}>
       {host.isNative ? <>
         <EditorContent editor={editor} />
       </> : <>
@@ -200,6 +206,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       <LinkMenu editor={editor} />
       <TableOfContents editor={editor} store={tocStore} numbered={numbered} />
       </>}
+      </div>
       </div>
     </FilesContext.Provider>
   );

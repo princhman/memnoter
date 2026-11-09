@@ -1,3 +1,5 @@
+import { isSchemaReadOnly } from "./guarded-collaboration";
+import { isNoteFromNewerVersion } from "./editor-schema";
 import { settled } from "@/lib/async-work";
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/core";
@@ -24,7 +26,7 @@ async function indexNote(moduleId: string, text: SearchText, backfill = false, p
 
 export async function indexStoredNote(moduleId: string, doc?: import("yjs").Doc, permit?: WritePermit) {
   const loaded = doc ?? await loadStoredNote(moduleId);
-  try { await indexNote(moduleId, extractFromYDoc(loaded), true, permit); }
+  try { if (!isNoteFromNewerVersion(loaded)) await indexNote(moduleId, extractFromYDoc(loaded), true, permit); }
   finally { if (!doc) loaded.destroy(); }
 }
 
@@ -35,10 +37,10 @@ export function useSearchIndexing(editor: Editor | null, moduleId: string, isRea
     let queue = Promise.resolve();
     const flush = (permit?: WritePermit) => {
       debounce.cancel();
-      if (!pending) return queue;
+      if (!pending || isSchemaReadOnly(editor)) { pending = null; return queue; }
       const snapshot = pending;
       pending = null;
-      const write = queue.then(() => indexNote(moduleId, extractFromDoc(snapshot), false, permit)).catch(async error => {
+      const write = queue.then(() => isSchemaReadOnly(editor) ? undefined : indexNote(moduleId, extractFromDoc(snapshot), false, permit)).catch(async error => {
         console.error(`Failed to index open note ${moduleId}; retrying stored text:`, error);
         await refreshDerived(moduleId, permit);
       });
