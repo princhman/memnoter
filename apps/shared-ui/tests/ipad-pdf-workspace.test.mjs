@@ -124,7 +124,8 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
       const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
       document.dispatchEvent(new Event('selectionchange'));
     });
-    await files.getByRole('button', { name: 'Quote text', exact: true }).click();
+    assert.equal(await files.getByRole('button', { name: 'Quote text', exact: true }).count(), 0);
+    await page.evaluate(() => window.memnoterEditor.pdfSelectionAction('quote'));
     await page.evaluate(() => { window.memnoterEditor.setTopInset(60); window.memnoterEditor.setBottomInset(250); });
     const quoteActions = page.getByRole('group', { name: 'Text quote actions', exact: true });
     const actionsBox = await quoteActions.boundingBox();

@@ -95,13 +95,20 @@ test('PDF reader highlights/comments persist independently, retain line geometry
     assert.equal(await editor.isVisible(), true, 'inside clicks keep the editor open');
     const save = editor.getByRole('button', { name: 'Save', exact: true });
     assert.equal(await save.isDisabled(), true, 'unchanged text has nothing to save');
-    const idleSaveBackground = await save.evaluate(element => getComputedStyle(element).backgroundColor);
+    const saveBackground = () => save.evaluate(async element => {
+      // Flush the style change, then compare the settled color rather than an
+      // interpolated frame of the button's background transition.
+      getComputedStyle(element).backgroundColor;
+      await Promise.all(element.getAnimations().map(animation => animation.finished));
+      return getComputedStyle(element).backgroundColor;
+    });
+    const idleSaveBackground = await saveBackground();
     await editor.getByRole('textbox').fill('Remember this <plain>');
     assert.equal(await save.isEnabled(), true);
-    assert.notEqual(await save.evaluate(element => getComputedStyle(element).backgroundColor), idleSaveBackground, 'Save gains emphasis only for changes');
+    assert.notEqual(await saveBackground(), idleSaveBackground, 'Save gains emphasis only for changes');
     await editor.getByRole('textbox').fill('');
     assert.equal(await save.isDisabled(), true, 'reverting an edit restores the idle state');
-    assert.equal(await save.evaluate(element => getComputedStyle(element).backgroundColor), idleSaveBackground);
+    assert.equal(await saveBackground(), idleSaveBackground);
     await editor.getByRole('textbox').fill('Remember this <plain>');
     await editor.getByRole('button', { name: 'Save', exact: true }).click();
     await editor.waitFor({ state: 'detached' });

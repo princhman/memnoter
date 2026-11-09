@@ -62,7 +62,14 @@ changes with it. Everything stays on your machine.
 
 ### A focused editor
 
-- Rich text with headings, lists, links, code, highlights and images.
+- Rich text with headings, lists, links, code, colored highlights, tables and images.
+- Foldable blocks hide examples or extra detail behind their own title.
+- Mermaid code blocks render as diagrams.
+- Keep PDFs beside your notes, quote text or page regions with links back to the
+  source, and add highlights and annotations.
+- Draw in your notes, with native PencilKit ink on iPad.
+- Organize modules into sidebar folders. Import notes from Obsidian or cards
+  from Anki `.apkg` files.
 - LaTeX math, inline (<kbd>⌘</kbd><kbd>⇧</kbd><kbd>M</kbd>) or as blocks
   (<kbd>⌘</kbd><kbd>⌥</kbd><kbd>M</kbd>), rendered with KaTeX.
 - Foldable sections. Each module reopens where you left it, with the same
@@ -73,11 +80,11 @@ changes with it. Everything stays on your machine.
 - <kbd>⌘</kbd><kbd>K</kbd> opens one palette that searches module titles, note
   text and math, and also runs commands.
 
-### On iPad too
+### On iPhone and iPad too
 
-- A native iPad app shares the same editor and scheduler, with its own
+- A native iPhone and iPad app shares the same editor and scheduler, with its own
   formatting bar above the keyboard, a Contents panel and a full review screen.
-- Sync keeps notes and review history the same on Mac and iPad.
+- Sync keeps notes and review history the same across desktop, iPhone and iPad.
 
 ### Your data is yours
 
@@ -89,6 +96,11 @@ changes with it. Everything stays on your machine.
 - A daily backup of notes and images keeps the last 7 days. You can also back
   up and restore from Settings.
 - The app updates itself in the background from signed GitHub releases.
+
+> **Before updating to 0.1.4:** update every device before using tables,
+> highlights, foldable blocks, PDF quotes or drawings. Builds before 0.1.4 can
+> delete content they do not recognize. Version 0.1.4 and later open notes with
+> unsupported content read-only instead. See the [0.1.4 release notes](docs/release-notes/v0.1.4.md).
 
 ## Install
 
@@ -105,7 +117,7 @@ Download the latest build from the
 After the first install, new versions download automatically. Each one applies
 the next time you open the app.
 
-The iPad app ships through TestFlight. To build it yourself, see
+The iPhone and iPad app ships through TestFlight. To build it yourself, see
 [apps/ios/README.md](apps/ios/README.md).
 
 ## Keyboard shortcuts

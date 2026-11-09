@@ -47,9 +47,13 @@ final class DrawingTests: XCTestCase {
             context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
             // Locate solid ink rather than assuming the native renderer's
             // padded bounds put a stroke at a particular raster pixel.
-            let ink = try XCTUnwrap(stride(from: 0, to: pixels.count, by: 4).max {
-                Int(pixels[$0 + 2]) - Int(pixels[$0]) < Int(pixels[$1 + 2]) - Int(pixels[$1])
-            })
+            let pixelOffsets = stride(from: 0, to: pixels.count, by: 4)
+            let bluestOffset: Int? = pixelOffsets.max { (left: Int, right: Int) -> Bool in
+                let leftBlue = Int(pixels[left + 2]) - Int(pixels[left])
+                let rightBlue = Int(pixels[right + 2]) - Int(pixels[right])
+                return leftBlue < rightBlue
+            }
+            let ink = try XCTUnwrap(bluestOffset)
             for (index, expected) in [36, 85, 218].enumerated() {
                 XCTAssertEqual(Int(pixels[ink + index]), expected, accuracy: 3, "Preview must use the selected blue in either appearance")
             }

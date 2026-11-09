@@ -63,8 +63,18 @@ test('source navigation and section picker preserve destinations and retained dr
     await page.evaluate(() => window.navigationTest.router.navigate({ to: '/picker' }));
     await page.waitForFunction(() => window.pickerTest);
     const note = page.locator('.tiptap');
-    const noteBounds = await note.boundingBox();
-    const assertStableNote = async () => assert.deepEqual(await note.boundingBox(), noteBounds);
+    // Focus and dialog restoration may scroll the fixture document. Compare
+    // layout coordinates so scrolling is not mistaken for an editor remount.
+    const noteLayout = () => note.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      let x = rect.x, y = rect.y;
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        x += parent.scrollLeft; y += parent.scrollTop;
+      }
+      return { x, y, width: rect.width, height: rect.height };
+    });
+    const noteBounds = await noteLayout();
+    const assertStableNote = async () => assert.deepEqual(await noteLayout(), noteBounds);
     await page.evaluate(() => window.pickerTest.draft());
     const insertQuote = page.getByRole('button', { name: 'Insert at cursor', exact: true });
     await insertQuote.waitFor();
@@ -90,8 +100,9 @@ test('source navigation and section picker preserve destinations and retained dr
     await assertStableNote();
     assert.equal(await strip.evaluate(element => {
       const bounds = element.getBoundingClientRect();
-      return document.elementFromPoint(13, bounds.y + bounds.height / 2)?.tagName;
-    }), 'MAIN', 'floating anchor passes pointer events through outside the card');
+      const target = document.elementFromPoint(13, bounds.y + bounds.height / 2);
+      return !!target?.closest('main') && !target.closest('[data-pdf-quote-controls]');
+    }), true, 'floating anchor passes pointer events through outside the card');
     await page.getByRole('textbox', { name: 'Other field' }).focus();
     await page.keyboard.press('Control+Enter');
     assert.deepEqual(await page.evaluate(() => window.pickerTest.calls), [], 'the quote shortcut leaves other editable fields alone');
@@ -148,7 +159,7 @@ test('source navigation and section picker preserve destinations and retained dr
     assert.equal(await page.getByRole('button', { name: 'Dismiss quote', exact: true }).isDisabled(), true);
     await assertStableNote();
     await page.setViewportSize({ width: 280, height: 800 });
-    const narrowNoteBounds = await note.boundingBox();
+    const narrowNoteBounds = await noteLayout();
     await page.evaluate(() => window.pickerTest.pendingPdfQuote.setState(current => ({ ...current, status: 'error', error: 'ConnectionUnavailable'.repeat(80) })));
     const retry = page.getByRole('button', { name: 'Retry images', exact: true });
     await retry.waitFor();
@@ -160,9 +171,9 @@ test('source navigation and section picker preserve destinations and retained dr
     const headerBounds = await page.locator('header').boundingBox();
     assert.ok(controlBounds.x >= 0 && controlBounds.x + controlBounds.width <= 280);
     assert.ok(controlBounds.y >= headerBounds.y + headerBounds.height);
-    assert.deepEqual(await note.boundingBox(), narrowNoteBounds);
+    assert.deepEqual(await noteLayout(), narrowNoteBounds);
     await page.evaluate(() => window.pickerTest.pendingPdfQuote.setState(() => null));
-    assert.deepEqual(await note.boundingBox(), narrowNoteBounds);
+    assert.deepEqual(await noteLayout(), narrowNoteBounds);
     for (const [section, shortcut] of [[true, 'Meta+Enter'], [false, 'Control+Enter']]) {
       await page.evaluate(section => {
         window.pickerTest.draft();
@@ -170,7 +181,7 @@ test('source navigation and section picker preserve destinations and retained dr
         window.pickerTest.editor.commands.setTextSelection(section ? 3 : 5);
       }, section);
       await assertCompactStrip();
-      assert.deepEqual(await note.boundingBox(), narrowNoteBounds);
+      assert.deepEqual(await noteLayout(), narrowNoteBounds);
       const cursor = await page.evaluate(() => window.pickerTest.editor.state.selection.from);
       await page.evaluate(() => window.pickerTest.editor.view.focus());
       await page.keyboard.press(shortcut);

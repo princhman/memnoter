@@ -247,6 +247,7 @@ test('quote PNG pixels, mapped insertion, Yjs persistence, HTML and retry use th
     }), true);
     // Actual pointer selection uses capture, clamps off-page coordinates and cancels on Escape.
     const selection = page.getByLabel('Drag a region on this PDF page');
+    await selection.scrollIntoViewIfNeeded();
     const box = await selection.boundingBox();
     await page.mouse.move(box.x + 150, box.y + 70); await page.mouse.down();
     await page.mouse.move(box.x + 240, box.y + 130); await page.mouse.up();
