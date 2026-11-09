@@ -384,13 +384,7 @@ struct RootView: View {
                         ToolbarSpacer(.fixed, placement: .primaryAction)
                     }
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
-                        .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
-                        .accessibilityValue(session.filesOpen ? "Open" : "Closed")
-                        .keyboardShortcut("d", modifiers: [.command, .shift])
-                        .disabled(busy || !session.ready)
-                }
+
                 ToolbarItemGroup(placement: isPhone ? .topBarTrailing : .topBarLeading) {
                     Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
                         .accessibilityLabel("Undo")
@@ -412,6 +406,14 @@ struct RootView: View {
                     } label: { Image(systemName: "ellipsis") }
                     .accessibilityLabel("Note actions")
                     .accessibilityValue(session.saveStatus)
+                }
+                // Far right, mirroring the sidebar toggle at the far left.
+                ToolbarItem(placement: .primaryAction) {
+                    Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
+                        .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
+                        .accessibilityValue(session.filesOpen ? "Open" : "Closed")
+                        .keyboardShortcut("d", modifiers: [.command, .shift])
+                        .disabled(busy || !session.ready)
                 }
             }
         }
