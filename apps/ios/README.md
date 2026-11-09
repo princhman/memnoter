@@ -161,8 +161,8 @@ scratchpad** in notes that have one. Import creates an editable embed and leaves
 the original scratchpad intact. Images inserted by the earlier prototype remain
 ordinary snapshots.
 
-The Mac app can insert drawings using the note's **Insert drawing** button or
-the `/drawing` slash command. Select a drawing and use its pencil button (or
+On Mac, insert drawings with the `/drawing` slash command. On iPad, use
+**Note actions → Insert drawing**. Select a drawing and use its pencil button (or
 click the selected drawing again) to edit with the native mouse/trackpad canvas.
 Pen, pencil, marker, whole-stroke eraser, undo/redo, fixed colors and stroke width
 operate on the same editable PencilKit archive as the iPad. Mac Close retains a

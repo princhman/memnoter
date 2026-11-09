@@ -52,6 +52,7 @@ struct DrawingRequest: Identifiable {
     let imageId: String
     let sourceId: String?
     var importPrototype = false
+    var isNew = false
 }
 
 struct DrawingOpenEvent: Decodable, Equatable {

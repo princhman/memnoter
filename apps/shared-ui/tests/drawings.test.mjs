@@ -101,3 +101,48 @@ test('desktop WebKit displays an iPad drawing and retains its editable reference
     assert.match(await page.locator('.tiptap').textContent(), /edited on Mac/);
   } finally { await browser?.close(); await server.close(); }
 });
+
+test('Mac drawing sessions preserve existing draft slots, clean only new slots, and recover deleted targets as copies', async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen(); browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
+        if (command === 'edit_drawing') {
+          if (window.outcome === 'save') editor.commands.setContent('<p>Removed by peer</p>');
+          return { status: window.outcome, asCopy: false, hasChanges: false, expectedSourceId: null,
+            source: { id: 'saved-source', path: '/source', file_type: 'json' }, preview: { id: 'saved-preview', path: '/preview', file_type: 'png' } };
+        }
+        if (command === 'drawing_committed') { window.acknowledged = args.imageId; return null; }
+        if (command === 'resolve_card_image') throw new Error('Not downloaded');
+        throw new Error(`Unexpected command: ${command}`);
+      } } });
+    });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/images.html`);
+    await page.waitForFunction(() => !!window.editor);
+    for (const existing of [true, false]) for (const status of ['empty', 'cancel', 'discarded', 'active']) {
+      const ids = await page.evaluate(async ({ existing, status }) => {
+        editor.commands.setContent(existing ? { type: 'doc', content: [{ type: 'image', attrs: { imageId: 'peer-slot', drawing: { version: 1, sourceId: null, previewId: null } } }, { type: 'paragraph' }] } : '<p></p>');
+        window.outcome = status;
+        const { openMacDrawing } = await import('/src/lib/mac-drawing.ts');
+        await openMacDrawing(editor, 'note', existing ? { imageId: 'peer-slot', sourceId: null } : undefined);
+        return editor.getJSON().content.filter(node => node.type === 'image').map(node => node.attrs.imageId);
+      }, { existing, status });
+      assert.deepEqual(ids, existing ? ['peer-slot'] : [], `${status}: only a slot created by this session may be automatically removed`);
+    }
+    const recovered = await page.evaluate(async () => {
+      editor.commands.setContent({ type: 'doc', content: [{ type: 'image', attrs: { imageId: 'peer-slot', drawing: { version: 1, sourceId: null, previewId: null } } }, { type: 'paragraph' }] });
+      window.outcome = 'save';
+      const { openMacDrawing } = await import('/src/lib/mac-drawing.ts');
+      await openMacDrawing(editor, 'note', { imageId: 'peer-slot', sourceId: null });
+      return { images: editor.getJSON().content.filter(node => node.type === 'image').map(node => node.attrs), text: editor.state.doc.textContent, acknowledged: window.acknowledged };
+    });
+    assert.equal(recovered.images.length, 1);
+    assert.notEqual(recovered.images[0].imageId, 'peer-slot');
+    assert.deepEqual(recovered.images[0].drawing, { version: 1, sourceId: 'saved-source', previewId: 'saved-preview' });
+    assert.match(recovered.text, /Removed by peer/);
+    assert.equal(recovered.acknowledged, 'peer-slot');
+  } finally { await browser?.close(); await server.close(); }
+});

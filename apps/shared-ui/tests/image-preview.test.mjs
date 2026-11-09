@@ -231,7 +231,9 @@ test("a drawing keeps its previous preview and shows progress until the replacem
     await page.addInitScript(() => {
       window.installTestBridge({ tauri: { invoke: (command, args) => {
         if (command === "resolve_card_image") {
-          if (args.fileId === "preview-next") return new Promise(resolve => { window.releasePreview = resolve; });
+          if (args.fileId === "missing-file") return Promise.reject(new Error("Not downloaded"));
+          if (args.fileId === "preview-broken") return Promise.resolve("data:image/png;base64,invalid");
+          if (args.fileId.startsWith("preview-next")) return new Promise(resolve => { window.releasePreview = resolve; });
           return Promise.resolve(window.firstPreview);
         }
         return Promise.resolve(null);
@@ -255,5 +257,27 @@ test("a drawing keeps its previous preview and shows progress until the replacem
     await page.evaluate(source => window.releasePreview(source), sources[1]);
     await page.getByRole("status").waitFor({ state: "hidden" });
     assert.equal(await preview.getAttribute("src"), sources[1]);
+    await page.evaluate(() => editor.commands.updateAttributes("image", { fileId: "preview-broken", drawing: { version: 1, sourceId: "source-broken", previewId: "preview-broken" } }));
+    await page.getByRole("button", { name: "Drawing (edit on iPad)", exact: true }).waitFor({ timeout: 3000 });
+    assert.equal(await page.getByRole("status").count(), 0, "Decode failures must stop progress and expose the fallback");
+    await page.evaluate(() => {
+      window.releasePreview = undefined;
+      editor.commands.updateAttributes("image", { fileId: "preview-next-2", drawing: { version: 1, sourceId: "source-next-2", previewId: "preview-next-2" } });
+    });
+    await page.getByRole("status").waitFor({ timeout: 3000 });
+    await page.waitForFunction(() => typeof window.releasePreview === "function");
+    await page.evaluate(source => window.releasePreview(source), sources[1]);
+    await page.waitForFunction(source => {
+      const image = document.querySelector(".note-image-host img");
+      return image?.getAttribute("src") === source && image.complete && image.naturalWidth > 0;
+    }, sources[1]);
+    await page.getByRole("status").waitFor({ state: "hidden" });
+    assert.equal(await preview.getAttribute("src"), sources[1], "An earlier decode error must not hide progress for a newer revision");
+    await page.evaluate(() => editor.commands.updateAttributes("image", { drawing: null, fileId: "preview-broken" }));
+    await page.getByText("Image unavailable", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("status").count(), 0, "Ordinary broken images must retain their unavailable state");
+    await page.evaluate(() => editor.commands.updateAttributes("image", { fileId: "missing-file", src: null }));
+    await page.getByText("Image unavailable", { exact: true }).waitFor({ timeout: 3000 });
+    assert.equal(await preview.count(), 0, "An unavailable ordinary image must not retain another image's preview");
   } finally { await browser?.close(); await server.close(); }
 });

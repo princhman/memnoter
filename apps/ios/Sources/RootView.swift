@@ -343,7 +343,7 @@ struct RootView: View {
                 try await session.flush()
                 guard selected == target.id else { return }
                 session.web.endEditing(true)
-                drawingRequest = DrawingRequest(module: target, imageId: imageId, sourceId: nil, importPrototype: importPrototype)
+                drawingRequest = DrawingRequest(module: target, imageId: imageId, sourceId: nil, importPrototype: importPrototype, isNew: true)
             } catch { store.error = error.localizedDescription }
         }
     }

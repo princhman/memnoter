@@ -112,10 +112,11 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         let reopened = paper(in: container)!
         precondition(reopened.model.drawing.strokes.count == 1)
         try await wait("The reopened ink loaded but was not displayed by the canvas") { reopened.drawing.strokes.count == 1 }
-        reopened.model.done()
+        reopened.model.done(copy: true)
         try await wait("Done did not return to the note") { PresentationReceipts.values[2] == 0 }
         let saved = try JSONDecoder().decode(EditorResult.self, from: Data(contentsOf: URL(fileURLWithPath: request.resultPath)))
         precondition(saved.status == "save" && FileManager.default.fileExists(atPath: saved.sourcePath!))
+        precondition(!saved.asCopy, "Save a copy for a new drawing must publish into its existing slot")
         precondition(container.subviews == [note] && !note.isHidden && window.delegate === delegate && !window.isVisible)
         let publishedURL = URL(fileURLWithPath: saved.sourcePath!)
         let publishedBytes = try Data(contentsOf: publishedURL)

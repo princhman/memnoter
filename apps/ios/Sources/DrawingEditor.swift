@@ -520,7 +520,7 @@ struct DrawingEditor: View {
             Button("Discard local changes", role: .destructive) {
                 perform {
                     try await model.discardLocalChanges()
-                    if model.request.sourceId == nil { try await discard() }
+                    if model.request.isNew { try await discard() }
                     dismiss()
                 }
             }
@@ -559,15 +559,15 @@ struct DrawingEditor: View {
         perform {
             if !model.loaded { dismiss(); return }
             if model.hasLocalEdits { try await model.flush() }
-            else if model.request.sourceId == nil { try await discard() }
+            else if model.request.isNew { try await discard() }
             dismiss()
         }
     }
     private func save(asCopy: Bool) {
         perform {
-            if model.request.sourceId != nil && !model.hasLocalEdits && !asCopy { dismiss(); return }
-            if model.request.sourceId == nil && !model.hasLocalEdits { try await discard() }
-            else { try await model.save(asCopy: asCopy, publish: publish) }
+            if !model.hasLocalEdits && (model.request.sourceId == nil || !asCopy) {
+                if model.request.isNew { try await discard() }
+            } else { try await model.save(asCopy: asCopy, publish: publish) }
             dismiss()
         }
     }

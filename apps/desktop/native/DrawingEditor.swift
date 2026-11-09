@@ -216,9 +216,10 @@ actor DrawingStorage {
         Task {
             do {
                 try await flush()
-                if !hasChanges && !copy { finish(EditorResult(status: request.sourceId == nil ? "empty" : "unchanged")); return }
+                let makingCopy = copy && (request.sourceId != nil || requiresCopy)
+                if !hasChanges && !makingCopy { finish(EditorResult(status: request.sourceId == nil ? "empty" : "unchanged")); return }
                 let files = try await storage.publication(drawing, width: paperWidth, height: paperHeight)
-                finish(EditorResult(status: "save", sourcePath: files.0, previewPath: files.1, expectedSourceId: baseSourceId, asCopy: copy, hasChanges: true))
+                finish(EditorResult(status: "save", sourcePath: files.0, previewPath: files.1, expectedSourceId: baseSourceId, asCopy: makingCopy, hasChanges: true))
             } catch { saving = false; self.error = error.localizedDescription }
         }
     }

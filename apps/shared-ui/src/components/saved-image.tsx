@@ -70,9 +70,11 @@ export function SavedImageView(props: NodeViewProps) {
   const currentSrc = file ? convertFileSrc(file.path) : resolved && resolved.id === previewId ? convertFileSrc(resolved.path) : (drawing?.previewId ? null : node.attrs.src);
   const previousSrc = useRef<string | null>(null);
   useEffect(() => { if (currentSrc) previousSrc.current = currentSrc; }, [currentSrc]);
-  const src = currentSrc || (previewId ? previousSrc.current : null);
+  const src = currentSrc || (drawing?.previewId ? previousSrc.current : null);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
-  const loading = !!previewId && (!currentSrc || loadedSrc !== currentSrc);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const failed = !!currentSrc && failedSource === currentSrc;
+  const loading = !!drawing?.previewId && !failed && (!currentSrc || loadedSrc !== currentSrc);
   const isInline = node.type.isInline;
   const host = useRef<HTMLElement>(null);
   // The host shrinks with the image; its containing block defines room to grow.
@@ -88,7 +90,6 @@ export function SavedImageView(props: NodeViewProps) {
   }, []);
   const latest = useRef(props);
   latest.current = props;
-  const [failed, setFailed] = useState(false);
   const [occlusionOpen, setOcclusionOpen] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -160,7 +161,7 @@ export function SavedImageView(props: NodeViewProps) {
 
   useEffect(() => {
     if (!host.current || !src) return;
-    setFailed(false);
+    setFailedSource(null);
     const img = document.createElement("img");
     image.current = img;
     img.className = "note-image";
@@ -186,8 +187,8 @@ export function SavedImageView(props: NodeViewProps) {
     setDisplayedImage({ source: src, url: img.style.opacity === "0" ? "" : img.src });
     img.alt = latest.current.node.attrs.alt ?? "";
     img.title = latest.current.node.attrs.title ?? "";
-    img.onerror = () => setFailed(true);
-    img.onload = () => { setFailed(false); setLoadedSrc(src); };
+    img.onerror = () => setFailedSource(src);
+    img.onload = () => { setFailedSource(null); setLoadedSrc(src); };
     const view = new ResizableNodeView({
       element: img,
       editor,

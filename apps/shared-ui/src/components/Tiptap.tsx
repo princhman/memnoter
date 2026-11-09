@@ -177,10 +177,12 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     };
   }, [editor, moduleId, isSuccess, setActiveEditor]);
 
+  const drawingFilesContext = useMemo(() => ({ ...filesContext, ...(capabilities.macDrawing && editor ? {
+    editDrawing: (imageId: string, sourceId: string | null) => { void launchDrawing(editor, { imageId, sourceId }); },
+  } : {}) }), [filesContext, editor, launchDrawing]);
+
   return (
-    <FilesContext.Provider value={{ ...filesContext, ...(capabilities.macDrawing && editor ? {
-      editDrawing: (imageId: string, sourceId: string | null) => { void launchDrawing(editor, { imageId, sourceId }); },
-    } : {}) }}>
+    <FilesContext.Provider value={drawingFilesContext}>
       <div ref={element} className="contents">
       <Dialog open={drawingError !== null} onOpenChange={open => { if (!open) setDrawingError(null); }}>
         <DialogContent><DialogTitle>Drawing</DialogTitle><p>{drawingError}</p></DialogContent>
