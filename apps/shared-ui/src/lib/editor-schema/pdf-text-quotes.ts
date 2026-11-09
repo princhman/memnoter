@@ -17,15 +17,19 @@ export const PdfTextQuote = Node.create({
       transformPasted(slice) {
         const copy = (fragment: Fragment): Fragment => {
           const nodes: import("@tiptap/pm/model").Node[] = [];
+          let changed = false;
           fragment.forEach(node => {
             const content = copy(node.content);
-            nodes.push(node.type.name === "pdfTextQuote"
+            const next = node.type.name === "pdfTextQuote"
               ? node.type.create({ ...node.attrs, quoteId: crypto.randomUUID() }, content, node.marks)
-              : node.copy(content));
+              : content === node.content ? node : node.copy(content);
+            changed ||= next !== node;
+            nodes.push(next);
           });
-          return Fragment.fromArray(nodes);
+          return changed ? Fragment.fromArray(nodes) : fragment;
         };
-        return new Slice(copy(slice.content), slice.openStart, slice.openEnd);
+        const content = copy(slice.content);
+        return content === slice.content ? slice : new Slice(content, slice.openStart, slice.openEnd);
       },
     } })];
   },

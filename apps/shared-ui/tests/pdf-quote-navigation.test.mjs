@@ -64,7 +64,7 @@ test('PDF quote navigation reveals stable images only in the intended ready note
       editor.commands.deleteRange(target);
       setReady(true);
     });
-    await page.getByRole('status').filter({ hasText: 'This quote is no longer available' }).waitFor();
+    await page.getByText('This quote is no longer available in the note.', { exact: true }).waitFor();
     assert.equal((await state()).imageId, 'quote-inline', 'missing id never selects an arbitrary image');
     await page.evaluate(() => window.quoteRouter.navigate({ to: '/files/$documentId', params: { documentId: 'pdf-one' } }));
     await page.getByText('Fullscreen PDF', { exact: true }).waitFor();

@@ -53,7 +53,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         await page.evaluate(() => editor.commands.focus("start"));
         const first = await page.locator(".tiptap > p").first().boundingBox();
         const target = await page.locator(".tiptap > h2").last().boundingBox();
-        if (action === "select-all") await page.keyboard.press("Meta+a");
+        if (action === "select-all") await page.keyboard.press(await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta+a" : "Control+a"));
         if (action === "drag") {
           await page.mouse.move(first.x + 1, first.y + first.height / 2); await page.mouse.down();
           await page.mouse.move(target.x + 120, target.y + target.height / 2, { steps: 20 }); await page.mouse.up();
