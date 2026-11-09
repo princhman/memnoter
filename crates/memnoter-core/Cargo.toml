@@ -8,7 +8,7 @@ description = "Portable storage and data operations for Memnoter"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+rusqlite = { version = "0.40.1", features = ["bundled", "collation"] }
 chrono = "0.4.45"
 uuid = { version = "1.23.4", features = ["v4"] }
 yrs = "0.24"
@@ -17,3 +17,5 @@ pbkdf2 = "0.12"
 sha2 = "0.10"
 unicode-normalization = "0.1"
 base64 = "0.22"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+ruzstd = "0.9.1"

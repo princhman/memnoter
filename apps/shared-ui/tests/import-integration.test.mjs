@@ -193,14 +193,26 @@ test("sidebar dropdown leads to a configurable import dialog and commits only on
   await ui.addInitScript(() => { window.installTestBridge({ tauri: { invoke: (command,args) => window.rustCall(command,args) } }); });
   try {
     await ui.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/import-dialog.html`);
-    await ui.getByRole('region', { name: 'Module actions' }).hover();
-    await ui.getByRole('button', { name: 'Add module', exact: true }).click();
+    // The button only shows on hover, and on a busy CI runner a click can land before the menu
+    // takes it (it then never opens), so try again rather than wait out the whole timeout.
+    const openAddMenu = async () => {
+      for (let attempt = 1; ; attempt++) {
+        await ui.getByRole('region', { name: 'Module actions' }).hover();
+        await ui.getByRole('button', { name: 'Add module', exact: true }).click();
+        try { await ui.getByRole('menuitem', { name: 'New module', exact: true }).waitFor({ timeout: 4000 }); return; }
+        catch (error) { if (attempt === 3) throw error; await ui.keyboard.press('Escape'); }
+      }
+    };
+    await openAddMenu();
     await ui.getByRole('menuitem', {name:'New module',exact:true}).click();
     await ui.getByRole('heading',{name:'Create new module'}).waitFor();
     assert.equal(await ui.getByRole('button',{name:'Import folder…',exact:true}).count(),0);
     await ui.getByRole('button',{name:'Cancel',exact:true}).click();
-    await ui.getByRole('region', { name: 'Module actions' }).hover();
-    await ui.getByRole('button',{name:'Add module',exact:true}).click();
+    await openAddMenu();
+    // The menu opens from a small icon button; its entries must not wrap to fit it.
+    await ui.getByRole('menuitem',{name:'Import Anki deck…',exact:true}).waitFor();
+    const heights = await ui.getByRole('menuitem').evaluateAll(items => items.map(item => Math.round(item.getBoundingClientRect().height)));
+    assert.ok(heights.length >= 3 && new Set(heights).size === 1, `every entry fits on one line, heights: ${heights}`);
     await ui.getByRole('menuitem',{name:'Import folder…',exact:true}).click();
     await ui.getByLabel('Module name', {exact:false}).fill('Planned module');
     await ui.getByRole('button',{name:'Next',exact:true}).click();

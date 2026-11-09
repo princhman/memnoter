@@ -46,6 +46,7 @@ commands! { core;
     due_cards(module_id: Option<String>, now: i64, created_at_cutoff: Option<i64>) => crate::cards::due_cards(&core.db, module_id, now, created_at_cutoff);
     card_schedules(module_id: String) => crate::cards::card_schedules(&core.db, module_id);
     due_counts(now: i64, day_end: i64, created_at_cutoff: Option<i64>) => crate::cards::due_counts(&core.db, now, day_end, created_at_cutoff);
+    import_card_history(histories: Vec<crate::cards::CardHistory>) => crate::cards::import_card_history(&core.db, histories);
     review_card(card_id: String, expected_reps: i64, card: ReviewedCard, log: ReviewLog) => crate::cards::review_card(&core.db, card_id, expected_reps, card, log);
     undo_review(card_id: String, expected_reps: i64, previous: ReviewedCard, previous_fsrs_model: Option<String>, review_time: i64) => crate::cards::undo_review(&core.db, card_id, expected_reps, previous, previous_fsrs_model, review_time);
     unindexed_card_modules() => crate::cards::unindexed_card_modules(&core.db);

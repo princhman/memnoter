@@ -2,6 +2,7 @@ use memnoter_core::{Core, CoreError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 mod import_folder;
+mod import_anki;
 #[cfg(target_os = "macos")]
 mod menu;
 #[cfg(target_os = "macos")]
@@ -108,6 +109,9 @@ pub fn run() {
             core,
             import_folder::pick_import_folder,
             import_folder::pick_import_image_folder,
+            import_anki::pick_anki_package,
+            import_anki::read_anki_media,
+            import_anki::close_anki_package,
             import_folder::read_import_images
         ])
         .build(tauri::generate_context!())

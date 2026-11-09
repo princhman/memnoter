@@ -12,6 +12,7 @@ export type ShortcutAction = {
 export const SHORTCUTS: readonly ShortcutAction[] = [
   { id: "settings.open", title: "Settings", keys: "Mod-,", menuId: "settings" },
   { id: "module.new", title: "New module", keys: "Mod-n", menuId: "new-module" },
+  { id: "module.importAnki", title: "Import Anki deck…", keys: "", menuId: "import-anki" },
   { id: "module.import", title: "Import Folder…", keys: "", menuId: "import-folder" },
   { id: "find.open", title: "Find in note", keys: "Mod-f", menuId: "find" },
   { id: "sidebar.toggle", title: "Toggle sidebar", keys: "Mod-d", menuId: "toggle-sidebar" },

@@ -1,5 +1,5 @@
 import { IMPORT_FOLDER_EVENT } from "@/lib/app-events";
-import { Toast } from "./ui/toast";
+import { importToast } from "@/lib/import-toast";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { call } from "@/lib/backend";
@@ -20,7 +20,6 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
-  const [summary, setSummary] = useState<{ text: string; details: string[] }>();
   // The picked image folder, and how many references resolved before it was added.
   const [imageFolder, setImageFolder] = useState<{ name: string; images: number; foundBefore: number }>();
   const [scanning, setScanning] = useState(false);
@@ -34,7 +33,7 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
         if (!selected) return;
         setName(selected.name); setOptions({ ...defaultImportOptions, order: importNoteOrder(selected), excluded: [] });
         setStep(0); setError(""); setPlan(undefined); setImageFolder(undefined); setFolder(selected);
-      } catch (e) { setSummary({ text: "Could not scan folder", details: [String(e)] }); }
+      } catch (e) { importToast("error", "Could not scan folder", [String(e)], "error details"); }
       finally { picking = false; }
     };
     window.addEventListener(IMPORT_FOLDER_EVENT, pick);
@@ -68,7 +67,7 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
     try {
       const result = await importFolder({ ...folder, originalName: folder.name, name: name.trim() }, setProgress, options);
       setFolder(undefined);
-      setSummary({ text: `Imported ${result.notes.length} ${result.notes.length === 1 ? "note" : "notes"} and ${result.images.length} ${result.images.length === 1 ? "image" : "images"} into ${result.name}.`, details: [...(result.indexingWarning ? [result.indexingWarning] : []), ...result.unresolved.map(s => `Unresolved image: ${s}`), ...result.skipped.map(s => `Skipped: ${s}`)] });
+      importToast("success", `Imported ${result.notes.length} ${result.notes.length === 1 ? "note" : "notes"} and ${result.images.length} ${result.images.length === 1 ? "image" : "images"} into ${result.name}.`, [...(result.indexingWarning ? [result.indexingWarning] : []), ...result.unresolved.map(s => `Unresolved image: ${s}`), ...result.skipped.map(s => `Skipped: ${s}`)], "warnings and skipped files");
       await onImported(result.moduleId);
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); setProgress(""); }
@@ -113,6 +112,5 @@ export function ImportFolderDialog({ onImported }: { onImported: (id: string) =>
         </div>
       </DialogContent>
     </Dialog>
-    {summary && <Toast role="status" className="max-w-sm rounded-xl p-4 shadow-lg text-sm"><p>{summary.text}</p>{summary.details.length > 0 && <details className="mt-2 max-h-52 overflow-auto"><summary>{summary.details.length} warnings and skipped files</summary><ul className="mt-2 space-y-1">{summary.details.map((line,i) => <li key={i}>{line}</li>)}</ul></details>}<Button className="mt-2" size="sm" variant="ghost" onClick={() => setSummary(undefined)}>Dismiss</Button></Toast>}
   </>;
 }

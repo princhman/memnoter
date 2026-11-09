@@ -1,5 +1,6 @@
 import { useState, type PointerEventHandler, type ReactNode } from 'react';
-import { DndContext, PointerSensor, useSensor, useSensors, useDroppable, closestCenter, pointerWithin } from '@dnd-kit/core';
+import { createPortal } from 'react-dom';
+import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, useDroppable, closestCenter, pointerWithin } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ChevronRight, Ellipsis, Folder } from 'lucide-react';
@@ -16,6 +17,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from './ui/dialog';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Field, FieldError, FieldGroup } from './ui/field';
 
 export const sidebarKey = ['sidebar-items'] as const;
 
@@ -47,13 +49,32 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
   const query = useQuery({ queryKey: sidebarKey, queryFn: () => call<SidebarItem[]>('sidebar_items') });
   const [editing, setEditing] = useState<SidebarItem | 'new' | null>(null);
   const [name, setName] = useState('');
+  // The row being dragged, so a copy of it can follow the pointer.
+  const [dragging, setDragging] = useState<{ id: string; width: number }>();
   const mutation = useMutation({
     mutationFn: (items: SidebarItem[]) => writeOperation(() => call('save_sidebar_items', { items })),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: sidebarKey }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: sidebarKey }),
   });
   const items = sidebarLayout(modules, query.data ?? []);
+  const dragged = dragging ? items.find(item => item.id === dragging.id) : undefined;
+  const draggedModule = dragged ? modules.find(module => module.id === dragged.id) : undefined;
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const save = (next: SidebarItem[]) => mutation.mutate(next.filter(item => JSON.stringify(item) !== JSON.stringify(query.data?.find(saved => saved.id === item.id))));
+  const save = (next: SidebarItem[]) => {
+    const changed = next.filter(item => JSON.stringify(item) !== JSON.stringify(query.data?.find(saved => saved.id === item.id)));
+    // Show the new layout in the same tick as the drop. Dropping clears the drag offsets at
+    // once, so waiting for the write and the refetch would snap rows back and then jump them.
+    const previous = queryClient.getQueryData<SidebarItem[]>(sidebarKey);
+    void queryClient.cancelQueries({ queryKey: sidebarKey });
+    queryClient.setQueryData<SidebarItem[]>(sidebarKey, saved => {
+      const merged = [...saved ?? []];
+      for (const item of changed) {
+        const index = merged.findIndex(entry => entry.id === item.id);
+        if (index < 0) merged.push(item); else merged[index] = item;
+      }
+      return merged;
+    });
+    mutation.mutate(changed, { onError: () => queryClient.setQueryData(sidebarKey, previous) });
+  };
   const edit = (item: SidebarItem | 'new') => { setEditing(item); setName(item === 'new' ? '' : item.name ?? ''); };
   const row = (item: SidebarItem): ReactNode => {
     const module = modules.find(module => module.id === item.id);
@@ -81,17 +102,34 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
     <DndContext sensors={sensors} collisionDetection={args => {
       const active = items.find(item => item.id === args.active.id);
       if (active?.name === null && args.pointerCoordinates) {
-        const hits = pointerWithin(args).filter(hit => hit.id !== args.active.id);
+        const all = pointerWithin(args);
+        const hits = all.filter(hit => hit.id !== args.active.id);
         const note = hits.find(hit => items.some(item => item.id === hit.id && item.name === null));
         // A folder is nested inside the root list, so prefer it over root.
         const zone = hits.find(hit => String(hit.id).startsWith('folder:')) ?? hits.find(hit => hit.id === 'root');
-        if (note || zone) return [note ?? zone!];
+        if (note) return [note];
+        // On its own slot: put down where it was picked up, so nothing is targeted.
+        if (all.some(hit => hit.id === args.active.id)) return [];
+        if (zone) {
+          // Not over another row, but inside the list the row already belongs to (a gap, or its
+          // own slot): the nearest sibling decides. Targeting the zone itself would light it up
+          // and, on drop, send the row to the end of the list.
+          const parent = zone.id === 'root' ? null : String(zone.id).slice('folder:'.length).replace(/:contents$/, '');
+          if (active.folder_id === parent) return closestCenter({ ...args, droppableContainers: args.droppableContainers.filter(container => {
+            const item = items.find(item => item.id === container.id);
+            return item && item.id !== active.id && item.folder_id === parent;
+          }) });
+          return [zone];
+        }
       }
       return closestCenter({ ...args, droppableContainers: args.droppableContainers.filter(container => {
         const item = items.find(item => item.id === container.id);
         return item && item.id !== args.active.id && (active?.name === null || item.folder_id === null);
       }) });
-    }} onDragEnd={({ active, over }) => {
+    }} onDragStart={({ active }) => setDragging({ id: String(active.id), width: document.querySelector(`[data-sidebar-item="${window.CSS.escape(String(active.id))}"]`)?.getBoundingClientRect().width ?? 0 })}
+    onDragCancel={() => setDragging(undefined)}
+    onDragEnd={({ active, over }) => {
+      setDragging(undefined);
       suppressNextClick();
       if (!over || mutation.isPending) return;
       const target = String(over.id).replace(/:contents$/, '');
@@ -101,6 +139,14 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
       <DropZone id="root" highlight={false}><SortableContext items={items.filter(item => item.folder_id === null).map(item => item.id)} strategy={verticalListSortingStrategy}>
         <div className="space-y-0.5 pb-2">{items.filter(item => item.folder_id === null).map(row)}</div>
       </SortableContext></DropZone>
+      {/* A folder is not a slot in the list, so the row cannot preview by moving into it:
+          a copy follows the pointer instead. Portalled out of the scrolling sidebar. */}
+      {createPortal(<DragOverlay dropAnimation={null}>{dragged && <div data-sidebar-drag-preview inert aria-hidden style={{ width: dragging?.width }}
+        className="floating-surface cursor-grabbing rounded-md text-sm">
+        <SidebarMenu>{dragged.name === null
+          ? (draggedModule && renderModule(draggedModule))
+          : <SidebarMenuItem><SidebarMenuButton><ChevronRight /><Folder /><span>{dragged.name}</span></SidebarMenuButton></SidebarMenuItem>}</SidebarMenu>
+      </div>}</DragOverlay>, document.body)}
     </DndContext>
     <Dialog open={editing !== null} onOpenChange={open => { if (!open) setEditing(null); }}><DialogContent>
       <form onSubmit={event => {
@@ -110,8 +156,14 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
         mutation.mutate([item], { onSuccess: () => setEditing(null) });
       }}>
         <DialogHeader><DialogTitle>{editing === 'new' ? 'New folder' : 'Rename folder'}</DialogTitle></DialogHeader>
-        <Label htmlFor="folder-name">Name</Label><Input id="folder-name" value={name} onChange={event => setName(event.target.value)} autoFocus />
-        {mutation.error && <p role="alert">{mutation.error.message}</p>}
+        <FieldGroup className="pb-2 pt-4">
+          <Field data-invalid={!!mutation.error}>
+            <Label htmlFor="folder-name">Name</Label>
+            <Input id="folder-name" value={name} onChange={event => setName(event.target.value)} placeholder="Year 1" autoFocus disabled={mutation.isPending}
+              aria-invalid={!!mutation.error} aria-describedby={mutation.error ? "folder-name-error" : undefined} />
+            <FieldError id="folder-name-error">{mutation.error?.message}</FieldError>
+          </Field>
+        </FieldGroup>
         <DialogFooter><DialogClose render={<Button variant="outline">Cancel</Button>} /><Button type="submit" disabled={!name.trim() || mutation.isPending}>Save</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>

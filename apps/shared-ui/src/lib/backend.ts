@@ -49,7 +49,7 @@ if (typeof window !== "undefined") installBridge();
 
 export function call<T>(command: string, args?: object): Promise<T> {
   if (!isNativeHost()) {
-    const shell = command.startsWith("plugin:") || ["confirm_exit", "confirm_restart", "set_editor_history", "pick_import_folder", "pick_import_image_folder", "read_import_images"].includes(command);
+    const shell = command.startsWith("plugin:") || ["confirm_exit", "confirm_restart", "set_editor_history", "pick_import_folder", "pick_import_image_folder", "read_import_images", "pick_anki_package", "read_anki_media", "close_anki_package"].includes(command);
     return (shell ? invoke<T>(command, args as Record<string, unknown> | undefined)
       : invoke<T>("core", { command, args: args ?? {} })).catch(error => {
         throw new Error(typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error));

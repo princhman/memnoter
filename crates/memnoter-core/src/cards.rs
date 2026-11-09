@@ -521,6 +521,14 @@ pub fn review_card(
 
     let tx = conn.transaction().map_err(db_err)?;
     write_card_state(&tx, card_id, expected_reps, card, Some(&log.fsrs_model))?;
+    insert_review_log(&tx, card_id, log)?;
+    tx.commit().map_err(db_err)
+}
+
+fn insert_review_log(tx: &rusqlite::Transaction, card_id: &str, log: &ReviewLog) -> CommandResult<()> {
+    if !(1..=4).contains(&log.rating) {
+        return Err("Review rating must be between 1 and 4".into());
+    }
     let before = &log.before;
     tx.execute(
         "insert into review_log (card_id, rating, review_time, duration_ms, fsrs_model,
@@ -546,8 +554,41 @@ pub fn review_card(
     )
     .map_err(db_err)?;
     let log_id = tx.last_insert_rowid();
-    crate::sync::record_review(&tx, card_id, Some(log_id), None)?;
-    tx.commit().map_err(db_err)
+    crate::sync::record_review(tx, card_id, Some(log_id), None)?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+pub struct CardHistory {
+    pub card_id: String,
+    pub card: ReviewedCard,
+    pub logs: Vec<ReviewLog>,
+    pub fsrs_model: String,
+}
+
+/// Returns identities skipped because indexing has not created them or they have reviews.
+pub fn import_card_history(db: &Db, histories: Vec<CardHistory>) -> CommandResult<Vec<String>> {
+    let mut conn = db.lock()?;
+    let tx = conn.transaction().map_err(db_err)?;
+    let mut skipped = Vec::new();
+    for history in histories {
+        let eligible: bool = tx.query_row(
+            "select exists(select 1 from cards where id = ?1 and reps = 0 and last_review_at is null and deleted_at is null)",
+            [&history.card_id], |row| row.get(0)).map_err(db_err)?;
+        if !eligible {
+            skipped.push(history.card_id);
+            continue;
+        }
+        write_card_state(&tx, &history.card_id, 0, &history.card, Some(&history.fsrs_model))?;
+        for log in &history.logs {
+            insert_review_log(&tx, &history.card_id, log)?;
+        }
+        if history.logs.is_empty() {
+            crate::sync::record_review(&tx, &history.card_id, None, None)?;
+        }
+    }
+    tx.commit().map_err(db_err)?;
+    Ok(skipped)
 }
 
 // Takes back a card's latest review, made at `review_time`: the card returns
@@ -689,6 +730,29 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+
+    #[test]
+    fn importing_history_is_atomic_skips_reviewed_cards_and_syncs() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("one", "Q", "A"), basic("two", "Q", "A")], 10);
+        crate::sync::sync_enable(&f.db, "test".into()).unwrap();
+        f.db.lock().unwrap().execute("delete from sync_outbox", []).unwrap();
+        let history = |id: &str| CardHistory { card_id: id.into(), card: reviewed(5000, 2), logs: vec![log(3), log(4)], fsrs_model: "fsrs-7".into() };
+        assert_eq!(import_card_history(&f.db, vec![history("one"), history("missing")]).unwrap(), ["missing"]);
+        assert_eq!(f.column::<i64>("select reps from cards where id = ?1", "one"), 2);
+        assert_eq!(f.column::<i64>("select count(*) from review_log where card_id = ?1 and sync_id is not null", "one"), 2);
+        let outbox: i64 = f.db.lock().unwrap().query_row("select count(*) from sync_outbox", [], |r| r.get(0)).unwrap();
+        assert!(outbox > 0);
+        assert_eq!(import_card_history(&f.db, vec![history("one")]).unwrap(), ["one"]);
+        let mut bad = history("two");
+        bad.logs[1].rating = 99;
+        assert!(import_card_history(&f.db, vec![bad]).is_err());
+        assert_eq!(f.column::<i64>("select reps from cards where id = ?1", "two"), 0);
+        assert_eq!(f.column::<i64>("select count(*) from review_log where card_id = ?1", "two"), 0);
+        let no_logs = CardHistory { card_id: "two".into(), card: reviewed(5000, 3), logs: vec![], fsrs_model: "fsrs-7".into() };
+        import_card_history(&f.db, vec![no_logs]).unwrap();
+        assert_eq!(f.column::<i64>("select reps from cards where id = ?1", "two"), 3);
     }
 
     #[test]
