@@ -8,6 +8,8 @@ struct RootView: View {
     @State private var session: WebSession?
     @State private var backgroundWork: Task<Void, Never>?
     @State private var previewColumnVisibility: NavigationSplitViewVisibility?
+    @State private var phoneColumn: NavigationSplitViewColumn = .sidebar
+    private let isPhone = UIDevice.current.userInterfaceIdiom == .phone
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @AppStorage("selectedDestination") private var savedDestination = "home"
     private var selected: String? {
@@ -36,148 +38,7 @@ struct RootView: View {
     @State private var detailWidth: CGFloat = 0
     var module: NoteModule? { store.modules.first { $0.id == selected } }
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            List(selection: Binding(get: { selected }, set: { if let destination = $0 { if destination == "review" { reviewModule = nil }; navigate(destination) } })) {
-                NavigationLink(value: "home") { Label("Home", systemImage: "house") }
-                NavigationLink(value: "review") {
-                    Label("Review", systemImage: "rectangle.stack").badge(store.counts.reduce(0) { $0 + $1.count })
-                }
-                Section("Modules") {
-                    ForEach(store.modules) { module in
-                        NavigationLink(value: module.id) {
-                            Text(module.name).badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
-                        }
-                        .contextMenu { moduleActions(module) }
-                        .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
-                    }
-                }
-                if !search.isEmpty {
-                    Section("Search results") {
-                        ForEach(hits, id: \.module_id) { hit in
-                            NavigationLink(value: hit.module_id) { VStack(alignment: .leading) { Text(hit.name); Text(hit.snippet.filter { !$0.isASCII || !$0.isNewline && !$0.unicodeScalars.contains(where: { $0.value < 32 }) }).font(.caption).lineLimit(2) } }
-                        }
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-            .searchable(text: $search, isPresented: $showSearch, prompt: "Search notes")
-            .background {
-                Button("Search modules") { columnVisibility = .all; showSearch = true }
-                    .keyboardShortcut("k").hidden().accessibilityHidden(true)
-            }
-            .task(id: search) {
-                guard let client = store.client else { return }
-                do { let results: [SearchHit] = try await client.call("search_notes", SearchArgs(query: search)); if !Task.isCancelled { hits = results } }
-                catch { store.error = String(describing: error) }
-            }
-            .navigationTitle("Memnoter")
-            .toolbar(removing: .sidebarToggle)
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button(action: newModule) { Image(systemName: "plus") }.keyboardShortcut("n")
-                    Button {
-                        withAnimation { columnVisibility = .detailOnly }
-                    } label: { Image(systemName: "sidebar.left") }
-                    .accessibilityLabel("Hide Sidebar")
-                }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Spacer()
-                    Button { showSettings = true } label: { Label("Settings", systemImage: "gear") }.disabled(busy)
-                }
-            }
-            .disabled(busy)
-        } detail: {
-            VStack(spacing: 0) {
-                if selected == "review", let client = store.client {
-                    ReviewView(client: client, directory: store.directory, moduleId: reviewModule, preferences: store.preferences, editCard: editReviewCard)
-                        .id(reviewModule ?? "all")
-                } else if module != nil, let session {
-                    if showingFind { TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding().onChange(of: find) { _, value in session.exec(.find, ["text": value]) } }
-                    WebSurface(session: session)
-                        .background(Color(uiColor: .systemBackground))
-                        .overlay {
-                            GeometryReader { geometry in
-                            let showBar = keyboardDocked && session.state.suppressKeyboard != true
-                            let keyboardInset = keyboardDocked ? max(0, geometry.frame(in: .global).maxY - keyboardTop) : 0
-                            Color.clear
-                                .onChange(of: keyboardInset + (showBar ? 60 : 0), initial: true) { _, overlap in
-                                    session.bottomInset = overlap
-                                }
-                            if showBar {
-                                FormattingBar(session: session, maximumWidth: max(0, geometry.size.width - 32), image: $image, busy: busy)
-                                    .padding(16)
-                                    .padding(.bottom, keyboardInset)
-                                    .disabled(!session.state.editable)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                            }
-                            }
-                        }
-
-                } else {
-                    HomeView(modules: store.modules, recentModules: store.recentModules, newModule: newModule, openModule: navigate)
-                        .disabled(busy)
-                }
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
-            .ignoresSafeArea(.keyboard)
-            .ignoresSafeArea(.container, edges: session?.imagePreviewOpen == true ? .all : [])
-            .toolbar(session?.imagePreviewOpen == true ? .hidden : .automatic, for: .navigationBar)
-            .statusBarHidden(session?.imagePreviewOpen == true)
-            .navigationTitle(selected == "review" && detailWidth < 500 ? "" : (module?.name ?? (selected == "review" ? "Review" : "Home")))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if selected != "review" || detailWidth >= 500 {
-                    ToolbarItem(placement: .principal) {
-                        Text(module?.name ?? (selected == "review" ? "Review" : "Home"))
-                            .lineLimit(1).truncationMode(.tail)
-                            .accessibilityIdentifier("module.title")
-                    }
-                }
-            }
-            .toolbar {
-                if columnVisibility == .detailOnly && (selected != "review" || horizontalSizeClass != .compact) {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
-                            .accessibilityLabel("Show Sidebar")
-                    }
-                }
-                if let session, module != nil {
-                    ToolbarItemGroup(placement: .topBarLeading) {
-                        Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
-                        Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
-                    }
-                    if session.state.focusedSectionId != nil || session.state.focusableSection != nil {
-                        if #available(iOS 26.0, *) {
-                            ToolbarSpacer(.fixed, placement: .topBarLeading)
-                        }
-                        ToolbarItem(placement: .topBarLeading) {
-                            SectionFocusControl(session: session, moduleName: module?.name ?? "", compact: detailWidth < 600)
-                        }
-                    }
-
-                    ToolbarItem(placement: .primaryAction) {
-                        Button { showingContents.toggle() } label: { Label("Contents", systemImage: "list.bullet.indent") }
-                            .accessibilityLabel("Contents")
-                            .popover(isPresented: $showingContents) {
-                                ContentsPopover(session: session) { heading in
-                                    session.exec(.scrollToHeading, ["id": heading.id])
-                                    showingContents = false
-                                }
-                            }
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu {
-                            PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
-                            Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }.keyboardShortcut("f")
-                            Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }
-                            if !session.saveStatus.isEmpty { Text(session.saveStatus) }
-                        } label: { Image(systemName: "ellipsis") }
-                        .accessibilityLabel("Note actions")
-                        .accessibilityValue(session.saveStatus)
-                    }
-                }
-            }
-        }
+        navigation
         .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { notification in
             guard let result = notification.object as? SyncApplyResult else { return }
             Task {
@@ -194,6 +55,7 @@ struct RootView: View {
             if let client = store.client, session == nil {
                 await store.refresh()
                 columnVisibility = sidebarVisible ? .all : .detailOnly
+                if isPhone, selected != "home" { phoneColumn = .detail }
                 let restored = WebSession(client: client, directory: store.directory, preferences: store.preferences)
                 session = restored
                 store.sync?.onFile = { module, json in
@@ -231,6 +93,13 @@ struct RootView: View {
                 } }
             }
         }
+        // Keep phone Contents presentation above the title's Button/Menu
+        // branches so it has a stable presenter across focus changes.
+        .sheet(isPresented: Binding(get: { isPhone && showingContents }, set: { if isPhone { showingContents = $0 } })) {
+            if let session {
+                ContentsSheet(session: session, moduleName: module?.name ?? "Note") { showingContents = false }
+            }
+        }
         .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, modules: store.modules, setChapterNumbering: setChapterNumbering, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory, preferences: store.preferences); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
         .onChange(of: session?.imagePreviewOpen) { _, open in
@@ -243,7 +112,7 @@ struct RootView: View {
             }
         }
         .onChange(of: columnVisibility) { _, visibility in
-            if session?.imagePreviewOpen == true { return }
+            if isPhone || session?.imagePreviewOpen == true { return }
             if visibility == .all { sidebarVisible = true }
             else if visibility == .detailOnly { sidebarVisible = false }
         }
@@ -288,6 +157,195 @@ struct RootView: View {
             } else { backgroundWork?.cancel(); store.sync?.resume(); Task { await store.refresh() } }
         }
     }
+    @ViewBuilder private var navigation: some View {
+        if isPhone {
+            NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $phoneColumn) {
+                sidebar
+            } detail: {
+                detail
+            }
+        } else {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                sidebar
+            } detail: {
+                detail
+            }
+        }
+    }
+
+    private var sidebar: some View {
+        List(selection: Binding(get: { selected }, set: { if let destination = $0 { if destination == "review" { reviewModule = nil }; navigate(destination) } })) {
+            destinationLink("home") { Label("Home", systemImage: "house") }
+            destinationLink("review") {
+                Label("Review", systemImage: "rectangle.stack").badge(store.counts.reduce(0) { $0 + $1.count })
+            }
+            Section("Modules") {
+                ForEach(store.modules) { module in
+                    destinationLink(module.id) {
+                        Text(module.name).badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
+                    }
+                    .contextMenu { moduleActions(module) }
+                    .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
+                }
+            }
+            if !search.isEmpty {
+                Section("Search results") {
+                    ForEach(hits, id: \.module_id) { hit in
+                        destinationLink(hit.module_id) { VStack(alignment: .leading) { Text(hit.name); Text(hit.snippet.filter { !$0.isASCII || !$0.isNewline && !$0.unicodeScalars.contains(where: { $0.value < 32 }) }).font(.caption).lineLimit(2) } }
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .searchable(text: $search, isPresented: $showSearch, prompt: "Search notes")
+        .background {
+            Button("Search modules") { if isPhone { phoneColumn = .sidebar }; columnVisibility = .all; showSearch = true }
+                .keyboardShortcut("k").hidden().accessibilityHidden(true)
+        }
+        .task(id: search) {
+            guard let client = store.client else { return }
+            do { let results: [SearchHit] = try await client.call("search_notes", SearchArgs(query: search)); if !Task.isCancelled { hits = results } }
+            catch { store.error = String(describing: error) }
+        }
+        .navigationTitle("Memnoter")
+        .navigationBarTitleDisplayMode(isPhone ? .inline : .automatic)
+        .toolbar(removing: .sidebarToggle)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button(action: newModule) { Image(systemName: "plus") }.keyboardShortcut("n")
+                    .accessibilityLabel("New module")
+                if !isPhone {
+                    Button {
+                        withAnimation { columnVisibility = .detailOnly }
+                    } label: { Image(systemName: "sidebar.left") }
+                    .accessibilityLabel("Hide Sidebar")
+                }
+            }
+            ToolbarItemGroup(placement: .bottomBar) {
+                Spacer()
+                Button { showSettings = true } label: { Label("Settings", systemImage: "gear") }.disabled(busy)
+            }
+        }
+        .disabled(busy)
+    }
+
+    private var detail: some View {
+        VStack(spacing: 0) {
+            if selected == "review", let client = store.client {
+                ReviewView(client: client, directory: store.directory, moduleId: reviewModule, preferences: store.preferences, editCard: editReviewCard)
+                    .id(reviewModule ?? "all")
+            } else if module != nil, let session {
+                if showingFind {
+                    if isPhone {
+                        HStack {
+                            TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder)
+                                .onChange(of: find) { _, value in session.exec(.find, ["text": value]) }
+                            Button("Done") { showingFind = false; find = ""; session.exec(.find, ["text": ""]) }
+                        }.padding()
+                    } else {
+                        TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder).padding()
+                            .onChange(of: find) { _, value in session.exec(.find, ["text": value]) }
+                    }
+                }
+                WebSurface(session: session)
+                    .background(Color(uiColor: .systemBackground))
+                    .overlay {
+                        GeometryReader { geometry in
+                        let showBar = keyboardDocked && session.state.suppressKeyboard != true
+                        let keyboardInset = keyboardDocked ? max(0, geometry.frame(in: .global).maxY - keyboardTop) : 0
+                        Color.clear
+                            .onChange(of: keyboardInset + (showBar ? 60 : 0), initial: true) { _, overlap in
+                                session.bottomInset = overlap
+                            }
+                        if showBar {
+                            FormattingBar(session: session, maximumWidth: max(0, geometry.size.width - 32), image: $image, busy: busy)
+                                .padding(16)
+                                .padding(.bottom, keyboardInset)
+                                .disabled(!session.state.editable)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        }
+                        }
+                    }
+
+            } else {
+                HomeView(modules: store.modules, recentModules: store.recentModules, newModule: newModule, openModule: navigate)
+                    .disabled(busy)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
+        .ignoresSafeArea(.keyboard)
+        .ignoresSafeArea(.container, edges: session?.imagePreviewOpen == true ? .all : [])
+        .toolbar(session?.imagePreviewOpen == true ? .hidden : .automatic, for: .navigationBar)
+        .statusBarHidden(session?.imagePreviewOpen == true)
+        .navigationTitle(selected == "review" && detailWidth < 500 ? "" : (module?.name ?? (selected == "review" ? "Review" : "Home")))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if selected != "review" || detailWidth >= 500 {
+                ToolbarItem(placement: .principal) {
+                    if isPhone, let module, let session {
+                        PhoneNoteTitle(session: session, moduleName: module.name) { showingContents = true }
+                    } else {
+                        Text(module != nil && session?.state.focusedSectionId != nil
+                             ? session?.state.focusedSectionPath.last?.title ?? module?.name ?? "Section"
+                             : module?.name ?? (selected == "review" ? "Review" : "Home"))
+                            .lineLimit(1).truncationMode(.tail)
+                            .accessibilityIdentifier("module.title")
+                    }
+                }
+            }
+        }
+        .toolbar {
+            if !isPhone && columnVisibility == .detailOnly && (selected != "review" || horizontalSizeClass != .compact) {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
+                        .accessibilityLabel("Show Sidebar")
+                }
+            }
+            if let session, module != nil {
+                ToolbarItemGroup(placement: isPhone ? .topBarTrailing : .topBarLeading) {
+                    Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
+                        .accessibilityLabel("Undo")
+                    Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                        .accessibilityLabel("Redo")
+                }
+                if !isPhone {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { showingContents.toggle() } label: { Label("Contents", systemImage: "list.bullet.indent") }
+                            .accessibilityLabel("Contents")
+                            .popover(isPresented: $showingContents) {
+                                ContentsPopover(session: session, moduleName: module?.name ?? "Note") { showingContents = false }
+                            }
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        noteActions(session)
+                    } label: { Image(systemName: "ellipsis") }
+                    .accessibilityLabel("Note actions")
+                    .accessibilityValue(session.saveStatus)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func noteActions(_ session: WebSession) -> some View {
+        PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
+        Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }.keyboardShortcut("f")
+        Button { reviewModule = selected; navigate("review") } label: { Label("Review", systemImage: "rectangle.stack") }
+        if !session.saveStatus.isEmpty { Text(session.saveStatus) }
+    }
+
+    // Phone rows commit navigation only after the shared save/open barrier succeeds.
+    // iPad keeps its existing selection-driven NavigationLinks.
+    @ViewBuilder private func destinationLink<Content: View>(_ destination: String, @ViewBuilder label: () -> Content) -> some View {
+        if isPhone {
+            Button { if destination == "review" { reviewModule = nil }; navigate(destination) } label: { label() }
+                .foregroundStyle(.primary)
+        } else {
+            NavigationLink(value: destination, label: label)
+        }
+    }
+
     private func updateKeyboard(_ notification: Notification, hiding: Bool = false) {
         guard let window = session?.web.window,
               let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
@@ -349,6 +407,7 @@ struct RootView: View {
                 try await session.open(moduleId)
                 store.recordOpenedModule(moduleId)
                 selected = moduleId
+                if isPhone { phoneColumn = .detail }
             } catch { store.error = String(describing: error) }
         }
     }
@@ -369,6 +428,7 @@ struct RootView: View {
                     store.recordOpenedModule(destination)
                 }
                 selected = destination
+                if isPhone { phoneColumn = .detail }
                 await store.refresh()
             } catch { store.error = String(describing: error) }
         }

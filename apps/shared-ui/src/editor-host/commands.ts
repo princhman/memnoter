@@ -24,12 +24,17 @@ function allHeadings(editor: Editor) {
 }
 
 // Use document positions from the same state as the visibility plugins.
-export function editorOutline(editor: Editor) {
+export function editorOutlines(editor: Editor) {
+  const all = allHeadings(editor);
   const focus = getFocusedSectionRange(editor.state);
   const folded = getFoldedRanges(editor.state);
-  return allHeadings(editor).filter(item =>
+  return { allHeadings: all, headings: all.filter(item =>
     (!focus || (item.pos >= focus.from && item.pos < focus.to)) &&
-    !folded.some(range => item.pos >= range.from && item.pos < range.to));
+    !folded.some(range => item.pos >= range.from && item.pos < range.to)) };
+}
+
+export function editorOutline(editor: Editor) {
+  return editorOutlines(editor).headings;
 }
 
 export function editorState(editor: Editor): EditorState {
@@ -145,6 +150,16 @@ export function execEditor(editor: Editor, command: ExecCommand, args: Record<st
     case "scrollToHeading": {
       const heading = allHeadings(editor).find(item => item.id === args.id);
       if (!heading) throw new Error("Unknown heading id");
+      if (args.revealHidden === true && (command === "focusSection" || command === "scrollToHeading")) {
+        // Contents browses the whole tree, including folded/focused-out nodes.
+        // Reveal only the target's ancestors; leave unrelated folds untouched.
+        for (const range of getFoldedRanges(editor.state)) {
+          if ((heading.pos >= range.from && heading.pos < range.to) ||
+              (command === "focusSection" && range.heading === heading.pos)) commands.toggleFold(range.heading);
+        }
+        const focus = getFocusedSectionRange(editor.state);
+        if (command === "scrollToHeading" && focus && (heading.pos < focus.from || heading.pos >= focus.to)) commands.showDocument();
+      }
       if (command === "focusSection") {
         // Outline/breadcrumb actions can target a section outside the selection.
         // Move the caret with focus so WebKit never tries to reveal hidden text.

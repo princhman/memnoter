@@ -97,7 +97,7 @@ test('native focus follows the innermost section through body text and section b
 });
 
 test('native outline hides folded descendants and headings outside focus, and navigation retains focus', async () => {
-  const { editorOutline } = await import('../src/editor-host/commands.ts');
+  const { editorOutline, editorOutlines } = await import('../src/editor-host/commands.ts');
   const h = (level, text) => ({ type: 'heading', attrs: { level, 'data-toc-id': text }, content: [{ type: 'text', text }] });
   const editor = new Editor({ element: null, extensions: editorExtensions({ collaborative: false }),
     content: { type: 'doc', content: [h(1, 'Parent'), h(2, 'Child'), h(3, 'Grandchild'), h(1, 'Other')] } });
@@ -112,6 +112,20 @@ test('native outline hides folded descendants and headings outside focus, and na
     assert.equal(editorState(editor).focusedSectionId, focused);
     execEditor(editor, 'unfold', { id: 'Child' });
     assert.deepEqual(editorOutline(editor).map(h => h.id), ['Parent', 'Child', 'Grandchild']);
+    execEditor(editor, 'fold', { id: 'Child' });
+    execEditor(editor, 'focusSection', { id: 'Other' });
+    assert.deepEqual(editorOutline(editor).map(h => h.id), ['Other']);
+    assert.deepEqual(editorOutlines(editor).allHeadings.map(h => h.id), ['Parent', 'Child', 'Grandchild', 'Other'], 'Contents retains the whole hierarchy');
+    execEditor(editor, 'scrollToHeading', { id: 'Grandchild', revealHidden: true });
+    assert.equal(editorState(editor).focusedSectionId, null, 'navigating outside focus reveals the note');
+    assert.deepEqual(editorOutline(editor).map(h => h.id), ['Parent', 'Child', 'Grandchild', 'Other'], 'navigating to a folded descendant reveals its ancestors');
+    execEditor(editor, 'fold', { id: 'Parent' });
+    execEditor(editor, 'focusSection', { id: 'Grandchild', revealHidden: true });
+    assert.equal(editorState(editor).focusedSectionId, 'Grandchild');
+    assert.deepEqual(editorOutline(editor).map(h => h.id), ['Grandchild']);
+    execEditor(editor, 'fold', { id: 'Parent' });
+    execEditor(editor, 'focusSection', { id: 'Parent', revealHidden: true });
+    assert.deepEqual(editorOutline(editor).map(h => h.id), ['Parent', 'Child', 'Grandchild'], 'focusing a folded section opens its own content');
   } finally { editor.destroy(); }
 });
 

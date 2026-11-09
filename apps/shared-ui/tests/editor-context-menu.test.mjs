@@ -24,6 +24,8 @@ async function fresh() {
     editor.commands.setTextSelection(1);
     editor.view.focus();
   });
+  // Resize/scroll dismisses an open menu; finish editor layout before opening it.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function openAt(pos) {
   const point = await page.evaluate(pos => {

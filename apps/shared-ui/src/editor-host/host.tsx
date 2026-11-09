@@ -18,7 +18,7 @@ import { imageStatusStore, flushAll } from "@/lib/write-lifecycle";
 import { flushPersistedViews } from "@/lib/view-persistence";
 import { headingMathLabel } from "@/lib/heading-label";
 import { headingNumbers, headingNumberingKey } from "@/lib/heading-numbering";
-import { editorOutline, editorState, execEditor } from "./commands";
+import { editorOutline, editorOutlines, editorState, execEditor } from "./commands";
 
 // How long after typing the caret may not be revealed upward.
 const TYPING_SETTLE_MS = 300;
@@ -148,15 +148,18 @@ export function Host() {
       if (editor.isDestroyed) return;
       postNativeEvent("state", { moduleId: id, ...editorState(editor) });
       const numbers = headingNumberingKey.getState(editor.state) ? headingNumbers(editor.state.doc) : new Map<number, string>();
-      const headings = editorOutline(editor).map(item => {
+      const formatHeading = (item: ReturnType<typeof editorOutline>[number]) => {
         let text = "";
         editor.state.doc.nodeAt(item.pos)?.forEach(child => { text += child.type.name === "inlineMath" ? headingMathLabel(child.textContent) : child.textContent; });
         return { ...item, text, number: numbers.get(item.pos) ?? null };
-      });
-      const encoded = JSON.stringify(headings);
+      };
+      const outline = editorOutlines(editor);
+      const headings = outline.headings.map(formatHeading);
+      const allHeadings = outline.allHeadings.map(formatHeading);
+      const encoded = JSON.stringify({ headings, allHeadings });
       if (encoded !== lastOutline) {
         lastOutline = encoded;
-        postNativeEvent("outline", { moduleId: id, headings });
+        postNativeEvent("outline", { moduleId: id, headings, allHeadings });
       }
       publishCurrent();
     };

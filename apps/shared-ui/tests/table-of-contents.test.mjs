@@ -130,7 +130,7 @@ test("popup can be entered and a hidden descendant click navigates", async () =>
   assert.equal(await popup().count(), 1);
   await child.click();
   await page.waitForFunction(() => document.querySelector("main").scrollTop > 100);
-  assert.equal(await popup().count(), 0);
+  await popup().waitFor({ state: "detached" });
 });
 
 test("keyboard moves between dashes, enters children, and Escape closes and restores focus", async () => {
@@ -145,7 +145,7 @@ test("keyboard moves between dashes, enters children, and Escape closes and rest
   await page.keyboard.press("End");
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), example(2, 1));
   await page.keyboard.press("Escape");
-  assert.equal(await popup().count(), 0);
+  await popup().waitFor({ state: "detached" });
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), topic(2, 1));
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector("main").scrollTop > 100);
@@ -160,7 +160,7 @@ test("touch first tap opens, second tap navigates; native host still omits the T
   assert.equal(await touch.locator("main").evaluate(el => el.scrollTop), 0);
   await target.tap();
   await touch.waitForFunction(() => document.querySelector("main").scrollTop > 100);
-  assert.equal(await touch.locator(".toc-popup").count(), 0);
+  await touch.locator(".toc-popup").waitFor({ state: "detached" });
   await touch.close();
   const native = await browser.newPage();
   await native.addInitScript(() => { window.installTestBridge({ native: function() {} }); });
@@ -181,9 +181,10 @@ test("popup renders numbered titles", async () => {
 
 test("menu aim protects diagonal travel, releases outside the triangle, and expires when still", async () => {
   await load();
-  await page.clock.install();
-  await page.clock.pauseAt(new Date());
+  // Pause ahead of the browser's clock rather than racing the host's wall clock.
+  await page.clock.install({ time: 0 });
   try {
+  await page.clock.pauseAt(60_000);
   const first = await dash(root(1)).boundingBox();
   const second = await dash(topic(1, 1)).boundingBox();
   const start = { x: first.x + first.width - 1, y: first.y + first.height / 2 };
@@ -240,11 +241,34 @@ test("descendants preserve relative indentation and render inline math", async (
   await waitNames(".toc-popup .toc-item", ["1 Root", "1.1 Formula x^2", "1.1.1 Detail"]);
   assert.equal(await popup().locator(".katex").count(), 1);
   assert.equal(await popup().locator(".katex annotation").textContent(), "x^2");
-  const indentation = await popup().getByRole("button").evaluateAll(rows => rows.map(row => {
+  const indentation = await popup().locator(".toc-item").evaluateAll(rows => rows.map(row => {
     const range = document.createRange(); range.selectNodeContents(row); return range.getBoundingClientRect().left;
   }));
   assert.ok(indentation[0] < indentation[1] && indentation[1] < indentation[2]);
   await popup().getByRole("button", { name: "1.1.1 Detail", exact: true }).click();
-  assert.equal(await popup().count(), 0);
+  await popup().waitFor({ state: "detached" });
   await waitNames('.toc-dash[data-related="true"]', []);
+});
+
+test("hover reveals the chosen Contents focus action and keyboard unfocus restores the note", async () => {
+  await load();
+  await selectHeading(root(1));
+  await dash(root(2)).hover();
+  await popup().getByRole("button", { name: root(2), exact: true }).hover();
+  await popup().getByRole("button", { name: `Focus on ${root(2)}`, exact: true }).click();
+  await page.waitForFunction(() => !!document.querySelector('.section-focus-start'));
+  assert.equal(await page.locator('.section-focus-start').textContent(), root(2));
+  assert.equal(await page.locator('.tiptap h1').filter({ hasText: root(1) }).isVisible(), false);
+  await popup().waitFor({ state: "detached" });
+  const top = await page.locator('.section-focus-start').evaluate(node => node.getBoundingClientRect().top);
+  await dash(root(2)).hover();
+  const unfocus = popup().getByRole("button", { name: `Unfocus ${root(2)}`, exact: true });
+  await unfocus.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => !document.querySelector('.section-focused'));
+  assert.equal(await page.locator('.tiptap h1').filter({ hasText: root(1) }).isVisible(), true);
+  await popup().waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), root(2));
+  const restored = await page.locator('.tiptap h1').filter({ hasText: root(2) }).evaluate(node => node.getBoundingClientRect().top);
+  assert.ok(Math.abs(restored - top) <= 1, 'Unfocus retains the section on screen');
 });

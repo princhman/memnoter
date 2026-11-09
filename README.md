@@ -67,6 +67,9 @@ changes with it. Everything stays on your machine.
   (<kbd>⌘</kbd><kbd>⌥</kbd><kbd>M</kbd>), rendered with KaTeX.
 - Foldable sections. Each module reopens where you left it, with the same
   scroll position and folds.
+- The desktop Contents panel uses compact section actions and a subtle purple
+  reading highlight. Hover a row or reach it by keyboard to focus that section;
+  its Unfocus control stays visible while focused. Touch controls stay visible.
 - <kbd>⌘</kbd><kbd>K</kbd> opens one palette that searches module titles, note
   text and math, and also runs commands.
 

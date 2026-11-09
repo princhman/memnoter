@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SyncSettingsView: View {
     @Bindable var sync: SyncClient
-    @State private var server = SyncConfiguration.defaultServer
+    private let server = SyncConfiguration.defaultServer
     @State private var email = ""
     @State private var code = ""
     @State private var passphrase = ""
@@ -28,12 +28,8 @@ struct SyncSettingsView: View {
             } else {
                 Text("Keep your notes up to date across devices. Notes are end-to-end encrypted.")
                 if step == 0 {
-                    #if DEBUG
-                    TextField("Sync server", text: $server).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    #endif
                     TextField("Email", text: $email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("Send sign-in code") { run {
-                        server = SyncConfiguration.server(server)
                         let result = try await sync.api(server, SyncConfiguration.path("authStart"), method: "POST", body: ["email": email])
                         devCode = result["devCode"] as? String; step = 1
                     } }.disabled(email.isEmpty)

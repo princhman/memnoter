@@ -472,6 +472,39 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       await page.locator('.tiptap').evaluate(node => { node.style.fontSize = '24px'; });
       await page.waitForTimeout(350);
       assert.ok(Math.abs(await page.locator('.app-scroll-container').evaluate(node => node.scrollTop) - releasedScroll) < 1, 'Expired section anchor moved the reader');
+
+      // A short whole note has no scroll range. Unfocus must create all the
+      // room needed to retain its heading before paint, not over resize frames.
+      await page.evaluate(() => window.memnoterEditor.open('short-scroll-regression'));
+      await page.locator('.tiptap').click();
+      for (const [level, title] of [[1, 'First'], [1, 'Second'], [2, 'Last child']]) {
+        await exec('heading', { level });
+        await page.keyboard.type(title);
+        await page.keyboard.press('Enter');
+        await page.keyboard.type(`${title} body`);
+        await page.keyboard.press('Enter');
+      }
+      const shortId = await page.evaluate(() => window.messages.filter(m => m.event === 'outline').at(-1).payload.headings.find(h => h.text === 'Last child').id);
+      for (const [width, height] of [[390, 844], [820, 1180]]) {
+        await page.setViewportSize({ width, height });
+        for (const keyboard of [0, 300]) {
+          await page.evaluate(keyboard => window.memnoterEditor.setBottomInset(keyboard), keyboard);
+          await exec('focusSection', { id: shortId });
+          await settleScroll();
+          const offsets = await page.evaluate(async () => {
+            const heading = document.querySelector('.section-focus-start');
+            const top = heading.getBoundingClientRect().top;
+            window.memnoterEditor.exec('showDocument');
+            const offsets = [heading.getBoundingClientRect().top - top];
+            for (let frame = 0; frame < 8; frame++) {
+              await new Promise(resolve => requestAnimationFrame(resolve));
+              offsets.push(heading.getBoundingClientRect().top - top);
+            }
+            return offsets;
+          });
+          assert.ok(offsets.every(delta => Math.abs(delta) <= 1), `Short-note unfocus moved across frames (${width}px, inset ${keyboard}): ${offsets}`);
+        }
+      }
     });
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.evaluate(() => { window.memnoterEditor.setTopInset(0); window.memnoterEditor.setBottomInset(0); });

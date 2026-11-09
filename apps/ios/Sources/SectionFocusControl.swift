@@ -1,60 +1,48 @@
 import SwiftUI
 
-struct SectionFocusControl: View {
-    @Bindable var session: WebSession
+// The phone title owns scope without adding another row above the editor.
+struct PhoneNoteTitle: View {
+    let session: WebSession
     let moduleName: String
-    let compact: Bool
+    let showContents: () -> Void
 
+    private var focused: Bool { session.state.focusedSectionId != nil }
     private var title: String {
-        session.state.focusedSectionPath.last?.title
+        guard focused else { return moduleName }
+        return session.state.focusedSectionPath.last?.title
             ?? session.headings.first { $0.id == session.state.focusedSectionId }?.text
-            ?? "Focused section"
+            ?? "Section"
+    }
+
+    private var titleLabel: some View {
+        HStack(spacing: 4) {
+            Text(title).font(.headline).lineLimit(1).truncationMode(.tail)
+            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     var body: some View {
-        Group {
-            if session.state.focusedSectionId != nil {
-                HStack(spacing: 0) {
-                    Menu {
-                        Button(moduleName, systemImage: "doc.text") { session.exec(.showDocument) }
-                        ForEach(session.state.focusedSectionPath.dropLast()) { crumb in
-                            Button(crumb.title) { session.exec(.focusSection, ["id": crumb.id]) }
-                        }
-                    } label: {
-                        Text(title)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: compact ? 80 : 140)
-                            .padding(.leading, 12)
-                            .frame(minHeight: 44)
-                    }
-                    .accessibilityIdentifier("sectionFocus.menu")
-                    .accessibilityLabel("Focused section: \(title). Ancestor sections")
-                    Button { session.exec(.showDocument) } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                    }
-                    .accessibilityIdentifier("sectionFocus.clear")
-                    .accessibilityLabel("Show whole note")
-                    .help("Show whole note")
+        HStack(spacing: 0) {
+            Button(action: showContents) { titleLabel }
+            .accessibilityHint("Open contents")
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("module.title")
+            .accessibilityLabel(title)
+            .accessibilityValue(focused ? "Focused section" : "Whole note")
+            if focused {
+                Button { session.exec(.showDocument) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
-            } else if session.state.focusableSection != nil {
-                Button { session.exec(.focusCurrentSection) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "scope")
-                        Text("Focus")
-                    }
-                        .font(.subheadline)
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 44)
-                }
-                .accessibilityIdentifier("sectionFocus.enter")
-                .accessibilityLabel("Focus on this section")
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sectionFocus.clear")
+                .accessibilityLabel("Show whole note")
             }
         }
         .foregroundStyle(.primary)
-        .tint(.primary)
     }
 }

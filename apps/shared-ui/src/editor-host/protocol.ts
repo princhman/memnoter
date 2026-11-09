@@ -94,7 +94,7 @@ export interface NativeEvents {
   cardsChanged: null;
   reviewState: ReviewState;
   "skip-cards-created-today": boolean;
-  outline: { moduleId: string; headings: Heading[] };
+  outline: { moduleId: string; headings: Heading[]; allHeadings: Heading[] };
   outlineCurrent: { moduleId: string; currentHeadingId: string | null };
   state: EditorState & { moduleId: string };
   ready: { protocolVersion: number };
