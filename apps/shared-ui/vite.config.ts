@@ -3,14 +3,29 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import { execSync } from "node:child_process";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+
+// Shown in Settings → About so a tester can tell which commit is installed.
+function buildStamp() {
+  try {
+    const git = (args: string) => execSync(`git ${args}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const dirty = git("status --porcelain --untracked-files=no") ? "-dirty" : "";
+    return `${git("rev-parse --short HEAD")}${dirty}`;
+  } catch {
+    return "unknown";
+  }
+}
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   // WKWebView loads editor.html from the bundled dist directory.
   base: "./",
+  define: {
+    "import.meta.env.VITE_BUILD_STAMP": JSON.stringify(buildStamp()),
+  },
   plugins: [
     tanstackRouter({
       target: "react",

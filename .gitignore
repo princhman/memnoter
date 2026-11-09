@@ -31,13 +31,9 @@ plan.md
 /apps/ios/MemnoterCore/Sources/
 /apps/ios/MemnoterCore/*.xcframework/
 /apps/ios/*.xcodeproj/
-/apps/ios/build/
-/apps/ios/build-device/
+/apps/ios/build*/
 /apps/ios/Resources/Web/
 
-/apps/ios/build-sidebar/
-
-/apps/ios/build-polish/
 # Throwaway data for scripts/sync-dev.sh
 .sync-dev/
 

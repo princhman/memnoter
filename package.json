@@ -19,7 +19,8 @@
     "preview": "pnpm --filter memnoter-shared-ui preview",
     "tauri": "tauri",
     "sync-version": "node scripts/sync-version.mjs",
-    "version": "node scripts/sync-version.mjs"
+    "version": "node scripts/sync-version.mjs",
+    "check:ci": "./scripts/check-ci.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",

@@ -166,13 +166,17 @@ pnpm dev            # run the desktop app with hot reload
 | `pnpm dev:sync-test` | Sync server and two desktop copies, with throwaway data |
 | `pnpm dev:marketing` | Build and serve the marketing site on port 4173 |
 | `pnpm dev:ios` | Build the iPad dependencies and open Xcode |
-| `pnpm check` | Lint, build and every test |
+| `pnpm check:ci` | Everything CI runs: lint, build, tests, clippy, sync typecheck and the iOS build |
+| `scripts/ios-install.sh` | Build and install on a connected iPad |
+| `scripts/preview-on-mac.sh` | Follow a branch pushed from another machine in a desktop preview |
 
 Before opening a pull request:
 
 ```sh
-pnpm check
+pnpm check:ci          # add --quick to skip the iOS build
 ```
+
+Agents: see [AGENTS.md](AGENTS.md).
 
 ## License
 
