@@ -354,6 +354,36 @@ struct RootView: View {
                 }
             }
             if let session, module != nil {
+                // The open PDF's tools sit in their own glass group, above the pane.
+                if let reader = session.pdfReader {
+                    ToolbarItem(placement: .primaryAction) {
+                        PdfFileMenu(session: session, reader: reader) { if let id = module?.id { beginPdfImport(id) } }
+                    }
+                    if reader.activeId != nil {
+                        ToolbarItem(placement: .primaryAction) { PdfPageButton(session: session, reader: reader) }
+                        ToolbarItem(placement: .primaryAction) {
+                            Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
+                                Label("Select region", systemImage: "rectangle.dashed")
+                            }
+                            .disabled(!reader.canSelect && !reader.selecting)
+                        }
+                        ToolbarItem(placement: .primaryAction) {
+                            Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
+                                Label("Annotate area", systemImage: "highlighter")
+                            }
+                            .disabled(!reader.canAnnotate && !reader.annotating)
+                        }
+                        ToolbarItem(placement: .primaryAction) { PdfViewMenu(session: session, reader: reader) }
+                        if reader.fullscreen {
+                            ToolbarItem(placement: .primaryAction) {
+                                Button { session.pdfCommand(.openBeside) } label: { Label("Exit full screen", systemImage: "arrow.down.right.and.arrow.up.left") }
+                            }
+                        }
+                    }
+                    if #available(iOS 26.0, *) {
+                        ToolbarSpacer(.fixed, placement: .primaryAction)
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
                         .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
@@ -568,6 +598,103 @@ struct RootView: View {
                 if isPhone { phoneColumn = .detail }
                 await store.refresh()
             } catch { store.error = String(describing: error) }
+        }
+    }
+}
+
+/// The PDF's name; its menu switches files, returns to the list or adds one.
+private struct PdfFileMenu: View {
+    let session: WebSession
+    let reader: PdfReaderState
+    let addPdf: () -> Void
+
+    var body: some View {
+        Menu {
+            if reader.fullscreen {
+                Button { session.pdfCommand(.backToNote) } label: { Label("Back to note", systemImage: "chevron.backward") }
+            }
+            Section {
+                ForEach(reader.files) { file in
+                    Button { session.pdfCommand(.openFile, file.id) } label: {
+                        if file.id == reader.activeId { Label(file.name, systemImage: "checkmark") } else { Text(file.name) }
+                    }
+                }
+            }
+            if reader.activeId != nil {
+                Button { session.pdfCommand(.showFiles) } label: { Label("All files", systemImage: "list.bullet") }
+            }
+            Button(action: addPdf) { Label("Add PDF", systemImage: "doc.badge.plus") }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text")
+                Text(reader.title).lineLimit(1).truncationMode(.middle).frame(maxWidth: 200)
+                Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 4)
+            .accessibilityHidden(true)
+        }
+        .accessibilityLabel("PDF file")
+        .accessibilityValue(reader.title)
+    }
+}
+
+/// "3 / 12"; tapping asks for a page to jump to.
+private struct PdfPageButton: View {
+    let session: WebSession
+    let reader: PdfReaderState
+    @State private var asking = false
+    @State private var text = ""
+
+    var body: some View {
+        Button {
+            text = ""
+            asking = true
+        } label: {
+            HStack(spacing: 3) {
+                Text("\(reader.page)").fontWeight(.semibold)
+                Text("/ \(reader.pageCount)").foregroundStyle(.secondary)
+            }
+            .monospacedDigit()
+            .padding(.horizontal, 4)
+            .accessibilityHidden(true)
+        }
+        .disabled(reader.pageCount == 0)
+        .accessibilityLabel("Page \(reader.page) of \(reader.pageCount)")
+        .accessibilityHint("Go to page")
+        .alert("Go to Page", isPresented: $asking) {
+            TextField("Page", text: $text).keyboardType(.numberPad)
+            Button("Cancel", role: .cancel) { }
+            Button("Go") {
+                guard let page = Int(text) else { return }
+                session.pdfCommand(.goToPage, max(1, min(reader.pageCount, page)))
+            }
+            .keyboardShortcut(.defaultAction)
+        } message: {
+            Text("1 to \(reader.pageCount)")
+        }
+    }
+}
+
+/// Zoom and where the PDF is shown; pinching still zooms too.
+private struct PdfViewMenu: View {
+    let session: WebSession
+    let reader: PdfReaderState
+
+    var body: some View {
+        Menu {
+            Section("Zoom \(reader.zoom)%") {
+                Button { session.pdfCommand(.zoomIn) } label: { Label("Zoom in", systemImage: "plus.magnifyingglass") }
+                    .disabled(!reader.canZoomIn)
+                    .menuActionDismissBehavior(.disabled)
+                Button { session.pdfCommand(.zoomOut) } label: { Label("Zoom out", systemImage: "minus.magnifyingglass") }
+                    .disabled(!reader.canZoomOut)
+                    .menuActionDismissBehavior(.disabled)
+            }
+            if !reader.fullscreen {
+                Button { session.pdfCommand(.openFullscreen) } label: { Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right") }
+            }
+        } label: {
+            Label("More PDF actions", systemImage: "ellipsis")
         }
     }
 }

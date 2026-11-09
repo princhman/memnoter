@@ -1794,12 +1794,53 @@ body {
         position: absolute;
         inset: -12px;
     }
-    /* Floating menus and status chips. */
-    .pdf-viewer > [role="group"], .pdf-viewer [role="status"].floating-surface,
-    [data-pdf-quote-controls] > [role="status"] {
-        border-radius: 16px;
+    /* Floating menus: one row of 40px pill buttons; the close X is a small
+       round button, not a full-size target that dominates the menu. */
+    .pdf-viewer .pdf-floating-menu {
         padding: 4px;
+        border-radius: 999px;
     }
-    .pdf-viewer > [role="group"][aria-label] button:not(.pdf-page button) { border-radius: 12px; padding-inline: 10px; font-size: 14px; }
-    .pdf-viewer > [role="group"][aria-label] button:not(.pdf-page button) svg { width: 16px; height: 16px; }
+    .pdf-viewer .pdf-floating-menu:has(> div + div) { border-radius: 22px; }
+    .pdf-viewer .pdf-floating-menu > div:first-child button:not(.pdf-page button) {
+        min-height: 40px;
+        min-width: 40px;
+        padding-inline: 12px;
+        border-radius: 999px;
+        font-size: 15px;
+        gap: 6px;
+    }
+    .pdf-viewer .pdf-floating-menu > div:first-child button:not(.pdf-page button) svg { width: 17px; height: 17px; }
+    .pdf-viewer .pdf-floating-menu > div:first-child button[aria-label="Highlight colour"]:not(.pdf-page button) { padding-inline: 8px; min-width: 0; gap: 4px; }
+    .pdf-viewer .pdf-floating-menu button[aria-label="Highlight colour"] > span { width: 12px; height: 12px; flex: none; box-shadow: 0 0 0 1.5px color-mix(in oklch, var(--foreground) 35%, transparent); }
+    /* Colour swatches: 36px round targets around the drawn dot. */
+    .pdf-viewer [aria-label="Highlight colours"] { gap: 2px; padding: 2px 0; }
+    .pdf-viewer [aria-label="Highlight colours"] button:not(.pdf-page button) {
+        width: 36px; height: 36px; min-width: 36px; min-height: 36px; padding: 0; border-radius: 999px;
+    }
+    .pdf-viewer [aria-label="Highlight colours"] button[aria-pressed]:not(.pdf-page button) { background: transparent; color: inherit; }
+    .pdf-viewer [aria-label="Highlight colours"] button > span { width: 22px; height: 22px; }
+    .pdf-viewer [aria-label="Highlight colours"] button > span svg { width: 14px; height: 14px; }
+    .pdf-viewer .pdf-floating-menu button[aria-label="Highlight colour"]:not(.pdf-page button) svg { width: 13px; height: 13px; }
+    .pdf-viewer .pdf-floating-menu > div:first-child > span[aria-hidden] { height: 20px; margin-inline: 4px; }
+    .pdf-viewer button.pdf-menu-close.pdf-menu-close.pdf-menu-close:not(.pdf-page button) {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
+        margin: 4px;
+        padding: 0;
+        border-radius: 999px;
+        background: color-mix(in oklch, var(--foreground) 10%, transparent);
+    }
+    .pdf-viewer button.pdf-menu-close.pdf-menu-close.pdf-menu-close:not(.pdf-page button) svg { width: 15px; height: 15px; }
+    /* Hint chips: a capsule with the text inset from the edge. */
+    .pdf-viewer .pdf-hint {
+        flex-wrap: nowrap;
+        gap: 12px;
+        padding: 4px 4px 4px 18px;
+        border-radius: 999px;
+        font-size: 14px;
+    }
+    .pdf-viewer .pdf-hint:not(:has(.pdf-menu-close)) { padding: 10px 18px; }
+    [data-pdf-quote-controls] > [role="status"] { border-radius: 16px; padding: 4px; }
 }

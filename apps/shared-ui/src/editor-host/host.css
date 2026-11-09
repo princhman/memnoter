@@ -126,8 +126,6 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-pdf-pane { display: flex; min-height: 0; min-width: 0; flex-direction: column; background: var(--background); padding-top: var(--top-inset, 0px); padding-bottom: var(--bottom-inset, 0px); }
 .native-pdf-beside { flex: 0 0 clamp(320px, 42%, 560px); border-left: 1px solid var(--border); }
 .native-pdf-cover { position: absolute; inset: 0; z-index: 10; }
-.native-pdf-heading { display: flex; flex-shrink: 0; align-items: center; gap: 2px; min-height: 52px; padding: 4px 8px; }
-.native-pdf-heading > span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 /* Page markers (quote links, annotation badges) keep their drawn size. */
 .native-pdf-pane button:not(.pdf-page button) { min-height: 44px; }
 .native-pdf-pane button[aria-label]:not(.pdf-page button) { min-width: 44px; border-radius: 999px; }
@@ -139,48 +137,6 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 
 [data-sonner-toast] button { min-height: 44px; }
 
-/* Native PDF reader: one row on the editor's own background: back, name,
-   page count, the two tools and More. */
+/* The native toolbar draws the reader's tools; the pane is just the pages,
+   on the editor's own background. */
 .native-pdf-pane, .native-pdf-pane .pdf-viewer { background: transparent; }
-.native-pdf-pane .pdf-reader-tools, .native-pdf-heading {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 2px;
-  min-height: 52px;
-  padding: 4px 8px;
-  background: transparent;
-  border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
-}
-.native-pdf-pane .pdf-reader-leading { flex: 1 1 auto; min-width: 0; min-height: 40px; }
-.native-pdf-pane .pdf-reader-controls, .native-pdf-pane #pdf-toolbar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 0;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  border-radius: 0;
-  overflow: visible;
-}
-.native-pdf-pane :is(.pdf-reader-tools, .native-pdf-heading) button:not(.pdf-page button) {
-  min-width: 40px;
-  min-height: 40px;
-  width: 40px;
-  height: 40px;
-}
-.native-pdf-pane :is(.pdf-reader-tools, .native-pdf-heading) button:not(.pdf-page button) svg { width: 19px; height: 19px; }
-.native-pdf-pane :is(.pdf-reader-tools, .native-pdf-heading) .pdf-tool-divider { height: 18px; margin: 0 6px; }
-.native-pdf-pane :is(.pdf-reader-tools, .native-pdf-heading) input[aria-label="Page number"] {
-  width: 2.25rem;
-  min-width: 0;
-  min-height: 40px;
-  padding: 0 2px 0 0;
-}
-.native-pdf-pane :is(.pdf-reader-tools, .native-pdf-heading) input[aria-label="Page number"] + span { font-size: 13px; }
-
-.pdf-more-menu [role="menuitem"] { min-height: 44px; padding: 0 10px; gap: 10px; border-radius: 10px; font-size: 15px; }
-.pdf-more-menu [role="menuitem"] svg { width: 18px; height: 18px; }
-.pdf-more-menu { padding: 6px; border-radius: 14px; }
