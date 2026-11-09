@@ -13,7 +13,8 @@ import { createPortal } from "react-dom";
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, Highlighter, MessageSquare, Quote, ChevronDown, X } from "lucide-react";
+import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, Highlighter, MessageSquare, Quote, ChevronDown, X, Ellipsis } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
@@ -96,7 +97,10 @@ function ReaderTools({ children, fullscreen, leading, trailing }: { children: Re
 
 const sameList = (a: number[], b: number[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 
-export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number }) {
+/** `compact` (native iPad) keeps one row: page count, the two tools, and a
+ * More menu holding zoom, `menu` items and the full-screen/beside switch. */
+export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage, compact = false, menu }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number; compact?: boolean; menu?: (close: () => void) => ReactNode }) {
+  const [moreOpen, setMoreOpen] = useState(false);
   const client = useQueryClient();
   const quoteRegions = usePdfQuoteRegions(doc.moduleId, doc.id);
   const navigateToQuote = usePdfQuoteNavigation(doc.moduleId);
@@ -670,6 +674,21 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
       <span aria-hidden="true" className="pdf-tool-divider hidden" />
+      {compact ? <>
+      <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Select region" pressed={selecting && !annotationArea} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>
+      <ToolButton label="Annotate area" pressed={annotationArea} disabled={!!pending || cropping || !pdf || !annotations.ready || writeBlocked} onClick={() => { setAnnotationEditor(null); setAnnotationArea(value => !value); setSelecting(!annotationArea); }}><Highlighter /></ToolButton>
+        <DropdownMenu open={moreOpen} onOpenChange={setMoreOpen}>
+          <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" />} aria-label="More PDF actions"><Ellipsis /></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="pdf-more-menu min-w-52">
+            <div className="flex items-center justify-between px-1.5 py-1 text-xs text-muted-foreground"><span>Zoom</span><span className="tabular-nums" aria-label="Zoom level">{Math.round(zoom * 100)}%</span></div>
+            <DropdownMenuItem closeOnClick={false} disabled={zoom >= 3} aria-label={`Zoom in (${Math.round(zoom * 100)}%)`} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn />Zoom in</DropdownMenuItem>
+            <DropdownMenuItem closeOnClick={false} disabled={zoom <= 0.25} aria-label={`Zoom out (${Math.round(zoom * 100)}%)`} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut />Zoom out</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {fullscreen && <DropdownMenuItem onClick={openBeside}><PanelRight />Open beside note</DropdownMenuItem>}
+            {menu?.(() => setMoreOpen(false))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </> : <>
       <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
       <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
       <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn /></ToolButton>
@@ -680,6 +699,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         {/* The small arrow says this moves the PDF into the note's side panel. */}
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
       </ToolButton>}
+      </>}
     </ReaderTools>
     {(selecting || cropping || quoteError || (fullscreen && pending?.moduleId === doc.moduleId)) && <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-center">
       <div className="pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
