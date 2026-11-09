@@ -5,6 +5,7 @@ import { IconTooltip } from "@/components/icon-tooltip";
 import AboutSection from "@/components/settings/about-section";
 import BackupsSection from "@/components/settings/backups-section";
 import NumberingSection from "@/components/settings/numbering-section";
+import OutlineSection from "@/components/settings/outline-section";
 import ReviewSection from "@/components/settings/review-section";
 import SyncSection from "@/components/settings/sync-section";
 
@@ -31,6 +32,7 @@ function Settings() {
       <SyncSection />
       <ReviewSection />
       <NumberingSection />
+      <OutlineSection />
       <BackupsSection />
       <AboutSection />
     </div>
