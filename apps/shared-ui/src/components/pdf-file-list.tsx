@@ -7,14 +7,14 @@ import { pickPdfs } from "./add-pdf";
 import { ToolButton } from "./ui/tool-button";
 
 // The module's files, as the right panel shows them before one is picked.
-export function PdfFileList({ moduleId, docs }: { moduleId: string; docs: DocumentRecord[] }) {
+export function PdfFileList({ moduleId, docs, hideHeader = false }: { moduleId: string; docs: DocumentRecord[]; hideHeader?: boolean }) {
   const canAdd = isTauri() || isNativeHost();
   return <>
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
+    {!hideHeader && <div className="flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
       <span className="min-w-0 flex-1 truncate px-1.5 text-sm font-medium">Files</span>
       {canAdd && <ToolButton label="Add PDF" onClick={() => pickPdfs(moduleId)}><Plus /></ToolButton>}
       <ToolButton label="Close" onClick={() => updatePdfPane(moduleId, { open: false })}><X /></ToolButton>
-    </div>
+    </div>}
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       {docs.length ? <ul className="grid gap-0.5">{docs.map(doc => <li key={doc.id}>
         <button type="button" onClick={() => openPdfPane(moduleId, doc.id)}

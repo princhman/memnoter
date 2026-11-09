@@ -105,6 +105,8 @@ private struct PdfViewStateRecord: Codable {
     var filesOpen = false
     var pdfCoveringNote = false
     var pdfFocused = false
+    /// The open PDF reader, drawn as native toolbar items; nil while the pane is closed.
+    var pdfReader: PdfReaderState?
     var requestedPdfImport: String?
     var requestedModule: String?
     var ready = false
@@ -272,6 +274,13 @@ private struct PdfViewStateRecord: Codable {
             catch { self.error = String(describing: error) }
         }
     }
+    func pdfCommand(_ command: PdfCommand, _ value: Any? = nil) {
+        guard ready, moduleId != nil else { return }
+        Task {
+            do { _ = try await callEditor(.pdfCommand, ["command": command.rawValue, "value": value ?? NSNull()], parameters: ["command", "value"]) }
+            catch { self.error = String(describing: error) }
+        }
+    }
     private func serialized(_ method: EditorApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws {
         let previous = barrier
         let next = Task { @MainActor in
@@ -287,7 +296,7 @@ private struct PdfViewStateRecord: Codable {
         if moduleId != id {
             moduleId = id
             state = EditorState(); headings = []; currentHeadingId = nil
-            filesOpen = false; pdfCoveringNote = false; pdfFocused = false
+            filesOpen = false; pdfCoveringNote = false; pdfFocused = false; pdfReader = nil
             requestedPdfImport = nil; requestedModule = nil
         }
         try await serialized(.open, ["id": id], parameters: ["id"])
@@ -297,7 +306,7 @@ private struct PdfViewStateRecord: Codable {
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         generation = UUID(); ready = false; reportedViewport = []
-        filesOpen = false; pdfCoveringNote = false; pdfFocused = false
+        filesOpen = false; pdfCoveringNote = false; pdfFocused = false; pdfReader = nil
         requestedPdfImport = nil; requestedModule = nil
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
@@ -380,6 +389,12 @@ private struct PdfViewStateRecord: Codable {
                     filesOpen = payload["open"] as? Bool == true
                     pdfCoveringNote = filesOpen && (payload["coveringNote"] as? Bool == true)
                     pdfFocused = filesOpen && (payload["focused"] as? Bool == true)
+                case .pdfReader:
+                    guard ready else { return }
+                    if payload.isEmpty { pdfReader = nil; return }
+                    let reader = try JSONDecoder().decode(PdfReaderState.self, from: JSONSerialization.data(withJSONObject: payload))
+                    guard reader.moduleId == moduleId else { return }
+                    if reader != pdfReader { pdfReader = reader }
                 case .outlineCurrent:
                     guard payload["moduleId"] as? String == moduleId else { return }
                     currentHeadingId = payload["currentHeadingId"] as? String

@@ -63,6 +63,7 @@ export function Host() {
     window.memnoterEditor = {
       toggleFiles() { getEditor(true); pdfActions.current?.toggleFiles(); },
       async refreshDocuments(id) { await pdfActions.current?.refreshDocuments(id); },
+      pdfCommand(command, value) { pdfActions.current?.pdfCommand(command, value); },
       setOutlineTracking(enabled) { outlineTracking.current = enabled; refreshOutline.current(); },
       async refreshModules() { await queryClient.invalidateQueries({ queryKey: ["modules"] }); },
       applyRemote: onRemote,
