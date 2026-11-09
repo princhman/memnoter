@@ -237,6 +237,7 @@ export function useNoteDocument(moduleId: string) {
   // Save acknowledgements must not invalidate every image's context value.
   const filesContext = useMemo(
     () => ({
+      moduleId,
       files: filesById,
       saveImage: (file: File, permit?: WritePermit) => uploadFileMutation.mutateAsync({ file, permit }),
       readImage: async (fileId: string) => {

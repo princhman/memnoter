@@ -14,7 +14,11 @@ import { headingNumberingKey } from "@/lib/heading-numbering";
 import { watchWriteAdmission } from "@/lib/write-lifecycle";
 import { suppressesTextInput } from "@/lib/editor-input";
 import { useEditor, EditorContent } from "@tiptap/react";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { Editor } from "@tiptap/core";
+import { capabilities } from "@/lib/backend";
+import { openMacDrawing } from "@/lib/mac-drawing";
+import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { redo as yRedo, undo as yUndo } from "@tiptap/y-tiptap";
 import { useNativeHistory } from "@/lib/native-history";
 import { HeadingActionOverlay } from "@/components/heading-action-overlay";
@@ -47,6 +51,11 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
   const { setActiveEditor } = useActiveEditor();
+  const [drawingError, setDrawingError] = useState<string | null>(null);
+  const launchDrawing = useCallback(async (current: Editor, target?: { imageId: string; sourceId: string | null }) => {
+    try { await openMacDrawing(current, moduleId, target); }
+    catch (error) { setDrawingError(error instanceof Error ? error.message : String(error)); }
+  }, [moduleId]);
 
   const editor = useEditor(
     {
@@ -61,7 +70,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
           inlineMath: InlineMathView,
           mathBlock: MathBlockView,
           mermaidView: MermaidView,
-          menus: [SlashCommand.configure({ insertImages }), LatexSuggest],
+          menus: [SlashCommand.configure({ insertImages, insertDrawing: current => { void launchDrawing(current); } }), LatexSuggest],
         },
         insertImages: (currentEditor, files, position) => {
           void insertImages(currentEditor, files, position);
@@ -169,8 +178,13 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   }, [editor, moduleId, isSuccess, setActiveEditor]);
 
   return (
-    <FilesContext.Provider value={filesContext}>
+    <FilesContext.Provider value={{ ...filesContext, ...(capabilities.macDrawing && editor ? {
+      editDrawing: (imageId: string, sourceId: string | null) => { void launchDrawing(editor, { imageId, sourceId }); },
+    } : {}) }}>
       <div ref={element} className="contents">
+      <Dialog open={drawingError !== null} onOpenChange={open => { if (!open) setDrawingError(null); }}>
+        <DialogContent><DialogTitle>Drawing</DialogTitle><p>{drawingError}</p></DialogContent>
+      </Dialog>
       {!host.isNative && <CardNavigationGuard editor={editor} ready={isSuccess} />}
       {host.isNative ? <>
         <EditorContent editor={editor} />

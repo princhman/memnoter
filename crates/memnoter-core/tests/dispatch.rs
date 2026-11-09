@@ -511,3 +511,141 @@ fn saved_images_are_announced_downloaded_and_not_echoed_as_uploads() {
         json!([])
     );
 }
+
+#[test]
+fn drawing_source_and_preview_survive_a_second_device_edit_and_restart() {
+    use yrs::{
+        updates::decoder::Decode, GetString, ReadTxn, Transact, Update, Xml, XmlElementPrelim,
+        XmlFragment,
+    };
+
+    fn transfer(from: &Fixture, to: &Fixture, cursor: &mut i64) {
+        let generation = from.call("sync_status", json!({}))["generation"].clone();
+        let rows = from.call(
+            "sync_outbox",
+            json!({"generation":generation,"limitBytes":1048576}),
+        );
+        let entries: Vec<_> = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                *cursor += 1;
+                json!({"seq":*cursor,"doc":row["doc"],"bytes":row["bytes"]})
+            })
+            .collect();
+        to.call("sync_apply", json!({"entries":entries,"cursor":cursor,"generation":to.call("sync_status", json!({}))["generation"]}));
+        if let Some(last) = rows.as_array().unwrap().last() {
+            from.call(
+                "sync_ack",
+                json!({"maxId":last["id"],"generation":generation}),
+            );
+        }
+    }
+    fn reopen_note(fixture: &Fixture, module: &Value) -> yrs::Doc {
+        let content = fixture.call("get_content", json!({"moduleId":module}));
+        let doc = yrs::Doc::new();
+        let mut txn = doc.transact_mut();
+        for bytes in std::iter::once(&content["state"]).chain(
+            content["updates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| &row["bytes"]),
+        ) {
+            let bytes: Vec<u8> = serde_json::from_value(bytes.clone()).unwrap();
+            if !bytes.is_empty() {
+                txn.apply_update(Update::decode_v1(&bytes).unwrap())
+                    .unwrap();
+            }
+        }
+        drop(txn);
+        doc
+    }
+
+    let ipad = Fixture::new();
+    let desktop = Fixture::new();
+    let module = ipad.call("create_module", json!({"name":"Drawing round trip"}));
+    for device in [&ipad, &desktop] {
+        device.call("sync_enable", json!({"account":"drawing-test"}));
+    }
+    // The core transports opaque source data; actual PencilKit decoding belongs
+    // to the native managed-source test, and schema retention to the web test.
+    let source_bytes = br#"{"version":1,"nativeData":"AQID","width":1024,"height":1440}"#.to_vec();
+    let source = ipad.call("save_file", json!({"moduleId":module,"bytes":source_bytes,"mimeType":"application/vnd.memnoter.drawing+json"}));
+    let preview = ipad.call(
+        "save_file",
+        json!({"moduleId":module,"bytes":[137,80,78,71,13,10,26,10],"mimeType":"image/png"}),
+    );
+    let reference = json!({"version":1,"sourceId":source["id"],"previewId":preview["id"]});
+    let doc = yrs::Doc::new();
+    let root = doc.get_or_insert_xml_fragment("default");
+    let mut txn = doc.transact_mut();
+    let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("image"));
+    image.insert_attribute(&mut txn, "fileId", preview["id"].as_str().unwrap());
+    image.insert_attribute(
+        &mut txn,
+        "drawing",
+        yrs::Any::from_json(&reference.to_string()).unwrap(),
+    );
+    let state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+    drop(txn);
+    ipad.call("add_update", json!({"moduleId":module,"bytes":state}));
+    let mut cursor = 0;
+    transfer(&ipad, &desktop, &mut cursor);
+    let generation = desktop.call("sync_status", json!({}))["generation"].clone();
+    let missing = desktop.call("sync_missing_files", json!({"generation":generation}));
+    assert_eq!(missing.as_array().unwrap().len(), 2);
+    for asset in [&source, &preview] {
+        let entry = missing
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["fileId"] == asset["id"])
+            .unwrap();
+        assert_eq!(entry["fileType"], asset["file_type"]);
+        let file = ipad.call("read_file", json!({"moduleId":module,"fileId":asset["id"]}));
+        desktop.call("sync_store_file", json!({"generation":generation,"moduleId":module,"fileId":asset["id"],"fileType":entry["fileType"],"bytes":file["bytes"]}));
+    }
+    assert_eq!(
+        desktop.call("sync_missing_files", json!({"generation":generation})),
+        json!([])
+    );
+    assert_eq!(
+        desktop.call("sync_pending_uploads", json!({"generation":generation})),
+        json!([])
+    );
+
+    let edited = reopen_note(&desktop, &module);
+    let root = edited.get_or_insert_xml_fragment("default");
+    let before = edited.transact().state_vector();
+    let mut txn = edited.transact_mut();
+    let paragraph = root.insert(&mut txn, 1, XmlElementPrelim::empty("paragraph"));
+    paragraph.insert(&mut txn, 0, yrs::XmlTextPrelim::new("Edited on Mac"));
+    let update = txn.encode_state_as_update_v1(&before);
+    drop(txn);
+    desktop.call("add_update", json!({"moduleId":module,"bytes":update}));
+    transfer(&desktop, &ipad, &mut cursor);
+    let returned = reopen_note(&ipad, &module);
+    let root = returned.get_or_insert_xml_fragment("default");
+    let txn = returned.transact();
+    let image = root.get(&txn, 0).unwrap().into_xml_element().unwrap();
+    let yrs::Out::Any(drawing) = image.get_attribute(&txn, "drawing").unwrap() else {
+        panic!("lost drawing attribute")
+    };
+    let mut json = String::new();
+    drawing.to_json(&mut json);
+    assert_eq!(serde_json::from_str::<Value>(&json).unwrap(), reference);
+    assert!(root.get_string(&txn).contains("Edited on Mac"));
+    let restarted = Core::open(&desktop.dir).unwrap();
+    let bytes: Value = serde_json::from_str(
+        &dispatch(
+            &restarted,
+            "read_file",
+            &json!({"moduleId":module,"fileId":source["id"]}).to_string(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(bytes["bytes"], json!(source_bytes));
+}

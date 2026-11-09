@@ -411,7 +411,12 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
     private let onError: @MainActor (Error) -> Void
     private var policy = SyncFilePolicy()
     private var now: UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
-    var nextDelay: UInt64? { policy.nextDelay(nowMs: now) }
+    private var awaitingUpload: [String: (deadline: UInt64, attempts: Int)] = [:]
+    var nextDelay: UInt64? {
+        let timestamp = now
+        let uploadDelay = awaitingUpload.values.map(\.deadline).min().map { $0 > timestamp ? $0 - timestamp : 0 }
+        return [policy.nextDelay(nowMs: timestamp), uploadDelay].compactMap { $0 }.min()
+    }
     init(command: @escaping @MainActor (String, [String: Any]) async throws -> Any,
          object: @escaping @MainActor (String, SyncAccount, Data?) async throws -> Data,
          isCurrent: @escaping @MainActor (UUID) -> Bool,
@@ -420,18 +425,27 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
         self.command = command; self.object = object; self.isCurrent = isCurrent
         self.onFile = onFile; self.onError = onError
     }
-    func reset() { policy = SyncFilePolicy() }
+    func reset() { policy = SyncFilePolicy(); awaitingUpload.removeAll() }
     private func attempt(_ id: String, transfer: () async throws -> Void) async throws {
-        guard policy.ready(id: id, nowMs: now) else { return }
+        guard policy.ready(id: id, nowMs: now), (awaitingUpload[id]?.deadline ?? 0) <= now else { return }
         do {
             try await transfer()
             policy.completed(id: id)
+            awaitingUpload.removeValue(forKey: id)
         } catch {
             try Task.checkCancellation()
             if let failure = error as? SyncHTTPFailure, failure.status == 401 { throw failure }
-            policy.failed(id: id, nowMs: now)
-            // A 404 means the announcing device has not uploaded the image yet.
-            if (error as? SyncHTTPFailure)?.status != 404 { onError(error) }
+            // The note and its immutable assets travel independently. A new
+            // revision may be announced just before the image upload finishes.
+            if (error as? SyncHTTPFailure)?.status == 404 {
+                let attempts = min(5, (awaitingUpload[id]?.attempts ?? 0) + 1)
+                let delay = min(UInt64(30_000), UInt64(2_000) << (attempts - 1))
+                awaitingUpload[id] = (now + delay, attempts)
+            } else {
+                awaitingUpload.removeValue(forKey: id)
+                policy.failed(id: id, nowMs: now)
+                onError(error)
+            }
         }
     }
     func run(account: SyncAccount, owner: UUID) async throws {
@@ -444,6 +458,7 @@ private func nativeCrypt(key: [UInt8], doc: String, bytes: [UInt8], decrypt: Boo
             file["fileId"].map { "download:" + $0 }
         })
         policy.retain(pending: Array(pending))
+        awaitingUpload = awaitingUpload.filter { pending.contains($0.key) }
         for id in uploads {
             guard isCurrent(owner) && !Task.isCancelled else { return }
             try await attempt("upload:" + id) {

@@ -7,6 +7,8 @@ mod menu;
 #[cfg(target_os = "macos")]
 mod selection_limit;
 mod sync_credentials;
+#[cfg(target_os = "macos")]
+mod drawing;
 #[derive(Default)]
 struct ExitGate(AtomicBool);
 #[tauri::command]
@@ -53,6 +55,8 @@ async fn core(
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
+    let builder = builder.manage(drawing::DrawingGate::default());
+    #[cfg(target_os = "macos")]
     let builder = builder.menu(menu::build).on_menu_event(menu::handle_event);
 
     // iOS apps update through the App Store and can't restart themselves.
@@ -63,6 +67,21 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if !window.app_handle().state::<ExitGate>().0.load(Ordering::SeqCst) {
+                    // Keep the webview alive until its existing safe-exit flow
+                    // has flushed edits. Otherwise ExitRequested can leave a
+                    // process with no window and no handler to finish exiting.
+                    api.prevent_close();
+                    #[cfg(target_os = "macos")]
+                    drawing::close(window.app_handle());
+                    if let Err(error) = window.emit("request-safe-exit", ()) {
+                        eprintln!("Unable to request safe window close: {error}");
+                    }
+                }
+            }
+        })
         .setup(|app| {
             let core = std::sync::Arc::new(
                 Core::open({
@@ -102,6 +121,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")]
+            drawing::edit_drawing,
+            #[cfg(target_os = "macos")]
+            drawing::drawing_committed,
+            #[cfg(target_os = "macos")]
             menu::set_editor_history,
             confirm_exit,
             confirm_restart,
@@ -116,6 +139,8 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if !app.state::<ExitGate>().0.load(Ordering::SeqCst) {
                     api.prevent_exit();
+                    #[cfg(target_os = "macos")]
+                    drawing::close(app);
                     if let Err(error) = app.emit("request-safe-exit", ()) {
                         eprintln!("Unable to request safe exit: {error}");
                     }

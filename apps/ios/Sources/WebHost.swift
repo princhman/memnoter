@@ -82,6 +82,7 @@ import ImageIO
     }
     var reviewState = ReviewState()
     var imagePreviewOpen = false
+    var drawingToEdit: DrawingOpenEvent?
     var ready = false
     var headings: [Heading] = []
     var currentHeadingId: String?
@@ -304,6 +305,9 @@ import ImageIO
                     NotificationCenter.default.post(name: .cardsDidChange, object: client)
                 case .imagePreview:
                     imagePreviewOpen = payload["open"] as? Bool == true
+                case .editDrawing:
+                    guard payload["moduleId"] as? String == moduleId else { return }
+                    drawingToEdit = try JSONDecoder().decode(DrawingOpenEvent.self, from: JSONSerialization.data(withJSONObject: payload))
                 case .outlineCurrent:
                     guard payload["moduleId"] as? String == moduleId else { return }
                     currentHeadingId = payload["currentHeadingId"] as? String

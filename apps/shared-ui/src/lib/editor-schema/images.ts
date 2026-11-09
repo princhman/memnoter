@@ -18,6 +18,7 @@ export const SavedImage = Image.extend({
       ...this.parent?.(),
       fileId: { default: null, parseHTML: el => el.getAttribute("data-file-id"), renderHTML: attrs => attrs.fileId ? { "data-file-id": attrs.fileId } : {} },
       imageId: { default: null, parseHTML: el => el.getAttribute("data-image-id"), renderHTML: attrs => attrs.imageId ? { "data-image-id": attrs.imageId } : {} },
+      drawing: { default: null, parseHTML: el => { try { return JSON.parse(el.getAttribute("data-drawing") || "null"); } catch { return null; } }, renderHTML: attrs => attrs.drawing ? { "data-drawing": JSON.stringify(attrs.drawing) } : {} },
       masks: { default: [], parseHTML: el => { try { return validMasks(JSON.parse(el.getAttribute("data-occlusion-masks") || "[]")); } catch { return []; } }, renderHTML: attrs => ({ "data-occlusion-masks": JSON.stringify(validMasks(attrs.masks)) }) },
       // Blends the image into the theme; see image-adapt.ts.
       adaptive: {

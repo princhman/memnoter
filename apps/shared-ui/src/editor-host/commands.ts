@@ -3,6 +3,9 @@ import type { ExecCommand, EditorState } from "./protocol";
 import { sectionOffset, sectionToTop } from "./scroll.ts";
 import { suppressesTextInput } from "../lib/editor-input.ts";
 import type { Editor } from "@tiptap/core";
+import { NodeSelection, Selection } from "@tiptap/pm/state";
+import { GapCursor } from "@tiptap/pm/gapcursor";
+import { beginDrawing, commitDrawing, discardEmptyDrawing } from "./drawings";
 import { getFocusedSectionPath, getFocusedSectionRange, sectionFocusKey } from "../lib/section-focus.ts";
 import { currentSection } from "../lib/sections.ts";
 import { headingFoldKey, getFoldedRanges } from "../lib/heading-fold.ts";
@@ -139,6 +142,18 @@ export function execEditor(editor: Editor, command: ExecCommand, args: Record<st
     case "insertImage":
       if (typeof args.fileId !== "string" || !args.fileId) throw new Error("insertImage requires fileId");
       return commands.insertContent({ type: "image", attrs: { fileId: args.fileId, alt: typeof args.alt === "string" ? args.alt : null } });
+    case "clearImageSelection": {
+      const { selection } = editor.state;
+      if (!(selection instanceof NodeSelection) || !["image", "inlineImage"].includes(selection.node.type.name)) return true;
+      const caret = Selection.findFrom(selection.$to, 1, true) ?? Selection.findFrom(selection.$from, -1, true)
+        ?? new GapCursor(selection.$to);
+      // Leave the note's content, scroll position and keyboard focus untouched.
+      editor.view.dispatch(editor.state.tr.setSelection(caret).setMeta("addToHistory", false));
+      return true;
+    }
+    case "beginDrawing": return beginDrawing(editor, args.imageId);
+    case "commitDrawing": return commitDrawing(editor, args);
+    case "discardEmptyDrawing": return discardEmptyDrawing(editor, args.imageId);
     case "fold":
     case "unfold":
     case "focusSection":

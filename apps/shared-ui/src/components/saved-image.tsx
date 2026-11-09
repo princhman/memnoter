@@ -16,7 +16,7 @@ import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/rea
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { call as invoke, fileUrl as convertFileSrc, postNativeEvent } from "../lib/backend.ts";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -26,8 +26,11 @@ import { adaptedUrl, cachedAdaptedUrl, scheduleTrim } from "@/lib/image-adapt";
 import { useDarkTheme } from "@/hooks/use-dark-theme";
 import { useSelector } from "@tanstack/react-store";
 import { requestSyncedFile, syncedFilesStore } from "@/lib/sync/file-requests";
+import { drawingReference } from "@/lib/drawing";
 
 type FilesContextValue = {
+  editDrawing?: (imageId: string, sourceId: string | null) => void;
+  moduleId?: string;
   files: ReadonlyMap<string, FileType>;
   saveImage: (file: File, permit?: WritePermit) => Promise<FileType>;
   readImage: (fileId: string) => Promise<Blob>;
@@ -51,17 +54,25 @@ export function SavedImageView(props: NodeViewProps) {
       return selection instanceof NodeSelection && selection.from === props.getPos();
     },
   });
-  const { files, saveImage, readImage } = useContext(FilesContext);
-  const file = files.get(node.attrs.fileId);
+  const { files, saveImage, readImage, moduleId, editDrawing } = useContext(FilesContext);
+  const drawing = drawingReference(node.attrs.drawing);
+  const canEditDrawing = !!drawing && (environment.isNative || !!editDrawing);
+  const previewId = drawing?.previewId ?? node.attrs.fileId;
+  const file = files.get(previewId);
   const [resolved, setResolved] = useState<{ id: string; path: string }>();
   // An image from another device may still be downloading; look again when one arrives.
   const syncedFiles = useSelector(syncedFilesStore, (state) => state.version);
   useEffect(() => {
     let active = true;
-    if (!file && node.attrs.fileId) void invoke<string>("resolve_card_image", { fileId: node.attrs.fileId }).then(path => { if (active) setResolved({ id: node.attrs.fileId, path }); }).catch(() => { if (active) requestSyncedFile(node.attrs.fileId); });
+    if (!file && previewId) void invoke<string>("resolve_card_image", { fileId: previewId }).then(path => { if (active) setResolved({ id: previewId, path }); }).catch(() => { if (active) requestSyncedFile(previewId); });
     return () => { active = false; };
-  }, [file, node.attrs.fileId, syncedFiles]);
-  const src = file ? convertFileSrc(file.path) : resolved && resolved.id === node.attrs.fileId ? convertFileSrc(resolved.path) : node.attrs.src;
+  }, [file, previewId, syncedFiles]);
+  const currentSrc = file ? convertFileSrc(file.path) : resolved && resolved.id === previewId ? convertFileSrc(resolved.path) : (drawing?.previewId ? null : node.attrs.src);
+  const previousSrc = useRef<string | null>(null);
+  useEffect(() => { if (currentSrc) previousSrc.current = currentSrc; }, [currentSrc]);
+  const src = currentSrc || (previewId ? previousSrc.current : null);
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const loading = !!previewId && (!currentSrc || loadedSrc !== currentSrc);
   const isInline = node.type.isInline;
   const host = useRef<HTMLElement>(null);
   // The host shrinks with the image; its containing block defines room to grow.
@@ -92,12 +103,23 @@ export function SavedImageView(props: NodeViewProps) {
     if (open !== wasOpen) postNativeEvent("imagePreview", { open });
   }, []);
   const lastTap = useRef<{ time: number; x: number; y: number } | null>(null);
-  const imagePress = useRef<{ id: number; time: number; x: number; y: number } | null>(null);
+  const openDrawing = () => {
+    if (!drawing || !moduleId || !editor.isEditable) return;
+    if (environment.isNative) postNativeEvent("editDrawing", { moduleId, imageId: node.attrs.imageId, sourceId: drawing.sourceId });
+    else editDrawing?.(node.attrs.imageId, drawing.sourceId);
+  };
+  const imagePress = useRef<{ id: number; time: number; x: number; y: number; selectedAtStart: boolean } | null>(null);
   const endImageTap = (event: ReactPointerEvent, cancelled = false) => {
     const down = imagePress.current;
     imagePress.current = null;
     if (!down || down.id !== event.pointerId) return;
     if (cancelled || event.timeStamp - down.time > TAP_DURATION_MS || Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { lastTap.current = null; return; }
+    if (canEditDrawing && editor.isEditable) {
+      event.preventDefault();
+      cancelMove.current?.();
+      if (down.selectedAtStart) openDrawing(); else selectImage();
+      return;
+    }
     const previous = lastTap.current;
     lastTap.current = { time: event.timeStamp, x: event.clientX, y: event.clientY };
     if (!previous || event.timeStamp - previous.time > DOUBLE_TAP_MS || Math.hypot(event.clientX - previous.x, event.clientY - previous.y) > DOUBLE_TAP_DISTANCE_PX || !src || failed) return;
@@ -165,7 +187,7 @@ export function SavedImageView(props: NodeViewProps) {
     img.alt = latest.current.node.attrs.alt ?? "";
     img.title = latest.current.node.attrs.title ?? "";
     img.onerror = () => setFailed(true);
-    img.onload = () => setFailed(false);
+    img.onload = () => { setFailed(false); setLoadedSrc(src); };
     const view = new ResizableNodeView({
       element: img,
       editor,
@@ -284,9 +306,13 @@ export function SavedImageView(props: NodeViewProps) {
   // Pressing and dragging the image moves it; a press without moving is a click.
   const pressImage = (event: ReactPointerEvent) => {
     if (event.button !== 0 || (event.target as Element).closest("[data-resize-handle]")) return;
-    if (environment.isNative) {
+    if (environment.isNative || canEditDrawing) {
       if (!event.isPrimary) { imagePress.current = null; lastTap.current = null; return; }
-      imagePress.current = { id: event.pointerId, time: event.timeStamp, x: event.clientX, y: event.clientY };
+      // Selection changes on pointer-down; remember its previous state so the
+      // first tap selects a drawing and only a subsequent tap opens it.
+      const selection = editor.state.selection;
+      imagePress.current = { id: event.pointerId, time: event.timeStamp, x: event.clientX, y: event.clientY,
+        selectedAtStart: selection instanceof NodeSelection && selection.from === latest.current.getPos() };
     }
     if (!editor.isEditable) return;
     // No text selection or native image drag while the pointer moves.
@@ -388,43 +414,50 @@ export function SavedImageView(props: NodeViewProps) {
   });
 
   return (
-    <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
+    <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-loading={loading || undefined} aria-busy={loading || undefined} data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
       <span ref={infoHost} className="contents" />
       {isInline
-        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && src && !failed) { setPreviewOpen(true); } }} />
-        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && src && !failed) { setPreviewOpen(true); } }} />}
-      {(!src || failed) && <span className="text-sm text-muted-foreground">Image unavailable</span>}
+        ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && !canEditDrawing && src && !failed) { setPreviewOpen(true); } }} />
+        : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && !canEditDrawing && src && !failed) { setPreviewOpen(true); } }} />}
+      {loading && <span className="note-image-loading" role="status"><LoaderCircle className="animate-spin motion-reduce:animate-none" size={20} /><span>{drawing ? "Updating drawing…" : "Loading image…"}</span></span>}
+      {(!src || failed) && !loading && (drawing
+        ? <Button variant="outline" onClick={openDrawing}>{canEditDrawing ? "Open drawing" : "Drawing (edit on iPad)"}</Button>
+        : <span className="text-sm text-muted-foreground">Image unavailable</span>)}
       {selected && editor.isEditable && (
         <div className="note-image-controls" aria-label="Image controls" contentEditable={false}>
           <div className="note-image-toolbar">
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button size="sm" variant="ghost" disabled={!src || failed} />}>
-                Size<ChevronDown data-icon="inline-end" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-auto">
-                {IMAGE_SIZES.map(([fraction, label]) => (
-                  <DropdownMenuItem key={label} onClick={() => resizeTo(fraction)}>{label}</DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => updateAttributes({ width: null, height: null })}>Original size</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <span className="note-image-divider" />
-            {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => (
-              <ToolbarButton key={value} label={label} hint={hint} pressed={layout === value} onClick={() => setLayout(value)}><Icon /></ToolbarButton>
-            ))}
-            {!isInline && <span className="note-image-divider" />}
-            {!isInline && IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => (
-              <ToolbarButton key={alignment} label={layout === "wrap" ? `Image on the ${alignment}, text beside it` : label} pressed={node.attrs.alignment === alignment} onClick={() => updateAttributes({ alignment })}><Icon /></ToolbarButton>
-            ))}
-            <span className="note-image-divider" />
-            <ToolbarButton label="Open image full screen" disabled={!src || failed} onClick={() => { setPreviewOpen(true); }}><Maximize2 /></ToolbarButton>
-            <ToolbarButton label="Adapt to theme" hint="Swaps the image's background for the page's and recolors it for dark or light mode" pressed={adaptive} disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast /></ToolbarButton>
-            <Button size="sm" variant="ghost" disabled={!src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}>Occlusion ({validMasks(node.attrs.masks).length})</Button>
-            <ToolbarButton label="Crop" disabled={!src || failed || !node.attrs.fileId} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop /></ToolbarButton>
-            <ToolbarButton label="Alt text and title" pressed={describing} onClick={() => setDescribing((open) => !open)}><Captions /></ToolbarButton>
-            <span className="note-image-divider" />
-            <ToolbarButton label="Remove image" onClick={deleteNode}><Trash2 /></ToolbarButton>
+            <div className="note-image-toolbar-scroll">
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button size="sm" variant="ghost" disabled={!src || failed} />}>
+                  Size<ChevronDown data-icon="inline-end" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-auto">
+                  {IMAGE_SIZES.map(([fraction, label]) => (
+                    <DropdownMenuItem key={label} onClick={() => resizeTo(fraction)}>{label}</DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => updateAttributes({ width: null, height: null })}>Original size</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <span className="note-image-divider" />
+              {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => (
+                <ToolbarButton key={value} label={label} hint={hint} pressed={layout === value} onClick={() => setLayout(value)}><Icon /></ToolbarButton>
+              ))}
+              {!isInline && <span className="note-image-divider" />}
+              {!isInline && IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => (
+                <ToolbarButton key={alignment} label={layout === "wrap" ? `Image on the ${alignment}, text beside it` : label} pressed={node.attrs.alignment === alignment} onClick={() => updateAttributes({ alignment })}><Icon /></ToolbarButton>
+              ))}
+              <span className="note-image-divider" />
+              <ToolbarButton label="Open image full screen" disabled={!src || failed} onClick={() => { setPreviewOpen(true); }}><Maximize2 /></ToolbarButton>
+              <ToolbarButton label="Adapt to theme" hint="Swaps the image's background for the page's and recolors it for dark or light mode" pressed={adaptive} disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast /></ToolbarButton>
+              <Button size="sm" variant="ghost" disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}>Occlusion ({validMasks(node.attrs.masks).length})</Button>
+              <ToolbarButton label="Crop" disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop /></ToolbarButton>
+              <ToolbarButton label="Alt text and title" pressed={describing} onClick={() => setDescribing((open) => !open)}><Captions /></ToolbarButton>
+            </div>
+            <div className="note-image-toolbar-actions">
+              {drawing && (canEditDrawing ? <ToolbarButton label="Edit drawing" onClick={openDrawing}><Pencil /></ToolbarButton> : <span className="text-xs text-muted-foreground">Edit on iPad</span>)}
+              <ToolbarButton label="Remove image" onClick={deleteNode}><Trash2 /></ToolbarButton>
+            </div>
           </div>
           {describing && (
             <div className="note-image-description">

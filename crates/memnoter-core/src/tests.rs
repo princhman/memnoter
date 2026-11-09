@@ -365,15 +365,55 @@ fn unopened_plain_copy_survives_owner_cleanup_after_restart() {
 }
 
 #[test]
-fn copied_image_lease_survives_removal_compaction_and_restart() {
+fn owner_cleanup_cannot_delete_referenced_drawing_source_or_preview() {
+    use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
+    let f = Fixture::new();
+    let preview = f.file("note");
+    let source = f.file("note");
+    let unused = f.file("note");
+    let doc = yrs::Doc::new();
+    let root = doc.get_or_insert_xml_fragment("default");
+    let mut txn = doc.transact_mut();
+    let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("image"));
+    image.insert_attribute(&mut txn, "fileId", preview.clone());
+    image.insert_attribute(&mut txn, "drawing", yrs::Any::from_json(&serde_json::json!({
+        "version": 1, "sourceId": source, "previewId": preview
+    }).to_string()).unwrap());
+    let state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+    drop(txn);
+    f.db.lock().unwrap().execute("update contents set state=?1 where module_id='note'", [&state]).unwrap();
+    let removed = cleanup_files(&f.dir, &f.db, "note".into(), vec![preview.clone(), source.clone(), unused.clone()], state, 7).unwrap();
+    assert_eq!(removed, vec![unused]);
+    for id in [source, preview] {
+        assert!(f.row_exists(&id));
+        assert!(f.dir.join("files").join(id).is_file());
+    }
+}
+
+#[test]
+fn copied_image_and_drawing_assets_survive_removal_compaction_and_restart() {
     use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
     let f = Fixture::new();
     let id = f.file("note");
+    let source_id = f.file("note");
+    let preview_id = f.file("note");
+    let retained = vec![id.clone(), source_id.clone(), preview_id.clone()];
     let doc = yrs::Doc::new();
     let root = doc.get_or_insert_xml_fragment("default");
     let mut txn = doc.transact_mut();
     let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("inlineImage"));
     image.insert_attribute(&mut txn, "fileId", id.clone());
+    image.insert_attribute(
+        &mut txn,
+        "drawing",
+        yrs::Any::from_json(
+            &serde_json::json!({
+                "version": 1, "sourceId": source_id, "previewId": preview_id
+            })
+            .to_string(),
+        )
+        .unwrap(),
+    );
     let inserted = txn.encode_state_as_update_v1(&yrs::StateVector::default());
     drop(txn);
     root.remove_range(&mut doc.transact_mut(), 0, 1);
@@ -413,7 +453,7 @@ fn copied_image_lease_survives_removal_compaction_and_restart() {
         &f.dir,
         &restarted,
         "note".into(),
-        vec![id.clone()],
+        retained.clone(),
         vec![0, 0],
         7
     )
@@ -426,17 +466,77 @@ fn copied_image_lease_survives_removal_compaction_and_restart() {
         "note",
     )
     .unwrap();
-    assert_eq!(
-        std::fs::read(f.dir.join("files").join(&id)).unwrap(),
-        b"image bytes"
-    );
+    for asset in &retained {
+        assert_eq!(
+            std::fs::read(f.dir.join("files").join(asset)).unwrap(),
+            b"image bytes"
+        );
+    }
     delete_module_data(
         &mut restarted.conn.lock().unwrap(),
         &f.dir.join("files"),
         "other",
     )
     .unwrap();
-    assert!(!f.row_exists(&id));
+    for asset in &retained {
+        assert!(!f.row_exists(asset));
+    }
+}
+
+#[test]
+fn same_payload_insert_and_delete_keeps_foreign_drawing_assets_for_undo() {
+    use yrs::{ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
+    let f = Fixture::new();
+    let source = f.file("note");
+    let preview = f.file("note");
+    let doc = yrs::Doc::new();
+    let root = doc.get_or_insert_xml_fragment("default");
+    let mut txn = doc.transact_mut();
+    let image = root.insert(&mut txn, 0, XmlElementPrelim::empty("image"));
+    image.insert_attribute(&mut txn, "fileId", preview.clone());
+    image.insert_attribute(&mut txn, "drawing", yrs::Any::from_json(&serde_json::json!({
+        "version":1,"sourceId":source,"previewId":preview
+    }).to_string()).unwrap());
+    drop(txn);
+    let mut txn = doc.transact_mut();
+    root.remove_range(&mut txn, 0, 1);
+    // Capture before the producer drops undo-kept content during GC. This is
+    // a valid complete payload whose final visible tree has no image.
+    let complete = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+    drop(txn);
+    f.db.lock().unwrap().execute("insert into contents_updates values (8, 'other', ?1, 0)", [&complete]).unwrap();
+    let assets = vec![source.clone(), preview.clone()];
+    assert!(f.cleanup(&assets, &[0, 0], 7).is_empty());
+    save_compaction(&f.db, "other".into(), complete, 8).unwrap();
+    delete_module_data(&mut f.db.lock().unwrap(), &f.dir.join("files"), "note").unwrap();
+    for id in assets { assert!(f.row_exists(&id)); assert!(f.dir.join("files").join(id).is_file()); }
+}
+
+#[test]
+fn self_contained_image_history_updates_do_not_block_owner_deletion() {
+    use yrs::{ReadTxn, Text, Transact, Xml, XmlElementPrelim, XmlFragment, XmlTextPrelim};
+    let f = Fixture::new();
+    let id = f.file("note");
+    let doc = yrs::Doc::new();
+    let root = doc.get_or_insert_xml_fragment("default");
+    let mut txn = doc.transact_mut();
+    let paragraph = root.insert(&mut txn, 0, XmlElementPrelim::empty("paragraph"));
+    let text = paragraph.insert(&mut txn, 0, XmlTextPrelim::new("edited text"));
+    let image = root.insert(&mut txn, 1, XmlElementPrelim::empty("image"));
+    image.insert_attribute(&mut txn, "fileId", id.clone());
+    drop(txn);
+    let mut txn = doc.transact_mut();
+    text.remove_range(&mut txn, 0, 3);
+    // A reconnect/snapshot update contains both its structs and their deletes.
+    let update = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+    drop(txn);
+    f.db.lock().unwrap().execute(
+        "insert into contents_updates values (8, 'other', ?1, 0)", [&update],
+    ).unwrap();
+    assert!(f.cleanup(std::slice::from_ref(&id), &[0, 0], 7).is_empty());
+    delete_module_data(&mut f.db.lock().unwrap(), &f.dir.join("files"), "note").unwrap();
+    assert!(f.row_exists(&id));
+    assert!(f.dir.join("files").join(id).is_file());
 }
 
 #[test]

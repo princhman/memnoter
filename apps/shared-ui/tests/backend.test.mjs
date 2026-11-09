@@ -15,6 +15,10 @@ test('Tauri takes precedence and retains command arguments and asset URLs', asyn
     });
     assert.match(fileUrl('/data/files/a'), /asset/);
     assert.deepEqual(await call('confirm_exit'), { command: 'confirm_exit', args: {} });
+    for (const command of ['edit_drawing', 'drawing_committed']) {
+      const args = { moduleId: 'note', imageId: 'drawing', sourceId: 'source' };
+      assert.deepEqual(await call(command, args), { command, args }, 'Mac drawing commands belong to the native shell, not portable core dispatch');
+    }
     mockIPC(() => { throw { code: 'conflict', message: 'Reload the review' }; });
     await assert.rejects(call('review_card'), { message: 'Reload the review' });
   } finally { clearMocks(); delete window.__TAURI_INTERNALS__; }

@@ -22,6 +22,7 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+      - path: ../apple-shared
       - path: Resources/Assets.xcassets
       - path: Resources/Web
         type: folder
