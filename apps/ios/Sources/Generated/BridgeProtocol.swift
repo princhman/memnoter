@@ -166,6 +166,9 @@ enum BridgeProtocol {
     static let appScheme = "memnoter-app"
     static let editorEntry = "editor.html"
     static let reviewEntry = "review-native.html"
+    static let pdfChunkCommand = "read_pdf_chunk"
+    static let pdfChunkBytes = 1048576
+    static let maxPdfBytes = 52428800
     static let highlightColors = ["yellow", "green", "blue", "pink", "purple"]
     static let homeShortcuts: [(keys: String, action: String)] = [
         ("/", "Insert a block"),

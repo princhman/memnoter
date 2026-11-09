@@ -6,6 +6,8 @@ import type { Grade } from "../lib/fsrs";
 
 export const BRIDGE_VERSION = 1;
 export const FILE_SCHEME = "memnoter-file";
+export const PDF_CHUNK_COMMAND = "read_pdf_chunk";
+export const PDF_CHUNK_BYTES = 1048576;
 export const APP_SCHEME = "memnoter-app";
 export const EDITOR_ENTRY = "editor.html";
 export const REVIEW_ENTRY = "review-native.html";

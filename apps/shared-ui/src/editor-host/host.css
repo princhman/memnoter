@@ -133,3 +133,6 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 
 .native-editor-workspace [data-pdf-quote-controls] { bottom: calc(var(--bottom-inset, 0px) + 12px); }
 .native-editor-workspace [data-pdf-quote-controls] button { min-height: 44px; min-width: 44px; }
+
+.toast-region { bottom: calc(var(--native-bottom-inset, 0px) + 16px); }
+.toast-region button { min-height: 44px; }

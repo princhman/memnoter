@@ -17,7 +17,8 @@ import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, Hi
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
-import { fileUrl } from "@/lib/backend";
+import { readNativePdf } from "@/lib/native-pdf";
+import { fileUrl, isNativeHost } from "@/lib/backend";
 import { parsePage, readPdfView, writePdfView, visiblePages } from "@/lib/pdf-state";
 import { documentsKey } from "@/lib/use-documents";
 import { requestSyncedFile } from "@/lib/sync/file-requests";
@@ -191,12 +192,13 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     restored.current = false; setPdf(null); setPages([]); setError(""); setSelecting(false);
     if (!doc.available) { requestSyncedFile(doc.id); return; }
     let disposed = false;
+    const abort = new AbortController();
     let loading: ReturnType<typeof getDocument> | undefined;
     void (async () => {
-      const url = fileUrl(await documentPath({ id: doc.id }));
+      const source = isNativeHost() ? { data: await readNativePdf(doc.id, abort.signal) } : { url: fileUrl(await documentPath({ id: doc.id })) };
       if (disposed) return;
       const asset = (folder: string) => new URL(`${import.meta.env.BASE_URL}pdfjs/${folder}/`, document.baseURI).href;
-      loading = getDocument({ url, cMapUrl: asset("cmaps"), cMapPacked: true, standardFontDataUrl: asset("standard_fonts"), wasmUrl: asset("wasm"), iccUrl: asset("iccs") });
+      loading = getDocument({ ...source, cMapUrl: asset("cmaps"), cMapPacked: true, standardFontDataUrl: asset("standard_fonts"), wasmUrl: asset("wasm"), iccUrl: asset("iccs") });
       const loaded = await loading.promise;
       const first = await loaded.getPage(1);
       if (disposed) return;
@@ -210,7 +212,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         void client.invalidateQueries({ queryKey: documentsKey });
       }
     })().catch(error => { if (!disposed) setError(error instanceof Error ? error.message : String(error)); });
-    return () => { disposed = true; void loading?.destroy(); };
+    return () => { disposed = true; abort.abort(); void loading?.destroy(); };
     // Not keyed on pageCount: saving it must not reload the document.
   }, [doc.id, doc.available, client]);
 

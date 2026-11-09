@@ -15,6 +15,7 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
   const images = new Map();
   let documents = [];
   let revision = 0;
+  let failImage = false;
   let browser;
   try {
     await server.listen();
@@ -22,9 +23,7 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, hasTouch: true });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.route('**/native-asset/*', route => route.fulfill({ contentType: 'image/png', body: Buffer.from(images.get(route.request().url().split('/').pop())?.bytes ?? []) }));
-    await page.route('**/text.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
-    await page.route('**/native-command', async route => {
-      const { command, args } = route.request().postDataJSON();
+    await page.exposeBinding('nativeCommand', async (_, { command, args }) => {
       let result;
       switch (command) {
         case 'modules': result = [{ id: 'one', name: 'One', heading_numbering: false }, { id: 'two', name: 'Two', heading_numbering: false }]; break;
@@ -34,22 +33,25 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
         case 'index_note': result = null; break;
         case 'list_documents': result = documents.filter(doc => !args.moduleId || doc.moduleId === args.moduleId); break;
         case 'save_file': {
+          if (failImage) throw new Error('Image storage unavailable');
           assert.deepEqual(args.bytes.slice(0, 8), [137,80,78,71,13,10,26,10], 'native image quotes store the actual cropped PNG');
           result = { id: 'image-quote', path: 'files/image-quote', file_type: args.mimeType };
           images.set(result.id, { ...result, bytes: args.bytes, moduleId: args.moduleId }); break;
         }
         case 'read_file': result = images.get(args.fileId).bytes; break;
         case 'resolve_card_image': result = images.get(args.fileId).path; break;
+        case 'read_pdf_chunk': { const pdf = textPdfBytes(); result = { offset: args.offset, total: pdf.length, data: pdf.subarray(args.offset, args.offset + args.length).toString('base64') }; break; }
         case 'document_path': result = '/app/files/text-pdf'; break;
         case 'load_annotations': result = { state: null, revision: 0, generation: 'native-test' }; break;
         case 'save_annotation_update': Y.applyUpdate(annotations, new Uint8Array(args.bytes)); result = { state: Array.from(Y.encodeStateAsUpdate(annotations)), revision: 1, generation: 'native-test' }; break;
-        default: return route.fulfill({ status: 500, body: `Unexpected command ${command}` });
+        default: throw new Error(`Unexpected command ${command}`);
       }
-      await route.fulfill({ json: result });
+      return result;
     });
     await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()};
       window.nativeMessages = [];
       let live = true;
+      window.prepareNativeNavigation = () => { live = false; };
       addEventListener("beforeunload", () => { live = false; });
       addEventListener("pagehide", () => { live = false; });
       window.installTestBridge({ native: message => {
@@ -58,16 +60,15 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
           if (message.event === 'openModule') queueMicrotask(() => window.memnoterEditor.open(message.payload.moduleId));
           return;
         }
-        fetch('/native-command', { method: 'POST', body: JSON.stringify(message) }).then(async response => {
-          if (!response.ok) throw new Error(await response.text());
-          const result = await response.json();
+        window.nativeCommand(message).then(result => {
           if (live) window.__memnoterBridge.resolve(message.id, result);
-        }).catch(error => { if (live) window.__memnoterBridge.reject(message.id, error.message); });
+        }).catch(error => { if (live) window.__memnoterBridge.reject(message.id, message.command + ": " + error.message); });
       } });
       const open = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         const file = String(url).split('/').pop();
-        return open.call(this, method, String(url).startsWith('memnoter-file://localhost/files/') ? file === 'text-pdf' ? '/text.pdf' : '/native-asset/' + file : url, ...rest);
+        if (String(url).startsWith('memnoter-file://localhost/files/') && file === 'text-pdf') throw new Error('Native PDF XHR is unavailable');
+        return open.call(this, method, String(url).startsWith('memnoter-file://localhost/files/') ? '/native-asset/' + file : url, ...rest);
       };
       const setAttribute = Element.prototype.setAttribute;
       Element.prototype.setAttribute = function(name, value) {
@@ -76,6 +77,9 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
       };`);
     const url = `http://localhost:${server.httpServer.address().port}/editor.html`;
     const openNote = async () => {
+      // WebSession rotates its generation at provisional navigation, before the
+      // old page emits pagehide. Model that transport boundary explicitly.
+      if (page.url() !== "about:blank") await page.evaluate(() => window.prepareNativeNavigation());
       await page.goto(url);
       await page.waitForFunction(() => window.memnoterEditor);
       await page.evaluate(() => window.memnoterEditor.open('one'));
@@ -136,6 +140,11 @@ test('iPad workspace keeps the note cursor, quotes PDFs, follows sources, and ad
     const box = await region.boundingBox();
     await page.mouse.move(box.x + box.width * .25, box.y + box.height * .25); await page.mouse.down();
     await page.mouse.move(box.x + box.width * .5, box.y + box.height * .5); await page.mouse.up();
+    failImage = true;
+    await page.getByRole('button', { name: 'Insert at cursor', exact: true }).click();
+    await page.getByRole('button', { name: 'Discard failed image operations', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Insert at cursor', exact: true }).isEnabled(), true, 'native failed-save discard retains a ready crop');
+    failImage = false;
     await page.getByRole('button', { name: 'Insert at cursor', exact: true }).click();
     await files.waitFor({ state: 'detached' });
     await note.locator('img').first().waitFor();

@@ -313,7 +313,14 @@ private struct PdfViewStateRecord: Codable {
             Task {
                 do {
                     let bytes = try JSONSerialization.data(withJSONObject: body["args"] ?? [:])
-                    let result = try await client.raw(command, json: String(decoding: bytes, as: UTF8.self))
+                    let result: String
+                    if command == BridgeProtocol.pdfChunkCommand {
+                        let args = try JSONDecoder().decode(PdfChunkArgs.self, from: bytes)
+                        let reply = try await client.readPdfChunk(args)
+                        result = String(decoding: try JSONEncoder().encode(reply), as: UTF8.self)
+                    } else {
+                        result = try await client.raw(command, json: String(decoding: bytes, as: UTF8.self))
+                    }
                     guard token == generation else { return }
                     let value = try JSONSerialization.jsonObject(with: Data(result.utf8), options: [.fragmentsAllowed])
                     _ = try await run("window.__memnoterBridge.resolve(id, value)", ["id": id, "value": value])

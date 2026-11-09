@@ -10,6 +10,8 @@ import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { NativePdfWorkspace, type NativePdfActions } from "./pdf-workspace";
 import Tiptap from "@/components/Tiptap";
+import { useSelector } from "@tanstack/react-store";
+import SaveStatus from "@/components/save-status";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
 import { queryClient } from "@/lib/query-client";
@@ -30,6 +32,7 @@ export function Host() {
     return match && "moduleId" in match.params ? match.params.moduleId : null;
   } });
   const pdfActions = useRef<NativePdfActions>(null);
+  const failedImages = useSelector(imageStatusStore, state => state.errors.length);
   const [moduleId, setModuleId] = useState<string | null>(null);
   const { activeEditor } = useActiveEditor();
   const active = useRef(activeEditor);
@@ -81,6 +84,7 @@ export function Host() {
         element.dataset.bottomInset = String(px);
         element.style.setProperty("--bottom-inset", `${px}px`);
         element.parentElement?.style.setProperty("--bottom-inset", `${px}px`);
+        document.documentElement.style.setProperty("--native-bottom-inset", `${px}px`);
         const editor = active.current?.editor;
         if (!hasSectionAnchor(element) && editor && !editor.isDestroyed) requestAnimationFrame(() => { if (!editor.isDestroyed) revealCaret(editor.view, "inset"); });
       },
@@ -239,5 +243,5 @@ export function Host() {
     };
   }, [activeEditor]);
 
-  return <NativePdfWorkspace moduleId={moduleId} actions={pdfActions}><main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} hostOnly />}</main></NativePdfWorkspace>;
+  return <NativePdfWorkspace moduleId={moduleId} actions={pdfActions}>{failedImages > 0 && <SaveStatus />}<main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} hostOnly />}</main></NativePdfWorkspace>;
 }
