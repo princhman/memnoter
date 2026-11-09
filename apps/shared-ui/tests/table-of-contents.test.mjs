@@ -259,7 +259,7 @@ test("hover reveals the chosen Contents focus action and keyboard unfocus restor
   await page.waitForFunction(() => !!document.querySelector('.section-focus-start'));
   assert.equal(await page.locator('.section-focus-start').textContent(), root(2));
   assert.equal(await page.locator('.tiptap h1').filter({ hasText: root(1) }).isVisible(), false);
-  assert.equal(await popup().count(), 0);
+  await popup().waitFor({ state: "detached" });
   const top = await page.locator('.section-focus-start').evaluate(node => node.getBoundingClientRect().top);
   await dash(root(2)).hover();
   const unfocus = popup().getByRole("button", { name: `Unfocus ${root(2)}`, exact: true });
@@ -267,7 +267,7 @@ test("hover reveals the chosen Contents focus action and keyboard unfocus restor
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => !document.querySelector('.section-focused'));
   assert.equal(await page.locator('.tiptap h1').filter({ hasText: root(1) }).isVisible(), true);
-  assert.equal(await popup().count(), 0);
+  await popup().waitFor({ state: "detached" });
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), root(2));
   const restored = await page.locator('.tiptap h1').filter({ hasText: root(2) }).evaluate(node => node.getBoundingClientRect().top);
   assert.ok(Math.abs(restored - top) <= 1, 'Unfocus retains the section on screen');
