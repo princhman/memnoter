@@ -23,7 +23,9 @@ export async function openMacDrawing(editor: Editor, moduleId: string, target?: 
     if (!target) execEditor(editor, "beginDrawing", { imageId });
     await flushSaves();
     execEditor(editor, "clearImageSelection");
-    editor.commands.blur();
+    // AppKit transfers first responder to the canvas and restores it on close.
+    // Keep the DOM caret: Tiptap blur also clears the browser selection on a
+    // later animation frame, and restoring NSWindow focus cannot undo that.
     const result = await call<Result>("edit_drawing", { moduleId, imageId, sourceId: target?.sourceId ?? null });
     assertWritable(permit);
     if (editor.isDestroyed) throw new Error("The note was closed. Your drawing is saved as a local draft; reopen its drawing to continue.");

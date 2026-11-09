@@ -6,6 +6,7 @@ import { useSelector } from "@tanstack/react-store";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { pendingPdfQuote } from "@/lib/pending-pdf-quote";
 import { isWriteAdmitted, retryFailedImages } from "@/lib/write-lifecycle";
+import { appStore } from "@/lib/store";
 import { outline } from "@/lib/outline";
 import { ChevronDown, X } from "lucide-react";
 import { ToolButton } from "./ui/tool-button";
@@ -33,6 +34,15 @@ export function PdfQuoteControls({ moduleId, onInserted }: { moduleId: string; o
   }, []);
   const pickerTrigger = useRef<HTMLElement | null>(null);
   const active = activeEditor?.moduleId === moduleId && activeEditor.isReady && !activeEditor.editor.isDestroyed && activeEditor.editor.isEditable ? activeEditor : null;
+  const caretEditors = useRef(new WeakSet<NonNullable<typeof activeEditor>["editor"]>());
+  useEffect(() => {
+    const editor = activeEditor?.moduleId === moduleId ? activeEditor.editor : null;
+    if (!editor) return;
+    const remember = () => { caretEditors.current.add(editor); };
+    if (editor.isFocused || appStore.state.viewByModule[moduleId]) remember();
+    editor.on("focus", remember);
+    return () => { editor.off("focus", remember); };
+  }, [activeEditor?.editor, moduleId]);
   const headings = useEditorState({ editor: active?.editor ?? null, selector: ({ editor }) => editor ? outline(editor.state.doc) : [] }) ?? [];
   useEffect(() => {
     setChoosing(false);
@@ -79,7 +89,9 @@ export function PdfQuoteControls({ moduleId, onInserted }: { moduleId: string; o
   };
   const handleInsertQuote = () => {
     if (!active || pending.status !== "draft") return;
-    insert({ position: active.editor.state.selection.from });
+    insert(caretEditors.current.has(active.editor)
+      ? { position: active.editor.state.selection.from }
+      : { headingId: null });
   };
   if (active && pending.status === "draft" && !choosing) insertCommand.current = handleInsertQuote;
   if (active && pending.status === "draft" && !choosing) primaryAction.current = event => {

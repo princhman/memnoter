@@ -1,3 +1,4 @@
+import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
 import { usePdfAnnotations } from "@/lib/pdf-annotation-store";
 import { parsePdfAnnotationColor, type PdfAnnotationColor, type PdfAnnotation, type PdfAnnotationAnchor } from "@/lib/pdf-annotations";
 import { watchWriteAdmission } from "@/lib/write-lifecycle";
@@ -18,7 +19,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
 import { readNativePdf } from "@/lib/native-pdf";
-import { fileUrl, isNativeHost } from "@/lib/backend";
+import { fileUrl, isNativeHost, postNativeEvent } from "@/lib/backend";
 import { parsePage, readPdfView, writePdfView, visiblePages } from "@/lib/pdf-state";
 import { documentsKey } from "@/lib/use-documents";
 import { requestSyncedFile } from "@/lib/sync/file-requests";
@@ -99,6 +100,8 @@ const sameList = (a: number[], b: number[]) => a.length === b.length && a.every(
 
 /** With `nativeTools`, the host draws the reader's tools (pdfReaderControls). */
 export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage, nativeTools = false }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number; nativeTools?: boolean }) {
+  const nativeSelectionMenu = nativeTools && isNativeHost();
+  const savedTextSelection = useRef<ReturnType<typeof readPdfTextSelection>>(null);
   const client = useQueryClient();
   const quoteRegions = usePdfQuoteRegions(doc.moduleId, doc.id);
   const navigateToQuote = usePdfQuoteNavigation(doc.moduleId);
@@ -500,6 +503,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     let frame = 0;
     const clear = () => {
       setTextAction(null);
+      savedTextSelection.current = null;
       const selection = window.getSelection();
       if (selection?.anchorNode && reader.contains(selection.anchorNode)) selection.removeAllRanges();
     };
@@ -508,6 +512,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       frame = requestAnimationFrame(() => {
         const selected = !selecting && !cropping && !pinching && !pendingPdfQuote.state && readPdfTextSelection(reader, doc);
         if (!selected) { setTextAction(null); return; }
+        savedTextSelection.current = selected;
         const bounds = host.getBoundingClientRect(), view = viewport.getBoundingClientRect();
         if (selected.anchor.bottom < view.top || selected.anchor.top > view.bottom) { setTextAction(null); return; }
         setTextAction({ left: Math.max(8, Math.min(bounds.width - 240, selected.anchor.left - bounds.left)),
@@ -555,12 +560,13 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   }, [annotationEditor, annotations.annotations, annotationPosition, zoom]);
   const annotateText = (kind: "highlight" | "comment", color = highlightColor) => {
     if (selecting || cropping || pinching || pending || writeBlocked || !annotations.ready || !content.current) return;
-    const selected = readPdfTextSelection(content.current, doc);
+    const selected = readPdfTextSelection(content.current, doc) ?? (nativeSelectionMenu ? savedTextSelection.current : null);
     if (!selected) return;
     const draft = { anchors: selected.anchors, excerpt: selected.parts.map(part => part.text).join("\n") };
     try {
       if (kind === "highlight") { annotations.create({ kind, ...draft, color }); setAnnotationEditor(null); }
       else setAnnotationEditor({ kind: "new", anchorPage: selected.anchors[0].page, ...draft, ...annotationPosition(selected.anchor) });
+      savedTextSelection.current = null;
       window.getSelection()?.removeAllRanges(); setTextAction(null); setShowHighlightColors(false);
     } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); }
   };
@@ -571,11 +577,54 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   };
   const quoteText = () => {
     if (selecting || cropping || pinching || pendingPdfQuote.state || !content.current) return;
-    const selected = readPdfTextSelection(content.current, doc);
+    const selected = readPdfTextSelection(content.current, doc) ?? (nativeSelectionMenu ? savedTextSelection.current : null);
     if (!selected) { setTextAction(null); return; }
     pendingPdfQuote.setState(previous => previous ?? ({ id: crypto.randomUUID(), kind: "text", moduleId: doc.moduleId, status: "draft", parts: selected.parts }));
+    savedTextSelection.current = null;
+    if (nativeSelectionMenu) window.getSelection()?.removeAllRanges();
     setTextAction(null);
   };
+  // Keep handlers fresh without unregistering on every selection update.
+  const selectionActions = useRef({ quoteText, annotateText, chooseHighlightColor });
+  selectionActions.current = { quoteText, annotateText, chooseHighlightColor };
+  useEffect(() => {
+    if (!nativeSelectionMenu) return;
+    return pdfSelectionControls.register((action, color) => {
+      const actions = selectionActions.current;
+      if (action === "quote") actions.quoteText();
+      else if (action === "comment") actions.annotateText("comment");
+      else if (action === "highlight") {
+        const parsed = color === "purple" ? "primary" : parsePdfAnnotationColor(color);
+        if (parsed) actions.chooseHighlightColor(parsed);
+        actions.annotateText("highlight", parsed ?? undefined);
+      }
+    });
+  }, [nativeSelectionMenu, doc.id]);
+  useEffect(() => {
+    if (!nativeSelectionMenu) return;
+    let previous = "";
+    const update = () => {
+      const selected = content.current && !selecting && !cropping && !pinching && !pendingPdfQuote.state && !annotationEditor
+        ? readPdfTextSelection(content.current, doc) : null;
+      if (selected) savedTextSelection.current = selected;
+      const active = !!selected;
+      const writable = active && annotations.ready && !writeBlocked;
+      const state = { active, canQuote: active, canHighlight: writable, canComment: writable, lastColor: highlightColor === "primary" ? "purple" : highlightColor };
+      const json = JSON.stringify(state);
+      if (json !== previous) { previous = json; postNativeEvent("pdfSelectionChanged", state); }
+    };
+    // A fresh touch invalidates the cached selection. Menu taps happen in UIKit,
+    // so they can still use the snapshot if WebKit collapses it on dismissal.
+    const invalidate = () => { savedTextSelection.current = null; };
+    document.addEventListener("selectionchange", update);
+    document.addEventListener("pointerdown", invalidate);
+    update();
+    return () => {
+      document.removeEventListener("selectionchange", update);
+      document.removeEventListener("pointerdown", invalidate);
+      postNativeEvent("pdfSelectionChanged", { active: false, canQuote: false, canHighlight: false, canComment: false, lastColor: "purple" });
+    };
+  }, [nativeSelectionMenu, doc.id, doc.name, selecting, cropping, pinching, pending?.id, annotationEditor, annotations.ready, writeBlocked, highlightColor]);
   const pageRequest = useSelector(pdfPageRequest, state => state);
   useEffect(() => {
     if (pageRequest?.id === doc.id && pages.length) { jump(Math.max(1, Math.min(pages.length, pageRequest.page))); pdfPageRequest.setState(() => null); }
@@ -656,7 +705,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     return pdfReaderControls.set({ documentId: doc.id, state: JSON.parse(nativeState), actions });
   }, [nativeState, doc.id]);
   return <div ref={root} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
-    {textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
+    {!nativeSelectionMenu && textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
       <div className="flex items-center gap-0.5 overflow-x-auto">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
         <Button size="xs" variant="ghost" className="px-1.5" title={`Highlight (${formatKeys(action("text.highlight").keys)})`} aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button>

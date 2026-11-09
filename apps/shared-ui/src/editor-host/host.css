@@ -4,6 +4,9 @@
   --font-heading: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 html, body, #root {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -18,6 +21,9 @@ body {
   user-select: none;
 }
 .app-scroll-container {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   overscroll-behavior: none;
   overflow-anchor: none;
   scroll-padding-bottom: calc(var(--bottom-inset, 0px) + 24px);
@@ -36,8 +42,27 @@ html, body, #root, .app-scroll-container, .tiptap-shell, .tiptap {
   background: transparent;
 }
 
+/* Bound intrinsic widths before sizing nested table/media viewports. The
+   native EditorContent has no desktop .tiptap-shell wrapper. */
+.app-scroll-container > div, .tiptap-shell, .tiptap.ProseMirror {
+  min-width: 0;
+  max-width: 100%;
+}
 .tiptap.ProseMirror {
+  contain: inline-size;
+  overflow-wrap: anywhere;
   padding-bottom: 0;
+}
+.tiptap :is(.tableWrapper, .math-block, .mermaid-block, .note-image-host) {
+  min-width: 0;
+  max-width: 100%;
+}
+.tiptap :is(.tableWrapper, .math-block-widget, .mermaid-preview, pre) {
+  contain: inline-size;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
 }
 .tiptap.section-focused {
   min-height: 100vh;

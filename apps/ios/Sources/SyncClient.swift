@@ -61,6 +61,7 @@ struct SyncKeychain {
     private let pass: @MainActor () async throws -> Void
     private let onError: @MainActor (Error) -> Void
     private var worker: Task<Void, Never>?
+    var isRunning: Bool { worker != nil }
     private var again = false
     private var generation = UUID()
 
@@ -97,6 +98,11 @@ struct SyncKeychain {
     var error: String?
     var pending = 0
     var lastSynced: Date?
+    private(set) var isSyncingNow = false
+    var accessibilityStatus: String {
+        [status, "\(pending) pending changes", lastSynced.map { "Last synced \($0.formatted(date: .abbreviated, time: .shortened))" }]
+            .compactMap { $0 }.joined(separator: ". ")
+    }
     var onFile: ((String, String) async throws -> Void)?
     private var connection: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
@@ -237,9 +243,13 @@ struct SyncKeychain {
                             guard let current = account else { return }
                             _ = try await api(current.server, SyncConfiguration.path("key"), token: current.token)
                         }
-                        catch let auth as SyncHTTPFailure where auth.status == 401 { fatal = true }
+                        catch let auth as SyncHTTPFailure where auth.status == 401 {
+                            guard !Task.isCancelled, owner == generation else { return }
+                            fatal = true
+                        }
                         catch { NSLog("Sync authentication probe failed: %@", error.localizedDescription) }
                     }
+                    guard !Task.isCancelled, owner == generation else { return }
                     if fatal || socket?.closeCode == .policyViolation {
                         stop(); self.error = error.localizedDescription; status = "Sync stopped."; return
                     }
@@ -267,9 +277,37 @@ struct SyncKeychain {
             }
         }
     }
-    func syncNow() {
-        fatal = false
-        if connection == nil { resume() } else { nudge() }
+    /// Reconnect to pull from the durable cursor, then wait for upload acknowledgments.
+    func syncNow() async throws {
+        guard account != nil, !isSyncingNow else { return }
+        isSyncingNow = true
+        defer { isSyncingNow = false }
+        stop(); fatal = false; error = nil; resume()
+        let owner = generation
+        let deadline = ContinuousClock.now + .seconds(30)
+        do {
+            while ContinuousClock.now < deadline {
+                try Task.checkCancellation()
+                guard owner == generation, !suspended, account != nil else {
+                    throw SyncFailure(message: error ?? "Sync was interrupted. Try again when the app is active.")
+                }
+                if ready {
+                    try await checkPushWaiters()
+                    guard owner == generation, !Task.isCancelled else { throw CancellationError() }
+                    if pending == 0, !transfers.isRunning {
+                        if let error { throw SyncFailure(message: error) }
+                        lastSynced = Date(); status = "Up to date"
+                        return
+                    }
+                    if pending > 0 { nudge() }
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            throw SyncFailure(message: error ?? "Sync timed out. Check your connection and try again.")
+        } catch {
+            self.error = error.localizedDescription
+            throw error
+        }
     }
     func nudge() {
         guard !suspended else { return }
@@ -326,9 +364,12 @@ struct SyncKeychain {
             case "apply":
                 let result = try await command("sync_apply", ["entries": action["entries"] ?? [], "cursor": action["cursor"] ?? 0, "generation": databaseGeneration])
                 try await deliver(result)
+                lastSynced = Date()
             case "ack":
                 _ = try await command("sync_ack", ["maxId": action["max_id"] ?? 0, "generation": databaseGeneration])
                 try await checkPushWaiters()
+                if pending > 0 { nudge() }
+                lastSynced = Date()
             case "cursor": _ = try await command("sync_set_cursor", ["cursor": action["cursor"] ?? 0, "generation": databaseGeneration])
             case "upload":
                 guard let account, let id = action["id"] as? String, let bytes = action["bytes"] as? [UInt8] else { throw SyncFailure(message: "Invalid upload") }
@@ -343,7 +384,7 @@ struct SyncKeychain {
                 guard let doc = action["doc"] as? String else { continue }
                 let bytes = try await command("sync_snapshot", ["doc": doc, "generation": databaseGeneration])
                 try await execute(drive("compact", ["doc": doc, "cursor": action["cursor"] ?? 0, "bytes": bytes]), owner: owner)
-            case "ready": ready = true; lastSynced = Date(); status = "Up to date"; nudge()
+            case "ready": ready = true; error = nil; lastSynced = Date(); status = "Up to date"; nudge()
             case "close":
                 if action["code"] as? Int == SyncConfiguration.integer("closePolicy") { fatal = true }
                 socket?.cancel(with: .init(rawValue: action["code"] as? Int ?? 4000) ?? .goingAway, reason: nil)
@@ -360,6 +401,7 @@ struct SyncKeychain {
         ws.maximumMessageSize = SyncConfiguration.integer("MAX_FRAME_BYTES"); socket = ws; ws.resume()
         status = "Syncing…"; error = nil
         let state = try await command("sync_status") as? [String: Any] ?? [:]
+        guard owner == generation, !Task.isCancelled else { throw CancellationError() }
         databaseGeneration = state["generation"] as? String ?? ""
         if engine == nil { engine = try SyncSession(key: Data(account.key), cursor: Int64(state["cursor"] as? Int ?? 0)) }
         try await execute(drive("hello", ["cursor": state["cursor"] ?? 0]), owner: owner)
@@ -382,12 +424,18 @@ struct SyncKeychain {
     }
     private func push() async throws {
         let state = try await command("sync_status") as? [String: Any] ?? [:]; pending = state["pending"] as? Int ?? 0
+        try Task.checkCancellation()
         guard ready, !pushing, engine != nil else { return }
         pushing = true; defer { pushing = false }
         let owner = generation
         let rows = try await command("sync_outbox", ["limitBytes": SyncConfiguration.integer("PUSH_BATCH_BYTES"), "generation": databaseGeneration])
-        do { try await execute(drive("push", rows), owner: owner) }
-        catch { socket?.cancel(with: .goingAway, reason: nil); throw error }
+        do {
+            guard owner == generation, !Task.isCancelled else { throw CancellationError() }
+            try await execute(drive("push", rows), owner: owner)
+        } catch {
+            if owner == generation { socket?.cancel(with: .goingAway, reason: nil) }
+            throw error
+        }
     }
 
 }
