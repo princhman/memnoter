@@ -97,10 +97,10 @@ changes with it. Everything stays on your machine.
   up and restore from Settings.
 - The app updates itself in the background from signed GitHub releases.
 
-> **Before updating to 0.2.0:** update every device before using tables,
-> highlights, foldable blocks, PDF quotes or drawings. Builds before 0.2.0 can
-> delete content they do not recognize. Version 0.2.0 and later open notes with
-> unsupported content read-only instead. See the [0.2.0 release notes](docs/release-notes/v0.2.0.md).
+> **Before updating to 0.1.4:** update every device before using tables,
+> highlights, foldable blocks, PDF quotes or drawings. Builds before 0.1.4 can
+> delete content they do not recognize. Version 0.1.4 and later open notes with
+> unsupported content read-only instead. See the [0.1.4 release notes](docs/release-notes/v0.1.4.md).
 
 ## Install
 
