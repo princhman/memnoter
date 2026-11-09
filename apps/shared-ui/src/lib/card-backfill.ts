@@ -1,6 +1,7 @@
 import { LOAD_ORIGIN } from "./content";
 import { Editor } from "@tiptap/core";
 import { dueCountsKey, isModuleOpen, startCardSync } from "@/lib/card-sync";
+import { isSchemaReadOnly } from "./guarded-collaboration";
 import { noteExtensions } from "@/lib/editor-schema";
 import { queryClient } from "@/lib/query-client";
 import { saveQueue } from "@/lib/saves";
@@ -29,7 +30,7 @@ export async function indexStoredCards(moduleId: string, doc: import("yjs").Doc,
         extensions: noteExtensions({ document: doc, onFirstRender: resolve }),
       });
     });
-    if (isModuleOpen(moduleId)) return;
+    if (isModuleOpen(moduleId) || isSchemaReadOnly(editor!)) return;
 
     const sync = startCardSync(editor!, moduleId, () => {
       void queryClient.invalidateQueries({ queryKey: dueCountsKey });

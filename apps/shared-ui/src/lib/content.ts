@@ -1,3 +1,4 @@
+import { isNoteFromNewerVersion } from "./editor-schema";
 import { queryClient } from "./query-client.ts";
 import { call as invoke } from "./backend.ts";
 import * as Y from "yjs";
@@ -55,6 +56,9 @@ export async function loadContent(
 
     // Incomplete update chains cannot prove that a file is unused.
     if (doc.store.pendingStructs || doc.store.pendingDs) return content;
+
+    // Future content may reference files through fields this build cannot see.
+    if (isNoteFromNewerVersion(doc)) return content;
 
     const referenced = new Set<string>();
     for (const node of doc.getXmlFragment("default").createTreeWalker(() => true)) {

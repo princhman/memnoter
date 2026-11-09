@@ -1,13 +1,14 @@
 import { MarkdownPaste } from "./markdown-paste-plugin";
-import type { Editor, AnyExtension } from "@tiptap/core";
+import { getSchema, type Editor, type AnyExtension } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
 import { ImageMoveHistory } from "@/lib/image-move-history";
 import { NoteHighlight } from "@/lib/highlight";
 import { NoteTables } from "@/lib/note-tables";
 import StarterKit from "@tiptap/starter-kit";
-import type * as Y from "yjs";
-import Collaboration from "@tiptap/extension-collaboration";
+import * as Y from "yjs";
+import { GuardedCollaboration } from "./guarded-collaboration";
+import { hasUnknownContent } from "./schema-compatibility";
 import FileHandler from "@tiptap/extension-file-handler";
 import {
   TableOfContents,
@@ -85,7 +86,7 @@ export function noteExtensions({
       searchDebounceMs: 100,
       injectCSS: false,
     }),
-    Collaboration.configure({ document, onFirstRender }),
+    GuardedCollaboration.configure({ document, onFirstRender }),
     (ui.savedImage ?? SavedImage).configure({
       inline: false,
       allowBase64: false,
@@ -110,4 +111,15 @@ export function noteExtensions({
       },
     }),
   ];
+}
+
+// Hidden consumers need the same persisted schema without mounting an editor.
+let persistedSchema: ReturnType<typeof getSchema> | undefined;
+export function isNoteFromNewerVersion(doc: Y.Doc) {
+  if (!persistedSchema) {
+    const empty = new Y.Doc();
+    try { persistedSchema = getSchema(noteExtensions({ document: empty })); }
+    finally { empty.destroy(); }
+  }
+  return hasUnknownContent(doc.getXmlFragment("default"), persistedSchema);
 }

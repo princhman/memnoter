@@ -1,3 +1,4 @@
+import { isSchemaReadOnly } from "./guarded-collaboration";
 import { settled } from "@/lib/async-work";
 import { writeCards } from "@/lib/card-writes";
 import { isWriteAdmitted, registerFlusher, type WritePermit } from "@/lib/write-lifecycle";
@@ -52,17 +53,17 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
 
   const sync = (permit: WritePermit | undefined = admittedPermit): Promise<void> => {
     debounce.cancel();
-    if (!isWriteAdmitted(permit)) return Promise.resolve();
+    if (!isWriteAdmitted(permit) || isSchemaReadOnly(editor)) return Promise.resolve();
     const cards = snapshot();
     const payload = JSON.stringify(cards);
     if (payload === lastSent) return lastWrite;
     lastSent = payload;
     // Keep syncs in order so an older snapshot never lands last.
     const write = queue
-      .then(() => writeCards<string[]>("sync_cards", { moduleId, cards }, permit))
+      .then(() => isSchemaReadOnly(editor) ? [] : writeCards<string[]>("sync_cards", { moduleId, cards }, permit))
       .then((conflicts) => {
         // Blocks copied from another note get their own cards here.
-        if (conflicts.length > 0 && !editor.isDestroyed) {
+        if (conflicts.length > 0 && !editor.isDestroyed && !isSchemaReadOnly(editor)) {
           editor.commands.renewCardIds(conflicts.map(blockIdOf));
         }
         onSynced();
@@ -80,7 +81,7 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
 
   const flush = async (permit?: WritePermit) => {
     do { await sync(permit); }
-    while (isWriteAdmitted(permit) && !editor.isDestroyed && JSON.stringify(snapshot()) !== lastSent);
+    while (isWriteAdmitted(permit) && !editor.isDestroyed && !isSchemaReadOnly(editor) && JSON.stringify(snapshot()) !== lastSent);
   };
   const debounce = editorSync.attach(flush);
   const schedule = debounce.schedule;
