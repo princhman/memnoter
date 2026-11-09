@@ -116,7 +116,7 @@ export function PdfQuoteControls({ moduleId, onInserted }: { moduleId: string; o
             </Button>
           </IconTooltip>
         </div>
-        <ToolButton size="icon-xs" className="pdf-menu-close shrink-0" label="Dismiss quote" disabled={pending.status !== "draft"} onClick={() => {
+        <ToolButton size="icon-sm" className="pdf-menu-close shrink-0" label="Dismiss quote" disabled={pending.status !== "draft"} onClick={() => {
           setChoosing(false);
           pendingPdfQuote.setState(() => null);
         }}><X /></ToolButton>
