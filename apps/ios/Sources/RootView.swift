@@ -190,13 +190,6 @@ struct RootView: View {
                         }
                     }
                     ToolbarItem(placement: .primaryAction) {
-                        Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
-                            .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
-                            .accessibilityValue(session.filesOpen ? "Open" : "Closed")
-                            .keyboardShortcut("d", modifiers: [.command, .shift])
-                            .disabled(busy || !session.ready)
-                    }
-                    ToolbarItem(placement: .primaryAction) {
                         Button { showingContents.toggle() } label: { Label("Contents", systemImage: "list.bullet.indent") }
                             .accessibilityLabel("Contents")
                             .popover(isPresented: $showingContents) {
@@ -216,6 +209,14 @@ struct RootView: View {
                         } label: { Image(systemName: "ellipsis") }
                         .accessibilityLabel("Note actions")
                         .accessibilityValue(session.saveStatus)
+                    }
+                    // Far right, mirroring the sidebar toggle at the far left.
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
+                            .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
+                            .accessibilityValue(session.filesOpen ? "Open" : "Closed")
+                            .keyboardShortcut("d", modifiers: [.command, .shift])
+                            .disabled(busy || !session.ready)
                     }
                 }
             }
