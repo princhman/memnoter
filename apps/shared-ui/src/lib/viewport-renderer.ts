@@ -1,3 +1,4 @@
+import { commitViewportLayout } from "./reader-scroll";
 import { editorHost } from "./editor-host";
 // Share one observer and one mount frame across an editor's formula views.
 // Keep rendered views mounted: scrolling back should not repeat their work.
@@ -23,7 +24,8 @@ export function createViewportRenderer() {
       return () => {};
     }
 
-    pending.set(element, render);
+    let cancelCommit: (() => void) | undefined;
+    pending.set(element, () => { cancelCommit = commitViewportLayout(element, render); });
     if (observer) {
       observer.observe(element);
     } else if (frame === undefined) {
@@ -52,6 +54,6 @@ export function createViewportRenderer() {
       });
     }
 
-    return () => cancel(element);
+    return () => { cancel(element); cancelCommit?.(); };
   };
 }

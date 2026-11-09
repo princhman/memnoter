@@ -29,6 +29,8 @@ import { useDarkTheme } from "@/hooks/use-dark-theme";
 import { useSelector } from "@tanstack/react-store";
 import { requestSyncedFile, syncedFilesStore } from "@/lib/sync/file-requests";
 import { drawingReference } from "@/lib/drawing";
+import { ImageControlsLayer } from "./image-controls-layer";
+import "./saved-image.css";
 
 type FilesContextValue = {
   editDrawing?: (imageId: string, sourceId: string | null) => void;
@@ -79,9 +81,27 @@ export function SavedImageView(props: NodeViewProps) {
   const loading = !!drawing?.previewId && !failed && (!currentSrc || loadedSrc !== currentSrc);
   const isInline = node.type.isInline;
   const host = useRef<HTMLElement>(null);
-  // The host shrinks with the image; its containing block defines room to grow.
-  const getAvailableWidth = () =>
-    host.current?.closest<HTMLElement>(".note-image-block")?.parentElement?.clientWidth ?? 0;
+  const inTableCell = useEditorState({
+    editor,
+    selector: ({ editor }) => {
+      const position = props.getPos();
+      if (position === undefined) return false;
+      const $pos = editor.state.doc.resolve(position);
+      for (let depth = $pos.depth; depth > 0; depth--) {
+        if (["tableCell", "tableHeader"].includes($pos.node(depth).type.name)) return true;
+      }
+      return false;
+    },
+  });
+  // clientWidth includes padding, which belongs to the cell, not its image.
+  // Re-read on every drag update so scrolling/resizing the editor stays safe.
+  const getAvailableWidth = () => {
+    const block = host.current?.closest<HTMLElement>(".note-image-block");
+    const container = block?.closest<HTMLElement>("td, th") ?? block?.parentElement;
+    if (!container) return 0;
+    const style = getComputedStyle(container);
+    return Math.max(0, container.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight));
+  };
   const image = useRef<HTMLImageElement | null>(null);
   const mounted = useRef(true);
   // Ends an image drag still in progress if this view goes away (editor destroyed).
@@ -161,9 +181,10 @@ export function SavedImageView(props: NodeViewProps) {
       canEditMasks ? { label: "Edit masks", run: () => setOcclusionOpen(true) } : null));
   }, [schedules, node.attrs.imageId, node.attrs.fileId, node.attrs.masks, isInline, canEditMasks]);
 
+  const hasSrc = !!src;
+  // Preview revisions must not detach editor DOM while a text caret is active.
   useEffect(() => {
-    if (!host.current || !src) return;
-    setFailedSource(null);
+    if (!host.current || !hasSrc) return;
     const img = document.createElement("img");
     image.current = img;
     img.className = "note-image";
@@ -176,21 +197,6 @@ export function SavedImageView(props: NodeViewProps) {
       img.height = height;
       img.style.aspectRatio = `${width} / ${height}`;
     }
-    if (latest.current.node.attrs.adaptive) {
-      // Start on the recolored copy when one is ready; otherwise stay hidden
-      // until it is, rather than flashing the original's background.
-      const cached = cachedAdaptedUrl(latest.current.node.attrs.fileId ?? src, dark);
-      if (cached) img.src = cached;
-      else {
-        img.src = src;
-        img.style.opacity = "0";
-      }
-    } else img.src = src;
-    setDisplayedImage({ source: src, url: img.style.opacity === "0" ? "" : img.src });
-    img.alt = latest.current.node.attrs.alt ?? "";
-    img.title = latest.current.node.attrs.title ?? "";
-    img.onerror = () => setFailedSource(src);
-    img.onload = () => { setFailedSource(null); setLoadedSrc(src); };
     const view = new ResizableNodeView({
       element: img,
       editor,
@@ -229,7 +235,29 @@ export function SavedImageView(props: NodeViewProps) {
       // It may have been showing a cached copy that can now be evicted.
       scheduleTrim();
     };
-  }, [src, editor]);
+  }, [hasSrc, editor]);
+
+  useEffect(() => {
+    const img = image.current;
+    if (!img || !src) return;
+    setFailedSource(null);
+    // Retain the decoded old preview until the source effect below swaps it.
+    if (!img.getAttribute("src")) {
+      if (latest.current.node.attrs.adaptive) {
+        // Hide the original until its recolored copy is ready.
+        const cached = cachedAdaptedUrl(latest.current.node.attrs.fileId ?? src, dark);
+        if (cached) img.src = cached;
+        else {
+          img.src = src;
+          img.style.opacity = "0";
+        }
+      } else img.src = src;
+      setDisplayedImage({ source: src, url: img.style.opacity === "0" ? "" : img.src });
+    }
+    img.onerror = () => setFailedSource(src);
+    img.onload = () => { setFailedSource(null); setLoadedSrc(src); };
+    return () => { img.onload = null; img.onerror = null; };
+  }, [src]);
 
   useEffect(() => {
     if (!image.current) return;
@@ -327,12 +355,12 @@ export function SavedImageView(props: NodeViewProps) {
     cancelMove.current = startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent);
   };
 
-  const layout: ImageLayout = isInline ? "inline" : node.attrs.wrap ? "wrap" : "break";
+  const layout: ImageLayout = isInline ? "inline" : node.attrs.wrap && !inTableCell ? "wrap" : "break";
 
   // Mirrors Google Docs' image layouts. A node type is either inline or block,
   // so moving into or out of a line of text replaces the node.
   const setLayout = (target: ImageLayout) => {
-    if (target === layout) return;
+    if (target === layout || (inTableCell && target === "wrap")) return;
     const wrap = target === "wrap";
     // Wrapped text flows around one side, so a centred image has no wrap side.
     const alignment = wrap && node.attrs.alignment === "center" ? "left" : node.attrs.alignment;
@@ -435,7 +463,7 @@ export function SavedImageView(props: NodeViewProps) {
         : <span className="text-sm text-muted-foreground">Image unavailable</span>)}
       {node.attrs.pdfSource && <PdfSourceCaption value={node.attrs.pdfSource} />}
       {selected && editor.isEditable && (
-        <div className="note-image-controls" aria-label="Image controls" contentEditable={false}>
+        <ImageControlsLayer anchor={host}>
           <div className="note-image-toolbar">
             <div className="note-image-toolbar-scroll">
               <DropdownMenu>
@@ -452,7 +480,7 @@ export function SavedImageView(props: NodeViewProps) {
               </DropdownMenu>
               <span className="note-image-divider" />
               {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => (
-                <ToolbarButton key={value} label={label} hint={hint} pressed={layout === value} onClick={() => setLayout(value)}><Icon /></ToolbarButton>
+                <ToolbarButton key={value} label={label} hint={hint} pressed={layout === value} disabled={inTableCell && value === "wrap"} onClick={() => setLayout(value)}><Icon /></ToolbarButton>
               ))}
               {!isInline && <span className="note-image-divider" />}
               {!isInline && IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => (
@@ -476,7 +504,7 @@ export function SavedImageView(props: NodeViewProps) {
               <label>Title<input key={`title-${node.attrs.title}`} defaultValue={node.attrs.title ?? ""} placeholder="Shown when hovering over the image" onBlur={(event) => { if (event.target.value !== (node.attrs.title ?? "")) updateAttributes({ title: event.target.value }); }} /></label>
             </div>
           )}
-        </div>
+        </ImageControlsLayer>
       )}
       {occlusionOpen && src && <OcclusionEditor src={src} masks={validMasks(node.attrs.masks)} onCancel={() => setOcclusionOpen(false)} onSave={masks => { if (!isWriteAdmitted() || editor.isDestroyed || !editor.isEditable) return; updateAttributes({ masks, imageId: node.attrs.imageId || crypto.randomUUID() }); setOcclusionOpen(false); }} />}
       {cropOpen && image.current && <CropDialog image={image.current} onCancel={() => setCropOpen(false)} onSave={applyCrop} />}

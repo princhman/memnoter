@@ -57,7 +57,7 @@ function EditorContextMenu({ editor, options, x, y, close }: ContextMenuProps) {
       }}>
       <div className="mx-2 mb-1 flex shrink-0 items-center gap-0.5">
         <input ref={input} role="combobox" aria-autocomplete="list" aria-expanded={items.length > 0} aria-label="Filter insert commands" placeholder="Search actions…"
-          className="min-w-0 flex-1 px-1 py-1 text-sm"
+          className="min-w-0 flex-1 px-1 py-1 text-sm outline-none"
           value={query} onChange={event => setQuery(event.target.value)} />
         {([["cut", "Cut", Scissors], ["copy", "Copy", Copy]] as const).map(([command, label, Icon]) =>
           <button key={command} type="button" aria-label={label} title={label}

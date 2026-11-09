@@ -2,6 +2,7 @@ import { Extension, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type NodeViewConstructor } from "@tiptap/pm/view";
 import type { Node } from "@tiptap/pm/model";
+import { commitViewportLayout } from "../reader-scroll";
 import { createViewportRenderer } from "../viewport-renderer";
 
 const isMermaid = (node: Node) =>
@@ -96,11 +97,20 @@ function mermaidNodeViews(editor: Editor): Record<string, NodeViewConstructor> {
       let destroyed = false;
       let editing = false;
       let cancel: (() => void) | undefined;
+      let cancelCommit: (() => void) | undefined;
+      const commit = (version: number, update: () => void) => {
+        cancelCommit?.();
+        cancelCommit = commitViewportLayout(preview, () => {
+          if (!destroyed && version === generation) update();
+        });
+      };
       const render = async () => {
         const version = ++generation;
         const text = current.textContent;
-        preview.classList.remove("has-error");
-        preview.textContent = text.trim() ? "Loading diagram…" : "Empty Mermaid diagram";
+        commit(version, () => {
+          preview.classList.remove("has-error");
+          preview.textContent = text.trim() ? "Loading diagram…" : "Empty Mermaid diagram";
+        });
         if (!text.trim()) return;
         try {
           const { renderAsync } = await import("pele/lazy");
@@ -110,13 +120,17 @@ function mermaidNodeViews(editor: Editor): Record<string, NodeViewConstructor> {
             fontFamilyMono: getComputedStyle(contentDOM).fontFamily,
           });
           if (destroyed || version !== generation) return;
-          preview.classList.remove("has-error");
-          // Only Pele-generated SVG is HTML; source and errors stay text.
-          preview.innerHTML = result.svg;
+          commit(version, () => {
+            preview.classList.remove("has-error");
+            // Only Pele-generated SVG is HTML; source and errors stay text.
+            preview.innerHTML = result.svg;
+          });
         } catch (error) {
           if (destroyed || version !== generation) return;
-          preview.classList.add("has-error");
-          preview.textContent = error instanceof Error ? error.message : "Unable to render diagram";
+          commit(version, () => {
+            preview.classList.add("has-error");
+            preview.textContent = error instanceof Error ? error.message : "Unable to render diagram";
+          });
         }
       };
       const appearance = (nextDecorations: readonly Decoration[]) => {
@@ -154,7 +168,7 @@ function mermaidNodeViews(editor: Editor): Record<string, NodeViewConstructor> {
           appearance(nextDecorations);
           return true;
         },
-        destroy() { destroyed = true; ++generation; cancel?.(); },
+        destroy() { destroyed = true; ++generation; cancel?.(); cancelCommit?.(); },
         stopEvent: event => event.target instanceof window.Node && preview.contains(event.target),
         ignoreMutation: mutation => mutation.type !== "selection" && (
           preview.contains(mutation.target) ||

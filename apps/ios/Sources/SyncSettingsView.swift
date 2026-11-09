@@ -22,7 +22,10 @@ struct SyncSettingsView: View {
                 if let date = sync.lastSynced { Text("Up to date as of \(date.formatted(date: .omitted, time: .shortened)).") }
                 Text("\(sync.pending) pending changes")
                 if let error = sync.error { Text(error).foregroundStyle(.red) }
-                Button("Sync now") { sync.syncNow() }
+                Button { run { try await sync.syncNow() } } label: {
+                    if sync.isSyncingNow { ProgressView("Syncing…") }
+                    else { Label("Sync now", systemImage: "arrow.triangle.2.circlepath") }
+                }.disabled(sync.isSyncingNow)
                 Button("Sign out", role: .destructive) { run { try await sync.signOut() } }
                 Text("Your notes stay on this device. The cloud copy is untouched.").font(.caption)
             } else {

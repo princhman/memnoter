@@ -248,7 +248,8 @@ test("a drawing keeps its previous preview and shows progress until the replacem
       editor.commands.setContent({ type: "doc", content: [{ type: "image", attrs: { imageId: crypto.randomUUID(), fileId: "preview-first", width: 200, height: 100, drawing: { version: 1, sourceId: "source-first", previewId: "preview-first" } } }] });
       return [window.firstPreview, second];
     });
-    const preview = page.locator(".note-image-host img");
+    // The outgoing crossfade copy can coexist with the live preview briefly.
+    const preview = page.locator(".note-image-host img").first();
     await page.waitForFunction(() => document.querySelector(".note-image-host img")?.naturalWidth > 0);
     await page.evaluate(() => { editor.commands.setNodeSelection(0); editor.commands.updateAttributes("image", { fileId: "preview-next", drawing: { version: 1, sourceId: "source-next", previewId: "preview-next" } }); });
     await page.getByRole("status").waitFor();

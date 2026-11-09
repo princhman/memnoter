@@ -219,9 +219,9 @@ body {
     max-width: calc(760px + 0.8rem);
     margin: 0 auto;
     padding-inline: 0.4rem;
-    /* Lets the last line scroll up to the middle of the window. Clicks here
+    /* Lets the last line scroll almost to the top of the window. Clicks here
        put the caret at the end. */
-    padding-bottom: 50dvh;
+    padding-bottom: 95dvh;
     min-height: 55vh;
     tab-size: 4;
     --card-list-indent: 1.75rem;

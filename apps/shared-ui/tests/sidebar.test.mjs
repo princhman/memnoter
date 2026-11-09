@@ -53,6 +53,18 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
     await row('0').waitFor();
     assert.equal(await page.getByText('Move to top level').count(), 0);
     assert.equal(await page.getByRole('button', { name: /^Move / }).count(), 0, 'no drag handles');
+    await page.locator('.group').first().hover();
+    await page.getByRole('button', { name: 'Add module', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
+    await page.getByLabel('Name', { exact: true }).fill('First folder');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    await page.reload();
+    await row('0').waitFor();
+    assert.deepEqual(await page.locator('[data-sidebar-item]').evaluateAll(rows => rows.map(row => row.textContent)), ['Algebra', 'Biology', 'Chemistry', 'First folder']);
+    await page.getByRole('button', { name: 'Actions for First folder', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Delete folder (keep modules)', exact: true }).click();
+    await page.getByRole('button', { name: 'First folder', exact: true }).waitFor({ state: 'hidden' });
     await drag(row('1'), row('0'));
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar') ?? '[]').some(item => item.id === '1' && item.sort_order === 0));
     await page.reload();
@@ -97,7 +109,7 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
     await page.getByRole('menuitem', { name: 'Delete folder (keep modules)', exact: true }).click();
     await row('0').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Science', exact: true }).count(), 0);
-    assert.equal((await stored()).filter(item => item.name && item.deleted).length, 1);
+    assert.equal((await stored()).filter(item => item.name && item.deleted).length, 2);
   } finally { await page.close(); }
 });
 

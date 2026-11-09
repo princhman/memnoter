@@ -68,6 +68,37 @@ private struct PdfViewStateRecord: Codable {
 }
 // Report navigation/safe-area occlusion after UIKit has laid out the web view.
 @MainActor final class EditorWebView: WKWebView {
+    var pdfSelection = PdfSelectionState() {
+        didSet {
+            UIMenuSystem.context.setNeedsRebuild()
+            UIMenuSystem.main.setNeedsRebuild()
+        }
+    }
+    var pdfSelectionAction: ((PdfSelectionAction, String?) -> Void)?
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        guard builder.system == UIMenuSystem.context, pdfSelection.active else { return }
+        let selection = pdfSelection
+        func action(_ title: String, _ kind: PdfSelectionAction, enabled: Bool, color: String? = nil) -> UIAction {
+            UIAction(title: title, attributes: enabled ? [] : [.disabled]) { [weak self] _ in
+                self?.pdfSelectionAction?(kind, color)
+            }
+        }
+        let colors = BridgeProtocol.highlightColors.map { color in
+            let item = action(color.capitalized, .highlight, enabled: selection.canHighlight, color: color)
+            item.state = selection.lastColor == color ? .on : .off
+            return item
+        }
+        let menu = UIMenu(title: "", identifier: UIMenu.Identifier("memnoter.pdfSelection"), options: .displayInline, children: [
+            action("Quote", .quote, enabled: selection.canQuote),
+            action("Highlight", .highlight, enabled: selection.canHighlight, color: selection.lastColor),
+            UIMenu(title: "Highlight colour", children: colors),
+            action("Comment", .comment, enabled: selection.canComment),
+        ])
+        // Preserve the standard Copy and Look Up groups.
+        builder.remove(menu: .share)
+        builder.insertSibling(menu, afterMenu: .standardEdit)
+    }
     var viewportChanged: (() -> Void)?
     // WebKit forwards its content responder's accessory lookup here. The
     // phone form-navigation row duplicates our formatting/dismiss controls;
@@ -80,7 +111,7 @@ private struct PdfViewStateRecord: Codable {
         viewportChanged?()
     }
 }
-@MainActor @Observable final class WebSession: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
+@MainActor @Observable final class WebSession: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate, UIScrollViewDelegate {
     #if DEBUG
     private var scrollObservations: [NSKeyValueObservation] = []
     #endif
@@ -91,16 +122,22 @@ private struct PdfViewStateRecord: Codable {
     private var reportedViewport: [CGFloat] = []
     private var insetReport: Task<Void, Never>?
     private func reportBottomInset() {
-        let viewport = [bottomInset, web.safeAreaInsets.top, web.bounds.height]
-        guard viewport != reportedViewport else { return }
+        let viewport = [bottomInset, web.safeAreaInsets.top, web.bounds.height, web.bounds.width]
         insetReport?.cancel()
+        guard viewport != reportedViewport else { return }
         insetReport = Task { @MainActor in
             do {
+                // Coalesce keyboard, formatting bar and safe-area layout into
+                // one occlusion report. Native never reveals the selection.
+                try await Task.sleep(for: .milliseconds(40))
                 guard !Task.isCancelled, ready else { return }
-                reportedViewport = viewport
-                _ = try await run("window.memnoterEditor?.[topMethod](top * window.innerHeight / height); window.memnoterEditor?.[bottomMethod](inset * window.innerHeight / height)",
+                // innerHeight can shrink with the software keyboard while the
+                // HTML scroll container keeps the full layout height. Derive
+                // CSS pixel scale from width so occlusion is not scaled twice.
+                _ = try await run("window.memnoterEditor?.[topMethod](top * window.innerWidth / width); window.memnoterEditor?.[bottomMethod](inset * window.innerWidth / width)",
                                   ["topMethod": EditorApiMethod.setTopInset.rawValue, "bottomMethod": EditorApiMethod.setBottomInset.rawValue,
-                                   "inset": bottomInset, "top": web.safeAreaInsets.top, "height": max(1, web.bounds.height)])
+                                   "inset": viewport[0], "top": viewport[1], "width": max(1, viewport[3])])
+                reportedViewport = viewport
             } catch is CancellationError { }
             catch { self.error = String(describing: error) }
         }
@@ -169,8 +206,18 @@ private struct PdfViewStateRecord: Codable {
         config.setURLSchemeHandler(ResourceHandler(root: Bundle.main.resourceURL!.appendingPathComponent("Web"), images: false), forURLScheme: BridgeProtocol.appScheme)
         let editorWeb = EditorWebView(frame: .zero, configuration: config)
         web = editorWeb
+        editorWeb.pdfSelectionAction = { [weak self] action, color in
+            guard let self, self.ready else { return }
+            Task {
+                do {
+                    _ = try await self.callEditor(.pdfSelectionAction,
+                        ["action": action.rawValue, "color": color ?? NSNull()], parameters: ["action", "color"])
+                } catch { self.error = String(describing: error) }
+            }
+        }
         // The HTML inner container owns scrolling; UIKit must not pan the page
         // to reveal a caret while JS is revealing it in that container.
+        web.scrollView.delegate = self
         web.scrollView.isScrollEnabled = false
         web.scrollView.bounces = false
         web.scrollView.contentInsetAdjustmentBehavior = .never
@@ -205,6 +252,15 @@ private struct PdfViewStateRecord: Codable {
         #endif
         web.load(URLRequest(url: URL(string: "\(BridgeProtocol.appScheme)://localhost/\(entry)")!))
     }
+    // isScrollEnabled only disables gestures. WK still pans its outer viewport
+    // on keyboard focus. Reject that offset synchronously, before it is drawn;
+    // the shared editor's reveal policy alone moves the inner scroll container.
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if scrollView.contentOffset != .zero {
+            scrollView.setContentOffset(.zero, animated: false)
+        }
+    }
+
     // WKWebView delegates text input to a content subview. Use only public
     // UIView / UIResponder APIs, without private selectors or runtime changes.
     private var editorInputViews: [UIView] {
@@ -312,6 +368,7 @@ private struct PdfViewStateRecord: Codable {
         hideEditorInputAssistant()
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        (webView as? EditorWebView)?.pdfSelection = PdfSelectionState()
         generation = UUID(); ready = false; reportedViewport = []
         filesOpen = false; pdfCoveringNote = false; pdfFocused = false; pdfReader = nil
         requestedPdfImport = nil; requestedModule = nil
@@ -399,6 +456,9 @@ private struct PdfViewStateRecord: Codable {
                     filesOpen = payload["open"] as? Bool == true
                     pdfCoveringNote = filesOpen && (payload["coveringNote"] as? Bool == true)
                     pdfFocused = filesOpen && (payload["focused"] as? Bool == true)
+                case .pdfSelectionChanged:
+                    guard ready, let editorWeb = web as? EditorWebView else { return }
+                    editorWeb.pdfSelection = try JSONDecoder().decode(PdfSelectionState.self, from: JSONSerialization.data(withJSONObject: payload))
                 case .pdfReader:
                     guard ready else { return }
                     if payload.isEmpty { pdfReader = nil; return }
@@ -448,7 +508,7 @@ private struct PdfViewStateRecord: Codable {
         do { _ = try await run("window.__memnoterBridge.emit(event, enabled)", ["event": NativeEventName.skipCardsCreatedToday.rawValue, "enabled": preferences.bool(forKey: "skipCardsCreatedToday")]) }
         catch { self.error = String(describing: error) }
     }
-    func dispose() { onReady = nil; insetReport?.cancel(); insetReport = nil; NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
+    func dispose() { web.scrollView.delegate = nil; onReady = nil; insetReport?.cancel(); insetReport = nil; NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
 }
 struct WebSurface: UIViewRepresentable {
     let session: WebSession
