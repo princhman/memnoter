@@ -119,6 +119,7 @@ final class SyncFileTransferTests: XCTestCase {
         let owner = UUID()
         try await files.run(account: account, owner: owner)
         XCTAssertEqual(stored, [available])
+        XCTAssertLessThanOrEqual(try XCTUnwrap(files.nextDelay), 2_000, "An image still uploading must retry promptly, not wait for the error backoff")
         let result = try await core.raw("read_file", json: "{\"moduleId\":\"\(module)\",\"fileId\":\"\(available)\"}")
         let contents = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any]
         XCTAssertEqual(contents?["bytes"] as? [UInt8], Array(payload))

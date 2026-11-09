@@ -3,12 +3,14 @@ import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { forwardRef, Fragment, useEffect, useId, useImperativeHandle, useRef, useState, type RefObject } from "react";
 import type { Editor, Range } from "@tiptap/core";
+import { capabilities } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import { useActiveDescendant } from "@/hooks/use-active-descendant";
 
 export type InsertCommandOptions = {
   // Saves picked images and inserts them at a position, as pasting does.
   insertImages: (editor: Editor, files: File[], position: number) => void;
+  insertDrawing?: (editor: Editor) => void;
 };
 
 export type InsertItem = {
@@ -120,6 +122,11 @@ const ITEMS: InsertItem[] = [
     hint: formatKeys(action("block.quote").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).toggleBlockquote().run(),
+  },
+  {
+    group: "Blocks", title: "Drawing", keywords: ["drawing", "draw", "ink", "pen", "sketch"], hint: "",
+    when: () => capabilities.macDrawing,
+    run: (editor, range, options) => { editor.chain().deleteRange(range).run(); options.insertDrawing?.(editor); },
   },
   {
     group: "Blocks",

@@ -53,6 +53,10 @@ export const EXEC_COMMANDS = {
   focusCurrentSection: true,
   showDocument: true,
   insertImage: false,
+  clearImageSelection: true,
+  beginDrawing: false,
+  commitDrawing: false,
+  discardEmptyDrawing: false,
   fold: false,
   unfold: false,
   focusSection: true,
@@ -99,6 +103,7 @@ export interface NativeEvents {
   state: EditorState & { moduleId: string };
   ready: { protocolVersion: number };
   imagePreview: { open: boolean };
+  editDrawing: { moduleId: string; imageId: string; sourceId: string | null };
   error: { moduleId: string | null; message: string };
   saveStatus: { pending: number; failing: boolean; imageErrors: string[] };
   scrollDebug: { time: number; reason: string; [key: string]: unknown };

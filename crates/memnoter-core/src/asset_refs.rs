@@ -18,7 +18,10 @@ pub fn migrate(conn: &Connection) -> CommandResult<()> {
 
 // Replay every persisted revision, not just the final tree: a foreign image
 // removed before compaction may still be recoverable by the live undo manager.
-pub fn retain_module(conn: &Connection, module_id: &str) -> CommandResult<()> {
+pub fn retain_module(
+    conn: &Connection,
+    module_id: &str,
+) -> CommandResult<std::collections::HashSet<String>> {
     let state: Vec<u8> = conn
         .query_row(
             "select state from contents where module_id = ?1",
@@ -36,31 +39,82 @@ pub fn retain_module(conn: &Connection, module_id: &str) -> CommandResult<()> {
         .map_err(db_err)?;
     let doc = Doc::new();
     let root = doc.get_or_insert_xml_fragment("default");
+    let foreign = conn
+        .prepare("select id from files where module_id <> ?1")
+        .map_err(db_err)?
+        .query_map([module_id], |row| row.get::<_, String>(0))
+        .map_err(db_err)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_err)?;
+    let canonical: std::collections::HashSet<&str> = foreign
+        .iter()
+        .filter(|id| id.len() == 36 && uuid::Uuid::parse_str(id).is_ok())
+        .map(String::as_str)
+        .collect();
+    let legacy: Vec<&str> = foreign
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !canonical.contains(id) && !id.is_empty())
+        .collect();
     for (index, bytes) in std::iter::once(state).chain(updates).enumerate() {
+        let mut deletions = None;
         if !bytes.is_empty() {
             let update = Update::decode_v1(&bytes).map_err(db_err)?;
             if index > 0 {
-                let known = doc.transact().state_vector();
-                // Do not let a delete conceal content that has never been
-                // observed in a preceding persisted revision, even if the
-                // decoder does not retain that deletion as pending.
-                if update.delete_set().iter().any(|(client, ranges)| {
-                    ranges.iter().any(|range| range.end > known.get(client))
-                }) {
-                    return Err(format!(
-                        "Out-of-order persisted image deletions in module {module_id}"
-                    ));
-                }
+                deletions = Some(update.delete_set().clone());
             }
             doc.transact_mut().apply_update(update).map_err(db_err)?;
         }
         let txn = doc.transact();
+        // A self-contained update can introduce structs and delete some of
+        // them in the same payload. Validate against the state after applying
+        // that payload, while still rejecting deletes whose inserts are absent.
+        if let Some(deletions) = deletions {
+            let known = txn.state_vector();
+            if deletions
+                .iter()
+                .any(|(client, ranges)| ranges.iter().any(|range| range.end > known.get(client)))
+            {
+                return Err(format!(
+                    "Out-of-order persisted image deletions in module {module_id}"
+                ));
+            }
+        }
         // An early delete may hide a later insertion before it ever appears in
         // the visible tree. A complete final state does not prove undo safety.
         if txn.has_missing_updates() {
             return Err(format!(
                 "Out-of-order persisted image history in module {module_id}"
             ));
+        }
+        // Version-1 Yjs strings are UTF-8 in the payload. Lease known foreign
+        // asset IDs even when their items are deleted by that same payload:
+        // they may still be held by the producer's live undo manager. Looking
+        // only at the final visible XML tree would miss those references.
+        let mut encoded_assets = std::collections::HashSet::new();
+        for candidate in bytes.windows(36) {
+            if [8, 13, 18, 23]
+                .iter()
+                .all(|&index| candidate[index] == b'-')
+            {
+                if let Ok(id) = std::str::from_utf8(candidate) {
+                    if canonical.contains(id) {
+                        encoded_assets.insert(id);
+                    }
+                }
+            }
+        }
+        for id in &legacy {
+            if bytes.windows(id.len()).any(|part| part == id.as_bytes()) {
+                encoded_assets.insert(*id);
+            }
+        }
+        for id in encoded_assets {
+            conn.execute(
+                "insert or ignore into shared_image_refs (module_id, file_id) values (?1, ?2)",
+                params![module_id, id],
+            )
+            .map_err(db_err)?;
         }
         for id in crate::files::assets::note_images(&root, &txn) {
             conn.execute(
@@ -76,7 +130,8 @@ pub fn retain_module(conn: &Connection, module_id: &str) -> CommandResult<()> {
             "Incomplete persisted image references in module {module_id}"
         ));
     }
-    Ok(())
+    let current_assets = crate::files::assets::note_images(&root, &doc.transact());
+    Ok(current_assets)
 }
 
 // Also bootstraps older notes that have never been opened by this version.

@@ -183,6 +183,74 @@ despite passing local simulator runs. Local commands still run the scenario.
 Remove the CI exclusion once that instability is resolved. Native unit tests and
 the mandatory two-database sync E2E test remain enabled.
 
+### Editable drawings
+
+In a note, choose **Note actions > Insert drawing**. Draw in the native
+PencilKit canvas with a compact custom toolbar (pen, pencil, marker, fixed
+ink colors, stroke width, erasing and lasso). Paper and drawing controls keep
+a light appearance with literal ink colors, including when the app uses dark
+mode. Floating Close, Done and options controls replace the navigation/status
+bar. Drawing options includes finger
+input, **Save a copy**, and geometry export. Paper fits the available width
+and scrolls vertically. Pinch zoom and horizontal panning are disabled; more
+blank paper is added automatically as writing or scrolling approaches the bottom.
+The selected tool, ink, width and finger-input preference are remembered on this
+device. Each drawing restores its own vertical position in document coordinates,
+including after rotation or app relaunch. These viewing preferences do not sync.
+
+**Done** saves the editable source and preview into the note. The first tap on a
+drawing selects it; tap it again or use the pencil button to reopen and update
+that same embed. Pencil and Delete stay together in the selection toolbar while
+other controls scroll horizontally when necessary. Returning from the canvas
+leaves the drawing deselected. Stroke-width options contain only width controls;
+ink colors live in the main toolbar. A note can contain multiple independent
+drawings. **Close** retains changed work as a local recovery draft; reopen the
+embed and choose Done to publish those changes. An untouched new drawing is
+removed when closed. Missing or corrupt sources never open as writable empty
+drawings; Retry can reopen a source that has finished downloading.
+
+Published source documents and PNG previews use immutable managed files and
+the normal encrypted file sync and backup paths. One versioned image attribute
+stores the source/preview pair. The core independently protects both assets
+from startup cleanup, including copies in other notes and retained undo history.
+Local recovery drafts are not synced or included in app backups. Drawing
+concurrency is revision-level: observed stale saves are rejected, with Save a
+copy available. Offline stroke-level merging is not implemented.
+Checkpoint encoding, source decoding, geometry export and preview rendering use
+immutable PencilKit snapshots off the main actor. A published checkpoint cannot
+be resurrected by a late autosave or remove newer recovery data. Publication
+enforces the sync protocol's 50 MB encrypted-file limit; an oversized drawing
+keeps its local recovery draft and offers the existing stroke export action.
+
+The earlier per-note prototype scratchpad remains available through **Import
+scratchpad** in notes that have one. Import creates an editable embed and leaves
+the original scratchpad intact. Images inserted by the earlier prototype remain
+ordinary snapshots.
+
+On Mac, insert drawings with the `/drawing` slash command. On iPad, use
+**Note actions → Insert drawing**. Select a drawing and use its pencil button (or
+click the selected drawing again) to edit with the native mouse/trackpad canvas.
+Pen, pencil, marker, whole-stroke eraser, undo/redo, fixed colors and stroke width
+operate on the same editable PencilKit archive as the iPad. Mac Close retains a
+local recovery draft; Done publishes a managed source/preview pair. Windows and
+Linux currently display previews and preserve editable source references.
+Clients predating the drawing schema/reference handling have not been
+validated for editing these notes. Source documents retain native PencilKit
+data; iPad publication also includes an optional geometry export for future adapters. Cross-renderer
+editing and stroke equivalence are not yet implemented.
+
+An isolated two-core test transfers the source/preview pair, edits the note on
+the second peer, transfers it back and reopens the source after restart. A
+desktop WebKit test independently verifies preview display and source-reference
+retention through text editing and reopening. These are not a live-account
+iPad-to-Mac cloud verification. A subsequent live-data investigation reproduced
+the storage failure: valid updates containing both new structs and their
+deletions were incorrectly rejected before applying the structs. The guard now
+checks the resulting state while retaining same-payload foreign asset references
+for undo. The original missing/out-of-order-history guards remain active.
+
+### Editor host
+
 CoreClient is an actor; opening and all Rust work run off the main actor.
 WebSession uses decoded JSON replies and safe JS
 arguments. It retains the editor across module switches, serializes open/flush,

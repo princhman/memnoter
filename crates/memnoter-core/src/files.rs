@@ -42,13 +42,22 @@ pub(crate) mod assets {
     ) -> std::collections::HashSet<String> {
         use yrs::{Any, Out, Xml, XmlFragment, XmlOut};
         root.successors(txn)
-            .filter_map(|node| {
+            .flat_map(|node| {
+                let mut ids = Vec::new();
                 if let XmlOut::Element(element) = node {
                     if let Some(Out::Any(Any::String(id))) = element.get_attribute(txn, "fileId") {
-                        return Some(id.to_string());
+                        ids.push(id.to_string());
+                    }
+                    if let Some(Out::Any(Any::Map(drawing))) = element.get_attribute(txn, "drawing")
+                    {
+                        for key in ["sourceId", "previewId"] {
+                            if let Some(Any::String(id)) = drawing.get(key) {
+                                ids.push(id.to_string());
+                            }
+                        }
                     }
                 }
-                None
+                ids
             })
             .collect()
     }
@@ -238,11 +247,14 @@ pub fn cleanup_files(
 
     // An invalid/incomplete persisted note cannot authorize asset destruction.
     asset_refs::retain_all(&conn, None)?;
+    // The core independently checks current references. An older UI may not
+    // understand drawing sources and propose them as unused cleanup candidates.
+    let current_assets = asset_refs::retain_module(&conn, module_id)?;
     let mut deleted = Vec::new();
     for id in file_ids {
         // Retain even retired faces: undo restores their ids/history and assets.
         let referenced = assets::referenced_by(&conn, id)?;
-        if referenced {
+        if referenced || current_assets.contains(id) {
             continue;
         }
         let path: Option<String> = conn

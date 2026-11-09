@@ -14,7 +14,7 @@ function ImageEditor() {
   const editor = useEditor({
     extensions: [StarterKit.configure({ undoRedo: false }), Collaboration.configure({ document: new Y.Doc() }), Flashcards, ItalicCaret, ImageMoveHistory, SavedImage, InlineImage],
     content: "<p>Image preview test</p>",
-    onCreate: ({ editor }) => Object.assign(window, { editor }),
+    onCreate: ({ editor }) => Object.assign(window, { editor, Y }),
   });
   return <TooltipProvider><EditorContent editor={editor} /></TooltipProvider>;
 }
