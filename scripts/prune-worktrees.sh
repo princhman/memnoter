@@ -35,7 +35,7 @@ esac
 backup() {
   local wt=$1 name index tree commit
   name=$(basename "$wt")
-  index=$(mktemp)
+  index=$(mktemp -u)
   GIT_INDEX_FILE=$index git -C "$wt" add -A
   tree=$(GIT_INDEX_FILE=$index git -C "$wt" write-tree)
   rm -f "$index"
@@ -44,6 +44,12 @@ backup() {
   echo "  backed up to refs/backup/worktrees/$name"
 }
 recent=$(( $(date +%s) - 3600 ))
+# Last checkout or commit (git status rewrites the index, so the git dir's own
+# mtime says nothing about whether an agent is using the worktree).
+last_used() {
+  local gitdir; gitdir=$(git -C "$1" rev-parse --git-dir)
+  stat -f %m "$gitdir/logs/HEAD" 2>/dev/null || stat -f %m "$gitdir/HEAD" 2>/dev/null || echo 0
+}
 
 git fetch --quiet origin 2>/dev/null || echo "warning: git fetch failed; using the last known origin/main" >&2
 main_wt=$(git rev-parse --show-toplevel)
@@ -68,7 +74,7 @@ while IFS= read -r line; do
     fi
   fi
   if [ -n "$reason" ] && [ "$all" = true ] && ! grep -qF "$wt" <<<"$busy" &&
-     [ "$(stat -f %m "$(git -C "$wt" rev-parse --git-dir)" 2>/dev/null || echo 0)" -lt "$recent" ]; then
+     [ "$(last_used "$wt")" -lt "$recent" ]; then
     echo "removable $wt ($reason, will back up)"
     [ "$apply" = true ] && backup "$wt"
     safe+=("$wt")
