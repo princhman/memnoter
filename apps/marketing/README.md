@@ -41,6 +41,7 @@ cd apps/marketing && npx wrangler@4 deploy
 ## Editing
 
 - `index.html`: copy, layout, metadata, and direct download links.
+- `support.html`: the support page at `/support`, also the App Store support URL.
 - `styles.css`: responsive styles and reduced-motion support.
 - `build.mjs`: asset packaging and verified release links.
 - `worker.js`: keeps download links on the latest release between deploys.
