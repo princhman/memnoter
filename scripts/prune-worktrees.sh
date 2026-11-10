@@ -3,6 +3,9 @@
 #
 #   scripts/prune-worktrees.sh            dry run: show what would go and why the rest stay
 #   scripts/prune-worktrees.sh --apply    remove the safe ones
+#   scripts/prune-worktrees.sh --all      back up, then remove every worktree except
+#                                         the main checkout, busy ones and ones
+#                                         touched in the last hour
 #
 # A worktree is "safe" only when ALL of these hold:
 #   - it has no uncommitted or untracked changes,
@@ -11,11 +14,36 @@
 #   - no process has its current directory inside it (no dev server running).
 # The main checkout is never touched. Branches are kept; only the worktree
 # directories (and their per-worktree target/ and node_modules/) go.
+#
+# --all backup: uncommitted changes (tracked and untracked, not ignored) and
+# commits not on any branch are saved as refs/backup/worktrees/<name>, which
+# survive the removal. Restore with
+#   git worktree add <dir> refs/backup/worktrees/<name>
+# List them with `git for-each-ref refs/backup/worktrees`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-apply=false
-[ "${1:-}" = "--apply" ] && apply=true
+apply=false all=false
+case "${1:-}" in
+  --apply) apply=true ;;
+  --all) apply=true all=true ;;
+  "") ;;
+  *) echo "unknown option: $1" >&2; exit 2 ;;
+esac
+
+# Save a worktree's full non-ignored state (HEAD plus uncommitted changes) as a ref.
+backup() {
+  local wt=$1 name index tree commit
+  name=$(basename "$wt")
+  index=$(mktemp)
+  GIT_INDEX_FILE=$index git -C "$wt" add -A
+  tree=$(GIT_INDEX_FILE=$index git -C "$wt" write-tree)
+  rm -f "$index"
+  commit=$(git -C "$wt" commit-tree "$tree" -p HEAD -m "Backup of worktree $wt before removal")
+  git update-ref "refs/backup/worktrees/$name" "$commit"
+  echo "  backed up to refs/backup/worktrees/$name"
+}
+recent=$(( $(date +%s) - 3600 ))
 
 git fetch --quiet origin 2>/dev/null || echo "warning: git fetch failed; using the last known origin/main" >&2
 main_wt=$(git rev-parse --show-toplevel)
@@ -39,7 +67,12 @@ while IFS= read -r line; do
       reason="a process is running inside it"
     fi
   fi
-  if [ -n "$reason" ]; then
+  if [ -n "$reason" ] && [ "$all" = true ] && ! grep -qF "$wt" <<<"$busy" &&
+     [ "$(stat -f %m "$(git -C "$wt" rev-parse --git-dir)" 2>/dev/null || echo 0)" -lt "$recent" ]; then
+    echo "removable $wt ($reason, will back up)"
+    [ "$apply" = true ] && backup "$wt"
+    safe+=("$wt")
+  elif [ -n "$reason" ]; then
     kept=$((kept + 1)); echo "keep     $wt ($reason)"
   else
     safe+=("$wt"); echo "removable $wt ($(du -sh "$wt" 2>/dev/null | cut -f1))"

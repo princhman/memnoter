@@ -3,7 +3,8 @@
 This code ships to desktop, iPad and iPhone at once.
 
 - **Parity.** Check a behaviour or styling change on desktop and iPad (and iPhone
-  for layout). Settings belong in Settings on every platform, not in toolbars.
+  for layout). Settings belong in Settings on every platform, not in toolbars. 
+  Make sure to consider Mac and Windows (through chrome run)
 - **Colour.** The accent is `--primary` in `src/App.css`. No default blue,
   violet or new purple shades. Primary buttons are purple.
 - **No decorative chrome.** No borders, dividers or outlines unless contrast

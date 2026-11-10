@@ -76,6 +76,34 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+  linear-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Linear scans commit history for issue IDs
+
+      - name: Find release notes
+        id: notes
+        env:
+          NOTES: docs/release-notes/${{ github.ref_name }}.md
+        run: |
+          if [[ -f "$NOTES" ]]; then
+            echo "path=$NOTES" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No $NOTES; Linear release will have no notes."
+          fi
+
+      - name: Linear Release
+        uses: linear/linear-release-action@v0.18.2
+        with:
+          access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
+          version: ${{ github.ref_name }}
+          release_notes: ${{ steps.notes.outputs.path }}
+
   ios-testflight:
     runs-on: macos-latest
     permissions:
