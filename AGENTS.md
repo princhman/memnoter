@@ -1,187 +1,58 @@
 # Agent guide
 
-Read this before working in the repo. Delegate briefs can say "follow AGENTS.md"
-instead of re-explaining the stack, the commands or the rules below. A brief only
-needs the task, its acceptance criteria, the branch, and anything that
-contradicts this file.
+Memnoter: a local-first notes app with spaced-repetition flashcards. This file
+is what every agent needs. Folder-specific rules live in `apps/shared-ui/AGENTS.md`
+and `apps/ios/AGENTS.md`. If you coordinate other agents or talk to the user
+directly (not as a delegate), also read `docs/agents/orchestrating.md`.
 
-## Stack
-
-Memnoter is a local-first notes app with spaced-repetition flashcards, and many more other features.
+## Layout
 
 | Path | What |
 | --- | --- |
-| `apps/shared-ui` | React + TipTap editor and app UI. Shared by desktop, iPad and iPhone. |
-| `apps/desktop` | Tauri shell for macOS and Windows. |
-| `apps/ios` | SwiftUI host for iPhone and iPad (one universal app). It embeds the shared-ui editor in a WKWebView. |
-| `apps/apple-shared` | Swift code shared by the Apple targets. |
-| `crates/memnoter-core` | Rust core: database, cards, sync engine, import. |
-| `crates/memnoter-ffi` | UniFFI bindings for the core, used by iOS. |
-| `apps/sync` | Cloudflare Worker + Durable Objects sync server (AGPL). |
-| `apps/marketing` | memnoter.com. Deployed by Cloudflare from `main`. |
-
-Most UI changes land in `apps/shared-ui` and so ship to **every** platform.
+| `apps/shared-ui` | React + TipTap editor and app UI, shared by desktop, iPad and iPhone. |
+| `apps/desktop` | Tauri shell (macOS, Windows). |
+| `apps/ios` | SwiftUI app for iPhone and iPad; embeds the shared-ui editor in a WKWebView. |
+| `crates/memnoter-core` | Rust core: database, cards, sync engine, import. `memnoter-ffi` = UniFFI for iOS. |
+| `apps/sync` | Cloudflare Worker sync server. |
+| `apps/marketing` | memnoter.com. |
 
 ## Commands
 
 | Command | Use |
 | --- | --- |
-| `pnpm dev` | Desktop app with hot reload, on the user's **real** notes. |
-| `pnpm dev:copy` | Desktop app on a fresh copy of the real notes. **Use this when you launch a branch for the user** (see Data safety). |
-| `pnpm check:ci` | **Run before opening or updating a PR.** Runs everything CI runs (see below). |
-| `pnpm check:ci --quick` | Skips the iOS build. For changes that don't touch `apps/ios`, `crates/` or the editor bridge. |
-| `pnpm test` | shared-ui tests only. Run one file with `node --experimental-strip-types --import ./tests/support/register.mjs --test tests/<name>.test.mjs` from `apps/shared-ui`. |
+| `pnpm check:ci` | Everything CI runs. Run before a PR; `--quick` skips the iOS build. |
+| `pnpm test` | shared-ui tests. One file: `node --experimental-strip-types --import ./tests/support/register.mjs --test tests/<name>.test.mjs` in `apps/shared-ui`. |
 | `cargo test -p memnoter-core` | Core tests. |
-| `scripts/ios-install.sh` | Build and install on the user's iPad; `--iphone` or `--all` for the phone (see Devices). |
-| `scripts/prune-worktrees.sh` | Dry run: list worktrees that are clean and fully merged. `--apply` deletes them; ask the user first. |
-| `scripts/preview-on-mac.sh` | Let the user try a branch on the Mac from another machine (see Machines). |
+| `pnpm dev:copy` | Desktop app on a copy of the user's notes. Use this, not `pnpm dev`, to run a branch. |
 
-`pnpm check` is the older, smaller set. It skips clippy, the sync-server
-typecheck and the iOS build, which caused most red CI runs, so use `check:ci`.
+Prefix cargo commands with `CARGO_BUILD_JOBS=4`; other agents share the machine.
+Never run a dev server in the foreground of a tool call.
 
-## How work ships
+## Shared checkout
 
-Unless the user says otherwise, finished work goes through these steps without
-waiting to be told each one:
+Other agents often have uncommitted work in the same checkout.
 
-1. Commit **only your own changes** on the feature branch. Other agents often
-   have uncommitted work in the same checkout. Never stage it, stash it,
-   reset it or revert it. If the user asks for "everything on the branch", list
-   what you'd include first.
-2. Run a sol loop (the `sol-loop` skill: a gpt-6.1-sol reviewer, then fix the findings you agree with).
-3. Run `pnpm check:ci`, then open a PR into `main` once you and the reviewer agree.
-4. Watch CI. If it goes red, fix it yourself. Don't report "CI failed" and stop.
-5. Merge when it's green, if the user approved the feature.
-6. Offer release notes. Ask before tagging a release or pushing to TestFlight.
-   Pushing a `v*` tag runs `release.yml`, which builds the desktop installers,
-   uploads to TestFlight and creates the Linear release. memnoter.com picks up
-   the newest GitHub release by itself, so it needs no redeploy.
-
-During hands-on testing sessions the user may say "just fix, don't test". Then
-compile only, install the build, and skip tests, the sol loop and CI waits.
-**Exception:** the iOS editor's scroll, keyboard and caret behaviour. Always
-cover those with `tests/editor-host.test.mjs` and simulator typing, because
-untested fixes there have repeatedly brought old bugs back.
+- Commit only your own changes. Never stage, stash, reset or revert anyone else's.
+- No `git stash` / `reset` / `checkout --` here. If it happened anyway, `touch`
+  changed Rust sources before rebuilding: cargo uses mtimes and reuses stale builds.
+- Don't add plans or notes to the repo; the backlog is in Linear.
 
 ## Data safety
 
-- `pnpm dev`, and any release build you run, opens the same database as the
-  installed `/Applications/Memnoter.app`. A branch that adds a migration then
-  moves that database forward, and the installed app refuses to start ("Database
-  schema is newer than this build"). This happened on 2026-11-09.
-- So when you launch a branch for the user to try, use `pnpm dev:copy`, unless
-  they ask to work on their real notes. If you did run a migration on the real
-  database, update `/Applications/Memnoter.app` to a build that knows it, or tell
-  the user.
-- Older builds delete Yjs nodes and marks they don't know when they load a note,
-  and that deletion syncs. Before releasing a new node, mark or attribute, say
-  so, and update all of the user's devices first.
-
-## Where work lives
-
-- **Backlog, bugs and roadmap are in Linear**, not in `plan.md`. `plan.md` is
-  gitignored and retired. Add new items to Linear rather than to a file.
-- Don't add plans, audits or research notes to the repo root. Put them in your
-  scratchpad, a Linear document, or a PR description.
-- Make requested changes in the checkout the user is looking at. If you need a
-  separate worktree, say so up front and bring the result back before calling it
-  done. Work that only exists in a side worktree counts as not done.
-- Never `git stash`, `reset` or `checkout --` in a checkout that other agents
-  share. If you must, `touch` the changed Rust sources afterwards, because cargo
-  goes by mtime and will otherwise silently reuse stale builds.
-
-## Product rules the user keeps repeating
-
-- **Platform parity.** A change to shared UI behaviour or styling must be
-  checked on desktop *and* iPad (and iPhone if it touches layout). Settings
-  live in Settings on every platform. Example: chapter numbering is a setting,
-  not a toolbar control.
-- **Colour.** The accent is the `--primary` purple in `apps/shared-ui/src/App.css`
-  (`Color("BrandAccent")` on iOS). Never use default
-  blue, violet or a new purple shade. Primary buttons (Done, Save) are purple.
-- **No decorative chrome.** No borders, dividers, outlines or bubbles unless
-  there is too little contrast without them. Don't re-add an outline that was
-  removed.
-- **Native feel on iOS.** Use system navigation patterns and glass materials,
-  not web-style bars. Keep toolbars stable: they scroll horizontally rather
-  than hiding or reshuffling buttons when space runs out.
-- **Contrast.** Check both light and dark mode. The user should never have to
-  squint at selected or highlighted states.
-- Show before/after screenshots for visual changes when the user asks to see
-  options.
+- `pnpm dev` and release builds open the user's real database. A migration run
+  there stops the installed app from starting. Use `pnpm dev:copy`.
+- Older builds delete Yjs nodes, marks and attributes they don't know, and the
+  deletion syncs. If you add one, say so in your report.
 
 ## Tests
 
-- Add a regression test for a real bug, especially editor, sync and data-loss
-  bugs. Prefer extending an existing test file.
-- Don't add tests for one-off visual tweaks or for things the type system
-  already guarantees. The user counts redundant tests as wasted compute (see
-  the `test-audit` skill).
-- The browser suites are timing-sensitive under load. If a test fails, rerun it
-  alone before assuming your change broke it, and say which you did.
+- Add a regression test for a real bug (editor, sync, data loss), preferably in
+  an existing file. No tests for one-off visual tweaks.
+- Browser suites are timing-sensitive. Rerun a failure alone before blaming your
+  change, and say which you did.
+- If the brief says "fix only, don't test", compile and stop.
 
-## Machines
+## Report
 
-- **Mac** (the user sits here): Xcode, simulators, the user's real iPad, the
-  desktop app the user tests. Everything Apple builds here.
-- **minipc** (Linux, `princhman-minipc`): TypeScript, Rust and the sync worker.
-  It can't build iOS, and its local WebKit fails a few UI tests even on clean
-  `main`. Don't count those as regressions.
-- To let the user try minipc work on the Mac, run `scripts/preview-on-mac.sh push`
-  from minipc. If no preview is running on the Mac yet, launch **one** Mac thread to run
-  `scripts/preview-on-mac.sh serve <branch>`. After that the Mac follows the
-  branch by itself, so later pushes need no new thread. Never start a
-  long-running dev server in the foreground of a tool call.
-
-## Load and parallel agents
-
-- Run no more than **3 heavy delegates** (anything that runs cargo, `pnpm build`,
-  the browser suites or xcodebuild) on one machine at a time. With 9–12 at once the
-  Mac reached a load average of 330 and single-line edits took 20 minutes.
-  Queue the rest, or send TS/Rust-only work to minipc.
-- Prefix heavy commands with `CARGO_BUILD_JOBS=4` when other agents are running.
-
-## Delegation
-
-- A delegate's final report must contain its final result: commit SHA, verdict,
-  what's left. Never end on "a test run will notify me". Finish waiting first.
-- After a delegate reports, read its final message before telling the user
-  anything. If it says work is still running, check its thread again before
-  saying "waiting".
-- If a delegate fails the same task once, take it over yourself instead of
-  delegating it a second time. This matters most for hangs, freezes and
-  native-only bugs.
-
-## Writing a delegate brief
-
-With this file in place a brief needs only:
-
-1. **Task** and why, in the user's words where possible (quote the complaint).
-2. **Done means**: what the user should see, on which platforms.
-3. **Where**: checkout or branch, and whether to commit.
-4. **Mode**: normal ship flow, or "fix only, compile, don't test, don't wait for
-   CI" during a testing session.
-5. Anything that **overrides** this file.
-
-End the brief with: "Report the commit SHA, what you verified and what you
-didn't. Don't end on a pending wait."
-
-## Tools
-
-- MCP servers added during a session (Linear, for example) don't appear in that
-  session. If a tool you expect is missing, tell the user to reconnect it in
-  `/mcp` or start a new thread, rather than working around it.
-
-## Devices
-
-- The user's physical iPad Air is "my iPad", and the iPhone 11 ("The best phone
-  ever") is "my phone". Install with `scripts/ios-install.sh` (`--iphone`,
-  `--all`). It prints the commit it installed, and Settings →
-  About shows the same build stamp, so "is this the latest build?" can be
-  checked.
-- When the user says "nothing changed", first compare the build stamp on their
-  screen with the commit you installed, and check you installed to the device they're
-  looking at.
-- Simulators: use T3 device tools. Never close or reuse another agent's open
-  device session. If you get `DEVICE_IN_USE`, wait or ask. Don't take it over.
-  See `apps/ios/README.md` for the retained simulator ids.
+End with: commit SHA (or "uncommitted"), what you verified, what you didn't.
+Never end on a pending wait; finish waiting first.
