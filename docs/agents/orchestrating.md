@@ -23,6 +23,23 @@ delegates fix and compile only: no tests, no sol loop, no CI waits. Install the
 build so they can try it. The editor scroll/caret exception in
 `apps/shared-ui/AGENTS.md` still applies.
 
+## Linear
+
+- When the user reports a bug or request mid-session, file it in Linear before
+  or while delegating: team **I build (PRI)**, project **memnoter.com**, label
+  **Bug** plus the relevant platform label (for example `windows` or `marketing`).
+  Put the issue ID in the delegate brief so it survives chat summaries.
+- Start branches from the issue: `pri-<n>-<slug>` or Linear's suggested branch
+  name (for example `novvladkyiv/pri-336-when-type-after-latex-expression-it`).
+- Include `Fixes PRI-<n>` in the PR title or body so GitHub and Linear link the
+  work and close the issue through the team's configured merge automation.
+- Delegates report the issue ID back with their result.
+- Preserve issue IDs or PR numbers in merge/squash commits. For rebase merges,
+  keep `Fixes PRI-<n>` in commit messages so release scanning can find the issues.
+- Release notes come from the shipped issues in Linear. Enable automatic notes
+  and set the notes template in the release pipeline settings; the tag workflow
+  syncs the issues without uploading hand-written notes.
+
 ## Delegating
 
 - Default workhorse: gpt-6.1-sol via `delegate_task`. Delegate mechanical work.
