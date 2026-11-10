@@ -63,6 +63,17 @@ devices.
 - **Sync E2E** (`testTwoNativeDatabasesMergeConcurrentYjsEdits`) needs a local
   Worker on port 8787 with `DEV_RETURN_CODE=1` in `apps/sync/.dev.vars`. Start
   it with `pnpm dev:sync`. The test skips if the Worker is unreachable.
+  For a test-owned Worker with auth readiness checks and cleanup, run from the
+  repository root after building the app dependencies:
+
+  ```sh
+  ./scripts/ensure-sync-vars.sh
+  node scripts/ios-test-with-worker.mjs xcodebuild test \
+    -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
+    -destination id=11A89810-6F0B-48A8-8A30-B699FDB4C5F0 \
+    -derivedDataPath apps/ios/build -parallel-testing-enabled NO
+  ```
+
 - **Keychain:** unsigned builds (`CODE_SIGNING_ALLOWED=NO`) can lack Keychain
   entitlements. Those tests then skip on `errSecMissingEntitlement` only. Leave
   out that flag for real Keychain coverage.

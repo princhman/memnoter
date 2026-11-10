@@ -106,7 +106,6 @@ jobs:
           PYTHON
           )
           echo "IOS_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
-          xcrun simctl boot "$simulator_id"
           xcrun simctl bootstatus "$simulator_id" -b
       - name: Build iOS tests
         run: |
