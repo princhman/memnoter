@@ -5,6 +5,7 @@
 #   scripts/ios-install.sh               iPad Air (default)
 #   scripts/ios-install.sh --iphone      iPhone 11
 #   scripts/ios-install.sh --all         both devices, one build
+#   scripts/ios-install.sh --live        use the running pnpm dev:device server
 #   scripts/ios-install.sh --core        also rebuild the Rust core (after crates/ changes)
 #
 # IOS_DEVICE_ID   overrides the device list (see `xcrun devicectl list devices`)
@@ -18,8 +19,10 @@ devices=()
 team=${IOS_TEAM_ID:-BVQCX5TLX3}
 bundle_id=com.vladyslavnalyvaiko.memnoter.ipad
 core=false
+live=false
 for arg in "$@"; do
   case "$arg" in
+    --live) live=true ;;
     --core) core=true ;;
     --ipad) devices+=("$ipad") ;;
     --iphone) devices+=("$iphone") ;;
@@ -30,6 +33,14 @@ done
 
 if [ -n "${IOS_DEVICE_ID:-}" ]; then devices=("$IOS_DEVICE_ID"); fi
 if [ ${#devices[@]} -eq 0 ]; then devices=("$ipad"); fi
+live_url=""
+if [ "$live" = true ]; then
+  live_url=${IOS_EDITOR_DEV_URL:-$(cat .ios-live/url 2>/dev/null || true)}
+  if [ -z "$live_url" ] || ! curl --fail --silent --max-time 3 "$live_url/editor.html" >/dev/null; then
+    echo "Start pnpm dev:device first (or set IOS_EDITOR_DEV_URL to its URL)." >&2
+    exit 1
+  fi
+fi
 connected=$(xcrun devicectl list devices 2>/dev/null)
 for device in "${devices[@]}"; do
   if ! grep -q "$device" <<<"$connected"; then
@@ -49,7 +60,7 @@ log="${TMPDIR:-/tmp}/memnoter-ios-install.log"
 echo "Building for ${devices[*]} (log: $log)"
 if ! xcodebuild -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
   -destination "generic/platform=iOS" -derivedDataPath apps/ios/build-device \
-  -allowProvisioningUpdates DEVELOPMENT_TEAM="$team" build > "$log" 2>&1; then
+  -configuration Debug -allowProvisioningUpdates DEVELOPMENT_TEAM="$team" MEMNOTER_EDITOR_DEV_URL="$live_url" build > "$log" 2>&1; then
   grep -E "error:|BUILD FAILED" "$log" | head -20
   exit 1
 fi

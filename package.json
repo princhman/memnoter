@@ -21,7 +21,8 @@
     "tauri": "tauri",
     "sync-version": "node scripts/sync-version.mjs",
     "version": "node scripts/sync-version.mjs",
-    "check:ci": "./scripts/check-ci.sh"
+    "check:ci": "./scripts/check-ci.sh",
+    "dev:device": "node scripts/dev-device.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",
