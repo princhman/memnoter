@@ -26,6 +26,8 @@ directly (not as a delegate), also read `docs/agents/orchestrating.md`.
 | `pnpm dev:copy` | Desktop app on a copy of the user's notes. Use this, not `pnpm dev`, to run a branch. |
 
 Prefix cargo commands with `CARGO_BUILD_JOBS=4`; other agents share the machine.
+On the Mac, cargo goes through sccache, so a fresh worktree reuses compiled
+dependencies. Don't set `CARGO_TARGET_DIR`; it changes the cache key.
 Never run a dev server in the foreground of a tool call.
 
 ## Shared checkout

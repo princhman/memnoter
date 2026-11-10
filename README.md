@@ -74,9 +74,7 @@ changes with it. Everything stays on your machine.
   (<kbd>⌘</kbd><kbd>⌥</kbd><kbd>M</kbd>), rendered with KaTeX.
 - Foldable sections. Each module reopens where you left it, with the same
   scroll position and folds.
-- The desktop Contents panel uses compact section actions and a subtle purple
-  reading highlight. Hover a row or reach it by keyboard to focus that section;
-  its Unfocus control stays visible while focused. Touch controls stay visible.
+- A Contents panel to jump to or focus on one section.
 - <kbd>⌘</kbd><kbd>K</kbd> opens one palette that searches module titles, note
   text and math, and also runs commands.
 
@@ -100,7 +98,7 @@ changes with it. Everything stays on your machine.
 > **Before updating to 0.1.4:** update every device before using tables,
 > highlights, foldable blocks, PDF quotes or drawings. Builds before 0.1.4 can
 > delete content they do not recognize. Version 0.1.4 and later open notes with
-> unsupported content read-only instead. See the [0.1.4 release notes](docs/release-notes/v0.1.4.md).
+> unsupported content read-only instead. See the [0.1.4 release notes](https://github.com/princhman/memnoter/releases/tag/v0.1.4).
 
 ## Install
 
@@ -161,13 +159,14 @@ pnpm dev            # run the desktop app with hot reload
 | Command | Runs |
 | --- | --- |
 | `pnpm dev` | Desktop app |
+| `pnpm dev:copy` | Desktop app on a fresh copy of your notes |
 | `pnpm dev:ui` | Shared UI in a browser, without native data |
 | `pnpm dev:sync` | Sync server on port 8787 |
 | `pnpm dev:sync-test` | Sync server and two desktop copies, with throwaway data |
 | `pnpm dev:marketing` | Build and serve the marketing site on port 4173 |
 | `pnpm dev:ios` | Build the iPad dependencies and open Xcode |
 | `pnpm check:ci` | Everything CI runs: lint, build, tests, clippy, sync typecheck and the iOS build |
-| `scripts/ios-install.sh` | Build and install on a connected iPad |
+| `scripts/ios-install.sh` | Build and install on your iPad (`--iphone`, `--all`) |
 | `scripts/preview-on-mac.sh` | Follow a branch pushed from another machine in a desktop preview |
 
 Before opening a pull request:
@@ -186,28 +185,3 @@ The Memnoter app, including the shared sync client and protocol in
 The server in [`apps/sync/`](apps/sync/) is licensed separately under
 [GNU AGPL-3.0](apps/sync/LICENSE). Self-hosting is free; anyone running a
 modified copy as a service must publish their changes.
-
-## Native iPad app and shared core
-
-See [apps/ios/README.md](apps/ios/README.md) for the native SwiftUI iPad app and build instructions, and [crates/memnoter-core/README.md](crates/memnoter-core/README.md) for the shared Rust core and dispatch API.
-
-
-### Import an Obsidian folder (desktop)
-
-Choose **Import folder…** in the new-module dialog, the command palette, or
-**File → Import Folder…**. Select the folder itself. Memnoter creates one new
-module, shows progress and a summary, then opens it. Existing module names get
-a numeric suffix.
-
-The folder's matching hub note comes first. Root notes and nonempty subfolders
-become sections, ordered naturally; numeric folder prefixes are hidden in section
-titles. Nested notes retain their headings below their section. Markdown tables,
-yellow highlights, code and supported local images are preserved. PNG, JPEG,
-WebP and GIF files are copied into managed storage; unresolved images become
-readable placeholders. PDFs, text exports and other files are listed in the
-summary and are not imported. Hidden folders and symbolic links are skipped.
-The source folder is read-only; a failed import removes its partial module.
-
-Importer tests use a synthetic folder. Real-folder verification runs when the
-local COMP0002 folder exists, or when `MEMNOTER_IMPORT_FOLDER` points to it.
-No source notes or attachments are stored in this repository.

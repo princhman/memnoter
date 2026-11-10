@@ -54,6 +54,17 @@ Don't restate the stack, commands or rules; the delegate already has them.
 - `scripts/prune-worktrees.sh` lists clean, merged worktrees; `--apply` deletes
   them. Ask the user first.
 
+## Keeping the guides current
+
+- When the user repeats a direction or corrects how agents work, add it to the
+  narrowest guide that needs it (`apps/*/AGENTS.md` before the root file, this
+  file for orchestration only), in the same change. Memory alone doesn't reach
+  delegates.
+- Keep the guides short. Remove a rule when it stops being true.
+- READMEs describe how to build, run and test, plus a short architecture note.
+  Verification logs, screenshot lists and design narration go in the PR
+  description, never a README. Tell delegates the same when they touch docs.
+
 ## Machines
 
 - **Mac** (the user sits here): Xcode, simulators, the user's devices, the
