@@ -7,7 +7,7 @@ contradicts this file.
 
 ## Stack
 
-Memnoter is a local-first notes app with spaced-repetition flashcards.
+Memnoter is a local-first notes app with spaced-repetition flashcards, and many more other features.
 
 | Path | What |
 | --- | --- |
@@ -26,12 +26,14 @@ Most UI changes land in `apps/shared-ui` and so ship to **every** platform.
 
 | Command | Use |
 | --- | --- |
-| `pnpm dev` | Desktop app with hot reload. |
+| `pnpm dev` | Desktop app with hot reload, on the user's **real** notes. |
+| `pnpm dev:copy` | Desktop app on a fresh copy of the real notes. **Use this when you launch a branch for the user** (see Data safety). |
 | `pnpm check:ci` | **Run before opening or updating a PR.** Runs everything CI runs (see below). |
 | `pnpm check:ci --quick` | Skips the iOS build. For changes that don't touch `apps/ios`, `crates/` or the editor bridge. |
 | `pnpm test` | shared-ui tests only. Run one file with `node --experimental-strip-types --import ./tests/support/register.mjs --test tests/<name>.test.mjs` from `apps/shared-ui`. |
 | `cargo test -p memnoter-core` | Core tests. |
-| `scripts/ios-install.sh` | Build and install on the user's real iPad (see Devices). |
+| `scripts/ios-install.sh` | Build and install on the user's iPad; `--iphone` or `--all` for the phone (see Devices). |
+| `scripts/prune-worktrees.sh` | Dry run: list worktrees that are clean and fully merged. `--apply` deletes them; ask the user first. |
 | `scripts/preview-on-mac.sh` | Let the user try a branch on the Mac from another machine (see Machines). |
 
 `pnpm check` is the older, smaller set. It skips clippy, the sync-server
@@ -51,12 +53,42 @@ waiting to be told each one:
 4. Watch CI. If it goes red, fix it yourself. Don't report "CI failed" and stop.
 5. Merge when it's green, if the user approved the feature.
 6. Offer release notes. Ask before tagging a release or pushing to TestFlight.
+   Pushing a `v*` tag runs `release.yml`, which builds the desktop installers,
+   uploads to TestFlight and creates the Linear release. memnoter.com picks up
+   the newest GitHub release by itself, so it needs no redeploy.
 
 During hands-on testing sessions the user may say "just fix, don't test". Then
 compile only, install the build, and skip tests, the sol loop and CI waits.
 **Exception:** the iOS editor's scroll, keyboard and caret behaviour. Always
 cover those with `tests/editor-host.test.mjs` and simulator typing, because
 untested fixes there have repeatedly brought old bugs back.
+
+## Data safety
+
+- `pnpm dev`, and any release build you run, opens the same database as the
+  installed `/Applications/Memnoter.app`. A branch that adds a migration then
+  moves that database forward, and the installed app refuses to start ("Database
+  schema is newer than this build"). This happened on 2026-11-09.
+- So when you launch a branch for the user to try, use `pnpm dev:copy`, unless
+  they ask to work on their real notes. If you did run a migration on the real
+  database, update `/Applications/Memnoter.app` to a build that knows it, or tell
+  the user.
+- Older builds delete Yjs nodes and marks they don't know when they load a note,
+  and that deletion syncs. Before releasing a new node, mark or attribute, say
+  so, and update all of the user's devices first.
+
+## Where work lives
+
+- **Backlog, bugs and roadmap are in Linear**, not in `plan.md`. `plan.md` is
+  gitignored and retired. Add new items to Linear rather than to a file.
+- Don't add plans, audits or research notes to the repo root. Put them in your
+  scratchpad, a Linear document, or a PR description.
+- Make requested changes in the checkout the user is looking at. If you need a
+  separate worktree, say so up front and bring the result back before calling it
+  done. Work that only exists in a side worktree counts as not done.
+- Never `git stash`, `reset` or `checkout --` in a checkout that other agents
+  share. If you must, `touch` the changed Rust sources afterwards, because cargo
+  goes by mtime and will otherwise silently reuse stale builds.
 
 ## Product rules the user keeps repeating
 
@@ -120,10 +152,31 @@ untested fixes there have repeatedly brought old bugs back.
   delegating it a second time. This matters most for hangs, freezes and
   native-only bugs.
 
+## Writing a delegate brief
+
+With this file in place a brief needs only:
+
+1. **Task** and why, in the user's words where possible (quote the complaint).
+2. **Done means**: what the user should see, on which platforms.
+3. **Where**: checkout or branch, and whether to commit.
+4. **Mode**: normal ship flow, or "fix only, compile, don't test, don't wait for
+   CI" during a testing session.
+5. Anything that **overrides** this file.
+
+End the brief with: "Report the commit SHA, what you verified and what you
+didn't. Don't end on a pending wait."
+
+## Tools
+
+- MCP servers added during a session (Linear, for example) don't appear in that
+  session. If a tool you expect is missing, tell the user to reconnect it in
+  `/mcp` or start a new thread, rather than working around it.
+
 ## Devices
 
-- The user's physical iPad Air is the default "my iPad". Install with
-  `scripts/ios-install.sh`. It prints the commit it installed, and Settings →
+- The user's physical iPad Air is "my iPad", and the iPhone 11 ("The best phone
+  ever") is "my phone". Install with `scripts/ios-install.sh` (`--iphone`,
+  `--all`). It prints the commit it installed, and Settings →
   About shows the same build stamp, so "is this the latest build?" can be
   checked.
 - When the user says "nothing changed", first compare the build stamp on their
