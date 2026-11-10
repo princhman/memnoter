@@ -397,11 +397,28 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
             const placed = await tapPage.evaluate(() => ({ text: getSelection().focusNode.textContent, offset: getSelection().focusOffset }));
             if (scenario === 'late opening') await tapPage.waitForTimeout(450);
             const steps = scenario === 'stepped opening' ? [80, 180, keyboard, keyboard + 76] : [keyboard + 76];
-            for (const inset of steps) {
-              await tapPage.evaluate(inset => window.memnoterEditor.setBottomInset(inset), inset);
-              await tapPage.waitForTimeout(30);
+            if (scenario === 'stepped opening') {
+              // Schedule the animation in the browser. Round trips through Node
+              // can stretch a 30ms gap past the production 100ms quiet window.
+              await tapPage.evaluate(async steps => {
+                for (const inset of steps) {
+                  window.memnoterEditor.setBottomInset(inset);
+                  await new Promise(resolve => setTimeout(resolve, 30));
+                }
+              }, steps);
+              await tapPage.waitForFunction(() => {
+                const container = document.querySelector('.app-scroll-container');
+                const rect = getSelection().getRangeAt(0).getClientRects()[0];
+                const limit = container.getBoundingClientRect().bottom - Number(container.dataset.bottomInset) - 24;
+                return rect && rect.bottom <= limit + 1 && rect.bottom >= limit - 2;
+              });
+            } else {
+              for (const inset of steps) {
+                await tapPage.evaluate(inset => window.memnoterEditor.setBottomInset(inset), inset);
+                await tapPage.waitForTimeout(30);
+              }
+              await tapPage.waitForTimeout(250);
             }
-            await tapPage.waitForTimeout(250);
             const result = await tapPage.evaluate(() => {
               const container = document.querySelector('.app-scroll-container');
               const selection = getSelection();

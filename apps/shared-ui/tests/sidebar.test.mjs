@@ -10,14 +10,14 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await server?.close(); });
 
-// A sidebar stored in localStorage, optionally starting with `seed` items; saving takes `delay` ms.
-const useSidebarStore = (page, seed = [], delay = 0) => page.addInitScript(([seed, delay]) => {
+// Hold saves explicitly when testing the optimistic layout before persistence.
+const useSidebarStore = (page, seed = [], holdSaves = false) => page.addInitScript(([seed, holdSaves]) => {
   if (localStorage.getItem('sidebar') === null && seed.length) localStorage.setItem('sidebar', JSON.stringify(seed));
   window.installTestBridge({ tauri: { invoke: async (command, args) => {
     const items = JSON.parse(localStorage.getItem('sidebar') ?? '[]');
     if (command === 'sidebar_items') return items;
     if (command === 'save_sidebar_items') {
-      await new Promise(resolve => setTimeout(resolve, delay));
+      if (holdSaves) await new Promise(resolve => { window.releaseSidebarSave = resolve; });
       for (const item of args.items) {
         const index = items.findIndex(entry => entry.id === item.id);
         if (index < 0) items.push(item); else items[index] = item;
@@ -27,7 +27,7 @@ const useSidebarStore = (page, seed = [], delay = 0) => page.addInitScript(([see
     }
     return [];
   } } });
-}, [seed, delay]);
+}, [seed, holdSaves]);
 
 test('sidebar creates, renames, collapses and deletes folders while preserving modules and reloads order', async () => {
   const page = await browser.newPage();
@@ -142,8 +142,8 @@ test('a dragged module is previewed under the pointer, also while over a folder'
 
 test('a reordered row stays where it was dropped while the change is still being saved', async () => {
   const page = await browser.newPage();
-  // A slow save: until it finishes the list must not fall back to the old order and then jump.
-  await useSidebarStore(page, [], 1500);
+  // Keep the save pending until the optimistic layout has been observed.
+  await useSidebarStore(page, [], true);
   try {
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/sidebar.html`);
     const row = id => page.locator(`[data-sidebar-item="${id}"]`).first();
@@ -165,11 +165,13 @@ test('a reordered row stays where it was dropped while the change is still being
       record();
     });
     await page.mouse.up();
-    await page.waitForTimeout(400);
+    await page.waitForFunction(() => window.releaseSidebarSave && window.frameOrders.filter(frame => !frame.dragging).length > 5);
     // After the drop (the save is still running) the rows are already in their new order, in every frame.
     const afterDrop = (await page.evaluate(() => window.frameOrders)).filter(frame => !frame.dragging);
     assert.ok(afterDrop.length > 5, 'frames were recorded after the drop');
     assert.deepEqual([...new Set(afterDrop.map(frame => frame.order))], ['2,0,1'], 'rows never fall back to the old order');
+    assert.equal(await page.evaluate(() => localStorage.getItem('sidebar')), null, 'save remains pending during the frame assertions');
+    await page.evaluate(() => window.releaseSidebarSave());
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('sidebar') ?? '[]').some(item => item.id === '2' && item.sort_order === 0), null, { timeout: 5000 });
     assert.deepEqual(await order(), ['2', '0', '1'], 'and stays so once saved');
   } finally { await page.close(); }
