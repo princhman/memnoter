@@ -278,7 +278,7 @@ struct RootView: View {
                     Spacer()
                     Text("\(store.counts.reduce(0) { $0 + $1.learning }) / \(store.counts.reduce(0) { $0 + $1.review }) / \(store.counts.reduce(0) { $0 + $1.new })")
                         .monospacedDigit().foregroundStyle(.secondary)
-                        .accessibilityLabel("Learn / due / new")
+                        .accessibilityLabel("\(store.counts.reduce(0) { $0 + $1.learning }) learn, \(store.counts.reduce(0) { $0 + $1.review }) due, \(store.counts.reduce(0) { $0 + $1.new }) new")
                 }
             }
             destinationLink("files") { Label("Files", systemImage: "doc.text") }

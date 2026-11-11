@@ -25,19 +25,16 @@ export function useCardReveal(editor: Editor | null, moduleId: string, ready: bo
     const card = parseCardId(request.cardId);
     let start: number | null = null;
     let end: number | null = null;
-    let blockPosition = 0;
     let image = false;
     editor.state.doc.descendants((node, pos) => {
       if (start !== null) return false;
       if (card.kind === "occlusion" && node.attrs.imageId === card.blockId) {
         start = pos;
-        blockPosition = pos;
         image = true;
         return false;
       }
       if (!node.isTextblock) return true;
       if (node.attrs.cardId === card.blockId) {
-        blockPosition = pos;
         start = pos + 1;
         if (card.kind === "cloze") {
           const cloze = clozeIdsOf(node).find(entry => entry.id === card.clozeId);
@@ -58,16 +55,14 @@ export function useCardReveal(editor: Editor | null, moduleId: string, ready: bo
     else chain.setTextSelection({ from: start, to: end ?? start }).run();
     editor.view.focus();
 
-    // Align the source block instead of only revealing the caret's nearest edge.
-    const position = blockPosition;
-    {
-      if (editor.isDestroyed || !editor.view.dom.isConnected) return;
-      const container = editorHost.scrollContainer(editor.view.dom);
-      const block = editor.view.nodeDOM(position);
-      if (!container || !(block instanceof HTMLElement)) return;
-      const top = container.getBoundingClientRect().top + container.clientTop;
-      container.scrollTop += block.getBoundingClientRect().top - top
-        - Math.min(96, container.clientHeight / 4);
-    }
+    // Clozes can sit deep inside a paragraph taller than the viewport.
+    // Align the selected answer, rather than the beginning of its block.
+    if (!editor.view.dom.isConnected) return;
+    const container = editorHost.scrollContainer(editor.view.dom);
+    if (!container) return;
+    const target = editor.view.coordsAtPos(start);
+    const top = container.getBoundingClientRect().top + container.clientTop;
+    container.scrollTop += target.top - top
+      - Math.min(96, container.clientHeight / 4);
   }, [editor, moduleId, ready, request]);
 }

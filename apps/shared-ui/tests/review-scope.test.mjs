@@ -221,7 +221,7 @@ test("go to card selects its cloze in a long note; counts read learn / due / new
   const doc = new Y.Doc();
   doc.getXmlFragment('default').insert(0, Array.from({ length: 75 }, (_, i) => {
     const block = new Y.XmlElement('paragraph'), text = new Y.XmlText();
-    text.insert(0, i === 55 ? 'First {{Paris}} then {{London}}' : `Note paragraph ${i}`);
+    text.insert(0, i === 55 ? 'First {{Paris}} ' + 'A long paragraph before the target. '.repeat(650) + 'then {{London}}' : `Note paragraph ${i}`);
     block.insert(0, [text]);
     if (i === 55) block.setAttribute('cardId', 'target');
     return block;
@@ -231,7 +231,6 @@ test("go to card selects its cloze in a long note; counts read learn / due / new
   for (const theme of ['light', 'dark']) {
     const page = await browser.newPage({ viewport: { width: 1100, height: 750 }, colorScheme: theme });
     await page.addInitScript(({ state, theme }) => {
-      localStorage.setItem('theme', theme);
       Object.defineProperty(navigator, 'platform', { value: 'MacIntel' });
       window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command.startsWith('plugin:')) return 1;
@@ -265,7 +264,7 @@ test("go to card selects its cloze in a long note; counts read learn / due / new
       await page.waitForFunction(() => document.getSelection()?.toString() === 'London');
       const geometry = await page.locator('[data-card-id="target"]').evaluate(node => {
         const scroll = node.closest('.app-scroll-container');
-        const rect = node.getBoundingClientRect(), bounds = scroll.getBoundingClientRect();
+        const rect = document.getSelection().getRangeAt(0).getBoundingClientRect(), bounds = scroll.getBoundingClientRect();
         return { top: rect.top, bottom: rect.bottom, viewportTop: bounds.top, viewportBottom: bounds.bottom, scrollTop: scroll.scrollTop };
       });
       assert.ok(geometry.scrollTop > 0);

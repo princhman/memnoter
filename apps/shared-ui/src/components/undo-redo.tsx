@@ -6,7 +6,7 @@ import { useEditorState } from "@tiptap/react";
 import { useSelector } from "@tanstack/react-store";
 import { reviewActionsStore } from "@/lib/review-actions";
 
-// Undo and redo for the open note, or for grades while reviewing, where an
+// Undo and redo for the open note, or for grades while reviewing, where a
 // go-to action also opens the shown card in its note.
 export function UndoRedo() {
   const { activeEditor } = useActiveEditor();
