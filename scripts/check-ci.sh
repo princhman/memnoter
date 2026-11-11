@@ -30,7 +30,7 @@ run() {
 # Job: check (macos-latest)
 run "build" pnpm build
 run "lint" pnpm lint
-run "shared-ui tests" pnpm test
+run "shared-ui tests" pnpm --filter memnoter-shared-ui test:ci
 run "cargo test" cargo test --workspace
 run "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
 
