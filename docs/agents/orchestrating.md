@@ -13,7 +13,9 @@ being asked each time:
 2. Run a sol loop (the `sol-loop` skill), fixing the findings you agree with.
 3. `pnpm check:ci`, then open a PR into `main`.
 4. Watch CI and fix red checks yourself.
-5. Merge when green, if the user approved the feature.
+5. Merge when green, if the user approved the feature. A PR with any issue in
+   Linear **In Review** (a visual change) waits until the user has looked at
+   it; behaviour-only PRs merge on green.
 6. Offer release notes. Ask before tagging. A `v*` tag runs `release.yml`:
    desktop installers, TestFlight and the Linear release. memnoter.com follows
    the latest GitHub release by itself.
