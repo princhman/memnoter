@@ -35,7 +35,7 @@ test("card popup omits empty headings and new badges while retaining answers and
   }
 });
 
-test("a foldable block becomes one cloze note and stays one when folded", async () => {
+test("a foldable block becomes one cloze note and stays one when folded, and a formula becomes a cloze", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const server = await createServer({ root, configFile: `${root}/vite.config.ts`, server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
@@ -53,6 +53,14 @@ test("a foldable block becomes one cloze note and stays one when folded", async 
     await page.locator(".foldable-block-toggle").click();
     assert.equal(await page.evaluate(() => window.editor.state.doc.firstChild.attrs.open), false);
     assert.equal(await note(), id, "folding keeps the note");
+    // A formula offers to become a cloze while it is edited.
+    await page.locator(".foldable-block-toggle").click();
+    await page.locator(".math-block-widget").click();
+    await page.getByRole("button", { name: "Cloze", exact: true }).click();
+    const formula = () => page.evaluate(() => window.editor.state.doc.firstChild.lastChild.lastChild.attrs.cloze);
+    assert.equal(await formula(), true);
+    await page.getByRole("button", { name: "Remove cloze" }).click();
+    assert.equal(await formula(), false);
   } finally {
     await browser?.close();
     await server.close();

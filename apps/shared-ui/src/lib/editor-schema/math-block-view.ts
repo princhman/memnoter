@@ -25,9 +25,27 @@ export const MathBlockView = MathBlock.extend({
         element.textContent = "$$";
         return element;
       };
+      // While editing, the whole formula can be made a cloze card.
+      const cloze = document.createElement("button");
+      cloze.type = "button";
+      cloze.className = "math-block-cloze";
+      cloze.contentEditable = "false";
+      cloze.addEventListener("mousedown", (event) => event.preventDefault());
+      cloze.addEventListener("click", () => {
+        const chain = editor.chain().focus();
+        (currentNode.attrs.cloze === true ? chain.removeCloze() : chain.makeCloze()).run();
+      });
+      const updateCloze = () => {
+        const on = currentNode.attrs.cloze === true;
+        cloze.textContent = on ? "Remove cloze" : "Cloze";
+        cloze.setAttribute("aria-pressed", String(on));
+      };
       dom.append(marker(), contentDOM, marker(), rendered);
+      // Only editors with flashcards have cards to make.
+      if ("makeCloze" in editor.commands) dom.append(cloze);
 
       let currentNode = node;
+      updateCloze();
       let renderedTex: string | undefined;
       let cancelRender: (() => void) | undefined;
       let wasEditing: boolean | undefined;
@@ -90,13 +108,15 @@ export const MathBlockView = MathBlock.extend({
           if (nextNode.type !== currentNode.type) return false;
           currentNode = nextNode;
           updateAppearance(nextDecorations);
+          updateCloze();
           return true;
         },
         stopEvent: (event) =>
-          event.target instanceof window.Node && rendered.contains(event.target),
+          event.target instanceof window.Node &&
+          (rendered.contains(event.target) || cloze.contains(event.target)),
         ignoreMutation: (mutation) =>
           mutation.type !== "selection" &&
-          (rendered.contains(mutation.target) ||
+          (rendered.contains(mutation.target) || cloze.contains(mutation.target) ||
             (mutation.type === "attributes" && mutation.target === contentDOM)),
       };
     };

@@ -1095,6 +1095,38 @@ body {
     display: none;
 }
 
+/* Make the formula a cloze card, offered while it is edited. */
+.tiptap .math-block {
+    position: relative;
+}
+
+.tiptap .math-block-cloze {
+    display: none;
+    position: absolute;
+    top: 0.4em;
+    right: 0.5em;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.375rem;
+    color: var(--muted-foreground);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.tiptap .math-block.is-editing .math-block-cloze {
+    display: block;
+}
+
+.tiptap .math-block-cloze:hover {
+    background: var(--accent);
+    color: var(--foreground);
+}
+
+.tiptap .math-block-cloze[aria-pressed="true"] {
+    color: var(--cloze);
+}
+
 /* ---------- Floating table of contents ---------- */
 .toc {
     position: fixed;
