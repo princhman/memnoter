@@ -14,6 +14,7 @@ import { ReactRenderer } from "@tiptap/react";
 import type { EditorState } from "@tiptap/pm/state";
 import { PluginKey, TextSelection } from "@tiptap/pm/state";
 import Suggestion, {
+  exitSuggestion,
   type SuggestionKeyDownProps,
   type SuggestionMatch,
   type SuggestionProps,
@@ -141,7 +142,14 @@ export const LatexSuggest = Extension.create<
   },
 
   addKeyboardShortcuts() {
-    return { Tab: () => jumpToNextSlot(this.editor) };
+    return {
+      Tab: () => jumpToNextSlot(this.editor),
+      Enter: () => {
+        if (!latexSuggestKey.getState(this.editor.state)?.active) return false;
+        exitSuggestion(this.editor.view, latexSuggestKey);
+        return true;
+      },
+    };
   },
 
   addProseMirrorPlugins() {
@@ -306,7 +314,7 @@ type LatexMenuHandle = {
 };
 
 const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
-  ({ items, command, query, editor, range }, ref) => {
+  ({ items, command, editor }, ref) => {
     const [selected, setSelected] = useState(0);
     const [detailsLeft, setDetailsLeft] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
@@ -375,17 +383,9 @@ const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
           setSelected((index) => (index + 1) % items.length);
           return true;
         }
-        if (event.key === "Enter" || event.key === "Tab") {
+        if (event.key === "Tab") {
           const item = items[selected];
           if (!item) return true;
-          // A fully typed command keeps Enter's usual meaning in a formula.
-          if (
-            event.key === "Enter" &&
-            item.insert === `\\${query}` &&
-            inMath(editor.state, range.from)
-          ) {
-            return false;
-          }
           command(item);
           return true;
         }

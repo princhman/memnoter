@@ -199,3 +199,32 @@ for (const [name, formula] of [["an empty formula", math("")], ["a formula", mat
     );
   });
 }
+
+test("PRI-336: typing after math and a card separator preserves the answer and caret", async () => {
+  await page.evaluate(() => { editor.commands.setContent('<p></p>'); editor.view.focus(); });
+  await page.keyboard.type("$x$::");
+  await page.keyboard.type(" answer");
+  await waitForEditorSelection(page);
+  assert.equal(await page.evaluate(() => editor.state.doc.firstChild.textContent), "x:: answer");
+  assert.equal(await page.evaluate(() => editor.state.selection.$head.parentOffset), 12);
+});
+
+test("PRI-337: arrows and clicks reach before list math with a separator", async () => {
+  const content = [{ type: "bulletList", content: [{ type: "listItem", content: [p(math("x"), text(" :: x"))] }] }];
+  const reset = () => page.evaluate(content => {
+    editor.commands.setContent({ type: "doc", content });
+    editor.commands.setTextSelection(4);
+    editor.view.focus();
+  }, content);
+  await reset();
+  await waitForEditorSelection(page);
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type("before ");
+  assert.equal(await page.evaluate(() => editor.state.doc.firstChild.firstChild.firstChild.firstChild.text), "before ");
+  await reset();
+  await page.keyboard.press("Enter");
+  const rect = await page.locator(".inline-math-widget").boundingBox();
+  await page.mouse.click(rect.x + 1, rect.y + rect.height / 2);
+  await page.keyboard.type("click ");
+  assert.equal(await page.evaluate(() => editor.state.doc.firstChild.firstChild.firstChild.firstChild.text), "click ");
+});
