@@ -19,8 +19,9 @@ being asked each time:
    the latest GitHub release by itself.
 
 **Testing sessions.** When the user is testing on devices and says "just fix",
-delegates fix and compile only: no tests, no sol loop, no CI waits. Install the
-build so they can try it. The editor scroll/caret exception in
+delegates fix only: no tests, no sol loop, no CI waits, no builds while
+`pnpm dev:copy` is running. Install on the device only when the user is testing
+there. The editor scroll/caret exception in
 `apps/shared-ui/AGENTS.md` still applies.
 
 ## Delegating
@@ -38,9 +39,10 @@ build so they can try it. The editor scroll/caret exception in
 A brief only needs:
 
 1. **Task** and why, quoting the user's complaint where possible.
-2. **Done means**: what the user should see, on which platforms.
+2. **Done means**: what the user should see, and on which platform. Name one
+   platform until the user has approved the feature; porting is a later brief.
 3. **Where**: checkout or branch, and whether to commit.
-4. **Mode**: normal, or "fix only, compile, don't test, don't wait for CI".
+4. **Mode**: normal, or "fix only, don't test, don't wait for CI".
 5. Anything that **overrides** `AGENTS.md`.
 
 Don't restate the stack, commands or rules; the delegate already has them.

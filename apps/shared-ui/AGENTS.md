@@ -2,9 +2,10 @@
 
 This code ships to desktop, iPad and iPhone at once.
 
-- **Parity.** Check a behaviour or styling change on desktop and iPad (and iPhone
-  for layout). Settings belong in Settings on every platform, not in toolbars. 
-  Make sure to consider Mac and Windows (through chrome run)
+- **Parity.** This code reaches every platform at once, but follow "One
+  platform first" in the root `AGENTS.md`: get it right where the user is
+  testing, then check Mac, Windows (Chromium), iPad and iPhone once they
+  approve. Settings belong in Settings on every platform, not in toolbars.
 - **Colour.** The accent is `--primary` in `src/App.css`. No default blue,
   violet or new purple shades. Primary buttons are purple.
 - **No decorative chrome.** No borders, dividers or outlines unless contrast

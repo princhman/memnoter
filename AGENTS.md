@@ -30,6 +30,22 @@ On the Mac, cargo goes through sccache, so a fresh worktree reuses compiled
 dependencies. Don't set `CARGO_TARGET_DIR`; it changes the cache key.
 Never run a dev server in the foreground of a tool call.
 
+## Seeing a change
+
+- **Desktop with `pnpm dev:copy` running:** save and let it reload. Vite
+  hot-reloads shared-ui, and Tauri rebuilds Rust changes by itself. Don't run
+  `pnpm build`, `cargo build` or `tsc` just to show the user a change.
+- **On a device:** run `scripts/ios-install.sh` (add `--core` after `crates/`
+  changes). That build is needed every time, so batch fixes before installing.
+- **Before a PR:** `pnpm check:ci`. That is where the full build belongs.
+
+## One platform first
+
+Build and check a feature on the one platform the user is testing. Don't port
+it to, or polish it for, the other platforms until the user says it's right.
+Then port it and check every platform: Mac, Windows (Chromium), iPad and
+iPhone. If the brief doesn't name a platform, ask which one to start on.
+
 ## Shared checkout
 
 Other agents often have uncommitted work in the same checkout.
@@ -52,7 +68,8 @@ Other agents often have uncommitted work in the same checkout.
   an existing file. No tests for one-off visual tweaks.
 - Browser suites are timing-sensitive. Rerun a failure alone before blaming your
   change, and say which you did.
-- If the brief says "fix only, don't test", compile and stop.
+- If the brief says "fix only, don't test", make the change visible (see
+  "Seeing a change") and stop.
 
 ## Report
 
