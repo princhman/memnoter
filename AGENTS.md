@@ -4,6 +4,9 @@ Memnoter: a local-first notes app with spaced-repetition flashcards. This file
 is what every agent needs. Folder-specific rules live in `apps/shared-ui/AGENTS.md`
 and `apps/ios/AGENTS.md`. If you coordinate other agents or talk to the user
 directly (not as a delegate), also read `docs/agents/orchestrating.md`.
+When you use the `pair-fix`, `handoff` or `perf-investigate` skill, read the
+Flows and Platforms sections of that file: they hold this repo's tracker, proof
+and profiling details.
 
 ## Layout
 
