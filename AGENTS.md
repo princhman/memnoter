@@ -26,6 +26,7 @@ and profiling details.
 | `pnpm check:ci` | Everything CI runs. Run before a PR; `--quick` skips the iOS build. |
 | `pnpm test` | shared-ui tests. One file: `node --experimental-strip-types --import ./tests/support/register.mjs --test tests/<name>.test.mjs` in `apps/shared-ui`. |
 | `cargo test -p memnoter-core` | Core tests. |
+| `pnpm dev:device` | LAN shared-ui server for `scripts/ios-install.sh --live` Debug installs. |
 | `pnpm dev:copy` | Desktop app on a copy of the user's notes. Use this, not `pnpm dev`, to run a branch. |
 
 Prefix cargo commands with `CARGO_BUILD_JOBS=4`; other agents share the machine.

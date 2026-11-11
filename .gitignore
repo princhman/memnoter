@@ -41,3 +41,6 @@ plan.md
 /apps/desktop/native/*.dylib
 /apps/ios/MemnoterCore/.build/
 .tanstack/tmp/
+
+# Local iOS live-server discovery
+/.ios-live/

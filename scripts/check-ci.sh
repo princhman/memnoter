@@ -28,6 +28,7 @@ run() {
 }
 
 # Job: check (macos-latest)
+run "iOS live configuration" node --test scripts/tests/ios-live-plist.test.mjs
 run "build" pnpm build
 run "lint" pnpm lint
 run "shared-ui tests" pnpm --filter memnoter-shared-ui test:ci

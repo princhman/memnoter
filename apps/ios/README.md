@@ -33,6 +33,25 @@ scripts/ios-install.sh --all      # both, one build; add --core after crates/ ch
 
 It prints the build stamp that Settings → About shows.
 
+## Live shared-ui development
+
+Run `pnpm dev:device` on your Mac, then in another terminal run
+`scripts/ios-install.sh --live` (add `--iphone` or `--all`). Keep the server
+running and the Mac and devices on the same trusted LAN; allow Local Network
+access when prompted. Set `IOS_DEV_HOST` / `IOS_DEV_PORT` to override LAN
+address detection / port. The command prints the editor URL.
+
+After this one Debug install, shared-ui edits reload in seconds. Reload waits
+for pending note, image and PDF writes; failed saves pause reload. React HMR is
+disabled to preserve edits. Review reloads its scope; its in-memory undo history
+resets. An unreachable server loads the bundle with a small debug note; relaunch
+to retry live mode. Native/Rust/bridge protocol changes still need a rebuild.
+A normal install uses the bundle. Release/TestFlight contain no dev URL, ATS
+exception or Local Network usage description.
+
+For simulator builds, pass `-configuration Debug MEMNOTER_EDITOR_DEV_URL=<URL>`
+to xcodebuild after the normal core/web preparation and xcodegen steps.
+
 ## Simulators
 
 Use the retained simulators, and don't create task-specific ones:
