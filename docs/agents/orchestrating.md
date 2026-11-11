@@ -78,8 +78,9 @@ The skills are general; the per-platform details below are what they look up.
 
 Handoff in this repo: Linear team I build (PRI). An agent waiting on the user
 comments on the issue and adds the `Needs input` label; it removes the label
-when it picks the issue up again. Handoff worktrees are removed once the branch
-is pushed.
+when it picks the issue up again. Each issue gets its own branch in the main
+checkout; add a worktree only to work issues in parallel, and remove it once the
+branch is pushed.
 
 ## Platforms: show, prove, profile
 
