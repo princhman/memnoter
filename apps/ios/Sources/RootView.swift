@@ -273,7 +273,13 @@ struct RootView: View {
         List(selection: Binding(get: { selected }, set: { if let destination = $0, isDestination(destination) { if destination == "review" { reviewModule = nil }; if destination == "files" { filesModuleFilter = nil }; navigate(destination) } })) {
             destinationLink("home") { Label("Home", systemImage: "house") }
             destinationLink("review") {
-                Label("Review", systemImage: "rectangle.stack").badge(store.counts.reduce(0) { $0 + $1.count })
+                HStack {
+                    Label("Review", systemImage: "rectangle.stack")
+                    Spacer()
+                    Text("\(store.counts.reduce(0) { $0 + $1.learning }) / \(store.counts.reduce(0) { $0 + $1.review }) / \(store.counts.reduce(0) { $0 + $1.new })")
+                        .monospacedDigit().foregroundStyle(.secondary)
+                        .accessibilityLabel("Learn / due / new")
+                }
             }
             destinationLink("files") { Label("Files", systemImage: "doc.text") }
             Section {

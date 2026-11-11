@@ -1,13 +1,13 @@
 import { action, formatKeys } from "@/lib/shortcuts";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { ToolButton } from "./ui/tool-button";
-import { LocateFixed, Pencil, Redo2, Undo2 } from "lucide-react";
+import { LocateFixed, Redo2, Undo2 } from "lucide-react";
 import { useEditorState } from "@tiptap/react";
 import { useSelector } from "@tanstack/react-store";
 import { reviewActionsStore } from "@/lib/review-actions";
 
 // Undo and redo for the open note, or for grades while reviewing, where an
-// Edit button also opens the shown card in its note.
+// go-to action also opens the shown card in its note.
 export function UndoRedo() {
   const { activeEditor } = useActiveEditor();
   const editor = activeEditor?.editor ?? null;
@@ -49,12 +49,6 @@ export function UndoRedo() {
       onUndo={review.undo}
       onRedo={review.redo}
     >
-      <ToolButton label="Edit card" side="bottom"
-          disabled={!review.edit}
-          onClick={() => review.edit?.()}
-        >
-          <Pencil />
-        </ToolButton>
       <ToolButton label="Go to card in note" side="bottom"
           disabled={!review.edit}
           onClick={() => review.edit?.()}

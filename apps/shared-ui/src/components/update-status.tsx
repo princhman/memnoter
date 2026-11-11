@@ -1,6 +1,6 @@
 import { capabilities } from "@/lib/backend";
 import { useSelector } from "@tanstack/react-store";
-import { AlertCircle, Check, Download, Loader2, RefreshCw, RotateCw } from "lucide-react";
+import { AlertCircle, Check, Download, Loader2, CircleArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { checkForUpdates, restartToUpdate, updateStore } from "@/lib/updater";
@@ -28,7 +28,7 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
       onClick = undefined;
       break;
     case "ready":
-      icon = <RotateCw className="text-sidebar-primary" />;
+      icon = <CircleArrowUp className="text-sidebar-primary" />;
       label = `Restart to update to v${status.version}`;
       onClick = () => void restartToUpdate();
       break;
@@ -41,7 +41,7 @@ const UpdateStatus = ({ children }: { children?: ReactNode }) => {
       label = `Update failed. Try again (${status.message})`;
       break;
     default:
-      icon = <RefreshCw />;
+      icon = <CircleArrowUp />;
       label = "Check for updates";
   }
 

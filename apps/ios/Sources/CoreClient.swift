@@ -7,7 +7,7 @@ struct NoteModule: Codable, Identifiable, Hashable, Sendable {
     let heading_numbering: Bool
 }
 struct SearchHit: Codable, Sendable { let module_id: String; let name: String; let snippet: String }
-struct DueCount: Codable, Sendable { let moduleId: String; let count: Int }
+struct DueCount: Codable, Sendable { let moduleId: String; let count: Int; let new: Int; let learning: Int; let review: Int }
 struct Backup: Codable, Identifiable, Sendable { let id: String; let created_at: Int64 }
 struct SavedFile: Codable, Sendable { let id: String; let path: String; let file_type: String }
 struct Empty: Encodable, Sendable {}

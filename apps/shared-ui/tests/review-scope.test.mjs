@@ -215,3 +215,64 @@ test("counts keep previous data during cutoff fetches and unkeyed schedules upda
     await page.close();
   }
 });
+
+test("go to card selects its cloze in a long note; counts read learn / due / new", async () => {
+  const Y = await import('yjs');
+  const doc = new Y.Doc();
+  doc.getXmlFragment('default').insert(0, Array.from({ length: 75 }, (_, i) => {
+    const block = new Y.XmlElement('paragraph'), text = new Y.XmlText();
+    text.insert(0, i === 55 ? 'First {{Paris}} then {{London}}' : `Note paragraph ${i}`);
+    block.insert(0, [text]);
+    if (i === 55) block.setAttribute('cardId', 'target');
+    return block;
+  }));
+  const state = [...Y.encodeStateAsUpdate(doc)];
+  doc.destroy();
+  for (const theme of ['light', 'dark']) {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 750 }, colorScheme: theme });
+    await page.addInitScript(({ state, theme }) => {
+      localStorage.setItem('theme', theme);
+      Object.defineProperty(navigator, 'platform', { value: 'MacIntel' });
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
+        if (command.startsWith('plugin:')) return 1;
+        if (command === 'modules') return [{ id: 'a', name: 'Geography' }];
+        if (command === 'get_content') return { state, updates: [], files: [] };
+        if (command === 'add_update') return { id: 1, bytes: args.bytes };
+        if (command === 'due_counts') return [{ moduleId: 'a', count: 10, new: 5, learning: 2, review: 3, laterNew: 4, laterLearning: 6, laterReview: 7 }];
+        if (command === 'due_cards') return [{
+          id: 'target:c2', moduleId: 'a', moduleName: 'Geography', section: [], kind: 'cloze',
+          front: [{ type: 'text', text: 'Go to the second cloze' }], back: [{ type: 'text', text: 'London' }],
+          dueAt: Date.now() - 60000, stability: 0, difficulty: 0, scheduledDays: 0, learningStep: 0,
+          state: 0, scheduleStatus: 'new', lastReviewAt: null, reps: 0, lapses: 0,
+        }];
+        return [];
+      } } });
+    }, { state, theme });
+    try {
+      await page.goto(`${url}/review`);
+      await page.getByText('Go to the second cloze', { exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Edit card', exact: true }).count(), 0);
+      const counts = page.locator('[aria-label="2 learn (+6 later today), 3 due (+7 later today), 5 new"]');
+      await counts.first().waitFor();
+      assert.equal((await counts.first().innerText()).replace(/\s/g, ''), '2+63+75');
+      if (process.env.PROOF_DIR) {
+        await page.screenshot({ path: `${process.env.PROOF_DIR}/PRI-316-${theme}.png` });
+        await page.getByRole('button', { name: 'Check for updates', exact: true }).waitFor();
+        await page.screenshot({ path: `${process.env.PROOF_DIR}/PRI-317-${theme}.png` });
+      }
+      await page.getByRole('button', { name: 'Go to card in note', exact: true }).click();
+      await page.waitForURL(`${url}/a`);
+      await page.waitForFunction(() => document.getSelection()?.toString() === 'London');
+      const geometry = await page.locator('[data-card-id="target"]').evaluate(node => {
+        const scroll = node.closest('.app-scroll-container');
+        const rect = node.getBoundingClientRect(), bounds = scroll.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, viewportTop: bounds.top, viewportBottom: bounds.bottom, scrollTop: scroll.scrollTop };
+      });
+      assert.ok(geometry.scrollTop > 0);
+      assert.ok(geometry.top >= geometry.viewportTop && geometry.bottom <= geometry.viewportBottom);
+      await page.getByRole('button', { name: 'Bold', exact: true }).click();
+      await page.getByRole('button', { name: 'Bold', exact: true, pressed: true }).waitFor();
+      if (process.env.PROOF_DIR) await page.screenshot({ path: `${process.env.PROOF_DIR}/PRI-343-${theme}.png` });
+    } finally { await page.close(); }
+  }
+});

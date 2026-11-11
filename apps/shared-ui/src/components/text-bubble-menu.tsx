@@ -240,5 +240,5 @@ function MarkButton({
   onToggle: () => void;
   children: ReactNode;
 }) {
-  return (<ToolButton label={label} hint={hint} pressed={pressed} disabled={disabled} onClick={onToggle}>{children}</ToolButton>);
+  return (<ToolButton label={label} hint={hint} pressed={pressed} className={pressed ? "bg-primary text-primary-foreground hover:bg-primary/80 hover:text-primary-foreground" : undefined} disabled={disabled} onClick={onToggle}>{children}</ToolButton>);
 }
