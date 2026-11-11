@@ -107,11 +107,12 @@ struct RootView: View {
             }.disabled(folderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog("Delete folder?", isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } }), titleVisibility: .visible) {
+        .alert("Delete folder?", isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } })) {
             Button("Delete folder", role: .destructive) {
                 if var item = deletingFolder { item.deleted = true; Task { await store.saveSidebar([item]) } }
                 deletingFolder = nil
             }
+            Button("Cancel", role: .cancel) { deletingFolder = nil }
         } message: { Text("Its modules move to the top level. No notes are deleted.") }
         // Keep phone Contents presentation above the title's Button/Menu
         // branches so it has a stable presenter across focus changes.
@@ -756,7 +757,7 @@ struct RootView: View {
             Button("Delete folder", role: .destructive) { deletingFolder = item }
         }
         .swipeActions {
-            Button("Delete", role: .destructive) { deletingFolder = item }
+            Button("Delete") { deletingFolder = item }.tint(.red)
             Button("Rename") { folder = item; folderName = item.name ?? ""; editingFolder = true }
         }
     }
@@ -766,6 +767,8 @@ struct RootView: View {
                 .padding(.leading, inFolder ? 20 : 0)
         }
         .contextMenu { moduleActions(module) }
+        // A destructive swipe removes the row before confirmation, losing its presenter.
+        .swipeActions { Button("Delete") { deleting = module }.tint(.red); Button("Rename") { rename = module; name = module.name; editingName = true } }
         .alert("Delete module and its notes?", isPresented: Binding(get: { isPhone && deleting?.id == module.id }, set: { if !$0 && deleting?.id == module.id { deleting = nil } })) {
             Button("Delete", role: .destructive) { deleteModule(module) }
             Button("Cancel", role: .cancel) { deleting = nil }
@@ -773,7 +776,6 @@ struct RootView: View {
         .confirmationDialog("Delete module and its notes?", isPresented: Binding(get: { !isPhone && deleting?.id == module.id }, set: { if !$0 && deleting?.id == module.id { deleting = nil } })) {
             Button("Delete", role: .destructive) { deleteModule(module) }
         }
-        .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
     }
     private func deleteModule(_ module: NoteModule) {
         Task {

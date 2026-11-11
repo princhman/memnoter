@@ -68,7 +68,7 @@ struct FilesView: View {
                                 Button("Delete", systemImage: "trash", role: .destructive) { deleting = document }
                             }
                             .swipeActions {
-                                Button("Delete", role: .destructive) { deleting = document }
+                                Button("Delete") { deleting = document }.tint(.red)
                                 Button("Rename") { beginRename(document) }
                             }
                         }
@@ -118,12 +118,13 @@ struct FilesView: View {
                 renaming = nil
             }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .confirmationDialog("Delete PDF?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+        .alert("Delete PDF?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("Delete PDF", role: .destructive) {
                 guard let document = deleting else { return }
                 mutate("delete_document", LibraryDocumentArgs(id: document.id))
                 deleting = nil
             }
+            Button("Cancel", role: .cancel) { deleting = nil }
         } message: {
             Text("“\(deleting?.displayName ?? "PDF")” will be removed from every device. This cannot be undone.")
         }
