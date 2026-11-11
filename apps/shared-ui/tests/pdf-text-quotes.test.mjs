@@ -10,6 +10,7 @@ test('text quotes insert atomically through the normal note owner and survive HT
   try {
     await server.listen(); browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
+    if (process.env.PDF_CPU_LOAD) await (await page.context().newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: 6 });
     page.on('pageerror', console.error);
     await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()};
       window.receipts = []; window.uploads = 0;
@@ -19,6 +20,23 @@ test('text quotes insert atomically through the normal note owner and survive HT
         if (command === 'save_file') { window.uploads++; throw new Error('Text must never upload'); }
         throw new Error('Unexpected command: ' + command);
       } } });`);
+    // Reader controls can subscribe after a quick focus/caret/blur cycle as
+    // the native workspace opens. The editor still owns a valid selection.
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-text-quotes.html?late-reader`);
+    await page.waitForFunction(() => window.textQuoteTest);
+    await page.evaluate(() => {
+      const { editor } = window.textQuoteTest;
+      editor.commands.setContent('<p>Before after</p>');
+      editor.commands.focus(8);
+    });
+    await page.getByRole('button', { name: 'Open reader', exact: true }).click();
+    await page.evaluate(() => window.textQuoteTest.pendingPdfQuote.setState(() => ({
+      id: 'late-reader', moduleId: 'quote-module', kind: 'text', status: 'draft',
+      parts: [{ text: 'Late reader quote', source: { documentId: 'pdf-one', page: 1, name: 'Lecture.pdf', region: { x: .1, y: .2, width: .5, height: .4 } } }],
+    })));
+    await page.getByRole('button', { name: 'Insert at cursor', exact: true }).click();
+    const lateText = await page.locator('.tiptap').textContent();
+    assert.ok(lateText.indexOf('Before') < lateText.indexOf('Late reader quote') && lateText.indexOf('Late reader quote') < lateText.lastIndexOf('after'), lateText);
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-text-quotes.html`);
     await page.waitForFunction(() => window.textQuoteTest);
     const parts = [1, 2].map(page => ({ text: page === 1 ? '<script>unsafe & editable</script>\nSecond line' : 'Next page', source: { documentId: 'pdf-one', page, name: 'Lecture.pdf', region: { x: .1, y: .2, width: .5, height: .4 } } }));

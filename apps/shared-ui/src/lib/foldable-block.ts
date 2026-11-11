@@ -1,6 +1,7 @@
 import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-details";
 import { Plugin, PluginKey, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
+import { Slice } from "@tiptap/pm/model";
 
 // A self-contained foldable block, e.g. a worked example (#27): a title line
 // and content that fold on their own. A heading's fold instead runs to the
@@ -51,6 +52,28 @@ export function foldableBlockReveal() {
 }
 
 const FoldableDetails = Details.extend({
+  addNodeView() {
+    const parent = this.parent?.();
+    if (!parent) return null;
+    return props => {
+      const nodeView = parent(props);
+      // Upstream refocuses the old caret after toggling. On iOS that can pan
+      // to the top of a long note, even with scrollIntoView disabled.
+      nodeView.dom.addEventListener("click", event => {
+        const toggle = (event.target as Element).closest(".foldable-block-toggle");
+        if (!toggle || toggle.parentElement !== nodeView.dom) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const pos = props.getPos();
+        if (!props.editor.isEditable || typeof pos !== "number") return;
+        const { state, dispatch } = props.editor.view;
+        const node = state.doc.nodeAt(pos);
+        if (node?.type !== this.type) return;
+        dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, open: !node.attrs.open }));
+      }, true);
+      return nodeView;
+    };
+  },
   addCommands() {
     return {
       ...this.parent?.(),
@@ -100,7 +123,27 @@ const FoldableDetails = Details.extend({
   },
   // Replaces upstream's plugin, which moves the caret out of folded content.
   addProseMirrorPlugins() {
-    return [foldableBlockReveal()];
+    return [foldableBlockReveal(), new Plugin({
+      props: {
+        transformCopied(slice, view) {
+          const { selection } = view.state;
+          if (!(selection instanceof TextSelection)) return slice;
+          const { $from, $to } = selection;
+          // Shared foldable ancestors are context, not selected blocks. PM's
+          // clipboard context otherwise recreates them when this text is pasted.
+          let depth = 0;
+          for (let d = 1; d <= $from.sharedDepth($to.pos); d++) {
+            if (["details", "detailsContent", "detailsSummary"].includes($from.node(d).type.name)) depth = d;
+          }
+          let { content, openStart, openEnd } = slice;
+          for (let d = 0; d < depth && openStart > 0 && openEnd > 0 && content.childCount === 1; d++) {
+            content = content.firstChild!.content;
+            openStart--; openEnd--;
+          }
+          return new Slice(content, openStart, openEnd);
+        },
+      },
+    })];
   },
 }).configure({
   // Open or folded is a node attribute, so it is saved and synced with the note.

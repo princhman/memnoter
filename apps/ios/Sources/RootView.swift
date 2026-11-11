@@ -107,24 +107,13 @@ struct RootView: View {
             }.disabled(folderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog("Delete folder?", isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } }), titleVisibility: .visible) {
+        .alert("Delete folder?", isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } })) {
             Button("Delete folder", role: .destructive) {
                 if var item = deletingFolder { item.deleted = true; Task { await store.saveSidebar([item]) } }
                 deletingFolder = nil
             }
+            Button("Cancel", role: .cancel) { deletingFolder = nil }
         } message: { Text("Its modules move to the top level. No notes are deleted.") }
-        .confirmationDialog("Delete module and its notes?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("Delete", role: .destructive) {
-                if let deleting { Task {
-                    await store.perform {
-                        try await session?.flush()
-                        if selected == deleting.id { selected = "home" }
-                        try await store.client?.write("delete_module", ModuleArgs(moduleId: deleting.id))
-                    }
-                    self.deleting = nil
-                } }
-            }
-        }
         // Keep phone Contents presentation above the title's Button/Menu
         // branches so it has a stable presenter across focus changes.
         .sheet(isPresented: Binding(get: { isPhone && showingContents }, set: { if isPhone { showingContents = $0 } })) {
@@ -589,9 +578,6 @@ struct RootView: View {
                 }.disabled(!reader.canAnnotate && !reader.annotating)
             }
             PdfViewMenu(session: session, reader: reader).actions
-            if reader.fullscreen {
-                Button { session.pdfCommand(.openBeside) } label: { Label("Exit full screen", systemImage: "arrow.down.right.and.arrow.up.left") }
-            }
         }
         // With a file open, the menu is only about that file; "× Note" leads back to the note.
         if reader.activeId == nil {
@@ -771,7 +757,7 @@ struct RootView: View {
             Button("Delete folder", role: .destructive) { deletingFolder = item }
         }
         .swipeActions {
-            Button("Delete", role: .destructive) { deletingFolder = item }
+            Button("Delete") { deletingFolder = item }.tint(.red)
             Button("Rename") { folder = item; folderName = item.name ?? ""; editingFolder = true }
         }
     }
@@ -781,7 +767,25 @@ struct RootView: View {
                 .padding(.leading, inFolder ? 20 : 0)
         }
         .contextMenu { moduleActions(module) }
-        .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
+        // A destructive swipe removes the row before confirmation, losing its presenter.
+        .swipeActions { Button("Delete") { deleting = module }.tint(.red); Button("Rename") { rename = module; name = module.name; editingName = true } }
+        .alert("Delete module and its notes?", isPresented: Binding(get: { isPhone && deleting?.id == module.id }, set: { if !$0 && deleting?.id == module.id { deleting = nil } })) {
+            Button("Delete", role: .destructive) { deleteModule(module) }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        }
+        .confirmationDialog("Delete module and its notes?", isPresented: Binding(get: { !isPhone && deleting?.id == module.id }, set: { if !$0 && deleting?.id == module.id { deleting = nil } })) {
+            Button("Delete", role: .destructive) { deleteModule(module) }
+        }
+    }
+    private func deleteModule(_ module: NoteModule) {
+        Task {
+            await store.perform {
+                try await session?.flush()
+                if selected == module.id { selected = "home" }
+                try await store.client?.write("delete_module", ModuleArgs(moduleId: module.id))
+            }
+            deleting = nil
+        }
     }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {
         Button("Rename") { rename = module; name = module.name; editingName = true }
@@ -1008,7 +1012,7 @@ private struct PdfViewMenu: View {
                     .disabled(!reader.canZoomOut)
                     .menuActionDismissBehavior(.disabled)
             }
-            if !reader.fullscreen {
+            if UIDevice.current.userInterfaceIdiom != .phone, !reader.fullscreen {
                 Button { session.pdfCommand(.openFullscreen) } label: { Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right") }
             }
     }
