@@ -769,19 +769,24 @@ struct RootView: View {
                 .padding(.leading, inFolder ? 20 : 0)
         }
         .contextMenu { moduleActions(module) }
-        .confirmationDialog("Delete module and its notes?", isPresented: Binding(get: { deleting?.id == module.id }, set: { if !$0 && deleting?.id == module.id { deleting = nil } })) {
-            Button("Delete", role: .destructive) {
-                if let deleting { Task {
-                    await store.perform {
-                        try await session?.flush()
-                        if selected == deleting.id { selected = "home" }
-                        try await store.client?.write("delete_module", ModuleArgs(moduleId: deleting.id))
-                    }
-                    self.deleting = nil
-                } }
-            }
+        .alert("Delete module and its notes?", isPresented: Binding(get: { isPhone && deleting?.id == module.id }, set: { if !$0 && deleting?.id == module.id { deleting = nil } })) {
+            Button("Delete", role: .destructive) { deleteModule(module) }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        }
+        .confirmationDialog("Delete module and its notes?", isPresented: Binding(get: { !isPhone && deleting?.id == module.id }, set: { if !$0 && deleting?.id == module.id { deleting = nil } })) {
+            Button("Delete", role: .destructive) { deleteModule(module) }
         }
         .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
+    }
+    private func deleteModule(_ module: NoteModule) {
+        Task {
+            await store.perform {
+                try await session?.flush()
+                if selected == module.id { selected = "home" }
+                try await store.client?.write("delete_module", ModuleArgs(moduleId: module.id))
+            }
+            deleting = nil
+        }
     }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {
         Button("Rename") { rename = module; name = module.name; editingName = true }
