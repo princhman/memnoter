@@ -85,10 +85,14 @@ export function PdfFindHighlights({ layer, matches, selected, ready }: { layer: 
     while (walker.nextNode()) { const node = walker.currentNode; const start = offset; offset += node.nodeName === "BR" ? 1 : node.textContent?.length ?? 0; nodes.push({ node, start, end: offset }); }
     const bounds = element.getBoundingClientRect();
     setRects(matches.flatMap(match => {
-      const first = nodes.find(node => node.node.nodeType === Node.TEXT_NODE && node.end > match.start), last = nodes.find(node => node.node.nodeType === Node.TEXT_NODE && node.end >= match.end);
+      const first = nodes.find(node => node.end > match.start), last = nodes.find(node => node.end >= match.end);
       if (!first || !last) return [];
-      const range = document.createRange(); range.setStart(first.node, match.start - first.start); range.setEnd(last.node, match.end - last.start);
-      return Array.from(range.getClientRects(), rect => ({ left: rect.left - bounds.left, top: rect.top - bounds.top, width: rect.width, height: rect.height, current: match === selected }));
+      const range = document.createRange();
+      if (first.node.nodeName === "BR") range.setStartBefore(first.node);
+      else range.setStart(first.node, match.start - first.start);
+      if (last.node.nodeName === "BR") range.setEndAfter(last.node);
+      else range.setEnd(last.node, match.end - last.start);
+      return Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0).map(rect => ({ left: rect.left - bounds.left, top: rect.top - bounds.top, width: rect.width, height: rect.height, current: match === selected }));
     }));
   }, [layer, matches, selected, ready]);
   useLayoutEffect(() => { active.current?.scrollIntoView({ block: "center", inline: "nearest" }); }, [rects]);

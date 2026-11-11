@@ -251,6 +251,12 @@ for (const engine of [chromium, webkit]) test(`PDF navigation and find across pa
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+f' : 'Control+f');
     const input = files.getByRole('textbox', { name: 'Find in PDF', exact: true });
     assert.equal(await page.getByRole('textbox', { name: 'Find', exact: true }).count(), 0, 'PDF shortcut must not open note find');
+    await input.fill(' Second');
+    await files.getByRole('status').filter({ hasText: '1 / 12' }).waitFor();
+    await files.locator('[data-pdf-page="1"] [data-pdf-find-match="current"]').first().waitFor();
+    await input.fill('first line ');
+    await files.getByRole('status').filter({ hasText: '1 / 12' }).waitFor();
+    await files.locator('[data-pdf-page="1"] [data-pdf-find-match="current"]').first().waitFor();
     await input.fill('first line');
     await files.getByRole('status').filter({ hasText: '1 / 12' }).waitFor();
     const at = async number => {
