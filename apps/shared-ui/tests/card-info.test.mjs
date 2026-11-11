@@ -34,3 +34,27 @@ test("card popup omits empty headings and new badges while retaining answers and
     await server.close();
   }
 });
+
+test("a foldable block becomes one cloze note and stays one when folded", async () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const server = await createServer({ root, configFile: `${root}/vite.config.ts`, server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/cloze-notes.html`);
+    const note = () => page.evaluate(() => window.editor.state.doc.firstChild.attrs.clozeNote);
+    await page.locator(".foldable-block").hover();
+    await page.getByRole("button", { name: "Make one note" }).click();
+    const id = await note();
+    assert.ok(id);
+    assert.equal(await page.getByRole("button", { name: "Make one note" }).count(), 0);
+    await page.locator(".foldable-block-toggle").click();
+    assert.equal(await page.evaluate(() => window.editor.state.doc.firstChild.attrs.open), false);
+    assert.equal(await note(), id, "folding keeps the note");
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});
