@@ -77,6 +77,11 @@ Other agents often have uncommitted work in the same checkout.
 
 ## Report
 
-If the brief names a PRI issue, include `Fixes PRI-<n>` in the PR body.
+If the brief names a PRI issue, include `Fixes PRI-<n>` in the PR body. For an
+issue the PR doesn't fix (not reproduced, waiting on the user), write
+`Refs PRI-<n>` instead, so merging doesn't close it.
+Once the PR is open and its proof is on the issue, move every issue whose fix
+changes how something looks (layout, colour, icons, text, controls added or
+removed) to **In Review** in Linear. Leave behaviour-only fixes In Progress.
 End with: commit SHA (or "uncommitted"), what you verified, what you didn't.
 Never end on a pending wait; finish waiting first.
