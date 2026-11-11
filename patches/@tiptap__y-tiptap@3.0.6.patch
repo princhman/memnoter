@@ -1,5 +1,5 @@
 diff --git a/dist/y-tiptap.cjs b/dist/y-tiptap.cjs
-index 5f3020b7c7fd6152e3a55ebe383318579dfceda9..3f9b2373b20a2feba9a453b88b7c0a3d47726671 100644
+index 5f3020b7c7fd6152e3a55ebe383318579dfceda9..850fa151b71fb115b9d32a7a0f389e56cffa54a9 100644
 --- a/dist/y-tiptap.cjs
 +++ b/dist/y-tiptap.cjs
 @@ -370,6 +370,10 @@ const restoreRelativeSelection = (tr, relSel, binding, oldDoc) => {
@@ -13,8 +13,47 @@ index 5f3020b7c7fd6152e3a55ebe383318579dfceda9..3f9b2373b20a2feba9a453b88b7c0a3d
          (
            anchor === null ||
            head === null ||
+@@ -814,10 +818,13 @@ class ProsemirrorBinding {
+         this.prosemirrorView.state.doc.content.size,
+         new PModel__namespace.Slice(PModel__namespace.Fragment.from(fragmentContent), 0, 0)
+       );
+-      restoreRelativeSelection(tr, this.beforeTransactionSelection, this, oldDoc);
++      // History positions refer to the restored document, not oldDoc.
++      restoreRelativeSelection(tr, this.beforeTransactionSelection, this,
++        transaction.origin instanceof Y__namespace.UndoManager ? undefined : oldDoc);
+       tr = tr.setMeta(ySyncPluginKey, { isChangeOrigin: true, isUndoRedoOperation: transaction.origin instanceof Y__namespace.UndoManager });
+       if (
+-        this.beforeTransactionSelection !== null && this._isLocalCursorInView()
++        this.beforeTransactionSelection !== null &&
++        (transaction.origin instanceof Y__namespace.UndoManager || this._isLocalCursorInView())
+       ) {
+         tr.scrollIntoView();
+       }
+@@ -2560,14 +2567,19 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+         stackItem.meta.set(binding, yUndoPluginKey.getState(view.state).prevSel);
+       }
+     });
+-    undoManager.on('stack-item-popped', ({ stackItem }) => {
++    // Yjs emits stack-item-popped after observers have already rendered the
++    // document. Restore the history selection before that render instead.
++    const restoreHistorySelection = transaction => {
+       const binding = ystate.binding;
+-      if (binding) {
++      const stackItem = undoManager.currStackItem;
++      if (transaction.origin === undoManager && binding && stackItem) {
+         binding.beforeTransactionSelection = stackItem.meta.get(binding) || binding.beforeTransactionSelection;
+       }
+-    });
++    };
++    undoManager.doc.on('beforeObserverCalls', restoreHistorySelection);
+     return {
+       destroy: () => {
++        undoManager.doc.off('beforeObserverCalls', restoreHistorySelection);
+         undoManager.destroy();
+         // Remove the doc 'destroy' listener Y.UndoManager fails to clean up
+         // (only for managers we created — see state.init above).
 diff --git a/dist/y-tiptap.js b/dist/y-tiptap.js
-index 8371b9eb14b3c76fe8b5de55f3633b57b9d0ac34..51810ed6a34be3efcc03a952b1007648948c420d 100644
+index 8371b9eb14b3c76fe8b5de55f3633b57b9d0ac34..5537840f72f8ed25de656db23813d6d0383c0625 100644
 --- a/dist/y-tiptap.js
 +++ b/dist/y-tiptap.js
 @@ -336,6 +336,10 @@ const restoreRelativeSelection = (tr, relSel, binding, oldDoc) => {
@@ -28,3 +67,42 @@ index 8371b9eb14b3c76fe8b5de55f3633b57b9d0ac34..51810ed6a34be3efcc03a952b1007648
          (
            anchor === null ||
            head === null ||
+@@ -780,10 +784,13 @@ class ProsemirrorBinding {
+         this.prosemirrorView.state.doc.content.size,
+         new PModel.Slice(PModel.Fragment.from(fragmentContent), 0, 0)
+       );
+-      restoreRelativeSelection(tr, this.beforeTransactionSelection, this, oldDoc);
++      // History positions refer to the restored document, not oldDoc.
++      restoreRelativeSelection(tr, this.beforeTransactionSelection, this,
++        transaction.origin instanceof Y.UndoManager ? undefined : oldDoc);
+       tr = tr.setMeta(ySyncPluginKey, { isChangeOrigin: true, isUndoRedoOperation: transaction.origin instanceof Y.UndoManager });
+       if (
+-        this.beforeTransactionSelection !== null && this._isLocalCursorInView()
++        this.beforeTransactionSelection !== null &&
++        (transaction.origin instanceof Y.UndoManager || this._isLocalCursorInView())
+       ) {
+         tr.scrollIntoView();
+       }
+@@ -2526,14 +2533,19 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+         stackItem.meta.set(binding, yUndoPluginKey.getState(view.state).prevSel);
+       }
+     });
+-    undoManager.on('stack-item-popped', ({ stackItem }) => {
++    // Yjs emits stack-item-popped after observers have already rendered the
++    // document. Restore the history selection before that render instead.
++    const restoreHistorySelection = transaction => {
+       const binding = ystate.binding;
+-      if (binding) {
++      const stackItem = undoManager.currStackItem;
++      if (transaction.origin === undoManager && binding && stackItem) {
+         binding.beforeTransactionSelection = stackItem.meta.get(binding) || binding.beforeTransactionSelection;
+       }
+-    });
++    };
++    undoManager.doc.on('beforeObserverCalls', restoreHistorySelection);
+     return {
+       destroy: () => {
++        undoManager.doc.off('beforeObserverCalls', restoreHistorySelection);
+         undoManager.destroy();
+         // Remove the doc 'destroy' listener Y.UndoManager fails to clean up
+         // (only for managers we created — see state.init above).
