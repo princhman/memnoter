@@ -489,6 +489,11 @@ test("Cloze in a formula makes the whole formula one card, and removing it keeps
     assert.deepEqual(extractCards(editor.state.doc), []);
     editor.commands.makeCloze();
     assert.equal(extractCards(editor.state.doc)[0].id, card.id);
+    // A formula cloze is enough for a note.
+    editor.commands.insertContentAt(0, { type: "paragraph", content: [{ type: "text", text: "Context" }] });
+    editor.commands.setTextSelection({ from: 2, to: editor.state.doc.content.size - 2 });
+    assert.equal(editor.commands.makeClozeNote(), true);
+    assert.equal(extractCards(editor.state.doc)[0].front.length, 2);
   } finally {
     editor.destroy();
   }

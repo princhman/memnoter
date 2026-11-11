@@ -600,7 +600,7 @@ export const Flashcards = Extension.create({
             blocks.push(pos);
             const id = validatedClozeNote(node.attrs.clozeNote);
             if (id) notes.add(id);
-            if (isCardBlock(node) && parseBlock(node).clozes.length) cloze = true;
+            if (isCardBlock(node) && parseBlock(node).cards.some((card) => card.kind === "cloze")) cloze = true;
             return false;
           });
           // A note never spans a heading, and holds at least one cloze.
