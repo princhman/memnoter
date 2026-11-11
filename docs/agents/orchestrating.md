@@ -155,6 +155,8 @@ branch is pushed.
 
 ## Data
 
+- Claude Code and Codex safety hooks: see `scripts/agent-hooks/README.md` (Codex hooks require trust review).
+
 - Launch branches for the user with `pnpm dev:copy`. If a migration did run on
   the real database, update `/Applications/Memnoter.app` or tell the user.
 - Before releasing a new Yjs node, mark or attribute, warn the user and update
