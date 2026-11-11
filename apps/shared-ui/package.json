@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test:ci": "node tests/support/run-ci.mjs && node --experimental-strip-types --import ./tests/support/register.mjs --test tests/copy-large-note.bench.mjs",
     "bench:large-note": "node --experimental-strip-types --import ./tests/support/register.mjs --test tests/large-note.bench.mjs"
   },
   "dependencies": {

@@ -77,6 +77,19 @@ h1 { margin: 0; font-size: clamp(42px, 6.4vw, 76px); font-weight: 600; line-heig
 footer { display: flex; justify-content: space-between; align-items: center; padding: 28px 0 36px; font-size: 13px; color: var(--faint); }
 footer a { transition: color .15s; }
 footer a:hover { color: var(--ink); }
+.footer-links { display: flex; gap: 20px; }
+
+/* Text pages */
+.page { width: min(680px, calc(100% - 48px)); padding: clamp(40px, 8vh, 96px) 0 64px; }
+.page h1 { font-size: clamp(36px, 5vw, 52px); }
+.page .description { max-width: none; }
+.contact { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+.contact-note { margin: 16px 0 0; font-size: 14px; line-height: 1.5; color: var(--muted); }
+.faq { margin-top: 56px; padding-top: 40px; border-top: 1px solid var(--line); }
+.faq h2 { margin: 0 0 8px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.faq h3 { margin: 28px 0 0; font-size: 16px; font-weight: 600; }
+.faq p { margin: 8px 0 0; font-size: 15px; line-height: 1.6; color: var(--muted); }
+.faq code { padding: 1px 5px; border-radius: 5px; background: #f0eef4; color: var(--ink); font-size: 13px; }
 
 @media (max-width: 720px) {
   .header { height: 64px; }
@@ -89,6 +102,7 @@ footer a:hover { color: var(--ink); }
   .download-buttons { flex-direction: column; align-items: stretch; max-width: 320px; margin-inline: auto; }
   .button { justify-content: center; }
   .features { grid-template-columns: 1fr; gap: 28px; padding: 40px 0 64px; }
+  .contact { flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
