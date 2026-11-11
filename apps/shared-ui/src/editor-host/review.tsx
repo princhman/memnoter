@@ -1,3 +1,4 @@
+import { isWriteAdmitted, registerFlusher } from "../lib/write-lifecycle";
 import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState } from "react";
 import { CardFace } from "../components/card-face";
@@ -22,11 +23,30 @@ function ReviewHost() {
     if (scopeRef.current !== undefined) void session.load(scopeRef.current ?? undefined, cutoff);
   }, [session, cutoff]);
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    return registerFlusher("live-review", async () => {
+      if (session.getSnapshot().busy || session.getSnapshot().loading) {
+        await new Promise<void>(resolve => {
+          const stop = session.subscribe(() => {
+            if (!session.getSnapshot().busy && !session.getSnapshot().loading) { stop(); resolve(); }
+          });
+        });
+      }
+      if (session.getSnapshot().error) throw new Error(session.getSnapshot().error!);
+    });
+  }, [session]);
+  useEffect(() => {
     const api: ReviewApi = {
       load: async scope => { scopeRef.current = scope; setScope(scope ?? undefined); await session.load(scope ?? undefined, cutoffRef.current); },
       reveal: session.reveal, showNow: session.showNow,
       rate: session.rate, undo: session.undo, redo: session.redo,
     };
+    if (import.meta.env.DEV) {
+      for (const method of ["rate", "undo", "redo", "reveal", "showNow"] as const) {
+        const action = api[method] as (...args: never[]) => unknown;
+        Object.assign(api, { [method]: (...args: never[]) => isWriteAdmitted() ? action(...args) : Promise.resolve() });
+      }
+    }
     window.memnoterReview = api;
     postNativeEvent("ready", { protocolVersion: BRIDGE_VERSION });
   }, [session]);

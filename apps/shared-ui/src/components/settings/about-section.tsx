@@ -15,6 +15,7 @@ export default function AboutSection() {
       <h2 className="font-medium">About</h2>
       <p className="text-sm text-muted-foreground">
         Memnoter{version ? ` v${version}` : ""}
+        {import.meta.env.VITE_BUILD_STAMP ? `, build ${import.meta.env.VITE_BUILD_STAMP}` : ""}
       </p>
       <p className="text-sm text-muted-foreground"><BetaNotice /></p>
     </section>

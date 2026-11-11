@@ -57,7 +57,16 @@ private struct PdfViewStateRecord: Codable {
             } else {
                 mime = ["js": "text/javascript", "mjs": "text/javascript", "wasm": "application/wasm", "css": "text/css", "html": "text/html" ][file.pathExtension] ?? UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
             }
+            #if DEBUG
+            if images, let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": mime, "Access-Control-Allow-Origin": "*"]) {
+                task.didReceive(response)
+            } else {
+                task.didReceive(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil))
+            }
+            #else
             task.didReceive(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil))
+            #endif
             task.didReceive(data); task.didFinish()
           } catch { if !Task.isCancelled { task.didFailWithError(error) } }
         }
@@ -113,6 +122,26 @@ private struct PdfViewStateRecord: Codable {
 }
 @MainActor @Observable final class WebSession: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate, UIScrollViewDelegate {
     #if DEBUG
+    private var liveURL: URL?
+    private var bundledURL: URL!
+    private var liveWatchdog: Task<Void, Never>?
+    private var reviewScope: Any = NSNull()
+    private var reviewLoaded = false
+    private var restoringLiveSession = false
+    private func fallbackToBundle() {
+        guard liveURL != nil else { return }
+        liveURL = nil
+        liveWatchdog?.cancel()
+        web.load(URLRequest(url: bundledURL))
+        let label = UILabel()
+        label.text = "Live editor unavailable · using bundle"
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabel
+        label.backgroundColor = .systemBackground
+        label.translatesAutoresizingMaskIntoConstraints = false
+        web.addSubview(label)
+        NSLayoutConstraint.activate([label.trailingAnchor.constraint(equalTo: web.trailingAnchor, constant: -8), label.bottomAnchor.constraint(equalTo: web.safeAreaLayoutGuide.bottomAnchor, constant: -4)])
+    }
     private var scrollObservations: [NSKeyValueObservation] = []
     #endif
     var web: WKWebView!
@@ -188,6 +217,9 @@ private struct PdfViewStateRecord: Codable {
         super.init()
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "memnoter")
+        #if DEBUG
+        config.userContentController.add(self, name: "memnoterLive")
+        #endif
         // Inject decoded JSON before the shared store mounts, independent of
         // Web Storage support for our custom scheme origin.
         let savedView = preferences.string(forKey: "editorViewState") ?? "{}"
@@ -250,7 +282,17 @@ private struct PdfViewStateRecord: Codable {
         #if DEBUG
         web.isInspectable = true
         #endif
-        web.load(URLRequest(url: URL(string: "\(BridgeProtocol.appScheme)://localhost/\(entry)")!))
+        let bundleURL = URL(string: "\(BridgeProtocol.appScheme)://localhost/\(entry)")!
+        #if DEBUG
+        bundledURL = bundleURL
+        if let raw = Bundle.main.object(forInfoDictionaryKey: "MemnoterEditorDevURL") as? String,
+           let base = URL(string: raw), base.scheme == "http", base.host != nil {
+            liveURL = base.appendingPathComponent(entry)
+        }
+        web.load(URLRequest(url: liveURL ?? bundleURL, timeoutInterval: 5))
+        #else
+        web.load(URLRequest(url: bundleURL))
+        #endif
     }
     // isScrollEnabled only disables gestures. WK still pans its outer viewport
     // on keyboard focus. Reject that offset synchronously, before it is drawn;
@@ -323,7 +365,10 @@ private struct PdfViewStateRecord: Codable {
         try await run("return await window.memnoterEditor.\(method.rawValue)(\(parameters.joined(separator: ",")))", arguments)
     }
     func callReview(_ method: ReviewApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws -> Any? {
-        try await run("return await window.memnoterReview.\(method.rawValue)(\(parameters.joined(separator: ",")))", arguments)
+        #if DEBUG
+        if method == .load { reviewScope = arguments["scope"] ?? NSNull(); reviewLoaded = true }
+        #endif
+        return try await run("return await window.memnoterReview.\(method.rawValue)(\(parameters.joined(separator: ",")))", arguments)
     }
     func execute(_ command: ExecCommand, _ args: [String: Any] = [:]) async throws -> Any? {
         try await callEditor(.exec, ["command": command.rawValue, "args": args], parameters: ["command", "args"])
@@ -369,6 +414,17 @@ private struct PdfViewStateRecord: Codable {
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         (webView as? EditorWebView)?.pdfSelection = PdfSelectionState()
+        #if DEBUG
+        restoringLiveSession = ready || restoringLiveSession
+        if liveURL != nil {
+            liveWatchdog?.cancel()
+            liveWatchdog = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled, !ready else { return }
+                fallbackToBundle()
+            }
+        }
+        #endif
         generation = UUID(); ready = false; reportedViewport = []
         filesOpen = false; pdfCoveringNote = false; pdfFocused = false; pdfReader = nil
         requestedPdfImport = nil; requestedModule = nil
@@ -376,10 +432,21 @@ private struct PdfViewStateRecord: Codable {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
         if url.scheme == BridgeProtocol.appScheme { return .allow }
+        #if DEBUG
+        if let liveURL, action.targetFrame?.isMainFrame == true,
+           url.scheme == liveURL.scheme, url.host == liveURL.host, url.port == liveURL.port,
+           url.path == liveURL.path { return .allow }
+        #endif
         if ["https", "http", "mailto"].contains(url.scheme ?? "") { await UIApplication.shared.open(url) }
         return .cancel
     }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        #if DEBUG
+        if message.name == "memnoterLive", message.frameInfo.isMainFrame {
+            fallbackToBundle()
+            return
+        }
+        #endif
         guard let body = message.body as? [String: Any] else { return }
         if body["kind"] as? String == "call", let id = body["id"] as? String, let command = body["command"] as? String {
             let token = generation
@@ -424,6 +491,18 @@ private struct PdfViewStateRecord: Codable {
                     guard payload["protocolVersion"] as? Int == BridgeProtocol.version else {
                         throw NSError(domain: "BridgeProtocol", code: 1, userInfo: [NSLocalizedDescriptionKey: "Incompatible web bridge protocol version"])
                     }
+                    #if DEBUG
+                    liveWatchdog?.cancel()
+                    if restoringLiveSession {
+                        restoringLiveSession = false
+                        Task {
+                            do {
+                                if reviewLoaded { _ = try await callReview(.load, ["scope": reviewScope], parameters: ["scope"]) }
+                                else if let moduleId { try await open(moduleId) }
+                            } catch { self.error = String(describing: error) }
+                        }
+                    }
+                    #endif
                     ready = true
                     trackOutline(outlineTracking)
                     reportBottomInset()
@@ -501,14 +580,37 @@ private struct PdfViewStateRecord: Codable {
         if let url = action.request.url, ["https", "http", "mailto"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
         return nil
     }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) { self.error = String(describing: error) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        #if DEBUG
+        if liveURL != nil { fallbackToBundle(); return }
+        #endif
+        self.error = String(describing: error)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        #if DEBUG
+        if liveURL != nil { fallbackToBundle(); return }
+        #endif
+        self.error = String(describing: error)
+    }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { error = "The editor process stopped. Reopen the app to recover saved notes." }
     func updateCardPreference() async {
         guard ready else { return }
         do { _ = try await run("window.__memnoterBridge.emit(event, enabled)", ["event": NativeEventName.skipCardsCreatedToday.rawValue, "enabled": preferences.bool(forKey: "skipCardsCreatedToday")]) }
         catch { self.error = String(describing: error) }
     }
-    func dispose() { web.scrollView.delegate = nil; onReady = nil; insetReport?.cancel(); insetReport = nil; NotificationCenter.default.removeObserver(self); generation = UUID(); web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter") }
+    func dispose() {
+        #if DEBUG
+        liveWatchdog?.cancel()
+        web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoterLive")
+        #endif
+        web.scrollView.delegate = nil
+        onReady = nil
+        insetReport?.cancel()
+        insetReport = nil
+        NotificationCenter.default.removeObserver(self)
+        generation = UUID()
+        web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoter")
+    }
 }
 struct WebSurface: UIViewRepresentable {
     let session: WebSession
