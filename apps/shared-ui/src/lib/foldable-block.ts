@@ -52,6 +52,28 @@ export function foldableBlockReveal() {
 }
 
 const FoldableDetails = Details.extend({
+  addNodeView() {
+    const parent = this.parent?.();
+    if (!parent) return null;
+    return props => {
+      const nodeView = parent(props);
+      // Upstream refocuses the old caret after toggling. On iOS that can pan
+      // to the top of a long note, even with scrollIntoView disabled.
+      nodeView.dom.addEventListener("click", event => {
+        const toggle = (event.target as Element).closest(".foldable-block-toggle");
+        if (!toggle || toggle.parentElement !== nodeView.dom) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const pos = props.getPos();
+        if (!props.editor.isEditable || typeof pos !== "number") return;
+        const { state, dispatch } = props.editor.view;
+        const node = state.doc.nodeAt(pos);
+        if (node?.type !== this.type) return;
+        dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, open: !node.attrs.open }));
+      }, true);
+      return nodeView;
+    };
+  },
   addCommands() {
     return {
       ...this.parent?.(),

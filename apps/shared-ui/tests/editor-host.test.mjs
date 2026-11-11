@@ -39,6 +39,39 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
         queueMicrotask(() => window.__memnoterBridge.resolve(id, result));
       } });
     });
+    await t.test('unfolding a block on iPad preserves the reader scroll and does not focus an old caret', async () => {
+      const reader = await context.newPage();
+      try {
+        await reader.setViewportSize({ width: 1024, height: 768 });
+        await reader.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+        await reader.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+        await reader.evaluate(() => window.memnoterEditor.open('fold-scroll'));
+        await reader.locator('.tiptap').click();
+        await reader.locator('.tiptap').evaluate(element => {
+          const clipboardData = new DataTransfer();
+          clipboardData.setData('text/html', '<p>Old caret</p>' + '<p>Reading above the example</p>'.repeat(45)
+            + '<details><summary>Worked example</summary><div data-type="detailsContent"><p>Hidden solution</p></div></details>'
+            + '<p>Reading below the example</p>'.repeat(25));
+          element.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+        });
+        await reader.locator('.tiptap p').first().click();
+        await reader.locator('.tiptap').evaluate(element => element.blur());
+        const toggle = reader.getByRole('button', { name: 'Unfold block', exact: true });
+        await toggle.evaluate(element => {
+          const container = element.closest('.app-scroll-container');
+          container.scrollTop += element.getBoundingClientRect().top - 300;
+        });
+        const before = await reader.locator('.app-scroll-container').evaluate(element => element.scrollTop);
+        assert.ok(before > 500, 'the example starts well below the top of the note');
+        await toggle.tap();
+        await reader.getByRole('button', { name: 'Fold block', exact: true }).waitFor();
+        await reader.waitForTimeout(400);
+        const after = await reader.locator('.app-scroll-container').evaluate(element => element.scrollTop);
+        assert.ok(Math.abs(after - before) < 2, `Unfold jumped from ${before} to ${after}`);
+        assert.equal(await reader.locator('.tiptap').evaluate(element => element === document.activeElement), false);
+        assert.equal(await reader.getByText('Hidden solution', { exact: true }).isVisible(), true);
+      } finally { await reader.close(); }
+    });
     // Exercise real DOM input/selection and the public native occlusion bridge.
     // These cases own visibility and minimum movement, rather than scroll internals.
     for (const [name, scenario] of [
