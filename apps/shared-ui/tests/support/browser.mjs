@@ -80,3 +80,16 @@ export function browserHarness(file) {
     },
   };
 }
+
+// Native WebKit selectionchange is delivered separately from keyboard input.
+// A completed key press (or a painted frame) does not mean PM has read it yet.
+export async function waitForEditorSelection(page) {
+  await page.waitForFunction(() => {
+    const { view, state } = window.editor;
+    const selection = view.dom.ownerDocument.getSelection();
+    return view.hasFocus() && selection?.anchorNode && selection.focusNode &&
+      view.dom.contains(selection.anchorNode) && view.dom.contains(selection.focusNode) &&
+      view.posAtDOM(selection.anchorNode, selection.anchorOffset) === state.selection.anchor &&
+      view.posAtDOM(selection.focusNode, selection.focusOffset) === state.selection.head;
+  });
+}

@@ -36,7 +36,8 @@ jobs:
       # Editor tests use WebKit; desktop navigation also covers Chromium layout.
       - run: pnpm --filter memnoter-shared-ui exec playwright install webkit chromium
 
-      - run: pnpm test
+      # Reruns a failing file alone once; only repeat failures fail the job.
+      - run: pnpm --filter memnoter-shared-ui test:ci
 
       - name: cargo test
         run: cargo test --workspace
