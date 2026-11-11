@@ -1053,7 +1053,12 @@ body {
     text-align: center;
 }
 
-.tiptap .math-block:is(.ProseMirror-selectednode, .is-range-selected) .math-block-widget .katex-base {
+/* A selected formula is one box around just the formula, as a cloze is. */
+.tiptap .math-block:is(.ProseMirror-selectednode, .is-range-selected) .math-block-widget .katex-display {
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+    padding-inline: 0.25em;
     background: color-mix(in srgb, var(--primary) 25%, transparent);
 }
 
