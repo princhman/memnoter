@@ -113,18 +113,6 @@ struct RootView: View {
                 deletingFolder = nil
             }
         } message: { Text("Its modules move to the top level. No notes are deleted.") }
-        .confirmationDialog("Delete module and its notes?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("Delete", role: .destructive) {
-                if let deleting { Task {
-                    await store.perform {
-                        try await session?.flush()
-                        if selected == deleting.id { selected = "home" }
-                        try await store.client?.write("delete_module", ModuleArgs(moduleId: deleting.id))
-                    }
-                    self.deleting = nil
-                } }
-            }
-        }
         // Keep phone Contents presentation above the title's Button/Menu
         // branches so it has a stable presenter across focus changes.
         .sheet(isPresented: Binding(get: { isPhone && showingContents }, set: { if isPhone { showingContents = $0 } })) {
@@ -781,6 +769,18 @@ struct RootView: View {
                 .padding(.leading, inFolder ? 20 : 0)
         }
         .contextMenu { moduleActions(module) }
+        .confirmationDialog("Delete module and its notes?", isPresented: Binding(get: { deleting?.id == module.id }, set: { if !$0 && deleting?.id == module.id { deleting = nil } })) {
+            Button("Delete", role: .destructive) {
+                if let deleting { Task {
+                    await store.perform {
+                        try await session?.flush()
+                        if selected == deleting.id { selected = "home" }
+                        try await store.client?.write("delete_module", ModuleArgs(moduleId: deleting.id))
+                    }
+                    self.deleting = nil
+                } }
+            }
+        }
         .swipeActions { Button("Delete", role: .destructive) { deleting = module }; Button("Rename") { rename = module; name = module.name; editingName = true } }
     }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {

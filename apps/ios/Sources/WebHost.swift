@@ -343,7 +343,14 @@ private struct PdfViewStateRecord: Codable {
         }
     }
     func run(_ script: String, _ arguments: [String: Any] = [:]) async throws -> Any? {
-        try await web.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .page)
+        do {
+            return try await web.callAsyncJavaScript("\(script)\n; return null;", arguments: arguments, in: nil, contentWorld: .page)
+        } catch let error as WKError where error.code == .javaScriptResultTypeIsUnsupported {
+            // The script already ran. A result WebKit cannot bridge is a host
+            // programming error, not a failed note operation for the user.
+            NSLog("Ignoring unsupported JavaScript bridge result: %@", error.localizedDescription)
+            return nil
+        }
     }
     func exec(_ command: ExecCommand, _ args: [String: Any] = [:], focusAfter: Bool = false) {
         let target = moduleId
@@ -362,13 +369,13 @@ private struct PdfViewStateRecord: Codable {
         }
     }
     func callEditor(_ method: EditorApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws -> Any? {
-        try await run("return await window.memnoterEditor.\(method.rawValue)(\(parameters.joined(separator: ",")))", arguments)
+        try await run("return (await window.memnoterEditor.\(method.rawValue)(\(parameters.joined(separator: ",")))) ?? null", arguments)
     }
     func callReview(_ method: ReviewApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws -> Any? {
         #if DEBUG
         if method == .load { reviewScope = arguments["scope"] ?? NSNull(); reviewLoaded = true }
         #endif
-        return try await run("return await window.memnoterReview.\(method.rawValue)(\(parameters.joined(separator: ",")))", arguments)
+        return try await run("return (await window.memnoterReview.\(method.rawValue)(\(parameters.joined(separator: ",")))) ?? null", arguments)
     }
     func execute(_ command: ExecCommand, _ args: [String: Any] = [:]) async throws -> Any? {
         try await callEditor(.exec, ["command": command.rawValue, "args": args], parameters: ["command", "args"])

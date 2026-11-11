@@ -1,5 +1,5 @@
 import "@/App.css";
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { noteExtensions } from "@/lib/editor-schema";
@@ -16,15 +16,16 @@ import { flushAll, imageStatusStore } from "@/lib/write-lifecycle";
 import { pendingPdfQuote } from "@/lib/pending-pdf-quote";
 
 function Fixture() {
+  const [readerOpen, setReaderOpen] = useState(!location.search.includes("late-reader"));
   const owner = useNoteDocument("quote-module");
   const { setActiveEditor } = useActiveEditor();
   const editor = useEditor({ extensions: noteExtensions({ document: owner.yDoc, ui: { pdfTextQuote: PdfTextQuote } }) });
   useLayoutEffect(() => { owner.editorRef.current = editor; }, [editor]);
   useEffect(() => {
     if (!editor || !owner.isSuccess) return;
-    setActiveEditor({ moduleId: "quote-module", editor, isReady: true, insertQuote: owner.insertQuote, insertTextQuote: owner.insertTextQuote });
+    if (readerOpen) setActiveEditor({ moduleId: "quote-module", editor, isReady: true, insertQuote: owner.insertQuote, insertTextQuote: owner.insertTextQuote });
     Object.assign(window, { textQuoteTest: { Editor, noteExtensions, editor, owner, Y, flushAll, imageStatusStore, pendingPdfQuote } });
-  }, [editor, owner.isSuccess, owner.insertQuote, owner.insertTextQuote, setActiveEditor]);
-  return <main className="relative h-[600px]"><EditorContent editor={editor} /><PdfQuoteControls moduleId="quote-module" /></main>;
+  }, [editor, owner.isSuccess, owner.insertQuote, owner.insertTextQuote, setActiveEditor, readerOpen]);
+  return <main className="relative h-[600px]"><EditorContent editor={editor} />{readerOpen ? <PdfQuoteControls moduleId="quote-module" /> : <button onClick={() => setReaderOpen(true)}>Open reader</button>}</main>;
 }
 createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><ActiveEditorProvider><Fixture /></ActiveEditorProvider></QueryClientProvider>);
