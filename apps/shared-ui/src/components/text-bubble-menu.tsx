@@ -28,7 +28,6 @@ import {
 import { HIGHLIGHT_COLORS, highlightColor } from "@/lib/highlight";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { IconTooltip } from "@/components/icon-tooltip";
 import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
 
 // Marks make no sense inside these; the menu stays hidden there. Inline
@@ -211,12 +210,14 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         <Code />
       </MarkButton>
       <div className="flex items-center">
-        <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}>
-          <Button size="icon-sm" variant="ghost" aria-label="Highlight" aria-pressed={active.highlight}
-            className={active.highlight ? "note-highlight" : undefined}
-            data-color={active.highlight ? active.highlightColor : undefined}
-            onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Button>
-        </IconTooltip>
+        <MarkButton
+          label="Highlight"
+          hint={formatKeys(action("text.highlight").keys)}
+          pressed={active.highlight}
+          onToggle={() => editor.chain().focus().toggleHighlight().run()}
+        >
+          <Highlighter />
+        </MarkButton>
         <DropdownMenu onOpenChange={open => { pickerOpen.current = open; }}>
           <DropdownMenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Highlight colours" />}>
             <ChevronDown />
@@ -302,5 +303,5 @@ function MarkButton({
   onToggle: () => void;
   children: ReactNode;
 }) {
-  return (<ToolButton label={label} hint={hint} pressed={pressed} className={pressed ? "bg-primary text-primary-foreground hover:bg-primary/80 hover:text-primary-foreground" : undefined} disabled={disabled} onClick={onToggle}>{children}</ToolButton>);
+  return (<ToolButton label={label} hint={hint} pressed={pressed} variant={pressed ? "default" : "ghost"} disabled={disabled} onClick={onToggle}>{children}</ToolButton>);
 }
