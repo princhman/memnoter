@@ -78,8 +78,13 @@ test("a formula cloze shows its card dot, and a foldable block wrapped around a 
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/cloze-notes.html`);
     await page.evaluate(() => window.editor.commands.setContent([
       { type: "paragraph", content: [{ type: "text", text: "Step {{one}}" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Plain" }] },
       { type: "mathBlock", attrs: { cloze: true }, content: [{ type: "text", text: "a + b" }] },
     ]));
+    assert.equal(await page.locator(".math-card-info .card-info").count(), 1);
+    // Editing the block before it keeps the formula's dot.
+    await page.evaluate(() => window.editor.chain().setTextSelection(16).insertContent("x").run());
+    assert.equal(await page.evaluate(() => window.editor.state.doc.child(1).textContent), "Pxlain");
     assert.equal(await page.locator(".math-card-info .card-info").count(), 1);
     assert.equal(await page.locator(".cloze-note-make").count(), 0);
     await page.evaluate(() => window.editor.chain().setTextSelection(2).setDetails().run());

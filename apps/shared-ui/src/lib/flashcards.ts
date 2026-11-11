@@ -177,7 +177,7 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules, place?:
           label: "Split note", run: () => view.dispatch(splitNote(view.state.tr, place.id)),
         } : null));
         return anchor;
-      }, { side: 1, ignoreSelection: true, stopEvent: () => true, key: `math-info:${schedules.now}:${place?.id ?? ""}:${key}` }));
+      }, { side: 1, leading: true, ignoreSelection: true, stopEvent: () => true, key: `math-info:${schedules.now}:${place?.id ?? ""}:${key}` }));
     }
     return decorations;
   }
@@ -861,7 +861,9 @@ export const Flashcards = Extension.create({
                 const end = pos + node.nodeSize;
                 const stale = next
                   .find(pos, end)
-                  .filter((decoration) => decoration.from >= pos && decoration.to <= end);
+                  // A formula's dot at this block's end belongs to the formula.
+                  .filter((decoration) => decoration.from >= pos && decoration.to <= end
+                    && !(decoration.from === end && decoration.spec.leading));
                 next = next.remove(stale).add(tr.doc, blockDecorations(node, pos, schedules));
               }
             }
