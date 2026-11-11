@@ -256,4 +256,9 @@ test("each cloze of a note is its own card that shows the whole note", () => {
   assert.deepEqual(cards[1].back[4], block([text("then z")], { depth: 1, marker: 2 }));
   // A block outside the note keeps its own card text.
   assert.deepEqual(cards[3].front, [text("Alone "), { type: "blank" }]);
+  // A heading ends a note, even one added between its members later.
+  const split = extractCards(doc.create(null, [
+    member("A {{a}}", "a"), heading.create({ level: 2 }, schema.text("H")), member("B {{b}}", "b"),
+  ]));
+  assert.deepEqual(split[1].front, [text("B "), { type: "blank" }]);
 });

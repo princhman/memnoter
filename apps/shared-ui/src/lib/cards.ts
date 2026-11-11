@@ -336,14 +336,16 @@ export function validatedClozeNote(value: unknown): string | null {
 export type ClozeNote = Range & { id: string };
 
 // Each cloze note spans from its first member block to its last, so blocks
-// added in between belong to it. Notes are ordered and never overlap: a note
-// that would overlap an earlier one is ignored.
+// added in between belong to it. A note ends at the next heading, and notes
+// never overlap: a note that would overlap an earlier one is ignored.
 export function clozeNotesOf(doc: Node): ClozeNote[] {
   const spans = new Map<string, ClozeNote>();
+  const ended = new Set<string>();
   doc.descendants((node, pos) => {
     if (!node.isTextblock) return true;
+    if (node.type.name === "heading") spans.forEach((_, id) => ended.add(id));
     const id = validatedClozeNote(node.attrs.clozeNote);
-    if (id) {
+    if (id && !ended.has(id)) {
       const span = spans.get(id);
       if (span) span.to = pos + node.nodeSize;
       else spans.set(id, { id, from: pos, to: pos + node.nodeSize });
