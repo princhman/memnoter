@@ -1368,8 +1368,13 @@ body {
     }
 }
 
-/* A formula that is a cloze card looks like a cloze. */
-.tiptap .cloze-math-block .math-block-widget {
+/* A formula that is a cloze card is marked like an inline cloze: one box
+   around just the formula, not the whole block. */
+.tiptap .cloze-math-block .math-block-widget .katex-display {
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+    padding-inline: 0.25em;
     background-color: var(--cloze-bg);
     box-shadow: inset 0 -2px 0 0 var(--cloze);
 }

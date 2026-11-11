@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import { noteExtensions } from "@/lib/editor-schema";
 import { MathBlockView } from "@/lib/editor-schema/math-block-view";
 import "@/App.css";
+import "katex/dist/katex.min.css";
 
 const editor = new Editor({
   element: document.getElementById("editor")!,
