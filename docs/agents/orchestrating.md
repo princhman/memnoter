@@ -67,6 +67,64 @@ Don't restate the stack, commands or rules; the delegate already has them.
   Verification logs, screenshot lists and design narration go in the PR
   description, never a README. Tell delegates the same when they touch docs.
 
+## Flows
+
+- **User present** ("just fix", screenshots, testing on a device): the
+  `pair-fix` skill.
+- **Handoff** (issues to fix alone, with proof at the end): the `handoff` skill.
+- **Lag, freezes, slow typing**: the `perf-investigate` skill.
+
+The skills are general; the per-platform details below are what they look up.
+
+Handoff in this repo: Linear team I build (PRI). An agent waiting on the user
+comments on the issue and adds the `Needs input` label; it removes the label
+when it picks the issue up again. Handoff worktrees are removed once the branch
+is pushed.
+
+## Platforms: show, prove, profile
+
+| Platform | Show the user | Proof (video or screenshot) | Cost |
+| --- | --- | --- | --- |
+| Mac desktop | `pnpm dev:copy`; save and it reloads | `screencapture -v -V <secs> out.mov` once T3 Code has Screen Recording permission | cheap |
+| Windows | no Windows machine; Chromium stands in | `PROOF_DIR=<dir>` on a shared-ui test (below) | cheap |
+| iPad / iPhone simulator | build for the simulator (below) | `agent-device record start --scope device <file>.mp4`, then `record stop` | expensive (iOS build) |
+| User's iPad / iPhone | `scripts/ios-install.sh [--iphone\|--all]` | only the user can record | expensive |
+
+- **Cheap** checks: do them yourself. **Expensive** ones on platforms the issue
+  didn't name: ask first.
+- **Chromium/WebKit proof:** `PROOF_DIR=<dir>` makes every page a shared-ui test
+  opens record a `.webm` into `<dir>`. Write a throwaway test for the scenario if
+  no existing one shows it, run it from `apps/shared-ui` with the usual
+  `node … --test`, and delete it afterwards. These pages use test data, so they
+  prove the shared-ui layout and behaviour, not the native shell.
+- **Simulator build:** `xcodebuild -project apps/ios/Memnoter.xcodeproj -scheme
+  Memnoter -destination id=<udid> -derivedDataPath apps/ios/build build`, then
+  `agent-device install com.vladyslavnalyvaiko.memnoter.ipad
+  apps/ios/build/Build/Products/Debug-iphonesimulator/Memnoter.app`. UDIDs are
+  in `apps/ios/README.md`. The recorder only writes frames when the screen
+  changes, so drive the scenario while recording.
+- **minipc** can make Chromium/WebKit proof only (no iOS, no macOS).
+- **Uploads:** proof goes on the Linear issue, one file at a time
+  (`prepare_file_upload`, then PUT within 60 s). Delete every local video and
+  screenshot after it's uploaded; none go in the repo or stay on the machine.
+
+**Profiling** (verified on the Mac 2026-11-11 unless marked):
+
+- **Mac desktop:** measure a production frontend, never `pnpm dev`:
+  `pnpm tauri build --debug --no-bundle` run with `MEMNOTER_DATA_DIR` pointing
+  at a `pnpm dev:copy` copy. Then `sample <pid> 5 -file out.txt` on `memnoter`
+  and on its `com.apple.WebKit.WebContent` process (the one started right after
+  it; `ps -A -o pid,lstart,comm`), or `xcrun xctrace record --template 'Time
+  Profiler' --attach <pid> --time-limit 10s --output out.trace`. Headless tests
+  miss macOS text-input paths (the Cmd+A Writing Tools freeze).
+- **iPad / iPhone:** simulators run on the Mac's CPU, so their timings mean
+  nothing. On a device: `xcrun xctrace record --template 'Time Profiler'
+  --device <udid> --attach Memnoter` (unverified: the devices were offline).
+  Editor JS timings need Safari's Web Inspector on the device, which only the
+  user can open.
+- **shared-ui in isolation:** `tests/copy-large-note.bench.mjs` and
+  `tests/large-note.bench.mjs` (`COPY_PROFILE=1` for a Chromium CPU profile).
+
 ## Machines
 
 - **Mac** (the user sits here): Xcode, simulators, the user's devices, the
