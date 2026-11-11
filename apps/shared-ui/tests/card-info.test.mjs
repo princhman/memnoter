@@ -66,3 +66,26 @@ test("a foldable block becomes one cloze note and stays one when folded, and a f
     await server.close();
   }
 });
+
+test("a formula cloze shows its card dot, and a foldable block wrapped around a cloze offers to become a note", async () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const server = await createServer({ root, configFile: `${root}/vite.config.ts`, server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/cloze-notes.html`);
+    await page.evaluate(() => window.editor.commands.setContent([
+      { type: "paragraph", content: [{ type: "text", text: "Step {{one}}" }] },
+      { type: "mathBlock", attrs: { cloze: true }, content: [{ type: "text", text: "a + b" }] },
+    ]));
+    assert.equal(await page.locator(".math-card-info .card-info").count(), 1);
+    assert.equal(await page.locator(".cloze-note-make").count(), 0);
+    await page.evaluate(() => window.editor.chain().setTextSelection(2).setDetails().run());
+    assert.equal(await page.locator(".foldable-block .cloze-note-make").count(), 1);
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});

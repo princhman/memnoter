@@ -155,17 +155,34 @@ type NotePlace = { id: string; cards: ReturnType<typeof cardIdsOf> | null };
 
 function blockDecorations(node: Node, pos: number, schedules: Schedules, place?: NotePlace): Decoration[] {
   const syntax = parseBlock(node);
-  // A formula that is a cloze is marked like one; a note lists its card.
-  if (node.type.spec.code) {
-    return syntax.cards.length ? [Decoration.node(pos, pos + node.nodeSize, { class: "cloze-math-block" })] : [];
-  }
-  const start = pos + 1;
-  const decorations: Decoration[] = [];
   const entries = (place ? place.cards ?? [] : cardIdsOf(node)).map(({ id, answer, parts }) => ({
     answer,
     parts,
     schedule: schedules.byId.get(id),
   }));
+  // A formula that is a cloze is marked like one. Its source hides while it
+  // is not edited, so its dot sits just before the block instead.
+  if (node.type.spec.code) {
+    if (!syntax.cards.length && !place?.cards?.length) return [];
+    const decorations = [Decoration.node(pos, pos + node.nodeSize, { class: "cloze-math-block" })];
+    if (entries.length) {
+      const due = entries.some(({ schedule }) => schedule && schedule.dueAt <= schedules.now);
+      const key = JSON.stringify([due, entries.map(({ answer, schedule }) =>
+        [answer, schedule?.state ?? null, schedule?.dueAt ?? null, schedule?.lastReviewAt ?? null])]);
+      decorations.push(Decoration.widget(pos, (view) => {
+        const anchor = document.createElement("div");
+        anchor.className = "math-card-info";
+        anchor.contentEditable = "false";
+        anchor.append(cardInfo(entries, due, schedules.now, place ? {
+          label: "Split note", run: () => view.dispatch(splitNote(view.state.tr, place.id)),
+        } : null));
+        return anchor;
+      }, { side: 1, ignoreSelection: true, stopEvent: () => true, key: `math-info:${schedules.now}:${place?.id ?? ""}:${key}` }));
+    }
+    return decorations;
+  }
+  const start = pos + 1;
+  const decorations: Decoration[] = [];
   if (entries.length > 0) {
     const due = entries.some(({ schedule }) => schedule && schedule.dueAt <= schedules.now);
     // Redrawn when what it shows changes.
@@ -231,17 +248,20 @@ function notePlaces(doc: Node, notes: ClozeNote[]) {
   for (const note of notes) {
     const owner: NotePlace = { id: note.id, cards: [] };
     let ownerPos: number | null = null;
+    let formulaPos: number | null = null;
     doc.nodesBetween(note.from, note.to, (node, pos) => {
       if (!node.isTextblock) return true;
       if (!isCardBlock(node)) return false;
       owner.cards!.push(...cardIdsOf(node));
       places.set(pos, { id: note.id, cards: null });
-      // A formula's dot would hide with its source.
-      if (ownerPos === null && !note.block && !node.type.spec.code) ownerPos = pos;
+      // The first text block shows the dot; a note of only formulas uses its first.
+      if (node.type.spec.code) formulaPos ??= pos;
+      else ownerPos ??= pos;
       return false;
     });
+    const at = ownerPos ?? formulaPos;
     if (note.block) blocks.set(note.id, owner);
-    else if (ownerPos !== null) places.set(ownerPos, owner);
+    else if (at !== null) places.set(at, owner);
   }
   return { places, blocks };
 }
@@ -475,11 +495,18 @@ function touchesNotes(tr: Transaction, before: ClozeNote[], after: ClozeNote[], 
     ...before.map(({ from, to }) => ({ from: tr.mapping.map(from, -1), to: tr.mapping.map(to, 1) })),
   ];
   if (ranges.some((range) => spans.some((span) => range.from <= span.to && range.to >= span.from))) return true;
-  // A foldable block offers to become a note once it holds a cloze.
-  return ranges.some(({ from }) => {
-    const $pos = tr.doc.resolve(Math.min(from, tr.doc.content.size));
+  // A foldable block offers to become a note once it holds a cloze, including
+  // one just wrapped around existing blocks.
+  const size = tr.doc.content.size;
+  return ranges.some(({ from, to }) => {
+    const $pos = tr.doc.resolve(Math.min(from, size));
     for (let depth = $pos.depth; depth > 0; depth--) if ($pos.node(depth).type.name === "details") return true;
-    return false;
+    let foldable = false;
+    tr.doc.nodesBetween(Math.min(from, size), Math.min(Math.max(from, to), size), (node) => {
+      if (node.type.name === "details") foldable = true;
+      return !foldable && !node.isTextblock;
+    });
+    return foldable;
   });
 }
 

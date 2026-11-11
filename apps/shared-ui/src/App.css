@@ -1384,6 +1384,20 @@ body {
     box-shadow: inset 0 -2px 0 0 var(--cloze);
 }
 
+/* A formula's dot sits in the margin by its first line, outside its source. */
+.tiptap .math-card-info {
+    position: relative;
+    height: 0;
+}
+
+.tiptap .math-card-info > .card-info {
+    top: 0.75rem;
+}
+
+.tiptap .math-card-info:is(:hover, :has(+ .math-block:hover)) > .card-info {
+    opacity: 1;
+}
+
 /* A heading's fold toggle keeps its place; the info goes before it. */
 .tiptap :is(h1, h2, h3, h4, h5, h6) > .card-info {
     right: calc(100% + 1.4rem + var(--card-list-depth, 0) * var(--card-list-indent));
