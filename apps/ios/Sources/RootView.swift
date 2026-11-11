@@ -577,9 +577,6 @@ struct RootView: View {
                 }.disabled(!reader.canAnnotate && !reader.annotating)
             }
             PdfViewMenu(session: session, reader: reader).actions
-            if reader.fullscreen {
-                Button { session.pdfCommand(.openBeside) } label: { Label("Exit full screen", systemImage: "arrow.down.right.and.arrow.up.left") }
-            }
         }
         // With a file open, the menu is only about that file; "× Note" leads back to the note.
         if reader.activeId == nil {
@@ -1013,7 +1010,7 @@ private struct PdfViewMenu: View {
                     .disabled(!reader.canZoomOut)
                     .menuActionDismissBehavior(.disabled)
             }
-            if !reader.fullscreen {
+            if UIDevice.current.userInterfaceIdiom != .phone, !reader.fullscreen {
                 Button { session.pdfCommand(.openFullscreen) } label: { Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right") }
             }
     }
