@@ -5,13 +5,14 @@ import { closeHistory } from "@tiptap/pm/history";
 import { joinBackward } from "@tiptap/pm/commands";
 import StarterKit from "@tiptap/starter-kit";
 import { Flashcards } from "../src/lib/flashcards.ts";
+import { MathBlock } from "../src/lib/math-block.ts";
 import { blockIdOf, cardIdsOf, extractCards } from "../src/lib/cards.ts";
 
 // Exercise real Tiptap commands and appendTransaction without mounting a DOM.
 function editorFor(content) {
   const editor = new Editor({
     element: null,
-    extensions: [StarterKit, Flashcards],
+    extensions: [StarterKit, MathBlock, Flashcards],
     content: { type: "doc", content },
   });
   editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
@@ -469,6 +470,25 @@ test("making a cloze note shares its text across its cards, keeps their ids, and
     assert.deepEqual(cards[2], original[2]);
     editor.commands.splitClozeNote(notes[0]);
     assert.deepEqual(extractCards(editor.state.doc), original);
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("Cloze in a formula makes the whole formula one card, and removing it keeps its id", () => {
+  const editor = editorFor([{ type: "mathBlock", content: [{ type: "text", text: "a^2 + b^2" }] }]);
+  try {
+    editor.commands.setTextSelection(2);
+    assert.equal(editor.can().removeCloze(), false);
+    assert.equal(editor.commands.makeCloze(), true);
+    const [card] = extractCards(editor.state.doc);
+    assert.equal(card.kind, "cloze");
+    assert.equal(card.id, `${editor.state.doc.firstChild.attrs.cardId}:math`);
+    assert.equal(editor.state.doc.textContent, "a^2 + b^2");
+    assert.equal(editor.commands.removeCloze(), true);
+    assert.deepEqual(extractCards(editor.state.doc), []);
+    editor.commands.makeCloze();
+    assert.equal(extractCards(editor.state.doc)[0].id, card.id);
   } finally {
     editor.destroy();
   }

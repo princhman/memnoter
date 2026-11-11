@@ -19,8 +19,10 @@ export function isImageNode(node: Node | null | undefined): boolean {
 //   - Cloze: `{{hidden}}`. Each cloze is its own card; the review shows the
 //     whole block with that cloze hidden and the other clozes as plain text.
 //   - A block with a cloze is a cloze block; any `::` or `:::` in it is plain text.
+//   - A math block marked as a cloze is one cloze card: its whole formula.
 //   - Blocks marked as one cloze note share their context: each cloze in the
-//     note is still its own card, but its review shows the whole note.
+//     note is still its own card, but its review shows the whole note. A
+//     foldable block can be a note too, holding all of its content.
 // Text in inline code is never syntax. Inline math may appear on either side
 // and inside a cloze. A card needs a non-empty front and answer.
 
@@ -151,9 +153,23 @@ function segmentsOf(units: Unit[]): Segment[] {
   return segments;
 }
 
+// A math block's formula, shown on its own line.
+function displayMath(block: Node): Segment[] {
+  const tex = block.textContent.trim();
+  return tex ? [{ type: "math", tex, display: true }] : [];
+}
+
 export function parseBlock(block: Node): BlockSyntax {
-  const units = unitsOf(block);
   const syntax: BlockSyntax = { separator: null, clozes: [], cards: [] };
+  // A formula's braces are LaTeX, never card syntax.
+  if (block.type.spec.code) {
+    const math = displayMath(block);
+    if (block.attrs.cloze === true && math.length) {
+      syntax.cards.push({ kind: "cloze", front: [{ type: "blank" }], back: [{ type: "cloze", children: math }] });
+    }
+    return syntax;
+  }
+  const units = unitsOf(block);
 
   // Clozes do not nest: the last `{{` before a `}}` opens it.
   const clozes: { open: number; close: number }[] = [];
@@ -223,9 +239,13 @@ function mergeText(segments: Segment[]): Segment[] {
 }
 
 // Blocks that can carry a card id: textblocks of a type with the attribute.
+// Code blocks have no card id; math blocks do, for whole-formula clozes.
 export function isCardBlock(node: Node) {
-  return node.isTextblock && !node.type.spec.code && "cardId" in node.attrs;
+  return node.isTextblock && "cardId" in node.attrs;
 }
+
+// The id a whole-formula cloze is stored under, after its block's id.
+const MATH_CLOZE_ID = "math";
 
 // Group membership uses stable cloze ids, so edits before an answer do not
 // change which answers are reviewed together.
@@ -287,6 +307,7 @@ function blockCardIds(node: Node, blockId: string, syntax: BlockSyntax) {
       id: basicCardId(blockId, index !== 0),
       answer: syntax.cards.length === 2 ? (index === 0 ? "Forward" : "Reverse") : null,
     };
+    if (node.type.spec.code) return { id: clozeCardId(blockId, MATH_CLOZE_ID), answer: node.textContent.trim() };
     const inner = syntax.clozes[index]?.inner;
     const entry = inner && clozeIds.find((entry) =>
       entry.from >= 0 && entry.from === inner.from && entry.to === inner.to);
@@ -322,10 +343,23 @@ function cardsOfBlock(node: Node, blockId: string) {
 }
 
 // The cards stored for a block, as `extractCards` names them.
-export function cardIdsOf(node: Node): { id: string; answer: string | null }[] {
+// A cloze card's answers, or null for other cards.
+function answerParts(back: CardPayload): Segment[] | null {
+  if (!Array.isArray(back)) return null;
+  const answers = back.flatMap((segment) => segment.type === "block" ? segment.children : [segment])
+    .flatMap((segment) => segment.type === "cloze" ? [segment.children] : []);
+  if (!answers.length) return null;
+  return answers.flatMap((children, index) => index ? [{ type: "text" as const, text: ", " }, ...children] : children);
+}
+
+// `parts` is a cloze card's answer as it renders, formulas included.
+export function cardIdsOf(node: Node): { id: string; answer: string | null; parts?: Segment[] }[] {
   const blockId = node.attrs.cardId;
   if (!isCardBlock(node) || typeof blockId !== "string") return [];
-  return cardsOfBlock(node, blockId).map(({ id, answer }) => ({ id, answer }));
+  return cardsOfBlock(node, blockId).map(({ id, answer, back }) => {
+    const parts = answerParts(back);
+    return parts ? { id, answer, parts } : { id, answer };
+  });
 }
 
 // Note ids come from documents and pasted HTML, not just us.
@@ -333,7 +367,8 @@ export function validatedClozeNote(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-export type ClozeNote = Range & { id: string };
+// `block` marks a foldable block that is a note as a whole.
+export type ClozeNote = Range & { id: string; block?: boolean };
 
 // Each cloze note spans from its first member block to its last, so blocks
 // added in between belong to it. A note ends at the next heading, and notes
@@ -342,6 +377,14 @@ export function clozeNotesOf(doc: Node): ClozeNote[] {
   const spans = new Map<string, ClozeNote>();
   const ended = new Set<string>();
   doc.descendants((node, pos) => {
+    // A foldable block that is a note holds all of its content.
+    if (node.type.name === "details") {
+      const id = validatedClozeNote(node.attrs.clozeNote);
+      if (!id || spans.has(id)) return true;
+      spans.set(id, { id, from: pos, to: pos + node.nodeSize, block: true });
+      ended.add(id);
+      return false;
+    }
     if (!node.isTextblock) return true;
     if (node.type.name === "heading") spans.forEach((_, id) => ended.add(id));
     const id = validatedClozeNote(node.attrs.clozeNote);
@@ -385,8 +428,10 @@ function noteSide(doc: Node, note: ClozeNote, cardPos: number, targets: number[]
     if (!node.isTextblock) return true;
     let children: Segment[];
     if (node.type.name === "mathBlock") {
-      const tex = node.textContent.trim();
-      children = tex ? [{ type: "math", tex, display: true }] : [];
+      const math = displayMath(node);
+      children = node.attrs.cloze !== true || !math.length ? math
+        : pos === cardPos ? [reveal ? { type: "cloze", children: math } : { type: "blank" }]
+        : [reveal ? math[0] : { type: "hidden", children: math }];
     } else if (node.type.spec.code) {
       children = node.textContent ? [{ type: "text", text: node.textContent, marks: ["code"] }] : [];
     } else {

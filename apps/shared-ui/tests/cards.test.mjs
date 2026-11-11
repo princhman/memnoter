@@ -262,3 +262,39 @@ test("each cloze of a note is its own card that shows the whole note", () => {
   ]));
   assert.deepEqual(split[1].front, [text("B "), { type: "blank" }]);
 });
+
+test("a formula can be a cloze, and a foldable block can be a note as a whole", () => {
+  const { mathBlock, details, detailsSummary, detailsContent } = schema.nodes;
+  const math = (tex, attrs = {}) => mathBlock.create(attrs, schema.text(tex));
+  // A formula's braces are LaTeX, not clozes.
+  assert.deepEqual(extractCards(doc.create(null, [math("\\frac{{a}}{b}", { cardId: "plain" })])), []);
+  const alone = extractCards(doc.create(null, [math("e^{i\\pi}", { cardId: "euler", cloze: true })]));
+  assert.deepEqual(alone.map(({ id, front, back }) => ({ id, front, back })), [{
+    id: "euler:math",
+    front: [{ type: "blank" }],
+    back: [{ type: "cloze", children: [{ type: "math", tex: "e^{i\\pi}", display: true }] }],
+  }]);
+  assert.deepEqual(cardIdsOf(math("e^{i\\pi}", { cardId: "euler", cloze: true })), [{
+    id: "euler:math", answer: "e^{i\\pi}", parts: [{ type: "math", tex: "e^{i\\pi}", display: true }],
+  }]);
+
+  const block = (children, place = {}) => ({ type: "block", children, ...place });
+  const cards = extractCards(doc.create(null, [
+    details.create({ open: true, clozeNote: "proof" }, [
+      detailsSummary.create(null, schema.text("Proof")),
+      detailsContent.create(null, [
+        p("Step {{one}}", "step"),
+        math("a = b", { cardId: "formula", cloze: true }),
+      ]),
+    ]),
+    p("Outside {{two}}", "outside"),
+  ]));
+  assert.deepEqual(cards.map(({ id }) => id), ["step:c1", "formula:math", "outside:c1"]);
+  assert.deepEqual(cards[1].front, [
+    block([text("Proof")]),
+    block([text("Step "), { type: "hidden", children: [text("one")] }]),
+    block([{ type: "blank" }]),
+  ]);
+  assert.deepEqual(cards[0].back[2], block([{ type: "math", tex: "a = b", display: true }]));
+  assert.deepEqual(cards[2].front, [text("Outside "), { type: "blank" }]);
+});

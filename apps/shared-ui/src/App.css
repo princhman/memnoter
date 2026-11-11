@@ -546,6 +546,7 @@ body {
 
 /* Foldable block: a title line and content that fold on their own. */
 .tiptap .foldable-block {
+    position: relative;
     display: flex;
     gap: 0.25rem;
     margin: 1rem 0;
@@ -1293,29 +1294,52 @@ body {
     user-select: none;
 }
 
-/* A cloze note: one line in the margin beside all of its blocks. */
-.tiptap .cloze-note {
-    position: relative;
+/* A foldable block that is a cloze note shows its dot outside the block, by
+   its title, and one that holds a cloze offers to become a note. */
+.tiptap .foldable-block .cloze-note-dot {
+    top: 0.4rem;
+    right: calc(100% + 0.15rem);
 }
 
-.tiptap .cloze-note::after {
-    content: "";
+.tiptap .foldable-block:hover .cloze-note-dot {
+    opacity: 1;
+}
+
+.tiptap .cloze-note-make {
     position: absolute;
-    top: 0;
-    bottom: -0.35rem;
-    left: calc(-0.5rem - var(--card-list-depth, 0) * var(--card-list-indent));
-    width: 2px;
-    border-radius: 1px;
-    background: var(--cloze);
-    pointer-events: none;
+    top: 0.35rem;
+    right: 0.5rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.375rem;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 400;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+    user-select: none;
 }
 
-.tiptap .cloze-note-first::after {
-    top: 0.25lh;
+.tiptap .foldable-block:hover .cloze-note-make,
+.tiptap .cloze-note-make:focus-visible {
+    opacity: 1;
 }
 
-.tiptap .cloze-note-last::after {
-    bottom: 0.25lh;
+.tiptap .cloze-note-make:hover {
+    background: var(--accent);
+    color: var(--foreground);
+}
+
+@media (pointer: coarse) {
+    .tiptap .cloze-note-make {
+        opacity: 1;
+    }
+}
+
+/* A formula that is a cloze card looks like a cloze. */
+.tiptap .cloze-math-block .math-block-widget {
+    background-color: var(--cloze-bg);
+    box-shadow: inset 0 -2px 0 0 var(--cloze);
 }
 
 /* A heading's fold toggle keeps its place; the info goes before it. */
