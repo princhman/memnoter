@@ -521,7 +521,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
       assert.equal(await readOnly.locator('.tiptap h1').textContent(), headingText);
       await readOnly.close();
     });
-    await t.test('native review reveal selects the requested cloze after opening its note', async () => {
+    await t.test('native review reveal selects the whole block when no sentence punctuation exists', async () => {
       const reveal = await context.newPage();
       try {
         await reveal.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
@@ -531,7 +531,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
         await reveal.keyboard.insertText('First {{Paris}} then {{London}}');
         const cardId = await reveal.locator('[data-card-id]').getAttribute('data-card-id');
         await reveal.evaluate(id => window.memnoterEditor.revealCard('reveal', `${id}:c2`), cardId);
-        await reveal.waitForFunction(() => getSelection()?.toString() === 'London');
+        await reveal.waitForFunction(() => getSelection()?.toString() === 'First {{Paris}} then {{London}}');
       } finally { await reveal.close(); }
     });
     // A native sync receipt must merge into the live Y.Doc while a draft is

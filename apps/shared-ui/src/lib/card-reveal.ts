@@ -8,7 +8,7 @@ import { stopScrollRestore } from "@/lib/view-persistence";
 
 // A request to show a card's text in its note, from review's go-to action. It
 // waits until that note is open and has restored its view, then puts the
-// selection on its cloze or image, or caret in its block. Not persisted.
+// selection on its sentence or whole block. Not persisted.
 export type CardRevealRequest = { moduleId: string; cardId: string };
 
 const cardRevealStore = createStore<CardRevealRequest | null>(null);
@@ -36,9 +36,24 @@ export function useCardReveal(editor: Editor | null, moduleId: string, ready: bo
       if (!node.isTextblock) return true;
       if (node.attrs.cardId === card.blockId) {
         start = pos + 1;
+        end = start + node.content.size;
         if (card.kind === "cloze") {
           const cloze = clozeIdsOf(node).find(entry => entry.id === card.clozeId);
-          if (cloze) { start += cloze.from; end = pos + 1 + cloze.to; }
+          if (cloze) {
+            // Keep string offsets aligned with document positions, including
+            // inline atoms and math. Only prose punctuation ends a sentence.
+            let text = "";
+            node.forEach(child => { text += child.isText ? child.text! : " ".repeat(child.nodeSize); });
+            if (!/[.!?]/.test(text)) return false;
+            let from = cloze.from;
+            let to = cloze.to;
+            while (from > 0 && !/[.!?]/.test(text[from - 1])) from--;
+            while (to < text.length && !/[.!?]/.test(text[to])) to++;
+            if (to < text.length) to++;
+            while (from < cloze.from && /\s/.test(text[from])) from++;
+            start = pos + 1 + from;
+            end = pos + 1 + to;
+          }
         }
       }
       return false;
@@ -56,7 +71,7 @@ export function useCardReveal(editor: Editor | null, moduleId: string, ready: bo
     editor.view.focus();
 
     // Clozes can sit deep inside a paragraph taller than the viewport.
-    // Align the selected answer, rather than the beginning of its block.
+    // Align the selected sentence, rather than the beginning of its block.
     if (!editor.view.dom.isConnected) return;
     const container = editorHost.scrollContainer(editor.view.dom);
     if (!container) return;
