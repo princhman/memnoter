@@ -115,3 +115,55 @@ test("typing a closing dollar still converts plain source to math", async () => 
     { type: "inlineMath", content: [{ type: "text", text: "a^qbc" }] },
   ]);
 });
+
+test("PRI-341: native copy of selected LaTeX source copies the selected text", async () => {
+  await page.evaluate(() => {
+    editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [
+      { type: "inlineMath", content: [{ type: "text", text: "a+\\alpha+b" }] },
+    ] }] });
+    editor.view.focus();
+    editor.commands.setTextSelection(10);
+  });
+  for (let i = 0; i < 6; i++) await page.keyboard.press("Shift+ArrowLeft");
+  await page.keyboard.press("ControlOrMeta+c");
+  await page.evaluate(() => {
+    const input = document.createElement("textarea");
+    input.id = "clipboard-target";
+    document.body.append(input);
+    input.focus();
+  });
+  await page.keyboard.press("ControlOrMeta+v");
+  assert.equal(await page.locator("#clipboard-target").inputValue(), "\\alpha");
+  await page.locator("#clipboard-target").evaluate(element => element.remove());
+});
+
+test("PRI-346: Enter dismisses completion and keeps editing the unchanged formula", async () => {
+  for (const tex of ["\\cup", "\\cu"]) {
+    await page.evaluate(tex => {
+      editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [
+        { type: "inlineMath", content: [{ type: "text", text: tex }] },
+      ] }] });
+      editor.view.focus();
+      editor.commands.setTextSelection(2 + tex.length);
+    }, tex);
+    await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor();
+    await page.keyboard.press("Enter");
+    await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor({ state: "hidden" });
+    assert.deepEqual(await page.evaluate(() => ({
+      text: editor.state.selection.$from.parent.textContent,
+      parent: editor.state.selection.$from.parent.type.name,
+    })), { text: tex, parent: "inlineMath" });
+    await page.keyboard.type("+b");
+    assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.textContent), tex + "+b");
+  }
+  await page.evaluate(() => {
+    editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [
+      { type: "inlineMath", content: [{ type: "text", text: "\\qqqqqqqq" }] },
+    ] }] });
+    editor.view.focus();
+    editor.commands.setTextSelection(11);
+  });
+  await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor({ state: "hidden" });
+  await page.keyboard.press("Enter");
+  assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.type.name), "paragraph");
+});

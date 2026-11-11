@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as viteServer, optimizeDeps } from 'vite';
-import { webkit as playwrightWebkit } from 'playwright';
+import { chromium, webkit as playwrightWebkit } from 'playwright';
 
 // Serialized into each page before test-specific setup. Call this with just the
 // command handler; platform bookkeeping lives here rather than in each fake.
@@ -58,7 +58,7 @@ export function browserHarness(file) {
     },
     webkit: {
       async launch(options) {
-        const browser = await playwrightWebkit.launch(options);
+        const browser = await (process.env.BROWSER === 'chromium' ? chromium : playwrightWebkit).launch(options);
         browsers.add(browser);
         const setup = async target => {
           const addInitScript = target.addInitScript.bind(target);

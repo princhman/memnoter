@@ -443,16 +443,21 @@ export const InlineMath = Node.create<InlineMathOptions>({
                 // Give a formula-only paragraph real line-height caret stops on
                 // both sides without adding characters to the saved document.
                 const anchor = () => {
-                  const span = document.createElement("span");
-                  span.textContent = "\u200b";
-                  span.setAttribute("aria-hidden", "true");
-                  return span;
+                  const image = document.createElement("img");
+                  // An editable replaced element gives Chromium a caret stop
+                  // without text that could swallow input in an ignored widget.
+                  image.style.cssText = "width: 0; height: 1em; display: inline;";
+                  image.alt = "";
+                  image.setAttribute("aria-hidden", "true");
+                  return image;
                 };
                 decos.push(
                   // side 1 keeps a caret before the formula in front of this
                   // anchor. Between them, WebKit draws it after an empty one.
-                  Decoration.widget(pos, anchor, { side: 1, key: "math-before" }),
-                  Decoration.widget(end, anchor, { side: 1, key: "math-after" }),
+                  Decoration.widget(pos, anchor, { side: 1, key: "math-before", raw: true }),
+                  ...(state.doc.resolve(end).nodeAfter ? [] : [
+                    Decoration.widget(end, anchor, { side: 1, key: "math-after", raw: true }),
+                  ]),
                 );
                 const selected = !empty && from <= pos && to >= end;
                 if (selected) {
