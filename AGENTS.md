@@ -76,5 +76,6 @@ Other agents often have uncommitted work in the same checkout.
 
 ## Report
 
+If the brief names a PRI issue, include `Fixes PRI-<n>` in the PR body.
 End with: commit SHA (or "uncommitted"), what you verified, what you didn't.
 Never end on a pending wait; finish waiting first.

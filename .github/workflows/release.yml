@@ -86,23 +86,22 @@ jobs:
         with:
           fetch-depth: 0 # Linear scans commit history for issue IDs
 
-      - name: Find release notes
-        id: notes
-        env:
-          NOTES: docs/release-notes/${{ github.ref_name }}.md
+      - name: Find previous release tag
+        id: base
         run: |
-          if [[ -f "$NOTES" ]]; then
-            echo "path=$NOTES" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::No $NOTES; Linear release will have no notes."
-          fi
+          # Bound the first Linear sync too; its default scans only HEAD.
+          previous=$(git describe --tags --match 'v[0-9]*' --abbrev=0 "${GITHUB_SHA}^")
+          echo "ref=$previous" >> "$GITHUB_OUTPUT"
 
+      # Use a continuous pipeline: each version tag creates a completed release.
+      # Enable automatic release notes in Linear's pipeline settings.
       - name: Linear Release
         uses: linear/linear-release-action@v0.18.2
         with:
           access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
           version: ${{ github.ref_name }}
-          release_notes: ${{ steps.notes.outputs.path }}
+          base_ref: ${{ steps.base.outputs.ref }}
+          links: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
 
   ios-testflight:
     runs-on: macos-latest
