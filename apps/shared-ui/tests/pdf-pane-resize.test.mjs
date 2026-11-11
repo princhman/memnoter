@@ -247,8 +247,9 @@ for (const engine of [chromium, webkit]) test(`PDF navigation and find across pa
     await page.getByRole('button', { name: 'Show files', exact: true }).click();
     await files.getByText('Resize', { exact: true }).click();
     await files.locator('.textLayer span').first().waitFor();
+    const findKey = await page.evaluate(async () => (await import('/src/lib/platform.ts')).IS_APPLE ? 'Meta+f' : 'Control+f');
     await files.locator('.pdf-viewer').focus();
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+f' : 'Control+f');
+    await page.keyboard.press(findKey);
     const input = files.getByRole('textbox', { name: 'Find in PDF', exact: true });
     assert.equal(await page.getByRole('textbox', { name: 'Find', exact: true }).count(), 0, 'PDF shortcut must not open note find');
     await input.fill(' Second');
@@ -275,8 +276,18 @@ for (const engine of [chromium, webkit]) test(`PDF navigation and find across pa
     assert.equal(await files.locator('[data-pdf-find-match]').count(), 0);
     await files.getByRole('button', { name: 'Find in PDF', exact: true }).click();
     assert.equal(await input.inputValue(), '');
+    await page.keyboard.press('Escape');
+    // Native macOS menus dispatch the app event instead of a JS accelerator.
+    await page.evaluate(async () => { const { requestApp, FIND_EVENT } = await import('/src/lib/app-events.ts'); requestApp(FIND_EVENT); });
+    await input.waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'Find', exact: true }).count(), 0);
     await page.keyboard.press('Escape'); await page.locator('.tiptap').click();
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+f' : 'Control+f');
+    const nativeMenu = await page.evaluate(async () => {
+      const { usesNativeMenuShortcuts, requestApp, FIND_EVENT } = await import('/src/lib/app-events.ts');
+      if (!usesNativeMenuShortcuts()) return false;
+      requestApp(FIND_EVENT); return true;
+    });
+    if (!nativeMenu) await page.keyboard.press(findKey);
     assert.equal(await input.count(), 0, 'note shortcut must not open PDF find');
     await page.getByRole('textbox', { name: 'Find', exact: true }).fill('Remember');
     await page.locator('.tiptap .find-and-replace-result').first().waitFor();

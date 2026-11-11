@@ -227,7 +227,10 @@ export function FindBar() {
         else handlers.current.goToNext();
       }
     };
-    const handleFind = () => handlers.current.open(false);
+    const handleFind = () => {
+      if (document.activeElement?.closest('.pdf-viewer, #pdf-toolbar')) return;
+      handlers.current.open(false);
+    };
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener(FIND_EVENT, handleFind);
