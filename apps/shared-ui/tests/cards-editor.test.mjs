@@ -444,3 +444,32 @@ test("joining an existing group with another cloze produces one card", () => {
     editor.destroy();
   }
 });
+
+test("making a cloze note shares its text across its cards, keeps their ids, and splits", () => {
+  const editor = editorFor([
+    paragraph("Context", "intro"),
+    paragraph("A {{one}}", "first"),
+    paragraph("B {{two}}", "second"),
+    { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Other" }] },
+    paragraph("C {{three}}", "third"),
+  ]);
+  try {
+    const original = extractCards(editor.state.doc);
+    const end = editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize + editor.state.doc.child(2).nodeSize;
+    editor.commands.setTextSelection({ from: 2, to: end + 3 });
+    assert.equal(editor.can().makeClozeNote(), false, "a note never spans a heading");
+    editor.commands.setTextSelection({ from: 2, to: end - 2 });
+    assert.equal(editor.commands.makeClozeNote(), true);
+    const notes = [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.clozeNote);
+    assert.ok(notes[0] && notes.every((id) => id === notes[0]));
+    assert.equal(editor.can().makeClozeNote(), false, "already one note");
+    const cards = extractCards(editor.state.doc);
+    assert.deepEqual(cards.map(({ id }) => id), original.map(({ id }) => id));
+    assert.deepEqual(cards[1].front.map((block) => block.type), ["block", "block", "block"]);
+    assert.deepEqual(cards[2], original[2]);
+    editor.commands.splitClozeNote(notes[0]);
+    assert.deepEqual(extractCards(editor.state.doc), original);
+  } finally {
+    editor.destroy();
+  }
+});

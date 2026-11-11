@@ -19,6 +19,8 @@ export function isImageNode(node: Node | null | undefined): boolean {
 //   - Cloze: `{{hidden}}`. Each cloze is its own card; the review shows the
 //     whole block with that cloze hidden and the other clozes as plain text.
 //   - A block with a cloze is a cloze block; any `::` or `:::` in it is plain text.
+//   - Blocks marked as one cloze note share their context: each cloze in the
+//     note is still its own card, but its review shows the whole note.
 // Text in inline code is never syntax. Inline math may appear on either side
 // and inside a cloze. A card needs a non-empty front and answer.
 
@@ -27,7 +29,7 @@ export type CardKind = "basic" | "cloze" | "occlusion";
 
 export type Segment =
   | { type: "text"; text: string; marks?: string[]; highlightColor?: string }
-  | { type: "math"; tex: string; highlightColor?: string }
+  | { type: "math"; tex: string; highlightColor?: string; display?: boolean }
   | { type: "break" }
   // The answer of a cloze card, highlighted on the back.
   | { type: "cloze"; children: Segment[] }
@@ -35,7 +37,10 @@ export type Segment =
   | { type: "blank" }
   // Another cloze of the block, also hidden on the front; review can show it
   // on its own, for context.
-  | { type: "hidden"; children: Segment[] };
+  | { type: "hidden"; children: Segment[] }
+  // One block of a cloze note, in document order. List items keep their
+  // nesting depth, and the first block of an item its marker.
+  | { type: "block"; children: Segment[]; depth?: number; marker?: "bullet" | number };
 
 export type CardPayload = Segment[] | OcclusionFace;
 
@@ -306,7 +311,7 @@ function cardsOfBlock(node: Node, blockId: string) {
     const owner = group ? targets.find((i) => ids[i]?.id === clozeCardId(blockId, group[0])) : undefined;
     const identity = ids[typeof owner === "number" ? owner : index]!;
     return [{
-      ...card, id: identity.id, blockId,
+      ...card, id: identity.id, blockId, targets,
       answer: targets.map((i) => ids[i]?.answer).filter((answer) => answer !== null).join(", ") || null,
       ...(targets.length > 1 ? {
         front: clozeSide(node, syntax, targets, false),
@@ -323,9 +328,81 @@ export function cardIdsOf(node: Node): { id: string; answer: string | null }[] {
   return cardsOfBlock(node, blockId).map(({ id, answer }) => ({ id, answer }));
 }
 
+// Note ids come from documents and pasted HTML, not just us.
+export function validatedClozeNote(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+export type ClozeNote = Range & { id: string };
+
+// Each cloze note spans from its first member block to its last, so blocks
+// added in between belong to it. Notes are ordered and never overlap: a note
+// that would overlap an earlier one is ignored.
+export function clozeNotesOf(doc: Node): ClozeNote[] {
+  const spans = new Map<string, ClozeNote>();
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true;
+    const id = validatedClozeNote(node.attrs.clozeNote);
+    if (id) {
+      const span = spans.get(id);
+      if (span) span.to = pos + node.nodeSize;
+      else spans.set(id, { id, from: pos, to: pos + node.nodeSize });
+    }
+    return false;
+  });
+  let end = -1;
+  return [...spans.values()].filter((note) => {
+    if (note.from < end) return false;
+    end = note.to;
+    return true;
+  });
+}
+
+// The list depth of a textblock, and its marker when it opens a list item.
+function listPlace(doc: Node, pos: number): { depth?: number; marker?: "bullet" | number } {
+  const $pos = doc.resolve(pos);
+  let depth = 0;
+  let marker: "bullet" | number | undefined;
+  for (let d = $pos.depth; d > 0; d--) {
+    const node = $pos.node(d);
+    if (!node.type.name.endsWith("Item")) continue;
+    depth++;
+    if (depth === 1 && $pos.index(d) === 0) {
+      const list = $pos.node(d - 1);
+      marker = list.type.name === "orderedList" ? (Number(list.attrs.start) || 1) + $pos.index(d - 1) : "bullet";
+    }
+  }
+  return { ...(depth ? { depth } : {}), ...(marker !== undefined ? { marker } : {}) };
+}
+
+// One side of a cloze card in a note: every block of the note, with the
+// card's own clozes asked and the note's other clozes handled as in a block.
+function noteSide(doc: Node, note: ClozeNote, cardPos: number, targets: number[], reveal: boolean): Segment[] {
+  const blocks: Segment[] = [];
+  doc.nodesBetween(note.from, note.to, (node, pos) => {
+    if (!node.isTextblock) return true;
+    let children: Segment[];
+    if (node.type.name === "mathBlock") {
+      const tex = node.textContent.trim();
+      children = tex ? [{ type: "math", tex, display: true }] : [];
+    } else if (node.type.spec.code) {
+      children = node.textContent ? [{ type: "text", text: node.textContent, marks: ["code"] }] : [];
+    } else {
+      const syntax = isCardBlock(node) ? parseBlock(node) : null;
+      children = syntax?.clozes.length
+        ? clozeSide(node, syntax, pos === cardPos ? targets : [], reveal)
+        : segmentsOf(unitsOf(node));
+    }
+    if (children.length) blocks.push({ type: "block", children, ...listPlace(doc, pos) });
+    return false;
+  });
+  return blocks;
+}
+
 export function extractCards(doc: Node): ExtractedCard[] {
   const cards: ExtractedCard[] = [];
   const seen = new Set<string>();
+  const notes = clozeNotesOf(doc);
   const headings = outline(doc);
   let headingIndex = -1;
   doc.descendants((node, pos) => {
@@ -353,7 +430,10 @@ export function extractCards(doc: Node): ExtractedCard[] {
     const blockId = node.attrs.cardId;
     if (!isCardBlock(node) || typeof blockId !== "string" || seen.has(blockId)) return true;
     seen.add(blockId);
-    cards.push(...cardsOfBlock(node, blockId).map((card) => ({ ...card, section })));
+    const note = notes.find(({ from, to }) => pos >= from && pos < to);
+    cards.push(...cardsOfBlock(node, blockId).map(({ targets, ...card }) => note && card.kind === "cloze"
+      ? { ...card, section, front: noteSide(doc, note, pos, targets, false), back: noteSide(doc, note, pos, targets, true) }
+      : { ...card, section }));
     return true;
   });
   return cards;

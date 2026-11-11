@@ -96,6 +96,9 @@ struct FormattingBar: View {
         if session.state.canJoinClozes {
             formatButton("Join clozes", "rectangle.stack", .joinClozes)
         }
+        if session.state.canMakeClozeNote {
+            formatButton("Make one note", "square.dashed", .makeClozeNote)
+        }
     }
 
     @ViewBuilder private var styleGroup: some View {

@@ -47,6 +47,7 @@ export const EXEC_COMMANDS = {
   makeCard: false,
   removeCard: false,
   joinClozes: false,
+  makeClozeNote: false,
   codeBlock: false,
   insertSection: false,
   indent: false,
@@ -130,7 +131,7 @@ export interface EditorState {
   canDeleteRow: boolean; canDeleteColumn: boolean; canDeleteTable: boolean;
   canToggleHeaderRow: boolean;
   canIndent: boolean; canOutdent: boolean;
-  canMakeCard: boolean; inCloze: boolean; canJoinClozes: boolean;
+  canMakeCard: boolean; inCloze: boolean; canJoinClozes: boolean; canMakeClozeNote: boolean;
   folded: boolean; canFold: boolean;
   canUndo: boolean; canRedo: boolean;
   hasSelection: boolean; editable: boolean; suppressKeyboard: boolean;

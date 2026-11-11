@@ -8,7 +8,7 @@ import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } 
 import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
-import { isCardBlock, cardIdsOf, changedRanges, clozeIdsOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, type ClozeId, type Range } from "./cards.ts";
+import { isCardBlock, cardIdsOf, changedRanges, clozeIdsOf, clozeNotesOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, validatedClozeNote, type ClozeId, type ClozeNote, type Range } from "./cards.ts";
 import { CardState, formatInterval } from "./fsrs.ts";
 
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
@@ -19,6 +19,10 @@ declare module "@tiptap/core" {
       // Wrap the selection in {{…}}, making it a cloze card.
       makeCloze: () => ReturnType;
       joinClozes: () => ReturnType;
+      // Make the selected blocks one cloze note, whose cards share its text.
+      makeClozeNote: () => ReturnType;
+      // Return a cloze note's blocks to cards of their own.
+      splitClozeNote: (noteId: string) => ReturnType;
       // Remove the braces of the cloze holding the selection, keeping its text.
       removeCloze: () => ReturnType;
       // Show when the note's cards are due and were last reviewed, as of `now`.
@@ -44,7 +48,9 @@ export function cardSchedulesOf(state: EditorState): Schedules | undefined {
   return decorationsKey.getState(state)?.schedules;
 }
 
-const decorationsKey = new PluginKey<{ set: DecorationSet; schedules: Schedules }>(
+type DecorationsState = { set: DecorationSet; schedules: Schedules; notes: ClozeNote[] };
+
+const decorationsKey = new PluginKey<DecorationsState>(
   "flashcardDecorations",
 );
 
@@ -126,11 +132,15 @@ export function cardInfo(
 // Card syntax stays real, editable text: decorations only restyle it.
 // A faint `::` reads as an arrow until the caret enters its block. Cloze
 // braces always take no room; their answer text stays highlighted and underlined.
-function blockDecorations(node: Node, pos: number, schedules: Schedules): Decoration[] {
+// In a cloze note, the note's first card block shows the dot for all of its
+// cards, and the others show none.
+type NotePlace = { id: string; cards: { id: string; answer: string | null }[] | null };
+
+function blockDecorations(node: Node, pos: number, schedules: Schedules, place?: NotePlace): Decoration[] {
   const syntax = parseBlock(node);
   const start = pos + 1;
   const decorations: Decoration[] = [];
-  const entries = cardIdsOf(node).map(({ id, answer }) => ({
+  const entries = (place ? place.cards ?? [] : cardIdsOf(node)).map(({ id, answer }) => ({
     answer,
     schedule: schedules.byId.get(id),
   }));
@@ -141,7 +151,9 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules): Decora
       [answer, schedule?.state ?? null, schedule?.dueAt ?? null, schedule?.lastReviewAt ?? null])]);
     decorations.push(
       Decoration.widget(start, (view, getPos) => cardInfo(entries, due, schedules.now,
-        syntax.clozes.length > 1 && entries.length > 1 ? { label: "Join into one card", run: () => {
+        place ? { label: "Split note", run: () => {
+          view.dispatch(splitNote(view.state.tr, place.id));
+        } } : syntax.clozes.length > 1 && entries.length > 1 ? { label: "Join into one card", run: () => {
           // Resolve the widget's current position: edits above it can move it.
           const position = getPos();
           if (position === undefined) return;
@@ -152,15 +164,15 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules): Decora
         side: -1,
         ignoreSelection: true,
         stopEvent: () => true,
-        key: `card-info:${schedules.now}:${key}`,
+        key: `card-info:${schedules.now}:${place?.id ?? ""}:${key}`,
       }),
     );
   }
-  if (syntax.cards.length > 0) {
+  if (syntax.cards.length > 0 || place?.cards) {
     decorations.push(
       Decoration.node(pos, pos + node.nodeSize, {
         class: "card-block",
-        "data-card-kind": syntax.cards[0].kind,
+        "data-card-kind": syntax.cards[0]?.kind ?? "cloze",
       }),
     );
   }
@@ -187,6 +199,51 @@ function blockDecorations(node: Node, pos: number, schedules: Schedules): Decora
     });
   }
   return decorations;
+}
+
+// Each card block of a cloze note, with the cards its first one lists.
+function notePlaces(doc: Node, notes: ClozeNote[]) {
+  const places = new Map<number, NotePlace>();
+  for (const note of notes) {
+    let owner: NotePlace | null = null;
+    doc.nodesBetween(note.from, note.to, (node, pos) => {
+      if (!node.isTextblock) return true;
+      if (!isCardBlock(node)) return false;
+      if (owner) {
+        owner.cards!.push(...cardIdsOf(node));
+        places.set(pos, { id: note.id, cards: null });
+      } else {
+        places.set(pos, owner = { id: note.id, cards: cardIdsOf(node) });
+      }
+      return false;
+    });
+  }
+  return places;
+}
+
+// A line in the margin beside every block of each note.
+function noteBrackets(doc: Node, notes: ClozeNote[]) {
+  return notes.flatMap((note) => {
+    const blocks: { node: Node; pos: number }[] = [];
+    doc.nodesBetween(note.from, note.to, (node, pos) => {
+      if (!node.isTextblock) return true;
+      blocks.push({ node, pos });
+      return false;
+    });
+    return blocks.map(({ node, pos }, index) => Decoration.node(pos, pos + node.nodeSize, {
+      class: ["cloze-note", index === 0 && "cloze-note-first", index === blocks.length - 1 && "cloze-note-last"]
+        .filter(Boolean).join(" "),
+    }));
+  });
+}
+
+function splitNote(tr: Transaction, noteId: string) {
+  tr.doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true;
+    if (node.attrs.clozeNote === noteId) tr.setNodeAttribute(pos, "clozeNote", null);
+    return false;
+  });
+  return tr;
 }
 
 // Shared by the selected-cloze action and the block's dot menu.
@@ -327,12 +384,26 @@ function repairClozeIds(
   }
 }
 
-function buildDecorations(doc: Node, schedules: Schedules) {
-  return DecorationSet.create(
-    doc,
-    collectBlocks(doc, 0, doc.content.size).flatMap(({ node, pos }) =>
-      blockDecorations(node, pos, schedules)),
-  );
+function buildDecorations(doc: Node, schedules: Schedules): DecorationsState {
+  const notes = clozeNotesOf(doc);
+  const places = notePlaces(doc, notes);
+  const set = DecorationSet.create(doc, [
+    ...collectBlocks(doc, 0, doc.content.size).flatMap(({ node, pos }) =>
+      blockDecorations(node, pos, schedules, places.get(pos))),
+    ...noteBrackets(doc, notes),
+  ]);
+  return { set, schedules, notes };
+}
+
+// The note-wide dot and line follow edits anywhere in a note, so those redraw
+// everything; edits elsewhere only redraw their own blocks.
+function touchesNotes(tr: Transaction, before: ClozeNote[], after: ClozeNote[], ranges: Range[]) {
+  if (before.map(({ id }) => id).join() !== after.map(({ id }) => id).join()) return true;
+  const spans = [
+    ...after,
+    ...before.map(({ from, to }) => ({ from: tr.mapping.map(from, -1), to: tr.mapping.map(to, 1) })),
+  ];
+  return ranges.some((range) => spans.some((span) => range.from <= span.to && range.to >= span.from));
 }
 
 // The textblock holding the caret shows its `::` and braces as typed.
@@ -392,6 +463,21 @@ export const Flashcards = Extension.create({
           },
         },
       },
+      {
+        // Context blocks such as a derivation can belong to a note too.
+        types: ["paragraph", "mathBlock"],
+        attributes: {
+          clozeNote: {
+            default: null,
+            keepOnSplit: false,
+            parseHTML: (element) => validatedClozeNote(element.getAttribute("data-cloze-note")),
+            renderHTML: (attributes) => {
+              const id = validatedClozeNote(attributes.clozeNote);
+              return id ? { "data-cloze-note": id } : {};
+            },
+          },
+        },
+      },
     ];
   },
 
@@ -406,6 +492,48 @@ export const Flashcards = Extension.create({
           const groups = joinedClozeGroups(node, $from.parentOffset, $to.parentOffset);
           if (!groups) return false;
           if (dispatch) tr.setNodeAttribute($from.before(), "clozeGroups", groups);
+          return true;
+        },
+      makeClozeNote:
+        () =>
+        ({ state, tr, dispatch }) => {
+          const { from, to, $from, $to, empty } = state.selection;
+          if (empty || $from.sameParent($to)) return false;
+          const blocks: number[] = [];
+          const notes = new Set<string>();
+          let heading = false;
+          let cloze = false;
+          state.doc.nodesBetween(from, to, (node, pos) => {
+            if (!node.isTextblock) return true;
+            if (node.type.name === "heading") heading = true;
+            if (!("clozeNote" in node.attrs)) return false;
+            blocks.push(pos);
+            const id = validatedClozeNote(node.attrs.clozeNote);
+            if (id) notes.add(id);
+            if (isCardBlock(node) && parseBlock(node).clozes.length) cloze = true;
+            return false;
+          });
+          // A note never spans a heading, and holds at least one cloze.
+          if (heading || blocks.length < 2) return false;
+          // Selecting inside a note's span joins that note, member or not.
+          const existing = clozeNotesOf(state.doc);
+          for (const note of existing) if (note.from < to && note.to > from) notes.add(note.id);
+          if (!cloze && !existing.some((note) => notes.has(note.id))) return false;
+          const id = notes.size === 1 ? [...notes][0] : crypto.randomUUID();
+          if (notes.size === 1 && blocks.every((pos) => state.doc.nodeAt(pos)!.attrs.clozeNote === id)) return false;
+          if (dispatch) {
+            state.doc.descendants((node, pos) => {
+              if (!node.isTextblock) return true;
+              if (notes.has(node.attrs.clozeNote) || blocks.includes(pos)) tr.setNodeAttribute(pos, "clozeNote", id);
+              return false;
+            });
+          }
+          return true;
+        },
+      splitClozeNote:
+        (noteId) =>
+        ({ tr, dispatch }) => {
+          if (dispatch) splitNote(tr, noteId);
           return true;
         },
       makeCloze:
@@ -560,10 +688,15 @@ export const Flashcards = Extension.create({
             // Internal drops keep the dragged slice: move/copy modifiers can
             // change after dragstart. Duplicate repair above renews copy ids.
             if (slice === view.dragging?.slice) return slice;
+            // A pasted copy of a note is a note of its own.
+            const notes = new Map<string, string>();
             const map = (fragment: import("@tiptap/pm/model").Fragment): import("@tiptap/pm/model").Fragment => Fragment.fromArray(Array.from({ length: fragment.childCount }, (_, i) => {
               const node = fragment.child(i);
+              const note = validatedClozeNote(node.attrs.clozeNote);
+              if (note && !notes.has(note)) notes.set(note, crypto.randomUUID());
               return isImageNode(node)
                 ? node.type.create(renewImageIdentity(node.attrs, () => crypto.randomUUID()), node.content, node.marks)
+                : note ? node.type.create({ ...node.attrs, clozeNote: notes.get(note) }, map(node.content), node.marks)
                 : node.copy(map(node.content));
             }));
             return new Slice(map(slice.content), slice.openStart, slice.openEnd);
@@ -573,18 +706,20 @@ export const Flashcards = Extension.create({
       new Plugin({
         key: decorationsKey,
         state: {
-          init: (_, { doc }) => {
-            const schedules: Schedules = { byId: new Map(), now: Date.now() };
-            return { set: buildDecorations(doc, schedules), schedules };
-          },
-          apply(tr, value) {
+          init: (_, { doc }) => buildDecorations(doc, { byId: new Map(), now: Date.now() }),
+          apply(tr, value): DecorationsState {
             const update = tr.getMeta(decorationsKey) as Schedules | undefined;
-            if (update) return { set: buildDecorations(tr.doc, update), schedules: update };
+            if (update) return buildDecorations(tr.doc, update);
             if (!tr.docChanged) return value;
             const { schedules } = value;
             // Attribute-only edits (joining clozes, assigning ids, undo) have
             // no mapped text ranges, but change the cards and their info dot.
-            if (!changedRanges(tr.mapping.maps).length) return { set: buildDecorations(tr.doc, schedules), schedules };
+            const ranges = changedRanges(tr.mapping.maps);
+            if (!ranges.length) return buildDecorations(tr.doc, schedules);
+            const notes = clozeNotesOf(tr.doc);
+            if ((notes.length || value.notes.length) && touchesNotes(tr, value.notes, notes, ranges)) {
+              return buildDecorations(tr.doc, schedules);
+            }
             let next = value.set.map(tr.mapping, tr.doc);
             const seen = new Set<number>();
             for (const { from, to } of changedRanges(tr.mapping.maps)) {
@@ -598,7 +733,7 @@ export const Flashcards = Extension.create({
                 next = next.remove(stale).add(tr.doc, blockDecorations(node, pos, schedules));
               }
             }
-            return { set: next, schedules };
+            return { set: next, schedules, notes };
           },
         },
         props: {

@@ -56,6 +56,7 @@ enum ExecCommand: String, Codable {
     case makeCard = "makeCard"
     case removeCard = "removeCard"
     case joinClozes = "joinClozes"
+    case makeClozeNote = "makeClozeNote"
     case codeBlock = "codeBlock"
     case insertSection = "insertSection"
     case indent = "indent"
@@ -164,6 +165,7 @@ struct EditorState: Codable {
     var canMakeCard: Bool = false
     var inCloze: Bool = false
     var canJoinClozes: Bool = false
+    var canMakeClozeNote: Bool = false
     var folded: Bool = false
     var canFold: Bool = false
     var canUndo: Bool = false

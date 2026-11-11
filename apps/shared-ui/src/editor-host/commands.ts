@@ -77,6 +77,7 @@ export function editorState(editor: Editor): EditorState {
     canOutdent: editor.can().liftListItem("listItem"),
     canMakeCard: editor.can().makeCloze(), inCloze: editor.can().removeCloze(),
     canJoinClozes: editor.can().joinClozes(),
+    canMakeClozeNote: editor.can().makeClozeNote(),
     folded: editor.can().unfoldCurrentSection(),
     canFold: editor.can().foldCurrentSection(),
     canUndo: editor.can().undo(), canRedo: editor.can().redo(),
@@ -129,6 +130,7 @@ export function execEditor(editor: Editor, command: ExecCommand, args: Record<st
     case "makeCard": return commands.makeCloze();
     case "removeCard": return commands.removeCloze();
     case "joinClozes": return commands.joinClozes();
+    case "makeClozeNote": return commands.makeClozeNote();
     case "codeBlock": return commands.toggleCodeBlock();
     case "insertSection":
       if (args.kind !== "sibling" && args.kind !== "subsection") throw new Error("insertSection requires sibling or subsection");

@@ -1293,6 +1293,31 @@ body {
     user-select: none;
 }
 
+/* A cloze note: one line in the margin beside all of its blocks. */
+.tiptap .cloze-note {
+    position: relative;
+}
+
+.tiptap .cloze-note::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: -0.35rem;
+    left: calc(-0.5rem - var(--card-list-depth, 0) * var(--card-list-indent));
+    width: 2px;
+    border-radius: 1px;
+    background: var(--cloze);
+    pointer-events: none;
+}
+
+.tiptap .cloze-note-first::after {
+    top: 0.25lh;
+}
+
+.tiptap .cloze-note-last::after {
+    bottom: 0.25lh;
+}
+
 /* A heading's fold toggle keeps its place; the info goes before it. */
 .tiptap :is(h1, h2, h3, h4, h5, h6) > .card-info {
     right: calc(100% + 1.4rem + var(--card-list-depth, 0) * var(--card-list-indent));
@@ -1543,6 +1568,23 @@ body {
 
 .card-face .katex {
     font-size: 1.1em;
+}
+
+/* A cloze note reviews block by block; list items keep their marker. */
+.card-face .cloze-note-block + .cloze-note-block {
+    margin-top: 0.5em;
+}
+
+.card-face .cloze-note-marker {
+    position: absolute;
+    width: 1.2em;
+    margin-left: -1.4em;
+    color: var(--muted-foreground);
+    text-align: right;
+}
+
+.card-face .cloze-note-marker:empty::before {
+    content: "\2022";
 }
 
 .occlusion-dialog { margin: auto; width: min(960px, 95vw); max-height: 94vh; overflow: auto; padding: 24px; border: none; border-radius: 12px; background: var(--background); color: var(--foreground); box-shadow: 0 12px 40px color-mix(in oklch, black 28%, transparent); }

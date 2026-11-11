@@ -228,3 +228,32 @@ test("card colours survive adjacent runs, clozes and inline math", () => {
     ] },
   ]);
 });
+
+test("each cloze of a note is its own card that shows the whole note", () => {
+  const { mathBlock, orderedList, listItem } = schema.nodes;
+  const member = (source, cardId) => paragraph.create({ cardId, clozeNote: "n" }, inline(source));
+  const cards = extractCards(doc.create(null, [
+    member("The derivation is", "intro"),
+    mathBlock.create(null, schema.text("a + b")),
+    p("And {{x}}. So:", "and"),
+    orderedList.create(null, [
+      listItem.create(null, [p("if {{y}}", "one")]),
+      listItem.create(null, [member("then {{z}}", "two")]),
+    ]),
+    p("Alone {{w}}", "alone"),
+  ]));
+  const block = (children, place = {}) => ({ type: "block", children, ...place });
+  const hidden = (value) => ({ type: "hidden", children: [text(value)] });
+  assert.deepEqual(cards.map(({ id }) => id), ["and:c1", "one:c1", "two:c1", "alone:c1"]);
+  assert.deepEqual(cards[1].front, [
+    block([text("The derivation is")]),
+    block([{ type: "math", tex: "a + b", display: true }]),
+    block([text("And "), hidden("x"), text(". So:")]),
+    block([text("if "), { type: "blank" }], { depth: 1, marker: 1 }),
+    block([text("then "), hidden("z")], { depth: 1, marker: 2 }),
+  ]);
+  assert.deepEqual(cards[1].back[3], block([text("if "), { type: "cloze", children: [text("y")] }], { depth: 1, marker: 1 }));
+  assert.deepEqual(cards[1].back[4], block([text("then z")], { depth: 1, marker: 2 }));
+  // A block outside the note keeps its own card text.
+  assert.deepEqual(cards[3].front, [text("Alone "), { type: "blank" }]);
+});

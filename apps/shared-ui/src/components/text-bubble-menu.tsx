@@ -15,6 +15,7 @@ import {
   ChevronDown,
   Braces,
   Combine,
+  Group,
   Code,
   Italic,
   Link,
@@ -62,6 +63,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         canMathBlock: editor.can().toggleMathBlock(),
         canMakeCard: editor.can().makeCloze(),
         canJoinClozes: editor.can().joinClozes(),
+        canMakeClozeNote: editor.can().makeClozeNote(),
         inCloze: editor.can().removeCloze(),
       };
     },
@@ -216,6 +218,16 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
           onToggle={() => editor.chain().focus().joinClozes().run()}
         >
           <Combine />
+        </MarkButton>
+      )}
+      {active.canMakeClozeNote && (
+        <MarkButton
+          label="Make one note"
+          hint="Show these blocks together on each of their cloze cards"
+          pressed={false}
+          onToggle={() => editor.chain().focus().makeClozeNote().run()}
+        >
+          <Group />
         </MarkButton>
       )}
       {active.inTable && <TableBubbleActions editor={editor} />}
