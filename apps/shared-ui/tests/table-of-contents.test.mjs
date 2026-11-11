@@ -17,7 +17,8 @@ before(async () => {
 after(async () => { await browser?.close(); await server?.close(); });
 async function load(query = "?short", width = 900, height = 800, target = page) {
   await target.setViewportSize({ width, height });
-  await target.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/contents.html${query}`);
+  // Resource load can lag the UI under contention; observe the editor below.
+  await target.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/contents.html${query}`, { waitUntil: "commit" });
   await target.waitForFunction(() => !!window.editor);
   await target.evaluate(() => document.fonts.ready);
 }

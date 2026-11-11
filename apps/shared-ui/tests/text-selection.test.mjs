@@ -1,4 +1,4 @@
-import { browserHarness } from "./support/browser.mjs";
+import { browserHarness, waitForEditorSelection } from "./support/browser.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
@@ -35,7 +35,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         const ctx = canvas.getContext("2d"); ctx.fillStyle = "#888"; ctx.fillRect(0, 0, 220, 80);
         const img = { type: "image", attrs: { src: canvas.toDataURL(), width: 220, height: 80 } };
         editor.commands.setContent({ type: "doc", content: [text("paragraph", "heh"), text("heading", "hello 2"), img, text("paragraph", "hello, how are you doing?"), text("heading", "This is pretty cool"), { type: "paragraph" }, { type: "paragraph" }, img, text("paragraph", "AV office affinity tail"), { type: "paragraph", content: [{ type: "text", text: "Formula " }, { type: "inlineMath", content: [{ type: "text", text: "x^2" }] }, { type: "text", text: " end" }] }, text("mathBlock", "x^2 + y^2"), text("paragraph", "Q :: A"), text("codeBlock", "const value = 42"), { type: "paragraph", content: [{ type: "text", text: "hard first" }, { type: "hardBreak" }, { type: "text", text: "hard second" }] }, text("paragraph", "last line ending here")] });
-        editor.commands.focus("start");
+        editor.commands.setTextSelection(1); editor.view.focus();
       }, dark);
       await page.waitForFunction(() => [...document.images].every(img => img.complete));
       // Math mounts lazily and can request fonts after the editor's initial
@@ -50,7 +50,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
       const baseline = await page.screenshot({ caret: "initial", animations: "disabled", path: artifacts ? `${prefix}-baseline.png` : undefined });
       const widths = await page.evaluate(() => [...editor.view.dom.querySelectorAll("p,h2")].map(el => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().width; }));
       for (const action of ["select-all", "drag", "shift-click", "shift-down", "mid-line"]) {
-        await page.evaluate(() => editor.commands.focus("start"));
+        await page.evaluate(() => { editor.commands.setTextSelection(1); editor.view.focus(); });
         const first = await page.locator(".tiptap > p").first().boundingBox();
         const target = await page.locator(".tiptap > h2").last().boundingBox();
         if (action === "select-all") await page.keyboard.press(await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta+a" : "Control+a"));
@@ -69,7 +69,8 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
           let end; editor.state.doc.descendants((node, pos) => { if (node.textContent === "AV office affinity tail" && node.isTextblock) end = pos + 10; });
           editor.commands.setTextSelection({ from: 2, to: end });
         });
-        await page.waitForTimeout(80);
+        await page.waitForFunction(() => !editor.state.selection.empty);
+        await waitForEditorSelection(page);
         assert.equal(await page.evaluate(() => editor.state.selection.empty), false, action);
         await page.screenshot({ caret: "initial", animations: "disabled", path: artifacts ? `${prefix}-${action}.png` : undefined });
         const png = await page.screenshot({ caret: "initial", animations: "disabled", style: '[aria-label="Text formatting"], [aria-label="Text formatting"] * { visibility: hidden !important; }' });
@@ -196,7 +197,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
     }
     await page.evaluate(() => {
       editor.commands.setContent("<p>AV office affinity tail</p>");
-      editor.commands.focus(); editor.commands.setTextSelection({ from: 2, to: 8 });
+      editor.commands.setTextSelection({ from: 2, to: 8 }); editor.view.focus();
     });
     const shaping = await page.evaluate(() => {
       const measure = () => { const r = document.createRange(); r.selectNodeContents(editor.view.dom.firstElementChild); return r.getBoundingClientRect().width; };

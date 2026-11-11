@@ -1,4 +1,4 @@
-import { browserHarness } from "./support/browser.mjs";
+import { browserHarness, waitForEditorSelection } from "./support/browser.mjs";
 // Caret movement around inline and block math, in a real WebKit (the engine
 // behind Tauri on macOS). Rendered formulas hide their source, so native
 // movement skips or sticks on them unless the math extensions step over it.
@@ -73,65 +73,71 @@ const KEYS = { L: "ArrowLeft", R: "ArrowRight", U: "ArrowUp", D: "ArrowDown" };
 
 // Presses each key and returns where the caret is before and after each one,
 // as "<key><position><first letter of the block it is in>", e.g. "D8m".
-async function walk(content, start, keys) {
-  await page.evaluate(({ content, start }) => {
-    editor.commands.setContent({ type: "doc", content });
-    editor.commands.focus();
-    editor.commands.setTextSelection(start);
-  }, { content, start });
-  // Tiptap focuses on the next frame; a key sent before that is lost.
-  await page.waitForFunction(() => editor.view.hasFocus());
+async function walk(content, start, keys, expected) {
+  await page.evaluate(content => editor.commands.setContent({ type: "doc", content }), content);
+  // Formulas mount through IntersectionObserver and may request more fonts.
+  // Finish that layout before testing native vertical movement.
+  await page.waitForFunction(() => !document.querySelector("[data-render-pending]"));
+  await page.evaluate(() => document.fonts.ready);
+  await page.evaluate(start => { editor.commands.setTextSelection(start); editor.view.focus(); }, start);
+  await waitForEditorSelection(page);
   const caret = () =>
     page.evaluate(() => {
       const { head, $head } = editor.state.selection;
       return `${head}${$head.parent.type.name[0]}`;
     });
+  const layout = () => page.evaluate(() => new Promise(resolve =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await layout();
   const steps = [await caret()];
-  for (const key of keys) {
+  for (const [index, key] of [...keys].entries()) {
     await page.keyboard.press(KEYS[key]);
-    // Two frames rather than a fixed delay, which a busy machine outlasts.
-    await page.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-    );
+    await layout();
+    // Native selectionchange can arrive after keyup. Wait for this step's
+    // expected caret, including deliberate no-ops at document boundaries.
+    await page.waitForFunction(({ target, previous }) => {
+      const { head, $head } = editor.state.selection;
+      const actual = `${head}${$head.parent.type.name[0]}`;
+      return target ? actual === target : actual !== previous;
+    }, { target: expected?.split(" ")[index + 1].slice(1), previous: steps.at(-1).replace(/^[LRUD]/, "") });
+    await waitForEditorSelection(page);
     steps.push(key + (await caret()));
   }
   return steps.join(" ");
 }
 
+async function assertWalk(content, start, keys, expected) {
+  assert.equal(await walk(content, start, keys, expected), expected);
+}
+
 test("left and right step through an inline formula one character at a time", async () => {
-  assert.equal(
-    await walk([p(text("ab "), math("x^2"), text(" cd"))], 1, "RRRRRRRRRRLLLLLLLLLL"),
+  await assertWalk([p(text("ab "), math("x^2"), text(" cd"))], 1, "RRRRRRRRRRLLLLLLLLLL",
     "1p R2p R3p R4p R5i R6i R7i R8i R9p R10p R11p " +
       "L10p L9p L8i L7i L6i L5i L4p L3p L2p L1p",
   );
 });
 
 test("right reaches the end of a line that ends in a formula, then down and up", async () => {
-  assert.equal(
-    await walk([p(text("ab "), math("x^2")), p(text("next"))], 1, "RRRRRRRRDU"),
+  await assertWalk([p(text("ab "), math("x^2")), p(text("next"))], 1, "RRRRRRRRDU",
     "1p R2p R3p R4p R5i R6i R7i R8i R9p D15p U9p",
   );
 });
 
 test("up and down cross a line with an inline formula", async () => {
-  assert.equal(
-    await walk(
-      [p(text("line one here")), p(text("ab "), math("x^2"), text(" cd")), p(text("line three"))],
-      3,
-      "DDDUUU",
-    ),
+  await assertWalk(
+    [p(text("line one here")), p(text("ab "), math("x^2"), text(" cd")), p(text("line three"))],
+    3,
+    "DDDUUU",
     "3p D17p D31p D39p U17p U3p U1p",
   );
 });
 
 // Explicit groups keep the caret fixtures independent of greedy script shorthand.
 test("up and down stop beside a formula that is alone on its line", async () => {
-  assert.equal(
-    await walk(
-      [p(text("line one here")), p(math("x^{2}+y^{2}")), p(text("line three"))],
-      3,
-      "DDDUUU",
-    ),
+  await assertWalk(
+    [p(text("line one here")), p(math("x^{2}+y^{2}")), p(text("line three"))],
+    3,
+    "DDDUUU",
     "3p D16p D31p D41p U29p U9p U1p",
   );
 });
@@ -150,30 +156,26 @@ test("down and up wrap through a formula that spans two lines", async () => {
 });
 
 test("up and down enter and leave a math block", async () => {
-  assert.equal(
-    await walk([p(text("above")), block("x^2"), p(text("below"))], 3, "DDDUUU"),
+  await assertWalk([p(text("above")), block("x^2"), p(text("below"))], 3, "DDDUUU",
     "3p D8m D14p D18p U11m U5p U1p",
   );
 });
 
 test("left and right enter and leave a math block", async () => {
-  assert.equal(
-    await walk([p(text("above")), block("x^2"), p(text("below"))], 6, "RRRRRRRLLLLLLL"),
+  await assertWalk([p(text("above")), block("x^2"), p(text("below"))], 6, "RRRRRRRLLLLLLL",
     "6p R8m R9m R10m R11m R13p R14p R15p " +
       "L14p L13p L11m L10m L9m L8m L6p",
   );
 });
 
 test("a math block right under a heading", async () => {
-  assert.equal(
-    await walk([h1("Title"), block("x^2"), p(text("below"))], 3, "DDDUUU"),
+  await assertWalk([h1("Title"), block("x^2"), p(text("below"))], 3, "DDDUUU",
     "3h D8m D14p D18p U11m U4h U1h",
   );
 });
 
 test("two math blocks in a row", async () => {
-  assert.equal(
-    await walk([p(text("above")), block("a"), block("b"), p(text("below"))], 3, "DDDDUUUU"),
+  await assertWalk([p(text("above")), block("a"), block("b"), p(text("below"))], 3, "DDDDUUUU",
     "3p D8m D11m D15p D19p U12m U9m U3p U1p",
   );
 });
@@ -183,7 +185,7 @@ test("two math blocks in a row", async () => {
 for (const [name, formula] of [["an empty formula", math("")], ["a formula", math("x+y")]]) {
   test(`left out of ${name} alone on its line draws the caret in front`, async () => {
     const content = [p(text("above")), p(formula), p(text("below"))];
-    assert.equal(await walk(content, 9, "L"), "9i L8p");
+    await assertWalk(content, 9, "L", "9i L8p");
     const caret = await caretX();
     const { left, right } = await page.evaluate(() =>
       editor.view.dom.querySelector(".inline-math").getBoundingClientRect().toJSON(),

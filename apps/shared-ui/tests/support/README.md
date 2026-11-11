@@ -21,14 +21,3 @@ expected value with the production Markdown parser. `bench:large-note` accepts
 `LARGE_NOTE_FOLDER` for profiling a larger vault without adding personal files to
 the correctness suite. Set `SELECTION_ARTIFACTS` to a directory to save selection
 screenshots; otherwise those checks only capture in memory.
-
-The cleanup follows the root audit: SVG path/background-size checks only pinned
-CSS implementation, the review foreground assertion accepted any computed color,
-and the old outline teardown ended without checking errors. Remaining style
-contracts are left for the audit's separate rendered-behavior rewrite. Restore
-coverage uses one loader, with controllable engine/file drains for lifecycle
-ordering and real engines for stalled network transfer cancellation.
-
-The real-schema editor helper is deferred until the React-free schema factory
-exists; copying the current component schema here would preserve the duplication
-that helper is meant to remove.

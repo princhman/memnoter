@@ -12,6 +12,14 @@ struct SettingsView: View {
     @State private var selected: Backup?
     @State private var error: String?
     @State private var busy = false
+    /// "Memnoter 0.1.2, build 2710db3"; the stamp is written by scripts/build-ios-web.sh.
+    private static let versionLine: String = {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let stamp = Bundle.main.url(forResource: "build-stamp", withExtension: "txt", subdirectory: "Web")
+            .flatMap { try? String(contentsOf: $0, encoding: .utf8) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return ["Memnoter \(version)", stamp.map { "build \($0)" }].compactMap { $0 }.joined(separator: ", ")
+    }()
     var body: some View {
         NavigationStack {
             List {
@@ -44,6 +52,7 @@ struct SettingsView: View {
                         }
                     }
                 }
+                Section("About") { Text(Self.versionLine).foregroundStyle(.secondary) }
                 if let error { Text(error).foregroundStyle(.red) }
             }.disabled(busy).navigationTitle("Settings")
                 .toolbar { Button("Done") { dismiss() }.disabled(busy) }

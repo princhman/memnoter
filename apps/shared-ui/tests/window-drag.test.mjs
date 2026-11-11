@@ -42,7 +42,8 @@ test("the entire top bar drags while controls and overlays remain interactive", 
           } } });
 
       }, fullscreen);
-      await page.goto(`http://localhost:${server.httpServer.address().port}/m1`);
+      // Wait for the actual editor rather than unrelated resource load completion.
+      await page.goto(`http://localhost:${server.httpServer.address().port}/m1`, { waitUntil: "commit" });
       await page.locator(".tiptap[contenteditable=true]").waitFor();
       await page.addScriptTag({ content: dragScript.replace("__TEMPLATE_os_name__", "'macos'") });
       for (const collapsed of [false, true]) {
