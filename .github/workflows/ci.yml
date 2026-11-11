@@ -68,8 +68,11 @@ jobs:
 
   ios:
     # The core script produces an arm64 simulator XCFramework slice.
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 4
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -87,29 +90,35 @@ jobs:
       - run: ./scripts/build-ios-web.sh
       - run: xcodegen generate
         working-directory: apps/ios
-      - name: Select an installed iPad simulator
+      - name: Select and boot the SDK's iPad simulator
         run: |
-          simulator_id=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; print(next(d["udid"] for devices in json.load(sys.stdin)["devices"].values() for d in devices if d["name"].startswith("iPad")))')
+          xcodebuild -version
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
+          simulator_id=$(python3 - "$RUNNER_TEMP/simulators.json" <<'PYTHON'
+          import json, subprocess, sys
+          sdk = subprocess.check_output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True).strip()
+          runtime = "com.apple.CoreSimulator.SimRuntime.iOS-" + sdk.replace(".", "-")
+          devices = json.load(open(sys.argv[1]))["devices"].get(runtime, [])
+          ipads = sorted((d for d in devices if d["name"].startswith("iPad")), key=lambda d: (d["name"], d["udid"]))
+          if not ipads:
+              raise SystemExit(f"No installed iPad for SDK {sdk}: {devices}")
+          print(ipads[0]["udid"])
+          PYTHON
+          )
           echo "IOS_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
+          xcrun simctl bootstatus "$simulator_id" -b
+      - name: Build iOS tests
+        run: |
+          xcodebuild build-for-testing -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
+            -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/ios-build" -parallel-testing-enabled NO
       - name: Run iOS tests against the local sync worker
         run: |
           ./scripts/ensure-sync-vars.sh
-          pnpm --dir apps/sync exec wrangler dev --local --ip 0.0.0.0 --port 8787 > "$RUNNER_TEMP/wrangler.log" 2>&1 &
-          worker_pid=$!
-          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
-          ready=false
-          for attempt in {1..60}; do
-            kill -0 "$worker_pid" || { cat "$RUNNER_TEMP/wrangler.log"; exit 1; }
-            if curl --silent --output /dev/null http://localhost:8787; then ready=true; break; fi
-            sleep 1
-          done
-          if [ "$ready" != true ]; then cat "$RUNNER_TEMP/wrangler.log"; exit 1; fi
-          # TODO: Restore this Contents UI scenario after investigating its intermittent
-          # CI reading-branch highlight timeout after focus (local simulator runs pass).
-          # Keep it enabled locally and keep all other native tests running in CI.
-          xcodebuild test -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
+          node scripts/ios-test-with-worker.mjs xcodebuild test-without-building \
+            -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
             -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID" \
-            -skip-testing:MemnoterUITests/SectionFocusUITests/testContentsHierarchyFocusAndUnfocusRestoreWholeNote \
+            -derivedDataPath "$RUNNER_TEMP/ios-build" \
             -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/ios-tests.xcresult"
           # E2E must execute, not silently pass through its worker/Keychain skip.
           xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/ios-tests.xcresult" > "$RUNNER_TEMP/ios-tests.json"
@@ -134,3 +143,4 @@ jobs:
             ${{ runner.temp }}/ios-tests.xcresult
             ${{ runner.temp }}/ios-tests.json
             ${{ runner.temp }}/wrangler.log
+            ${{ runner.temp }}/simulators.json
