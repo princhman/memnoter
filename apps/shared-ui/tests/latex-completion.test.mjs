@@ -156,4 +156,14 @@ test("PRI-346: Enter dismisses completion and keeps editing the unchanged formul
     await page.keyboard.type("+b");
     assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.textContent), tex + "+b");
   }
+  await page.evaluate(() => {
+    editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [
+      { type: "inlineMath", content: [{ type: "text", text: "\\qqqqqqqq" }] },
+    ] }] });
+    editor.view.focus();
+    editor.commands.setTextSelection(11);
+  });
+  await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor({ state: "hidden" });
+  await page.keyboard.press("Enter");
+  assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.type.name), "paragraph");
 });

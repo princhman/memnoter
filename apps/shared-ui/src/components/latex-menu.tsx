@@ -142,14 +142,7 @@ export const LatexSuggest = Extension.create<
   },
 
   addKeyboardShortcuts() {
-    return {
-      Tab: () => jumpToNextSlot(this.editor),
-      Enter: () => {
-        if (!latexSuggestKey.getState(this.editor.state)?.active) return false;
-        exitSuggestion(this.editor.view, latexSuggestKey);
-        return true;
-      },
-    };
+    return { Tab: () => jumpToNextSlot(this.editor) };
   },
 
   addProseMirrorPlugins() {
@@ -381,6 +374,10 @@ const LatexMenu = forwardRef<LatexMenuHandle, LatexMenuProps>(
         }
         if (event.key === "ArrowDown") {
           setSelected((index) => (index + 1) % items.length);
+          return true;
+        }
+        if (event.key === "Enter") {
+          exitSuggestion(editor.view, latexSuggestKey);
           return true;
         }
         if (event.key === "Tab") {
