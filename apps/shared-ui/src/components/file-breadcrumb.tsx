@@ -1,3 +1,4 @@
+import { MiddleTruncate } from "./middle-truncate";
 import { useDocuments } from "@/lib/use-documents";
 import { documentName } from "@/lib/pdf-state";
 import { useModules } from "@/lib/modules";
@@ -91,22 +92,22 @@ export function FileBreadcrumb() {
       />
       {/* Below md the sidebar is a sheet, so always clear the window controls. */}
       <div className={cn("shrink-0 md:hidden", TOOLBAR_OFFSET)} />
-      <div className="min-w-0">
+      <div className="min-w-0 overflow-hidden">
         <Breadcrumb>
-          <BreadcrumbList className={isReview || isFiles ? "flex-nowrap" : undefined}>
+          <BreadcrumbList className="flex-nowrap whitespace-nowrap [&>[data-slot=breadcrumb-item]]:min-w-0 [&>[data-slot=breadcrumb-item]]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:block [&>[data-slot=breadcrumb-item]>*]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:min-w-0 [&>[data-slot=breadcrumb-item]>*]:max-w-full [&>[data-slot=breadcrumb-separator]]:shrink-0">
             {isFiles ? (<>
               {/* Like Review: the module scope first, then the page. */}
-              <BreadcrumbItem className="min-w-0"><ReviewScopeMenu page="files" current={pdf?.moduleId} /></BreadcrumbItem>
+              <BreadcrumbItem className="min-w-0 overflow-visible!"><ReviewScopeMenu page="files" current={pdf?.moduleId} /></BreadcrumbItem>
               <BreadcrumbSeparator>/</BreadcrumbSeparator>
               {pdf ? <>
                 <BreadcrumbItem className="shrink-0"><BreadcrumbLink render={<Link to="/files" search={{ module: pdf.moduleId }} />}>Files</BreadcrumbLink></BreadcrumbItem>
                 <BreadcrumbSeparator>›</BreadcrumbSeparator>
-                <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate whitespace-nowrap">{documentName(pdf.name)}</BreadcrumbPage></BreadcrumbItem>
+                <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate whitespace-nowrap"><MiddleTruncate text={documentName(pdf.name)} /></BreadcrumbPage></BreadcrumbItem>
               </> : <BreadcrumbItem className="shrink-0"><BreadcrumbPage data-tauri-drag-region="deep">Files</BreadcrumbPage></BreadcrumbItem>}
             </>) : isReview ? (
               <>
                 {/* The module under review comes first, as it will for a module's other pages. */}
-                <BreadcrumbItem className="min-w-0">
+                <BreadcrumbItem className="min-w-0 overflow-visible!">
                   <ReviewScopeMenu />
                 </BreadcrumbItem>
                 <BreadcrumbSeparator>/</BreadcrumbSeparator>
@@ -128,13 +129,13 @@ export function FileBreadcrumb() {
                         type="button"
                         onClick={() => editor?.commands.showDocument()}
                       >
-                        {moduleTitle}
+                        <MiddleTruncate text={moduleTitle ?? ""} />
                       </button>
                     }
                   />
                 ) : (
                   <BreadcrumbPage data-tauri-drag-region="deep" className="font-bold">
-                    {moduleTitle}
+                    <MiddleTruncate text={moduleTitle ?? ""} />
                   </BreadcrumbPage>
                 )}
               </BreadcrumbItem>
@@ -168,7 +169,7 @@ export function FileBreadcrumb() {
                                 editor?.commands.showSection(crumb.pos)
                               }
                             >
-                              {crumb.title}
+                              <MiddleTruncate text={crumb.title} />
                             </DropdownMenuItem>
                           ))}
                       </DropdownMenuGroup>
@@ -189,7 +190,7 @@ export function FileBreadcrumb() {
 
                   <BreadcrumbItem>
                     {index === Math.min(2, sectionPath.length) - 1 ? (
-                      <BreadcrumbPage data-tauri-drag-region="deep">{crumb.title}</BreadcrumbPage>
+                      <BreadcrumbPage data-tauri-drag-region="deep"><MiddleTruncate text={crumb.title} /></BreadcrumbPage>
                     ) : (
                       <BreadcrumbLink
                         render={
@@ -199,7 +200,7 @@ export function FileBreadcrumb() {
                               editor?.commands.showSection(crumb.pos)
                             }
                           >
-                            {crumb.title}
+                            <MiddleTruncate text={crumb.title} />
                           </button>
                         }
                       />

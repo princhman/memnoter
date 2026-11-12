@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { chromium } from "playwright";
 import { browserHarness, installTestBridge } from "./support/browser.mjs";
 
-const { createServer } = browserHarness(import.meta.url);
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 test("desktop toolbar spacing and Settings back navigation respect the platform and history", async () => {
   const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
@@ -57,6 +57,57 @@ test("desktop toolbar spacing and Settings back navigation respect the platform 
     await direct.getByRole("button", { name: "Back", exact: true }).click();
     await direct.waitForURL(`${origin}/`);
     await direct.close();
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});
+
+
+test("long breadcrumbs remain within the desktop header", async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { value: "MacIntel" });
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
+        if (command.startsWith("plugin:")) return 1;
+        if (command === "modules") return [{ id: "m1", name: "Computer Architecture and Concurrency ".repeat(12), heading_numbering: false }];
+        if (command === "get_content") return { state: [], updates: [], files: [] };
+        if (command === "add_update") return { id: 1, bytes: args.bytes };
+        return [];
+      } } });
+    });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/m1`);
+    await page.locator(".tiptap[contenteditable=true]").waitFor();
+    for (const width of [1280, 800, 1100]) {
+      await page.setViewportSize({ width, height: 800 });
+      for (let i = 0; i < 2; i++) {
+        await page.getByRole("button", { name: "Toggle sidebar", exact: true }).click();
+        await page.waitForTimeout(400);
+        const box = await page.evaluate(() => {
+          const h = document.querySelector("header").getBoundingClientRect();
+          const c = document.querySelector('[data-slot="breadcrumb-list"]').getBoundingClientRect();
+          return { top: c.top, bottom: c.bottom, ht: h.top, hb: h.bottom, height: h.height };
+        });
+        await page.waitForFunction(() => {
+          const label = document.querySelector('[aria-label="breadcrumb"] span[title]');
+          const node = label?.lastChild;
+          const shown = node?.textContent ?? "";
+          const range = document.createRange();
+          if (node) range.selectNodeContents(node);
+          const used = range.getBoundingClientRect().width;
+          // Both ends stay, and the cut fills the width, including after it grows back.
+          return shown.includes("…") && shown.startsWith("Computer") && shown.endsWith("Concurrency ")
+            && used <= label.clientWidth + 0.5 && label.clientWidth - used < 30;
+        });
+        assert.equal(box.height, 32);
+        assert.ok(box.top >= box.ht && box.bottom <= box.hb, JSON.stringify(box));
+      }
+    }
   } finally {
     await browser?.close();
     await server.close();

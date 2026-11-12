@@ -1,3 +1,4 @@
+import { MiddleTruncate } from "./middle-truncate";
 import { useEffect, useRef, useState } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -77,7 +78,7 @@ export function AddPdf() {
   return <>
     <Dialog open={pending !== null} onOpenChange={open => { if (!open && !busy) setPending(null); }}>
       <DialogContent><DialogHeader><DialogTitle>Add PDFs to a module</DialogTitle></DialogHeader>
-        <div className="grid gap-1">{modules.map(module => <Button key={module.id} variant="ghost" disabled={busy} onClick={() => void add(module.id, pending?.files ?? [])}>{module.name}</Button>)}</div>
+        <div className="grid gap-1">{modules.map(module => <Button key={module.id} variant="ghost" disabled={busy} onClick={() => void add(module.id, pending?.files ?? [])}><MiddleTruncate text={module.name} /></Button>)}</div>
         {!modules.length && <p className="text-sm text-muted-foreground">Create a module first.</p>}
       </DialogContent>
     </Dialog>
