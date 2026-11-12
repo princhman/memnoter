@@ -5,7 +5,6 @@ import { isImageNode } from "../lib/cards.ts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { posToDOMRect } from "@tiptap/core";
-import type { EditorState } from "@tiptap/pm/state";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { CellSelection } from "@tiptap/pm/tables";
 import { TableControls } from "@/components/table-controls";
@@ -40,17 +39,30 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
   const [menuContainer] = useState(() => document.createElement("div"));
   useEffect(() => {
     // TipTap uses the menu parent's containment to decide whether focus left it.
-    document.body.appendChild(menuContainer);
+    const parent = editor?.view.dom.parentElement;
+    if (!parent) return;
+    if (getComputedStyle(parent).position === "static") parent.style.position = "relative";
+    parent.appendChild(menuContainer);
     return () => menuContainer.remove();
-  }, [menuContainer]);
-  const anchor = useRef<{ state: EditorState; rect: DOMRect; hidden: boolean } | null>(null);
+  }, [editor, menuContainer]);
+  const anchor = useRef<{ hidden: boolean } | null>(null);
 
   useEffect(() => {
     if (!editor) return;
     anchor.current = null;
     // Capture also sees scrolls in the desktop note pane and nested editors.
     const update = () => {
-      if (!editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(TEXT_BUBBLE_MENU_KEY, "updatePosition"));
+      if (!editor.isDestroyed && menu.current) {
+        const rect = posToDOMRect(editor.view, editor.state.selection.from, editor.state.selection.to);
+        let top = 0, bottom = window.innerHeight;
+        for (let parent = editor.view.dom.parentElement; parent; parent = parent.parentElement) {
+          if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(parent).overflowY)) {
+            const bounds = parent.getBoundingClientRect();
+            top = Math.max(top, bounds.top); bottom = Math.min(bottom, bounds.bottom);
+          }
+        }
+        menu.current.style.visibility = rect.bottom <= top || rect.top >= bottom ? "hidden" : "visible";
+      }
     };
     document.addEventListener("scroll", update, true);
     return () => document.removeEventListener("scroll", update, true);
@@ -120,14 +132,8 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
           }
         }
         const hidden = live.bottom <= top || live.top >= bottom || live.right <= left || live.left >= right;
-        const previous = anchor.current;
-        // A scroll keeps the screen anchor. Editing or returning from outside
-        // the viewport uses the selection's current position instead.
-        const rect = !previous || previous.hidden || !state.selection.eq(previous.state.selection)
-          || !state.doc.eq(previous.state.doc) || state.storedMarks !== previous.state.storedMarks
-          ? live : previous.rect;
-        anchor.current = { state, rect, hidden };
-        return { getBoundingClientRect: () => rect };
+        anchor.current = { hidden };
+        return { contextElement: view.dom, getBoundingClientRect: () => live };
       }}
       role="toolbar"
       aria-label="Text formatting"
@@ -135,7 +141,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       // The default 250ms debounce makes the menu lag behind the selection.
       updateDelay={0}
       options={{
-        strategy: "fixed", placement: "top", offset: 8, flip: true, shift: true,
+        strategy: "absolute", scrollTarget: menuContainer, placement: "top", offset: 8, flip: true, shift: true,
         onUpdate: () => {
           if (menu.current && anchor.current?.hidden) menu.current.style.visibility = "hidden";
         },

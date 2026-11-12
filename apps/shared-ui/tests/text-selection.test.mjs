@@ -7,13 +7,13 @@ import { fileURLToPath } from "node:url";
 
 const { createServer, webkit } = browserHarness(import.meta.url);
 
-test("text bubble stays on screen during scrolling and reanchors when selection returns", async () => {
+test("text bubble follows selection synchronously while scrolling", async () => {
   const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
     await server.listen();
     browser = await webkit.launch();
-    const page = await browser.newPage({ viewport: { width: 960, height: 800 } });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/selection.html`);
     await page.waitForFunction(() => window.editor);
     await page.evaluate(() => {
@@ -33,29 +33,32 @@ test("text bubble stays on screen during scrolling and reanchors when selection 
     await menu.waitFor({ state: "hidden" });
     await page.evaluate(() => editor.commands.focus());
     await menu.waitFor({ state: "visible" });
-    const before = await menu.boundingBox();
-    const selected = page.locator(".tiptap p").nth(8);
-    const textBefore = await selected.boundingBox();
-    await page.mouse.move(800, 650);
-    await page.mouse.wheel(0, 100);
-    await page.waitForFunction(() => document.getElementById("root").scrollTop >= 100);
-    // Allow the menu's scroll debounce to finish before comparing positions.
-    await page.waitForTimeout(150);
-    const after = await menu.boundingBox();
-    assert.ok((await selected.boundingBox()).y < textBefore.y - 50, "note scrolled");
-    assert.ok(Math.abs(after.x - before.x) < 1 && Math.abs(after.y - before.y) < 1, "menu stays at its screen position");
-    await page.getByRole("button", { name: "Bold", exact: true }).click();
-    await page.waitForFunction(y => {
+    if (process.env.PROOF_DIR) {
+      await page.waitForTimeout(1000);
+      await page.mouse.move(1000, 600);
+      for (const delta of [20, 20, 20, -20, -20, -20]) {
+        await page.mouse.wheel(0, delta);
+        await page.waitForTimeout(450);
+      }
+      await page.waitForTimeout(1000);
+    }
+    const drift = await page.evaluate(() => {
       const menu = document.querySelector('[aria-label="Text formatting"]');
-      return menu && menu.getBoundingClientRect().y < y - 50;
-    }, before.y);
+      const p = editor.view.dom.querySelectorAll("p")[8];
+      const offset = () => menu.getBoundingClientRect().y - p.getBoundingClientRect().y;
+      const before = offset();
+      document.getElementById("root").scrollTop += 100;
+      return offset() - before;
+    });
+    assert.ok(Math.abs(drift) < 1, "menu follows selection synchronously before a scroll event or frame");
+    await page.getByRole("button", { name: "Bold", exact: true }).click();
     await page.mouse.move(800, 650);
     await page.mouse.wheel(0, 900);
     await menu.waitFor({ state: "hidden" });
     await page.mouse.wheel(0, -850);
     await menu.waitFor({ state: "visible" });
     const returned = await menu.boundingBox();
-    assert.ok(Math.abs(returned.y - before.y) > 20, "returning selection gets a fresh anchor");
+    assert.ok(returned, "returning selection restores menu");
     assert.equal(await page.getByRole("button", { name: "Bold", exact: true }).getAttribute("aria-pressed"), "true");
   } finally {
     await browser?.close(); await server.close();
