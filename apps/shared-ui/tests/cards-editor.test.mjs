@@ -5,13 +5,14 @@ import { closeHistory } from "@tiptap/pm/history";
 import { joinBackward } from "@tiptap/pm/commands";
 import StarterKit from "@tiptap/starter-kit";
 import { Flashcards } from "../src/lib/flashcards.ts";
+import { MathBlock } from "../src/lib/math-block.ts";
 import { blockIdOf, cardIdsOf, extractCards } from "../src/lib/cards.ts";
 
 // Exercise real Tiptap commands and appendTransaction without mounting a DOM.
 function editorFor(content) {
   const editor = new Editor({
     element: null,
-    extensions: [StarterKit, Flashcards],
+    extensions: [StarterKit, MathBlock, Flashcards],
     content: { type: "doc", content },
   });
   editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
@@ -440,6 +441,59 @@ test("joining an existing group with another cloze produces one card", () => {
     assert.equal(cards[0].front.filter((part) => part.type === "blank").length, 3);
     editor.commands.setTextSelection(4);
     assert.equal(editor.can().joinClozes(), false);
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("making a cloze note shares its text across its cards, keeps their ids, and splits", () => {
+  const editor = editorFor([
+    paragraph("Context", "intro"),
+    paragraph("A {{one}}", "first"),
+    paragraph("B {{two}}", "second"),
+    { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Other" }] },
+    paragraph("C {{three}}", "third"),
+  ]);
+  try {
+    const original = extractCards(editor.state.doc);
+    const end = editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize + editor.state.doc.child(2).nodeSize;
+    editor.commands.setTextSelection({ from: 2, to: end + 3 });
+    assert.equal(editor.can().makeClozeNote(), false, "a note never spans a heading");
+    editor.commands.setTextSelection({ from: 2, to: end - 2 });
+    assert.equal(editor.commands.makeClozeNote(), true);
+    const notes = [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.clozeNote);
+    assert.ok(notes[0] && notes.every((id) => id === notes[0]));
+    assert.equal(editor.can().makeClozeNote(), false, "already one note");
+    const cards = extractCards(editor.state.doc);
+    assert.deepEqual(cards.map(({ id }) => id), original.map(({ id }) => id));
+    assert.deepEqual(cards[1].front.map((block) => block.type), ["block", "block", "block"]);
+    assert.deepEqual(cards[2], original[2]);
+    editor.commands.splitClozeNote(notes[0]);
+    assert.deepEqual(extractCards(editor.state.doc), original);
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("Cloze in a formula makes the whole formula one card, and removing it keeps its id", () => {
+  const editor = editorFor([{ type: "mathBlock", content: [{ type: "text", text: "a^2 + b^2" }] }]);
+  try {
+    editor.commands.setTextSelection(2);
+    assert.equal(editor.can().removeCloze(), false);
+    assert.equal(editor.commands.makeCloze(), true);
+    const [card] = extractCards(editor.state.doc);
+    assert.equal(card.kind, "cloze");
+    assert.equal(card.id, `${editor.state.doc.firstChild.attrs.cardId}:math`);
+    assert.equal(editor.state.doc.textContent, "a^2 + b^2");
+    assert.equal(editor.commands.removeCloze(), true);
+    assert.deepEqual(extractCards(editor.state.doc), []);
+    editor.commands.makeCloze();
+    assert.equal(extractCards(editor.state.doc)[0].id, card.id);
+    // A formula cloze is enough for a note.
+    editor.commands.insertContentAt(0, { type: "paragraph", content: [{ type: "text", text: "Context" }] });
+    editor.commands.setTextSelection({ from: 2, to: editor.state.doc.content.size - 2 });
+    assert.equal(editor.commands.makeClozeNote(), true);
+    assert.equal(extractCards(editor.state.doc)[0].front.length, 2);
   } finally {
     editor.destroy();
   }

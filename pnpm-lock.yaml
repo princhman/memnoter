@@ -8,6 +8,9 @@ patchedDependencies:
   '@tanstack/history@1.162.0':
     hash: 80a4783b3989311a7bdd29986dc9511606bc8ee771d45ceee691d1d9a814130f
     path: patches/@tanstack__history@1.162.0.patch
+  '@tiptap/extension-details@3.29.2':
+    hash: 59de5a6eff7419a7c01f48869ed5c992e7253c7ca22d8b89b5f6e19761973dbc
+    path: patches/@tiptap__extension-details@3.29.2.patch
   '@tiptap/y-tiptap@3.0.6':
     hash: 6839971996994b9e03c46dc70c452dd80db7309ac10dc84e30732982b1bc202e
     path: patches/@tiptap__y-tiptap@3.0.6.patch
@@ -86,7 +89,7 @@ importers:
         version: 3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)(@tiptap/y-tiptap@3.0.6(patch_hash=6839971996994b9e03c46dc70c452dd80db7309ac10dc84e30732982b1bc202e)(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31))(yjs@13.6.31)
       '@tiptap/extension-details':
         specifier: 3.29.2
-        version: 3.29.2(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
+        version: 3.29.2(patch_hash=59de5a6eff7419a7c01f48869ed5c992e7253c7ca22d8b89b5f6e19761973dbc)(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
       '@tiptap/extension-document':
         specifier: ^3.27.3
         version: 3.27.3(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))
@@ -4867,7 +4870,7 @@ snapshots:
       '@tiptap/y-tiptap': 3.0.6(patch_hash=6839971996994b9e03c46dc70c452dd80db7309ac10dc84e30732982b1bc202e)(prosemirror-model@1.25.9)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
       yjs: 13.6.31
 
-  '@tiptap/extension-details@3.29.2(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)':
+  '@tiptap/extension-details@3.29.2(patch_hash=59de5a6eff7419a7c01f48869ed5c992e7253c7ca22d8b89b5f6e19761973dbc)(@tiptap/core@3.29.2(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)':
     dependencies:
       '@tiptap/core': 3.29.2(@tiptap/pm@3.27.1)
       '@tiptap/pm': 3.27.1

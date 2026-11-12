@@ -546,6 +546,7 @@ body {
 
 /* Foldable block: a title line and content that fold on their own. */
 .tiptap .foldable-block {
+    position: relative;
     display: flex;
     gap: 0.25rem;
     margin: 1rem 0;
@@ -1052,7 +1053,12 @@ body {
     text-align: center;
 }
 
-.tiptap .math-block:is(.ProseMirror-selectednode, .is-range-selected) .math-block-widget .katex-base {
+/* A selected formula is one box around just the formula, as a cloze is. */
+.tiptap .math-block:is(.ProseMirror-selectednode, .is-range-selected) .math-block-widget .katex-display {
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+    padding-inline: 0.25em;
     background: color-mix(in srgb, var(--primary) 25%, transparent);
 }
 
@@ -1092,6 +1098,38 @@ body {
 
 .tiptap .math-block.is-editing .math-block-widget.is-empty {
     display: none;
+}
+
+/* Make the formula a cloze card, offered while it is edited. */
+.tiptap .math-block {
+    position: relative;
+}
+
+.tiptap .math-block-cloze {
+    display: none;
+    position: absolute;
+    top: 0.4em;
+    right: 0.5em;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.375rem;
+    color: var(--muted-foreground);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.tiptap .math-block.is-editing .math-block-cloze {
+    display: block;
+}
+
+.tiptap .math-block-cloze:hover {
+    background: var(--accent);
+    color: var(--foreground);
+}
+
+.tiptap .math-block-cloze[aria-pressed="true"] {
+    color: var(--cloze);
 }
 
 /* ---------- Floating table of contents ---------- */
@@ -1291,6 +1329,73 @@ body {
     opacity: 0;
     transition: opacity 120ms ease-out;
     user-select: none;
+}
+
+/* A foldable block that is a cloze note shows its dot outside the block, by
+   its title, and one that holds a cloze offers to become a note. */
+.tiptap .foldable-block .cloze-note-dot {
+    top: 0.4rem;
+    right: calc(100% + 0.15rem);
+}
+
+.tiptap .foldable-block:hover .cloze-note-dot {
+    opacity: 1;
+}
+
+.tiptap .cloze-note-make {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.5rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.375rem;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 400;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+    user-select: none;
+}
+
+.tiptap .foldable-block:hover .cloze-note-make,
+.tiptap .cloze-note-make:focus-visible {
+    opacity: 1;
+}
+
+.tiptap .cloze-note-make:hover {
+    background: var(--accent);
+    color: var(--foreground);
+}
+
+@media (pointer: coarse) {
+    .tiptap .cloze-note-make {
+        opacity: 1;
+    }
+}
+
+/* A formula that is a cloze card is marked like an inline cloze: one box
+   around just the formula, not the whole block. */
+.tiptap .cloze-math-block .math-block-widget .katex-display {
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+    padding-inline: 0.25em;
+    background-color: var(--cloze-bg);
+    box-shadow: inset 0 -2px 0 0 var(--cloze);
+}
+
+/* A formula's dot sits in the margin by its first line, outside its source. */
+.tiptap .math-card-info {
+    position: relative;
+    height: 0;
+}
+
+.tiptap .math-card-info > .card-info {
+    top: 0.75rem;
+}
+
+.tiptap .math-card-info:is(:hover, :has(+ .math-block:hover)) > .card-info {
+    opacity: 1;
 }
 
 /* A heading's fold toggle keeps its place; the info goes before it. */
@@ -1543,6 +1648,23 @@ body {
 
 .card-face .katex {
     font-size: 1.1em;
+}
+
+/* A cloze note reviews block by block; list items keep their marker. */
+.card-face .cloze-note-block + .cloze-note-block {
+    margin-top: 0.5em;
+}
+
+.card-face .cloze-note-marker {
+    position: absolute;
+    width: 1.2em;
+    margin-left: -1.4em;
+    color: var(--muted-foreground);
+    text-align: right;
+}
+
+.card-face .cloze-note-marker:empty::before {
+    content: "\2022";
 }
 
 .occlusion-dialog { margin: auto; width: min(960px, 95vw); max-height: 94vh; overflow: auto; padding: 24px; border: none; border-radius: 12px; background: var(--background); color: var(--foreground); box-shadow: 0 12px 40px color-mix(in oklch, black 28%, transparent); }

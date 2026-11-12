@@ -15,6 +15,7 @@ import {
   ChevronDown,
   Braces,
   Combine,
+  Group,
   Code,
   Italic,
   Link,
@@ -62,12 +63,31 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         canMathBlock: editor.can().toggleMathBlock(),
         canMakeCard: editor.can().makeCloze(),
         canJoinClozes: editor.can().joinClozes(),
+        canMakeClozeNote: editor.can().makeClozeNote(),
         inCloze: editor.can().removeCloze(),
+        inMathBlock: editor.state.selection.$from.sameParent(editor.state.selection.$to) &&
+          editor.state.selection.$from.parent.type.name === "mathBlock",
       };
     },
   });
 
   if (!editor || !active) return null;
+
+  const clozeButton = (
+    <MarkButton
+      label={active.inCloze ? "Remove cloze" : "Cloze"}
+      hint={formatKeys(action("card.cloze").keys)}
+      pressed={active.inCloze}
+      disabled={!active.canMakeCard && !active.inCloze}
+      onToggle={() =>
+        active.inCloze
+          ? editor.chain().focus().removeCloze().run()
+          : editor.chain().focus().makeCloze().run()
+      }
+    >
+      <Braces />
+    </MarkButton>
+  );
 
   return (
     <>
@@ -96,6 +116,8 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         });
         if (containsImage) return false;
         const { $from, $to } = selection;
+        // A selection in one formula offers only to make it a cloze.
+        if ($from.sameParent($to) && $from.parent.type.name === "mathBlock") return true;
         for (const $pos of [$from, $to]) {
           for (let depth = $pos.depth; depth > 0; depth--) {
             if (RAW_TEXT_NODES.has($pos.node(depth).type.name)) return false;
@@ -107,7 +129,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       // Keep the editor selection while clicking menu buttons.
       onMouseDown={(event) => event.preventDefault()}
     >
-      {active.cells ? <TableBubbleActions editor={editor} /> : <>
+      {active.cells ? <TableBubbleActions editor={editor} /> : active.inMathBlock ? clozeButton : <>
       <MarkButton
         label="Bold"
         hint={formatKeys(action("text.bold").keys)}
@@ -195,19 +217,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       >
         <Sigma />
       </MarkButton>
-      <MarkButton
-        label={active.inCloze ? "Remove cloze" : "Cloze"}
-        hint={formatKeys(action("card.cloze").keys)}
-        pressed={active.inCloze}
-        disabled={!active.canMakeCard && !active.inCloze}
-        onToggle={() =>
-          active.inCloze
-            ? editor.chain().focus().removeCloze().run()
-            : editor.chain().focus().makeCloze().run()
-        }
-      >
-        <Braces />
-      </MarkButton>
+      {clozeButton}
       {active.canJoinClozes && (
         <MarkButton
           label="Join clozes"
@@ -216,6 +226,16 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
           onToggle={() => editor.chain().focus().joinClozes().run()}
         >
           <Combine />
+        </MarkButton>
+      )}
+      {active.canMakeClozeNote && (
+        <MarkButton
+          label="Make one note"
+          hint="Show these blocks together on each of their cloze cards"
+          pressed={false}
+          onToggle={() => editor.chain().focus().makeClozeNote().run()}
+        >
+          <Group />
         </MarkButton>
       )}
       {active.inTable && <TableBubbleActions editor={editor} />}

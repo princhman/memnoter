@@ -1,0 +1,36 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index da94a5601e96d104519ef655b32d2da851177164..14a96c414f3bff12f93ef0716f7caeea15033cbe 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -225,6 +225,7 @@ var Details = import_core2.Node.create({
+               return false;
+             }
+             tr.setNodeMarkup(pos, void 0, {
++              ...currentNode.attrs,
+               open: !currentNode.attrs.open
+             });
+             return true;
+diff --git a/dist/index.js b/dist/index.js
+index 1abfae51bd8feed2adc362a32720013f12851af9..adb0617952a184f3ed2677d1a78399dd9f45b413 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -204,6 +204,7 @@ var Details = Node2.create({
+               return false;
+             }
+             tr.setNodeMarkup(pos, void 0, {
++              ...currentNode.attrs,
+               open: !currentNode.attrs.open
+             });
+             return true;
+diff --git a/src/details.ts b/src/details.ts
+index 4d1e3406c37ab3f39c1bea7fabc509714bb2e94e..bcf1526d2c115d89bed25ba40709b69c57e870bb 100644
+--- a/src/details.ts
++++ b/src/details.ts
+@@ -226,6 +226,7 @@ export const Details = Node.create<DetailsOptions>({
+               }
+ 
+               tr.setNodeMarkup(pos, undefined, {
++                ...currentNode.attrs,
+                 open: !currentNode.attrs.open,
+               })
+ 

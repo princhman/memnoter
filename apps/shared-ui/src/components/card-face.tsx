@@ -20,8 +20,8 @@ const MARK_TAGS: Record<string, keyof HTMLElementTagNameMap> = {
   highlight: "mark",
 };
 
-function TexMath({ tex }: { tex: string }) {
-  const html = katex.renderToString(groupMathScripts(tex), { throwOnError: false });
+function TexMath({ tex, display = false }: { tex: string; display?: boolean }) {
+  const html = katex.renderToString(groupMathScripts(tex), { throwOnError: false, displayMode: display });
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
@@ -48,9 +48,24 @@ function Segments({ segments }: { segments: Segment[] }) {
   return segments.map((segment, index) => {
     switch (segment.type) {
       case "math":
-        return <span key={index} className={segment.highlightColor ? "note-highlight" : undefined} data-color={segment.highlightColor ? highlightColor(segment.highlightColor) : undefined}><TexMath tex={segment.tex} /></span>;
+        return <span key={index} className={segment.highlightColor ? "note-highlight" : undefined} data-color={segment.highlightColor ? highlightColor(segment.highlightColor) : undefined}><TexMath tex={segment.tex} display={segment.display} /></span>;
       case "break":
         return <br key={index} />;
+      case "block":
+        return (
+          <div
+            key={index}
+            className="cloze-note-block"
+            style={segment.depth ? { paddingLeft: `${segment.depth * 1.5}em` } : undefined}
+          >
+            {segment.marker !== undefined && (
+              <span className="cloze-note-marker" aria-hidden="true">
+                {segment.marker === "bullet" ? "" : `${segment.marker}.`}
+              </span>
+            )}
+            <Segments segments={segment.children} />
+          </div>
+        );
       case "blank":
         return (
           <span
