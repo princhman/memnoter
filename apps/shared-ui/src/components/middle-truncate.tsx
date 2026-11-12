@@ -19,7 +19,8 @@ export function MiddleTruncate({ text }: { text: string }) {
       context.font = getComputedStyle(element).font;
       // Canvas ignores letter spacing and font features; scale to the layout.
       const scale = full / (context.measureText(text).width || full);
-      const chars = Array.from(text);
+      // Whole graphemes, so a cut never splits an emoji or an accent from its letter.
+      const chars = Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), part => part.segment);
       const candidate = (count: number) => chars.slice(0, Math.ceil(count / 2)).join("") + "…" + chars.slice(chars.length - Math.floor(count / 2)).join("");
       let low = 0;
       let high = Math.max(0, chars.length - 1);
