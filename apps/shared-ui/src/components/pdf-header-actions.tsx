@@ -2,6 +2,7 @@ import { useMatchRoute, useRouterState } from "@tanstack/react-router";
 import { PanelRight, Plus } from "lucide-react";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { updatePdfPane, usePdfPane } from "@/lib/pdf-pane";
+import { IS_IOS } from "@/lib/platform";
 import { isTauri } from "@/lib/backend";
 import { pickPdfs } from "./add-pdf";
 import { Button } from "./ui/button";
@@ -17,7 +18,7 @@ export function PdfHeaderActions() {
   const reader = matchRoute({ to: "/files/$documentId" });
   const scope = useRouterState({ select: state => (state.location.search as { module?: unknown }).module });
   return <>
-    <div id={PDF_TOOLBAR_ID} className={reader ? "flex items-center gap-1" : "hidden"} />
+    <div id={PDF_TOOLBAR_ID} data-pdf-ios={IS_IOS || undefined} className={reader ? "flex items-center gap-1" : "hidden"} />
     {files && !reader && isTauri() && <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => pickPdfs(typeof scope === "string" ? scope : undefined)}>
       <Plus />Add PDF
     </Button>}

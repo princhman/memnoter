@@ -11,7 +11,7 @@ test('PDF touch pinch/pan preserves the reading point and cancels a captured cro
   let browser;
   try {
     await server.listen(); browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ hasTouch: true, deviceScaleFactor: 2, viewport: { width: 600, height: 1000 } });
+    const page = await browser.newPage({ hasTouch: true, userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)", deviceScaleFactor: 2, viewport: { width: 600, height: 1000 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async command => {
       if (command === 'get_content') return { state: [], updates: [], files: [] };

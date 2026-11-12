@@ -1808,16 +1808,16 @@ body {
 
 /* The reader owns pinch scaling; one-finger PDF scrolling remains native. */
 .pdf-viewport { touch-action: pan-x pan-y; }
-/* Touch: a title row (back, name, pane actions) above one rounded capsule
+/* iOS touch: a title row (back, name, pane actions) above one rounded capsule
    of reader tools, with 44px round targets and grouped controls. */
 @media (any-pointer: coarse) {
-    .pdf-viewer button:not(.pdf-page button), #pdf-toolbar button {
+    .pdf-viewer[data-pdf-ios] button:not(.pdf-page button), #pdf-toolbar[data-pdf-ios] button {
         min-width: 44px;
         min-height: 44px;
         border-radius: 999px;
     }
-    .pdf-viewer button:not(.pdf-page button) svg, #pdf-toolbar button svg { width: 20px; height: 20px; }
-    .pdf-reader-tools {
+    .pdf-viewer[data-pdf-ios] button:not(.pdf-page button) svg, #pdf-toolbar[data-pdf-ios] button svg { width: 20px; height: 20px; }
+    .pdf-viewer[data-pdf-ios] .pdf-reader-tools {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas: "lead trail" "tools tools";
@@ -1828,10 +1828,10 @@ body {
         padding: 4px 8px 10px;
         border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
     }
-    .pdf-reader-leading { grid-area: lead; min-height: 44px; gap: 2px; }
-    .pdf-reader-leading > span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-    .pdf-reader-trailing { grid-area: trail; display: flex; align-items: center; gap: 2px; }
-    .pdf-reader-controls, #pdf-toolbar {
+    .pdf-viewer[data-pdf-ios] .pdf-reader-leading { grid-area: lead; min-height: 44px; gap: 2px; }
+    .pdf-viewer[data-pdf-ios] .pdf-reader-leading > span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+    .pdf-viewer[data-pdf-ios] .pdf-reader-trailing { grid-area: trail; display: flex; align-items: center; gap: 2px; }
+    .pdf-viewer[data-pdf-ios] .pdf-reader-controls, #pdf-toolbar[data-pdf-ios] {
         grid-area: tools;
         display: flex;
         align-items: center;
@@ -1846,9 +1846,9 @@ body {
         overscroll-behavior-x: contain;
         scrollbar-width: none;
     }
-    .pdf-reader-controls::-webkit-scrollbar, #pdf-toolbar::-webkit-scrollbar { display: none; }
-    #pdf-toolbar { flex-wrap: nowrap; margin: 0 8px 10px; border-bottom: 0; }
-    .pdf-tool-divider {
+    .pdf-viewer[data-pdf-ios] .pdf-reader-controls::-webkit-scrollbar, #pdf-toolbar[data-pdf-ios]::-webkit-scrollbar { display: none; }
+    #pdf-toolbar[data-pdf-ios] { flex-wrap: nowrap; margin: 0 8px 10px; border-bottom: 0; }
+    .pdf-viewer[data-pdf-ios] .pdf-tool-divider, #pdf-toolbar[data-pdf-ios] .pdf-tool-divider {
         display: block;
         flex: none;
         width: 1px;
@@ -1856,7 +1856,7 @@ body {
         margin: 0 4px;
         background: color-mix(in oklch, var(--foreground) 14%, transparent);
     }
-    .pdf-reader-tools input[aria-label="Page number"], #pdf-toolbar input[aria-label="Page number"] {
+    .pdf-viewer[data-pdf-ios] .pdf-reader-tools input[aria-label="Page number"], #pdf-toolbar[data-pdf-ios] input[aria-label="Page number"] {
         min-width: 44px;
         min-height: 44px;
         padding: 0 4px 0 10px;
@@ -1864,8 +1864,8 @@ body {
         font-size: 16px;
         font-weight: 600;
     }
-    .pdf-viewer [aria-label="Zoom level"] { min-width: 3rem; font-size: 13px; font-weight: 500; }
-    .pdf-viewer button[aria-pressed="true"]:not(.pdf-page button), #pdf-toolbar button[aria-pressed="true"] {
+    .pdf-viewer[data-pdf-ios] [aria-label="Zoom level"] { min-width: 3rem; font-size: 13px; font-weight: 500; }
+    .pdf-viewer[data-pdf-ios] button[aria-pressed="true"]:not(.pdf-page button), #pdf-toolbar[data-pdf-ios] button[aria-pressed="true"] {
         background: var(--primary);
         color: var(--primary-foreground);
     }

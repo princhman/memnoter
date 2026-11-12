@@ -1,4 +1,5 @@
 import { usePdfFind, PdfFindHighlights } from "./pdf-find";
+import { IS_IOS } from "@/lib/platform";
 import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
 import { usePdfAnnotations } from "@/lib/pdf-annotation-store";
 import { parsePdfAnnotationColor, type PdfAnnotationColor, type PdfAnnotation, type PdfAnnotationAnchor } from "@/lib/pdf-annotations";
@@ -708,7 +709,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     };
     return pdfReaderControls.set({ documentId: doc.id, state: JSON.parse(nativeState), actions });
   }, [nativeState, doc.id]);
-  return <div ref={root} tabIndex={-1} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
+  return <div ref={root} data-pdf-ios={IS_IOS || undefined} tabIndex={-1} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
     {!nativeSelectionMenu && textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
       <div className="flex items-center gap-0.5 overflow-x-auto">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>

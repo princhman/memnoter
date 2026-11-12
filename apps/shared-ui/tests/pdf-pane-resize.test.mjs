@@ -226,7 +226,8 @@ for (const engine of [chromium, webkit]) test(`PDF navigation and find across pa
   let browser;
   try {
     await server.listen(); browser = await engine.launch({ headless: true, slowMo: process.env.PROOF_DIR ? 150 : 0 });
-    const page = await browser.newPage({ viewport: { width: 1400, height: 950 } });
+    const page = await browser.newPage({ hasTouch: engine === chromium, viewport: { width: 1366, height: 900 } });
+    if (engine === chromium) await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { value: 'Win32' }));
     await page.addInitScript(`(${installTestBridge.toString()})({ tauri: { invoke: async command => {
       if (command === 'get_content') return { state: [], updates: [], files: [] };
       if (command === 'list_documents') return [{ id: 'resize-pdf', moduleId: 'resize-module', moduleName: 'Resize', name: 'Resize.pdf', size: 1000, pageCount: 12, createdAt: 0, available: true }];
@@ -247,6 +248,9 @@ for (const engine of [chromium, webkit]) test(`PDF navigation and find across pa
     await page.getByRole('button', { name: 'Show files', exact: true }).click();
     await files.getByText('Resize', { exact: true }).click();
     await files.locator('.textLayer span').first().waitFor();
+    const controls = ['All files', 'Open full screen', 'Find in PDF', 'Zoom in (100%)', 'Select region', 'Annotate area'];
+    const centers = await Promise.all(controls.map(async name => { const box = await files.getByRole('button', { name, exact: true }).boundingBox(); return box.y + box.height / 2; }));
+    assert.ok(Math.max(...centers) - Math.min(...centers) < 1, 'desktop PDF tools share one row even with touch input');
     const findKey = await page.evaluate(async () => (await import('/src/lib/platform.ts')).IS_APPLE ? 'Meta+f' : 'Control+f');
     await files.locator('.pdf-viewer').focus();
     await page.keyboard.press(findKey);
