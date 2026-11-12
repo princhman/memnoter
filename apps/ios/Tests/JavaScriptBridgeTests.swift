@@ -9,6 +9,8 @@ import WebKit
         let client = try await CoreClient.open(directory)
         let session = WebSession(client: client, directory: directory)
         defer { session.dispose() }
+        let editorReady = expectation(description: "Editor bridge ready event")
+        session.onReady = { editorReady.fulfill() }
         session.web.stopLoading()
         session.web.loadHTMLString("""
             <script>
@@ -22,11 +24,8 @@ import WebKit
             window.webkit.messageHandlers.memnoter.postMessage({ kind: 'event', event: 'ready', payload: { protocolVersion: \(BridgeProtocol.version) } });
             </script>
             """, baseURL: URL(string: "memnoter-app://localhost/editor.html"))
-        for _ in 0..<100 {
-            if session.ready { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        XCTAssertTrue(session.ready)
+        await fulfillment(of: [editorReady], timeout: 5)
+        try XCTUnwrap(session.ready ? true : nil, "Editor did not emit its ready event")
         try await session.open("startup")
         let executed = try await session.execute(.undo)
         XCTAssertTrue(executed as? Bool == true)
