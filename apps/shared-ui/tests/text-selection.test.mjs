@@ -51,6 +51,18 @@ test("text bubble follows selection synchronously while scrolling", async () => 
       return offset() - before;
     });
     assert.ok(Math.abs(drift) < 1, "menu follows selection synchronously before a scroll event or frame");
+    // Scrolled near the top edge, the menu flips below the still-visible selection.
+    await page.evaluate(() => {
+      const root = document.getElementById("root");
+      const p = editor.view.dom.querySelectorAll("p")[8];
+      root.scrollTop += p.getBoundingClientRect().top - root.getBoundingClientRect().top - 10;
+    });
+    await page.waitForFunction(() => {
+      const menu = document.querySelector('[aria-label="Text formatting"]').getBoundingClientRect();
+      const p = editor.view.dom.querySelectorAll("p")[8].getBoundingClientRect();
+      return menu.top >= p.top && menu.top >= document.getElementById("root").getBoundingClientRect().top;
+    });
+    await page.evaluate(() => { document.getElementById("root").scrollTop -= 200; });
     await page.getByRole("button", { name: "Bold", exact: true }).click();
     await page.mouse.move(800, 650);
     await page.mouse.wheel(0, 900);

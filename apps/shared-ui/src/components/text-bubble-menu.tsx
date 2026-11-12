@@ -61,7 +61,17 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
             top = Math.max(top, bounds.top); bottom = Math.min(bottom, bounds.bottom);
           }
         }
-        menu.current.style.visibility = rect.bottom <= top || rect.top >= bottom ? "hidden" : "visible";
+        const hidden = rect.bottom <= top || rect.top >= bottom;
+        menu.current.style.visibility = hidden ? "hidden" : "visible";
+        if (hidden) return;
+        // The menu scrolls natively with the text; re-place it only when it
+        // must flip: above the selection but cut off at the top, or below it
+        // with room above again.
+        const box = menu.current.getBoundingClientRect();
+        const above = box.bottom <= rect.top;
+        if (above ? box.top < top : rect.top - box.height - 8 >= top) {
+          editor.view.dispatch(editor.state.tr.setMeta(TEXT_BUBBLE_MENU_KEY, "updatePosition"));
+        }
       }
     };
     document.addEventListener("scroll", update, true);
