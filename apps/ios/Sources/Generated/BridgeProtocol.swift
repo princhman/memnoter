@@ -248,8 +248,8 @@ enum BridgeProtocol {
     ]
 }
 enum ReviewPalette {
-    static let countsLight = [0x0069a8, 0x9f0712, 0x006045]
-    static let countsDark = [0x00bcff, 0xff6467, 0x00d492]
+    static let countsLight = [0x9f0712, 0x006045, 0x0069a8]
+    static let countsDark = [0xff6467, 0x00d492, 0x00bcff]
     static let gradesLight = [0x9f0712, 0x973c00, 0x006045, 0x00598a]
     static let gradesDark = [0xffa2a2, 0xffb900, 0x00d492, 0x00bcff]
     static let gradesTint = [0xfb2c36, 0xfe9a00, 0x00bc7d, 0x00a6f4]

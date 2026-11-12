@@ -6,7 +6,6 @@ import { CardFace } from "@/components/card-face";
 import { flushCardSyncs } from "@/lib/card-sync";
 import { formatInterval, GRADES } from "@/lib/fsrs";
 import { cn } from "@/lib/utils";
-import { blockIdOf } from "@/lib/cards";
 import { requestCardReveal } from "@/lib/card-reveal";
 import { useNativeHistory } from "@/lib/native-history";
 import { reviewActionsStore } from "@/lib/review-actions";
@@ -60,7 +59,7 @@ function Review() {
       redo: () => void redo(),
       edit: card
         ? () => {
-            requestCardReveal({ moduleId: card.moduleId, blockId: blockIdOf(card.id) });
+            requestCardReveal({ moduleId: card.moduleId, cardId: card.id });
             void router.navigate({ to: "/$moduleId", params: { moduleId: card.moduleId } });
           }
         : null,

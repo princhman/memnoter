@@ -73,7 +73,6 @@ struct ReviewView: View {
         return 16 // Older navigation bars have no shared glass; leave a visible gap.
     }
     @ViewBuilder private var cardActions: some View {
-        Button("Edit card", systemImage: "pencil", action: editCurrentCard).disabled(!state.hasCard || busy)
         Button("Go to card in note", systemImage: "scope", action: editCurrentCard).disabled(!state.hasCard || busy)
     }
     private func editCurrentCard() {
@@ -81,9 +80,9 @@ struct ReviewView: View {
     }
     private var countsLabel: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            countLabel(state.counts.new, later: state.laterToday.new, current: state.currentKind == "new", index: 0)
-            countLabel(state.counts.learning, later: state.laterToday.learning, current: state.currentKind == "learning", index: 1)
-            countLabel(state.counts.review, later: state.laterToday.review, current: state.currentKind == "review", index: 2)
+            countLabel(state.counts.learning, later: state.laterToday.learning, current: state.currentKind == "learning", index: 0)
+            countLabel(state.counts.review, later: state.laterToday.review, current: state.currentKind == "review", index: 1)
+            countLabel(state.counts.new, later: 0, current: state.currentKind == "new", index: 2)
         }
         .font(.system(size: 14)).monospacedDigit()
         .fixedSize(horizontal: true, vertical: false)

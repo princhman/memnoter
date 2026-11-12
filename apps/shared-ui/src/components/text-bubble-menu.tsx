@@ -2,8 +2,9 @@ import { ToolButton } from "./ui/tool-button";
 import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { isImageNode } from "../lib/cards.ts";
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
+import { posToDOMRect } from "@tiptap/core";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { CellSelection } from "@tiptap/pm/tables";
 import { TableControls } from "@/components/table-controls";
@@ -27,7 +28,6 @@ import {
 import { HIGHLIGHT_COLORS, highlightColor } from "@/lib/highlight";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { IconTooltip } from "@/components/icon-tooltip";
 import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
 
 // Marks make no sense inside these; the menu stays hidden there. Inline
@@ -36,6 +36,48 @@ const RAW_TEXT_NODES = new Set(["codeBlock", "mathBlock", "inlineMath"]);
 
 export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
   const pickerOpen = useRef(false);
+  const menu = useRef<HTMLDivElement>(null);
+  const [menuContainer] = useState(() => document.createElement("div"));
+  useEffect(() => {
+    // TipTap uses the menu parent's containment to decide whether focus left it.
+    const parent = editor?.view.dom.parentElement;
+    if (!parent) return;
+    if (getComputedStyle(parent).position === "static") parent.style.position = "relative";
+    parent.appendChild(menuContainer);
+    return () => menuContainer.remove();
+  }, [editor, menuContainer]);
+  const anchor = useRef<{ hidden: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!editor) return;
+    anchor.current = null;
+    // Capture also sees scrolls in the desktop note pane and nested editors.
+    const update = () => {
+      if (!editor.isDestroyed && menu.current) {
+        const rect = posToDOMRect(editor.view, editor.state.selection.from, editor.state.selection.to);
+        let top = 0, bottom = window.innerHeight;
+        for (let parent = editor.view.dom.parentElement; parent; parent = parent.parentElement) {
+          if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(parent).overflowY)) {
+            const bounds = parent.getBoundingClientRect();
+            top = Math.max(top, bounds.top); bottom = Math.min(bottom, bounds.bottom);
+          }
+        }
+        const hidden = rect.bottom <= top || rect.top >= bottom;
+        menu.current.style.visibility = hidden ? "hidden" : "visible";
+        if (hidden) return;
+        // The menu scrolls natively with the text; re-place it only when it
+        // must flip: above the selection but cut off at the top, or below it
+        // with room above again.
+        const box = menu.current.getBoundingClientRect();
+        const above = box.bottom <= rect.top;
+        if (above ? box.top < top : rect.top - box.height - 8 >= top) {
+          editor.view.dispatch(editor.state.tr.setMeta(TEXT_BUBBLE_MENU_KEY, "updatePosition"));
+        }
+      }
+    };
+    document.addEventListener("scroll", update, true);
+    return () => document.removeEventListener("scroll", update, true);
+  }, [editor]);
   // The editor does not re-render on transactions, so track mark state here.
   const active = useEditorState({
     editor,
@@ -94,12 +136,47 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
     <TableControls editor={editor} />
     <BubbleMenu
       editor={editor}
+      ref={menu}
+      appendTo={menuContainer}
+      getReferencedVirtualElement={() => {
+        const { state, view } = editor;
+        let live = posToDOMRect(view, state.selection.from, state.selection.to);
+        if (state.selection instanceof CellSelection) {
+          const { $anchorCell, $headCell } = state.selection;
+          const first = (view.nodeDOM($anchorCell.pos) as HTMLElement | null)?.getBoundingClientRect();
+          const last = (view.nodeDOM($headCell.pos) as HTMLElement | null)?.getBoundingClientRect();
+          if (first && last) {
+            const left = Math.min(first.left, last.left), top = Math.min(first.top, last.top);
+            live = new DOMRect(left, top, Math.max(first.right, last.right) - left, Math.max(first.bottom, last.bottom) - top);
+          }
+        }
+        let top = 0, left = 0, bottom = window.innerHeight, right = window.innerWidth;
+        for (let parent = view.dom.parentElement; parent; parent = parent.parentElement) {
+          const style = getComputedStyle(parent);
+          const bounds = parent.getBoundingClientRect();
+          if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) {
+            top = Math.max(top, bounds.top); bottom = Math.min(bottom, bounds.bottom);
+          }
+          if (/(auto|scroll|hidden|clip)/.test(style.overflowX)) {
+            left = Math.max(left, bounds.left); right = Math.min(right, bounds.right);
+          }
+        }
+        const hidden = live.bottom <= top || live.top >= bottom || live.right <= left || live.left >= right;
+        anchor.current = { hidden };
+        return { contextElement: view.dom, getBoundingClientRect: () => live };
+      }}
       role="toolbar"
       aria-label="Text formatting"
       pluginKey={TEXT_BUBBLE_MENU_KEY}
       // The default 250ms debounce makes the menu lag behind the selection.
       updateDelay={0}
-      options={{ placement: "top", offset: 8, flip: true, shift: true }}
+      options={{
+        strategy: "absolute", scrollTarget: menuContainer, placement: "top", offset: 8, flip: true, shift: true,
+        onUpdate: () => {
+          if (menu.current && anchor.current?.hidden) menu.current.style.visibility = "hidden";
+        },
+        onHide: () => { anchor.current = null; },
+      }}
       shouldShow={({ editor, state, from, to }) => {
         const { selection } = state;
         if (!editor.isEditable || !editor.view.hasFocus() && !pickerOpen.current && !document.activeElement?.closest('[aria-label="Text formatting"]')) return false;
@@ -171,12 +248,14 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         <Code />
       </MarkButton>
       <div className="flex items-center">
-        <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}>
-          <Button size="icon-sm" variant="ghost" aria-label="Highlight" aria-pressed={active.highlight}
-            className={active.highlight ? "note-highlight" : undefined}
-            data-color={active.highlight ? active.highlightColor : undefined}
-            onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Button>
-        </IconTooltip>
+        <MarkButton
+          label="Highlight"
+          hint={formatKeys(action("text.highlight").keys)}
+          pressed={active.highlight}
+          onToggle={() => editor.chain().focus().toggleHighlight().run()}
+        >
+          <Highlighter />
+        </MarkButton>
         <DropdownMenu onOpenChange={open => { pickerOpen.current = open; }}>
           <DropdownMenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Highlight colours" />}>
             <ChevronDown />
@@ -260,5 +339,5 @@ function MarkButton({
   onToggle: () => void;
   children: ReactNode;
 }) {
-  return (<ToolButton label={label} hint={hint} pressed={pressed} disabled={disabled} onClick={onToggle}>{children}</ToolButton>);
+  return (<ToolButton label={label} hint={hint} pressed={pressed} variant={pressed ? "default" : "ghost"} disabled={disabled} onClick={onToggle}>{children}</ToolButton>);
 }

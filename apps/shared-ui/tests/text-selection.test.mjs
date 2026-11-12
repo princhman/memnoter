@@ -7,6 +7,76 @@ import { fileURLToPath } from "node:url";
 
 const { createServer, webkit } = browserHarness(import.meta.url);
 
+test("text bubble follows selection synchronously while scrolling", async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/selection.html`);
+    await page.waitForFunction(() => window.editor);
+    await page.evaluate(() => {
+      document.getElementById("root").style.overflowY = "auto";
+      editor.commands.setContent(Array.from({ length: 60 }, (_, i) => `<p>Paragraph ${i}: select this text and scroll the note.</p>`).join(""));
+      const p = editor.view.dom.querySelectorAll("p")[8];
+      const from = editor.view.posAtDOM(p.firstChild, 0);
+      editor.chain().focus().setTextSelection({ from, to: from + 20 }).run();
+    });
+    const menu = page.getByRole("toolbar", { name: "Text formatting" });
+    await menu.waitFor({ state: "visible" });
+    await page.evaluate(() => {
+      const input = document.createElement("input");
+      document.body.appendChild(input);
+      input.focus();
+    });
+    await menu.waitFor({ state: "hidden" });
+    await page.evaluate(() => editor.commands.focus());
+    await menu.waitFor({ state: "visible" });
+    if (process.env.PROOF_DIR) {
+      await page.waitForTimeout(1000);
+      await page.mouse.move(1000, 600);
+      for (const delta of [20, 20, 20, -20, -20, -20]) {
+        await page.mouse.wheel(0, delta);
+        await page.waitForTimeout(450);
+      }
+      await page.waitForTimeout(1000);
+    }
+    const drift = await page.evaluate(() => {
+      const menu = document.querySelector('[aria-label="Text formatting"]');
+      const p = editor.view.dom.querySelectorAll("p")[8];
+      const offset = () => menu.getBoundingClientRect().y - p.getBoundingClientRect().y;
+      const before = offset();
+      document.getElementById("root").scrollTop += 100;
+      return offset() - before;
+    });
+    assert.ok(Math.abs(drift) < 1, "menu follows selection synchronously before a scroll event or frame");
+    // Scrolled near the top edge, the menu flips below the still-visible selection.
+    await page.evaluate(() => {
+      const root = document.getElementById("root");
+      const p = editor.view.dom.querySelectorAll("p")[8];
+      root.scrollTop += p.getBoundingClientRect().top - root.getBoundingClientRect().top - 10;
+    });
+    await page.waitForFunction(() => {
+      const menu = document.querySelector('[aria-label="Text formatting"]').getBoundingClientRect();
+      const p = editor.view.dom.querySelectorAll("p")[8].getBoundingClientRect();
+      return menu.top >= p.top && menu.top >= document.getElementById("root").getBoundingClientRect().top;
+    });
+    await page.evaluate(() => { document.getElementById("root").scrollTop -= 200; });
+    await page.getByRole("button", { name: "Bold", exact: true }).click();
+    await page.mouse.move(800, 650);
+    await page.mouse.wheel(0, 900);
+    await menu.waitFor({ state: "hidden" });
+    await page.mouse.wheel(0, -850);
+    await menu.waitFor({ state: "visible" });
+    const returned = await menu.boundingBox();
+    assert.ok(returned, "returning selection restores menu");
+    assert.equal(await page.getByRole("button", { name: "Bold", exact: true }).getAttribute("aria-pressed"), "true");
+  } finally {
+    await browser?.close(); await server.close();
+  }
+});
+
 // Pixel evidence at the actual rendering boundary: DOM/CSS assertions alone
 // cannot detect WebKit's native newline and replaced-element selection paint.
 test("WebKit selection hugs text and keeps image actions exclusive", async () => {

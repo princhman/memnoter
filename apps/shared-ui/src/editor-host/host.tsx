@@ -7,7 +7,6 @@ import { BRIDGE_VERSION, EXEC_COMMANDS } from "./protocol";
 import { onRemote, onFileStored } from "@/lib/sync/apply-remote";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { requestCardReveal } from "@/lib/card-reveal";
-import { blockIdOf } from "@/lib/cards";
 import { sectionFocusKey } from "@/lib/section-focus";
 import { observeCardInfo } from "./card-info";
 import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop } from "./scroll";
@@ -125,7 +124,7 @@ export function Host() {
         }
         catch (error) { fail(error); return false; }
       },
-      revealCard(moduleId, cardId) { requestCardReveal({ moduleId, blockId: blockIdOf(cardId) }); },
+      revealCard(moduleId, cardId) { requestCardReveal({ moduleId, cardId }); },
       focus() {
         try { return getEditor().commands.focus(); }
         catch (error) { fail(error); return false; }

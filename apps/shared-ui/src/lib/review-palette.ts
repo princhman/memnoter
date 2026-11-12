@@ -6,7 +6,7 @@ export const GRADE_STYLES = Object.fromEntries(palette.grades.map((grade, index)
 
 export function reviewCountsLabel(counts: { new: number; learning: number; review: number; laterToday?: { new: number; learning: number; review: number } }, current?: CardCountKind | null) {
   return COUNT_PARTS.map(({ key, label }) => {
-    const later = counts.laterToday?.[key] ?? 0;
+    const later = key === "new" ? 0 : counts.laterToday?.[key] ?? 0;
     return `${counts[key]} ${label}${later > 0 ? ` (+${later} later today)` : ""}`;
   }).join(", ") + (current ? `, reviewing ${COUNT_PARTS.find(part => part.key === current)?.label}` : "");
 }

@@ -1,19 +1,19 @@
 {
   "counts": [
     {
-      "key": "new",
-      "label": "new",
-      "className": "text-sky-700 dark:text-sky-400"
-    },
-    {
       "key": "learning",
-      "label": "learning",
+      "label": "learn",
       "className": "text-red-800 dark:text-red-400"
     },
     {
       "key": "review",
-      "label": "to review",
+      "label": "due",
       "className": "text-emerald-800 dark:text-emerald-400"
+    },
+    {
+      "key": "new",
+      "label": "new",
+      "className": "text-sky-700 dark:text-sky-400"
     }
   ],
   "grades": [

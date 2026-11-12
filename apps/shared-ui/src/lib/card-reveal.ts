@@ -1,13 +1,15 @@
+import { parseCardId } from "./card-id";
+import { clozeIdsOf } from "./cards";
 import { editorHost } from "@/lib/editor-host";
 import type { Editor } from "@tiptap/core";
 import { createStore, useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
 import { stopScrollRestore } from "@/lib/view-persistence";
 
-// A request to show a card's text in its note, from review's Edit action. It
+// A request to show a card's text in its note, from review's go-to action. It
 // waits until that note is open and has restored its view, then puts the
-// caret at the start of the card's block. Not persisted, like find requests.
-export type CardRevealRequest = { moduleId: string; blockId: string };
+// selection on its sentence or whole block. Not persisted.
+export type CardRevealRequest = { moduleId: string; cardId: string };
 
 const cardRevealStore = createStore<CardRevealRequest | null>(null);
 
@@ -20,11 +22,40 @@ export function useCardReveal(editor: Editor | null, moduleId: string, ready: bo
 
   useEffect(() => {
     if (!editor || editor.isDestroyed || !ready || request?.moduleId !== moduleId) return;
+    const card = parseCardId(request.cardId);
     let start: number | null = null;
+    let end: number | null = null;
+    let image = false;
     editor.state.doc.descendants((node, pos) => {
       if (start !== null) return false;
+      if (card.kind === "occlusion" && node.attrs.imageId === card.blockId) {
+        start = pos;
+        image = true;
+        return false;
+      }
       if (!node.isTextblock) return true;
-      if (node.attrs.cardId === request.blockId) start = pos + 1;
+      if (node.attrs.cardId === card.blockId) {
+        start = pos + 1;
+        end = start + node.content.size;
+        if (card.kind === "cloze") {
+          const cloze = clozeIdsOf(node).find(entry => entry.id === card.clozeId);
+          if (cloze) {
+            // Keep string offsets aligned with document positions, including
+            // inline atoms and math. Only prose punctuation ends a sentence.
+            let text = "";
+            node.forEach(child => { text += child.isText ? child.text! : " ".repeat(child.nodeSize); });
+            if (!/[.!?]/.test(text)) return false;
+            let from = cloze.from;
+            let to = cloze.to;
+            while (from > 0 && !/[.!?]/.test(text[from - 1])) from--;
+            while (to < text.length && !/[.!?]/.test(text[to])) to++;
+            if (to < text.length) to++;
+            while (from < cloze.from && /\s/.test(text[from])) from++;
+            start = pos + 1 + from;
+            end = pos + 1 + to;
+          }
+        }
+      }
       return false;
     });
     if (start === null) return;
@@ -34,20 +65,19 @@ export function useCardReveal(editor: Editor | null, moduleId: string, ready: bo
     stopScrollRestore();
     // Section focus can hide the target even after its caret moves there.
     // Clear that filter; the caret also unfolds any folded ancestor.
-    editor.chain().showDocument().setTextSelection(start).run();
+    const chain = editor.chain().showDocument();
+    if (image) chain.setNodeSelection(start).run();
+    else chain.setTextSelection({ from: start, to: end ?? start }).run();
     editor.view.focus();
 
-    // Focus runs on the next frame. Position the block after that, rather
-    // than relying on caret scrolling, which only reveals the nearest edge.
-    const position = start;
-    {
-      if (editor.isDestroyed || !editor.view.dom.isConnected) return;
-      const container = editorHost.scrollContainer(editor.view.dom);
-      const block = editor.view.nodeDOM(position - 1);
-      if (!container || !(block instanceof HTMLElement)) return;
-      const top = container.getBoundingClientRect().top + container.clientTop;
-      container.scrollTop += block.getBoundingClientRect().top - top
-        - Math.min(96, container.clientHeight / 4);
-    }
+    // Clozes can sit deep inside a paragraph taller than the viewport.
+    // Align the selected sentence, rather than the beginning of its block.
+    if (!editor.view.dom.isConnected) return;
+    const container = editorHost.scrollContainer(editor.view.dom);
+    if (!container) return;
+    const target = editor.view.coordsAtPos(start);
+    const top = container.getBoundingClientRect().top + container.clientTop;
+    container.scrollTop += target.top - top
+      - Math.min(96, container.clientHeight / 4);
   }, [editor, moduleId, ready, request]);
 }
