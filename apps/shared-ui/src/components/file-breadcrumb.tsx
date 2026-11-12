@@ -91,9 +91,9 @@ export function FileBreadcrumb() {
       />
       {/* Below md the sidebar is a sheet, so always clear the window controls. */}
       <div className={cn("shrink-0 md:hidden", TOOLBAR_OFFSET)} />
-      <div className="min-w-0">
+      <div className="min-w-0 overflow-hidden">
         <Breadcrumb>
-          <BreadcrumbList className={isReview || isFiles ? "flex-nowrap" : undefined}>
+          <BreadcrumbList className="flex-nowrap whitespace-nowrap [&>[data-slot=breadcrumb-item]]:min-w-0 [&>[data-slot=breadcrumb-item]]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:truncate [&>[data-slot=breadcrumb-separator]]:shrink-0">
             {isFiles ? (<>
               {/* Like Review: the module scope first, then the page. */}
               <BreadcrumbItem className="min-w-0"><ReviewScopeMenu page="files" current={pdf?.moduleId} /></BreadcrumbItem>
