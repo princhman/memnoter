@@ -123,7 +123,19 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
       - run: brew install xcodegen
+      - name: Identify iOS core toolchain
+        id: core-toolchain
+        run: |
+          echo "version=$( { rustc -Vv; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: ios-core
+        with:
+          path: |
+            apps/ios/MemnoterCore/MemnoterFFI.xcframework
+            apps/ios/MemnoterCore/Sources/MemnoterCore/memnoter_ffi.swift
+          key: ios-core-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-${{ hashFiles('crates/**', 'Cargo.lock', 'Cargo.toml', 'scripts/build-ios-core.sh') }}
       - run: ./scripts/build-ios-core.sh
+        if: steps.ios-core.outputs.cache-hit != 'true'
       - run: ./scripts/build-ios-web.sh
       - run: xcodegen generate
         working-directory: apps/ios

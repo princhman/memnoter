@@ -190,28 +190,29 @@ test("menu aim protects diagonal travel, releases outside the triangle, and expi
   const second = await dash(topic(1, 1)).boundingBox();
   const start = { x: first.x + first.width - 1, y: first.y + first.height / 2 };
   const crossing = { x: start.x - 10, y: second.y + second.height / 2 };
-  const title = () => popup().locator(".toc-item").first().getAttribute("aria-label");
+  const waitTitle = title => page.waitForFunction(title => document.querySelector(".toc-popup .toc-item")?.getAttribute("aria-label") === title, title, { polling: 10 });
   await page.mouse.move(start.x, start.y);
   await popup().waitFor();
   await page.mouse.move(crossing.x, crossing.y);
-  assert.equal(await title(), root(1));
+  await waitTitle(root(1));
   // Back toward the rail leaves the safe triangle and switches immediately.
   await page.mouse.move(start.x, crossing.y);
-  assert.equal(await title(), topic(1, 1));
+  await waitTitle(topic(1, 1));
   // Vertical scrubbing switches without waiting for the aim timeout.
   await page.mouse.move(start.x, start.y);
-  assert.equal(await title(), root(1));
+  await waitTitle(root(1));
   await page.mouse.move(crossing.x, crossing.y);
-  assert.equal(await title(), root(1));
+  await waitTitle(root(1));
   await page.clock.runFor(1000);
   await waitNames(".toc-popup .toc-item", [topic(1, 1), detail(1, 1), example(1, 1)]);
   // Entering the popup cancels the pending switch.
   await page.mouse.move(start.x, start.y);
+  await waitTitle(root(1));
   await page.mouse.move(crossing.x, crossing.y);
   const box = await popup().boundingBox();
   await page.mouse.move(box.x + box.width - 2, crossing.y);
   await page.clock.runFor(200);
-  assert.equal(await title(), root(1));
+  await waitTitle(root(1));
   } finally { await page.clock.resume(); }
 });
 
@@ -262,7 +263,9 @@ test("hover reveals the chosen Contents focus action and keyboard unfocus restor
   assert.equal(await page.locator('.tiptap h1').filter({ hasText: root(1) }).isVisible(), false);
   await popup().waitFor({ state: "detached" });
   const top = await page.locator('.section-focus-start').evaluate(node => node.getBoundingClientRect().top);
+  await page.mouse.move(0, 0);
   await dash(root(2)).hover();
+  await waitNames(".toc-popup .toc-item", [root(2), topic(2, 1), detail(2, 1), example(2, 1), topic(2, 2), detail(2, 2), example(2, 2)]);
   const unfocus = popup().getByRole("button", { name: `Unfocus ${root(2)}`, exact: true });
   await unfocus.focus();
   await page.keyboard.press("Enter");

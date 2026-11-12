@@ -9,6 +9,15 @@ import WebKit
         let client = try await CoreClient.open(directory)
         let session = WebSession(client: client, directory: directory)
         defer { session.dispose() }
+        // An off-screen web view's content process gets suspended on a busy
+        // runner, stalling every JavaScript call. Host it like the app does.
+        let frame = CGRect(x: 0, y: 0, width: 400, height: 600)
+        let window = (UIApplication.shared.connectedScenes.first as? UIWindowScene).map { UIWindow(windowScene: $0) } ?? UIWindow(frame: frame)
+        window.frame = frame
+        session.web.frame = window.bounds
+        window.addSubview(session.web)
+        window.isHidden = false
+        defer { window.isHidden = true; session.web.removeFromSuperview() }
         session.web.stopLoading()
         session.web.loadHTMLString("""
             <script>
@@ -22,11 +31,13 @@ import WebKit
             window.webkit.messageHandlers.memnoter.postMessage({ kind: 'event', event: 'ready', payload: { protocolVersion: \(BridgeProtocol.version) } });
             </script>
             """, baseURL: URL(string: "memnoter-app://localhost/editor.html"))
-        for _ in 0..<100 {
-            if session.ready { break }
+        // `ready` is set when the stub's ready event arrives; onReady would also
+        // wait for an extra JavaScript round trip this test doesn't need.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !session.ready && ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(50))
         }
-        XCTAssertTrue(session.ready)
+        try XCTUnwrap(session.ready ? true : nil, "Editor did not emit its ready event")
         try await session.open("startup")
         let executed = try await session.execute(.undo)
         XCTAssertTrue(executed as? Bool == true)
