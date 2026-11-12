@@ -83,7 +83,7 @@ test("long breadcrumbs remain within the desktop header", async () => {
     });
     await page.goto(`http://localhost:${server.httpServer.address().port}/m1`);
     await page.locator(".tiptap[contenteditable=true]").waitFor();
-    for (const width of [1280, 850, 1100]) {
+    for (const width of [1280, 800, 1100]) {
       await page.setViewportSize({ width, height: 800 });
       for (let i = 0; i < 2; i++) {
         await page.getByRole("button", { name: "Toggle sidebar", exact: true }).click();
@@ -92,6 +92,17 @@ test("long breadcrumbs remain within the desktop header", async () => {
           const h = document.querySelector("header").getBoundingClientRect();
           const c = document.querySelector('[data-slot="breadcrumb-list"]').getBoundingClientRect();
           return { top: c.top, bottom: c.bottom, ht: h.top, hb: h.bottom, height: h.height };
+        });
+        await page.waitForFunction(() => {
+          const label = document.querySelector('[aria-label="breadcrumb"] span[title]');
+          const node = label?.lastChild;
+          const shown = node?.textContent ?? "";
+          const range = document.createRange();
+          if (node) range.selectNodeContents(node);
+          const used = range.getBoundingClientRect().width;
+          // Both ends stay, and the cut fills the width, including after it grows back.
+          return shown.includes("…") && shown.startsWith("Computer") && shown.endsWith("Concurrency ")
+            && used <= label.clientWidth + 0.5 && label.clientWidth - used < 30;
         });
         assert.equal(box.height, 32);
         assert.ok(box.top >= box.ht && box.bottom <= box.hb, JSON.stringify(box));
