@@ -83,5 +83,7 @@ issue the PR doesn't fix (not reproduced, waiting on the user), write
 Once the PR is open and its proof is on the issue, move every issue whose fix
 changes how something looks (layout, colour, icons, text, controls added or
 removed) to **In Review** in Linear. Leave behaviour-only fixes In Progress.
+Don't wait for GitHub CI: push, report, and stop. The orchestrator watches CI
+and sends red checks back.
 End with: commit SHA (or "uncommitted"), what you verified, what you didn't.
-Never end on a pending wait; finish waiting first.
+Never end on any other pending wait; finish waiting first.
