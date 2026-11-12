@@ -26,6 +26,12 @@ being asked each time:
 6. Offer release notes. Ask before tagging. A `v*` tag runs `release.yml`:
    desktop installers, TestFlight and the Linear release. memnoter.com follows
    the latest GitHub release by itself.
+7. Clean up without being asked, on the Mac and on minipc: remove merged
+   worktrees (`scripts/prune-worktrees.sh --apply`), delete merged local
+   branches with `git branch -d`, stop leftover dev servers and test browsers,
+   and delete proof files and old temp folders. Keep anything with uncommitted
+   or unpushed work, and list it in your report. The orchestrator owns this
+   step, including for work its delegates did.
 
 **Testing sessions.** When the user is testing on devices and says "just fix",
 delegates fix only: no tests, no sol loop, no CI waits, no builds while
@@ -80,7 +86,7 @@ Don't restate the stack, commands or rules; the delegate already has them.
   done. Work that only exists in a side worktree is not done.
 - Backlog, bugs and roadmap: Linear. `plan.md` is retired.
 - `scripts/prune-worktrees.sh` lists clean, merged worktrees; `--apply` deletes
-  them. Ask the user first.
+  them. Run it as part of cleanup (Ship flow step 7); no need to ask.
 
 ## Keeping the guides current
 
