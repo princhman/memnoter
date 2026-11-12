@@ -55,6 +55,9 @@ there. The editor scroll/caret exception in
 - Release notes come from the shipped issues in Linear. Enable automatic notes
   and set the notes template in the release pipeline settings; the tag workflow
   syncs the issues without uploading hand-written notes.
+- In release notes (GitHub release or Linear), refer to an issue by its number
+  alone, for example "(316)". Never write `PRI-316`, and don't add `#`: GitHub
+  links `#316` to an unrelated issue or PR.
 
 ## Delegating
 
