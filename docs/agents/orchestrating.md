@@ -16,7 +16,10 @@ being asked each time:
    Changes with no UI/UX effect get their sol loop straight away. You start
    the loop; don't ask delegates on visual work to run one first.
 3. `pnpm check:ci`, then open a PR into `main`.
-4. Watch CI and fix red checks yourself.
+4. Watch CI (`watch_pull_request`) and fix red checks yourself; delegates
+   don't wait for it. A visual PR needs green CI only at merge time, so
+   nothing waits on it before the user approves. A one-off iOS simulator
+   failure in code the PR didn't touch: rerun the failed job once.
 5. Merge when green, if the user approved the feature. A PR with any issue in
    Linear **In Review** (a visual change) waits until the user has looked at
    it; behaviour-only PRs merge on green.
