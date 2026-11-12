@@ -1,3 +1,4 @@
+import { MiddleTruncate } from "./middle-truncate";
 import { useState, type PointerEventHandler, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, useDroppable, closestCenter, pointerWithin } from '@dnd-kit/core';
@@ -83,7 +84,7 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
       {item.name === null ? <SidebarMenu>{renderModule(module!)}</SidebarMenu> : <>
         <DropZone id={`folder:${item.id}`}><SidebarMenu><SidebarMenuItem>
           <SidebarMenuButton disabled={mutation.isPending} aria-expanded={!item.collapsed} onClick={() => save(items.map(entry => entry.id === item.id ? { ...entry, collapsed: !entry.collapsed } : entry))}>
-            <ChevronRight className={`transition-transform ${item.collapsed ? '' : 'rotate-90'}`} /><Folder /><span>{item.name}</span>
+            <ChevronRight className={`transition-transform ${item.collapsed ? '' : 'rotate-90'}`} /><Folder /><MiddleTruncate text={item.name} />
           </SidebarMenuButton>
           <DropdownMenu><DropdownMenuTrigger render={<SidebarMenuAction showOnHover disabled={mutation.isPending} aria-label={`Actions for ${item.name}`} />}><Ellipsis /></DropdownMenuTrigger>
             <DropdownMenuContent><DropdownMenuItem onClick={() => edit(item)}>Rename</DropdownMenuItem><DropdownMenuItem variant="destructive" onClick={() => save([{ ...item, deleted: true }])}>Delete folder (keep modules)</DropdownMenuItem></DropdownMenuContent>

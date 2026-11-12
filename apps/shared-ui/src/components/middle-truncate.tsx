@@ -11,16 +11,21 @@ export function MiddleTruncate({ text }: { text: string }) {
     let active = true;
     const fit = () => {
       if (!active) return;
-      context.font = getComputedStyle(element).font;
+      // scrollWidth is the full name's laid-out width (from the ::after copy),
+      // rounded like clientWidth, so a name that fits is never cut.
       const width = element.clientWidth;
+      const full = element.scrollWidth;
+      if (full <= width) { setVisible(text); return; }
+      context.font = getComputedStyle(element).font;
+      // Canvas ignores letter spacing and font features; scale to the layout.
+      const scale = full / (context.measureText(text).width || full);
       const chars = Array.from(text);
       const candidate = (count: number) => chars.slice(0, Math.ceil(count / 2)).join("") + "…" + chars.slice(chars.length - Math.floor(count / 2)).join("");
-      if (context.measureText(text).width <= width) { setVisible(text); return; }
       let low = 0;
       let high = Math.max(0, chars.length - 1);
       while (low < high) {
         const mid = Math.ceil((low + high) / 2);
-        if (context.measureText(candidate(mid)).width <= width) low = mid;
+        if (context.measureText(candidate(mid)).width * scale <= width) low = mid;
         else high = mid - 1;
       }
       setVisible(candidate(low));
@@ -31,11 +36,16 @@ export function MiddleTruncate({ text }: { text: string }) {
     void document.fonts.ready.then(fit);
     return () => { active = false; observer.disconnect(); };
   }, [text]);
-  // The hidden full name keeps the box as wide as the space allows, so it
+  // The invisible ::after copy keeps the box as wide as the space allows, so it
   // grows back when the window widens instead of hugging the shortened text.
   return (
-    <span ref={ref} title={text} aria-label={text} className="block min-w-0 max-w-full overflow-hidden whitespace-nowrap">
-      <span aria-hidden className="invisible block h-0">{text}</span>
+    <span
+      ref={ref}
+      title={text}
+      aria-label={text}
+      data-full={text}
+      className="block min-w-0 max-w-full overflow-hidden whitespace-nowrap after:invisible after:block after:h-0 after:content-[attr(data-full)]"
+    >
       {visible}
     </span>
   );

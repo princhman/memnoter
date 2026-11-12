@@ -1,3 +1,4 @@
+import { MiddleTruncate } from "./middle-truncate";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
 import { openReview } from "@/components/card-navigation-guard";
@@ -193,7 +194,7 @@ const AppSidebar = () => {
                           />
                         }
                       >
-                        <span>{module.name}</span>
+                        <MiddleTruncate text={module.name} />
                       </SidebarMenuButton>
                     </ModuleMenu>
                   );

@@ -3,6 +3,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
 import { openReview } from "@/components/card-navigation-guard";
 import { Button } from "./ui/button";
+import { MiddleTruncate } from "./middle-truncate";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,9 +25,7 @@ export function ReviewScopeMenu({ page = "review", current }: { page?: "review" 
       <DropdownMenuTrigger
         render={
           <Button variant="ghost" size="xs" className="-mx-2 min-w-0 max-w-56 text-sm font-bold text-foreground" aria-label={page === "files" ? "Select files module" : "Select review module"}>
-            <span className="truncate">
-              {selected ? (modules.find((module) => module.id === selected)?.name || "Module") : "All modules"}
-            </span>
+            <MiddleTruncate text={selected ? (modules.find((module) => module.id === selected)?.name || "Module") : "All modules"} />
             <ChevronDown className="size-3 shrink-0" />
           </Button>
         }
@@ -46,7 +45,7 @@ export function ReviewScopeMenu({ page = "review", current }: { page?: "review" 
           <DropdownMenuRadioItem value="" closeOnClick>All modules</DropdownMenuRadioItem>
           {modules.map((module) => (
             <DropdownMenuRadioItem key={module.id} value={module.id} closeOnClick>
-              <span className="truncate">{module.name || "Untitled module"}</span>
+              <MiddleTruncate text={module.name || "Untitled module"} />
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

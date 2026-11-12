@@ -97,7 +97,7 @@ export function FileBreadcrumb() {
           <BreadcrumbList className="flex-nowrap whitespace-nowrap [&>[data-slot=breadcrumb-item]]:min-w-0 [&>[data-slot=breadcrumb-item]]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:block [&>[data-slot=breadcrumb-item]>*]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:min-w-0 [&>[data-slot=breadcrumb-item]>*]:max-w-full [&>[data-slot=breadcrumb-separator]]:shrink-0">
             {isFiles ? (<>
               {/* Like Review: the module scope first, then the page. */}
-              <BreadcrumbItem className="min-w-0"><ReviewScopeMenu page="files" current={pdf?.moduleId} /></BreadcrumbItem>
+              <BreadcrumbItem className="min-w-0 overflow-visible!"><ReviewScopeMenu page="files" current={pdf?.moduleId} /></BreadcrumbItem>
               <BreadcrumbSeparator>/</BreadcrumbSeparator>
               {pdf ? <>
                 <BreadcrumbItem className="shrink-0"><BreadcrumbLink render={<Link to="/files" search={{ module: pdf.moduleId }} />}>Files</BreadcrumbLink></BreadcrumbItem>
@@ -107,7 +107,7 @@ export function FileBreadcrumb() {
             </>) : isReview ? (
               <>
                 {/* The module under review comes first, as it will for a module's other pages. */}
-                <BreadcrumbItem className="min-w-0">
+                <BreadcrumbItem className="min-w-0 overflow-visible!">
                   <ReviewScopeMenu />
                 </BreadcrumbItem>
                 <BreadcrumbSeparator>/</BreadcrumbSeparator>

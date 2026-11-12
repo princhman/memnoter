@@ -1,3 +1,4 @@
+import { MiddleTruncate } from "@/components/middle-truncate";
 import { action, formatKeys, HOME_ACTION_IDS } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
@@ -48,7 +49,7 @@ function Index() {
   ].slice(0, RECENT_SHOWN);
 
   return (
-    <div className="mx-auto flex max-w-md flex-col items-center gap-8 py-12 text-center">
+    <div className="mx-auto flex w-full max-w-md flex-col px-4 items-center gap-8 py-12 text-center">
       <div className="flex flex-col items-center gap-3">
         <img src={appIcon} alt="" className="size-16 rounded-2xl" draggable={false} />
         <div>
@@ -73,7 +74,7 @@ function Index() {
           >
             Recent
           </h2>
-          <ul className="grid gap-0.5">
+          <ul className="grid grid-cols-1 gap-0.5">
             {recent.map((module) => (
               <li key={module.id}>
                 <Link
@@ -82,7 +83,7 @@ function Index() {
                   className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:outline-none"
                 >
                   <FileText className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{module.name}</span>
+                  <MiddleTruncate text={module.name} />
                 </Link>
               </li>
             ))}
