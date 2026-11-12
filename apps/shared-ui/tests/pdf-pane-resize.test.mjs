@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { browserHarness, installTestBridge } from './support/browser.mjs';
 
 function pdfBytes() {
@@ -136,7 +136,7 @@ test('files resize previews a fixed layout, commits on release, and cleans up ev
       assert.deepEqual(await geometry(), fixed);
       assert.equal(await guide.isVisible(), true);
       if (exit === 'unmount') await page.getByRole('button', { name: 'Toggle pane mount' }).dispatchEvent('click');
-      else if (exit === 'close') await page.getByRole('button', { name: 'Close', exact: true }).dispatchEvent('click');
+      else if (exit === 'close') await page.getByRole('button', { name: 'Hide files', exact: true }).dispatchEvent('click');
       else await separator.evaluate((element, exit) => {
         if (exit === 'cancel') element.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true }));
         else element.releasePointerCapture(1);
@@ -217,5 +217,83 @@ test('files resize previews a fixed layout, commits on release, and cleans up ev
       assert.equal(await page.locator('#outside').evaluate(element => getComputedStyle(element).cursor), 'help');
     }
     assert.deepEqual(errors, []);
+  } finally { await browser?.close(); await server.close(); }
+});
+
+for (const engine of [chromium, webkit]) test(`PDF navigation and find across pages without a pane close button (${engine.name()})`, async () => {
+  const { textPdfBytes } = await import('./browser/pdf-text-selection-pdf.mjs');
+  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen(); browser = await engine.launch({ headless: true, slowMo: process.env.PROOF_DIR ? 150 : 0 });
+    const page = await browser.newPage({ hasTouch: engine === chromium, viewport: { width: 1366, height: 900 } });
+    if (engine === chromium) await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { value: 'Win32' }));
+    await page.addInitScript(`(${installTestBridge.toString()})({ tauri: { invoke: async command => {
+      if (command === 'get_content') return { state: [], updates: [], files: [] };
+      if (command === 'list_documents') return [{ id: 'resize-pdf', moduleId: 'resize-module', moduleName: 'Resize', name: 'Resize.pdf', size: 1000, pageCount: 12, createdAt: 0, available: true }];
+      if (command === 'document_path') return '/resize.pdf';
+      if (command === 'load_annotations') return { state: null, revision: 0, generation: 'find-test' };
+      throw new Error(command);
+    } } }); localStorage.setItem('pdf-pane:resize-module', JSON.stringify({ open: true, active: 'resize-pdf', width: 650 }));`);
+    await page.route('**/resize.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes(12) }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-pane-resize.html`);
+    const files = page.getByRole('complementary', { name: 'Files', exact: true });
+    await files.locator('.textLayer span').first().waitFor();
+    assert.equal(await files.getByRole('button', { name: 'Close', exact: true }).count(), 0);
+    await files.getByRole('button', { name: 'All files', exact: true }).click();
+    await files.getByText('Resize', { exact: true }).waitFor();
+    assert.equal(await files.getByRole('button', { name: 'Close', exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Hide files', exact: true }).click();
+    await files.waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Show files', exact: true }).click();
+    await files.getByText('Resize', { exact: true }).click();
+    await files.locator('.textLayer span').first().waitFor();
+    const controls = ['All files', 'Open full screen', 'Find in PDF', 'Zoom in (100%)', 'Select region', 'Annotate area'];
+    const centers = await Promise.all(controls.map(async name => { const box = await files.getByRole('button', { name, exact: true }).boundingBox(); return box.y + box.height / 2; }));
+    assert.ok(Math.max(...centers) - Math.min(...centers) < 1, 'desktop PDF tools share one row even with touch input');
+    const findKey = await page.evaluate(async () => (await import('/src/lib/platform.ts')).IS_APPLE ? 'Meta+f' : 'Control+f');
+    await files.locator('.pdf-viewer').focus();
+    await page.keyboard.press(findKey);
+    const input = files.getByRole('textbox', { name: 'Find in PDF', exact: true });
+    assert.equal(await page.getByRole('textbox', { name: 'Find', exact: true }).count(), 0, 'PDF shortcut must not open note find');
+    await input.fill(' Second');
+    await files.getByRole('status').filter({ hasText: '1 / 12' }).waitFor();
+    await files.locator('[data-pdf-page="1"] [data-pdf-find-match="current"]').first().waitFor();
+    await input.fill('first line ');
+    await files.getByRole('status').filter({ hasText: '1 / 12' }).waitFor();
+    await files.locator('[data-pdf-page="1"] [data-pdf-find-match="current"]').first().waitFor();
+    await input.fill('first line');
+    await files.getByRole('status').filter({ hasText: '1 / 12' }).waitFor();
+    const at = async number => {
+      const current = files.locator(`[data-pdf-page="${number}"] [data-pdf-find-match="current"]`);
+      await current.waitFor();
+      assert.ok(await current.evaluate(element => { const a = element.getBoundingClientRect(), b = element.closest('.pdf-viewport').getBoundingClientRect(); return a.top >= b.top && a.bottom <= b.bottom; }));
+    };
+    assert.ok(await files.locator('canvas').count() < 12, 'search must keep page rendering virtualized');
+    await at(1); await page.keyboard.press('Enter'); await at(2);
+    await page.keyboard.press('ArrowDown'); await at(3);
+    await files.getByRole('status').filter({ hasText: '3 / 12' }).waitFor();
+    await page.keyboard.press('Shift+Enter'); await at(2);
+    await page.keyboard.press('ArrowUp'); await at(1);
+    await files.getByRole('button', { name: 'Previous PDF match', exact: true }).click(); await at(12);
+    await page.keyboard.press('Escape'); await input.waitFor({ state: 'detached' });
+    assert.equal(await files.locator('[data-pdf-find-match]').count(), 0);
+    await files.getByRole('button', { name: 'Find in PDF', exact: true }).click();
+    assert.equal(await input.inputValue(), '');
+    await page.keyboard.press('Escape');
+    // Native macOS menus dispatch the app event instead of a JS accelerator.
+    await page.evaluate(async () => { const { requestApp, FIND_EVENT } = await import('/src/lib/app-events.ts'); requestApp(FIND_EVENT); });
+    await input.waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'Find', exact: true }).count(), 0);
+    await page.keyboard.press('Escape'); await page.locator('.tiptap').click();
+    const nativeMenu = await page.evaluate(async () => {
+      const { usesNativeMenuShortcuts, requestApp, FIND_EVENT } = await import('/src/lib/app-events.ts');
+      if (!usesNativeMenuShortcuts()) return false;
+      requestApp(FIND_EVENT); return true;
+    });
+    if (!nativeMenu) await page.keyboard.press(findKey);
+    assert.equal(await input.count(), 0, 'note shortcut must not open PDF find');
+    await page.getByRole('textbox', { name: 'Find', exact: true }).fill('Remember');
+    await page.locator('.tiptap .find-and-replace-result').first().waitFor();
   } finally { await browser?.close(); await server.close(); }
 });

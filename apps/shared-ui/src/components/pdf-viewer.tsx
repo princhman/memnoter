@@ -1,3 +1,5 @@
+import { usePdfFind, PdfFindHighlights } from "./pdf-find";
+import { IS_IOS } from "@/lib/platform";
 import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
 import { usePdfAnnotations } from "@/lib/pdf-annotation-store";
 import { parsePdfAnnotationColor, type PdfAnnotationColor, type PdfAnnotation, type PdfAnnotationAnchor } from "@/lib/pdf-annotations";
@@ -42,12 +44,13 @@ type Size = { width: number; height: number };
 
 // Memoized: scrolling re-renders the viewer, but a page only redraws when it
 // arrives, the zoom changes, or it enters or leaves the render window.
-const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, annotations, onAnnotationOpen, quoteRegions, quoteNavigationDisabled, onQuoteNavigate, onSelect, onCancel }: { page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; annotations: readonly PdfAnnotation[]; onAnnotationOpen: (id: string, bounds: DOMRect, page: number) => void; quoteRegions?: readonly PdfQuoteRegion[]; quoteNavigationDisabled: boolean; onQuoteNavigate: (quoteId: string) => void; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number) => void; onCancel: () => void }) {
+const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, annotations, onAnnotationOpen, quoteRegions, quoteNavigationDisabled, onQuoteNavigate, onSelect, onCancel, find }: { find: ReturnType<typeof usePdfFind>; page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; annotations: readonly PdfAnnotation[]; onAnnotationOpen: (id: string, bounds: DOMRect, page: number) => void; quoteRegions?: readonly PdfQuoteRegion[]; quoteNavigationDisabled: boolean; onQuoteNavigate: (quoteId: string) => void; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number) => void; onCancel: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
   const [ready, setReady] = useState<{ page: PDFPageProxy; zoom: number } | null>(null);
   const live = active && !!page;
+  const findMatches = useMemo(() => find.matches.filter(match => match.page === pageNumber), [find.matches, pageNumber]);
   useLayoutEffect(() => {
     const target = canvas.current;
     const layer = text.current;
@@ -78,6 +81,7 @@ const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, a
   }, [page, zoom, live]);
   return <div data-pdf-page={pageNumber} className="pdf-page relative shrink-0 bg-white shadow-sm" style={{ width, height, "--scale-factor": zoom, "--total-scale-factor": zoom * (page?.userUnit ?? 1) } as React.CSSProperties}>
     {live && <><canvas ref={canvas} className="absolute inset-0 size-full" /><div ref={text} className="textLayer" /></>}
+    {live && <PdfFindHighlights layer={text} matches={findMatches} selected={find.selected} ready={ready} />}
     {live && <PdfAnnotationLayer annotations={annotations} pageNumber={pageNumber} disabled={quoteNavigationDisabled} onOpen={onAnnotationOpen} />}
     {live && <PdfQuoteRegions regions={quoteRegions} disabled={quoteNavigationDisabled} onNavigate={onQuoteNavigate} />}
     {live && ready && ready.page === page && ready.zoom === zoom && selecting && <PdfRegionSelection key={zoom} onCancel={onCancel} onSelect={region => { if (canvas.current) onSelect(canvas.current, region, pageNumber); }} />}
@@ -274,6 +278,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     element.scrollTop = latestHeights.current.slice(0, page - 1).reduce((sum, value) => sum + value, 0);
     measure();
   }
+  const find = usePdfFind(pdf, root, fullscreen, jump);
   useLayoutEffect(() => {
     if (pages.length && !restored.current) { restored.current = true; jump(Math.min(saved.page, pages.length)); }
     const element = container.current;
@@ -704,7 +709,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     };
     return pdfReaderControls.set({ documentId: doc.id, state: JSON.parse(nativeState), actions });
   }, [nativeState, doc.id]);
-  return <div ref={root} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
+  return <div ref={root} data-pdf-ios={IS_IOS || undefined} tabIndex={-1} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
     {!nativeSelectionMenu && textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
       <div className="flex items-center gap-0.5 overflow-x-auto">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
@@ -746,6 +751,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       {annotations.error && <button type="button" className="ml-2 underline" disabled={writeBlocked} onClick={() => { try { annotations.retry(); } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); } }}>Retry annotations</button>}
     </div>}
     {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
+      {find.button}
       <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
@@ -762,6 +768,8 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
       </ToolButton>}
     </ReaderTools>}
+    {nativeTools && <div className="flex justify-end">{find.button}</div>}
+    {find.bar}
     {(selecting || cropping || quoteError || (fullscreen && pending?.moduleId === doc.moduleId)) && <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-center">
       <div className="pdf-hint pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
         {selecting && !pending && <><span className="min-w-0 flex-1">{annotationArea ? "Drag to highlight or comment on an area" : "Drag to select a quote"}</span><ToolButton size="icon-xs" className="pdf-menu-close" label="Exit selection" onClick={cancelSelection}><X /></ToolButton></>}
@@ -771,7 +779,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="pdf-viewport min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF</p>}
-      <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} annotations={annotations.annotations} onAnnotationOpen={openAnnotation} quoteRegions={quoteRegions.get(index + 1)} onQuoteNavigate={navigateToQuote} quoteNavigationDisabled={selecting || cropping || pinching} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
+      <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage find={find} key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} annotations={annotations.annotations} onAnnotationOpen={openAnnotation} quoteRegions={quoteRegions.get(index + 1)} onQuoteNavigate={navigateToQuote} quoteNavigationDisabled={selecting || cropping || pinching} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
     </div>}
   </div>;
 }

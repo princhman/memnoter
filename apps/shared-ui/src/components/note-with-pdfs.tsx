@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, Maximize2, X } from "lucide-react";
+import { ChevronLeft, Maximize2 } from "lucide-react";
 import { useDocuments } from "@/lib/use-documents";
 import { documentName } from "@/lib/pdf-state";
 import { updatePdfPane, usePdfPane } from "@/lib/pdf-pane";
@@ -106,7 +106,6 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
           </>}
           trailing={<>
             <ToolButton label="Open full screen" onClick={() => void navigate({ to: "/files/$documentId", params: { documentId: active.id } })}><Maximize2 /></ToolButton>
-            <ToolButton label="Close" onClick={() => updatePdfPane(moduleId, { open: false })}><X /></ToolButton>
           </>} /></div> : <PdfFileList moduleId={moduleId} docs={docs} />}
       </aside>
     </>}

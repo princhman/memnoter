@@ -1,8 +1,8 @@
-import { FileText, Plus, X } from "lucide-react";
+import { FileText, Plus } from "lucide-react";
 import { isNativeHost, isTauri } from "@/lib/backend";
 import type { DocumentRecord } from "@/lib/documents";
 import { documentName } from "@/lib/pdf-state";
-import { openPdfPane, updatePdfPane } from "@/lib/pdf-pane";
+import { openPdfPane } from "@/lib/pdf-pane";
 import { pickPdfs } from "./add-pdf";
 import { ToolButton } from "./ui/tool-button";
 
@@ -13,7 +13,6 @@ export function PdfFileList({ moduleId, docs, hideHeader = false }: { moduleId: 
     {!hideHeader && <div className="flex h-9 shrink-0 items-center gap-1 border-b bg-background px-1.5">
       <span className="min-w-0 flex-1 truncate px-1.5 text-sm font-medium">Files</span>
       {canAdd && <ToolButton label="Add PDF" onClick={() => pickPdfs(moduleId)}><Plus /></ToolButton>}
-      <ToolButton label="Close" onClick={() => updatePdfPane(moduleId, { open: false })}><X /></ToolButton>
     </div>}
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       {docs.length ? <ul className="grid gap-0.5">{docs.map(doc => <li key={doc.id}>

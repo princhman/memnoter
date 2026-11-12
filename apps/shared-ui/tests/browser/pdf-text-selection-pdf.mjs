@@ -1,8 +1,8 @@
-export function textPdfBytes() {
-  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>'];
-  for (let index = 0; index < 3; index++) {
+export function textPdfBytes(pageCount = 3) {
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, index) => `${3 + index * 2} 0 R`).join(" ")}] /Count ${pageCount} >>`];
+  for (let index = 0; index < pageCount; index++) {
     const stream = `BT /F1 16 Tf 40 340 Td (Page ${index + 1} first line) Tj 0 -30 Td (Second line <plain>.) Tj ET\n`;
-    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Resources << /Font << /F1 9 0 R >> >> /Contents ${4 + index * 2} 0 R >>`, `<< /Length ${stream.length} >>\nstream\n${stream}endstream`);
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Resources << /Font << /F1 ${3 + pageCount * 2} 0 R >> >> /Contents ${4 + index * 2} 0 R >>`, `<< /Length ${stream.length} >>\nstream\n${stream}endstream`);
   }
   objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
   let pdf = '%PDF-1.4\n'; const offsets = [0];
