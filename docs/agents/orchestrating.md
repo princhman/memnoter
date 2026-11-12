@@ -11,6 +11,10 @@ being asked each time:
 1. Commit only your own changes on the feature branch. If the user asks for
    "everything on the branch", list what you'd include first.
 2. Run a sol loop (the `sol-loop` skill), fixing the findings you agree with.
+   For a visual change, start it only after the user has approved the
+   interface, so a review fix can't change what they approved unseen.
+   Changes with no UI/UX effect get their sol loop straight away. You start
+   the loop; don't ask delegates on visual work to run one first.
 3. `pnpm check:ci`, then open a PR into `main`.
 4. Watch CI and fix red checks yourself.
 5. Merge when green, if the user approved the feature. A PR with any issue in
