@@ -35,7 +35,7 @@ jobs:
           code=$(echo "$files" | grep -vqE '(\.md$|^docs/|^scripts/agent-hooks/|^\.gitignore$)' && echo true || echo false)
           # The iOS app bundles all of shared-ui, but its own tests exercise the
           # native bridge; other shared-ui changes are covered by check and by main.
-          ios=$(echo "$files" | grep -qE '^(apps/ios/|crates/|apps/sync/|apps/shared-ui/src/editor-host/|apps/shared-ui/src/lib/(editor-host|native-)|apps/shared-ui/package\.json|scripts/(build-ios|ios-|ensure-sync|generate-bridge)|Cargo\.(toml|lock)|pnpm-lock\.yaml|\.github/workflows/ci\.yml)' && echo true || echo false)
+          ios=$(echo "$files" | grep -qE '^(apps/ios/|apps/apple-shared/|crates/|apps/sync/|apps/shared-ui/src/editor-host/|apps/shared-ui/src/lib/(editor-host|native-)|apps/shared-ui/package\.json|scripts/(build-ios|ios-|ensure-sync|generate-bridge|sync-version)|Cargo\.(toml|lock)|pnpm-lock\.yaml|\.github/workflows/ci\.yml)' && echo true || echo false)
           echo "code=$code" >> "$GITHUB_OUTPUT"; echo "ios=$ios" >> "$GITHUB_OUTPUT"
 
   check:
