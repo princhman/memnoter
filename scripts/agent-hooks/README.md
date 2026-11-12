@@ -1,6 +1,8 @@
 # Agent hooks
-Requires Python 3 and Git. Claude Code loads `.claude/settings.json`;
-Codex CLI 0.167.0+ loads `.codex/hooks.json` after project and hook trust review (`/hooks`).
+Requires Python 3 and Git. `.claude/` and `.codex/` are gitignored, so turn the
+hooks on per checkout: copy `claude-settings.json` to `.claude/settings.json`
+(Claude Code) and `codex-hooks.json` to `.codex/hooks.json` (Codex CLI 0.167.0+,
+after project and hook trust review in `/hooks`).
 Both use the same stdin JSON scripts; denial exits 2 with a safe alternative on stderr.
 Git guards apply only to `/Users/vladyslavnalyvaiko/Projects/notes` (including subdirectories).
 Isolated worktrees may use destructive Git commands; dev launches always need a data override.

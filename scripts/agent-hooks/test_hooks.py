@@ -88,7 +88,7 @@ class Hooks(unittest.TestCase):
 
     def test_registered_commands(self):
         root = HERE.parents[1]
-        for config in ['.claude/settings.json', '.codex/hooks.json']:
+        for config in ['scripts/agent-hooks/claude-settings.json', 'scripts/agent-hooks/codex-hooks.json']:
             hooks = json.loads((root / config).read_text())['hooks']
             self.assertEqual(hooks['PreToolUse'][0]['matcher'], 'Bash')
             for event, command, expected in [('PreToolUse', 'pnpm dev', 2),

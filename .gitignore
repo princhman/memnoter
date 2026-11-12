@@ -44,3 +44,8 @@ plan.md
 
 # Local iOS live-server discovery
 /.ios-live/
+
+# Local agent config (templates in scripts/agent-hooks/)
+/.claude/
+/.codex/
+__pycache__/
