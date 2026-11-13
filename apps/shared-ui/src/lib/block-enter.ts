@@ -73,6 +73,8 @@ export const BlockEnter = Extension.create({
         const { selection } = this.editor.state;
         const { $head } = selection;
         const parent = $head.parent;
+        // Inline formulas own Enter to finish editing their source.
+        if (parent.type.name === "inlineMath") return false;
         const atEnd = $head.parentOffset === parent.content.size;
         const emptyLine = parent.content.size === 0 ||
           (parent.type.spec.code && parent.textContent.endsWith("\n")) ||
