@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { deriveKey, encryptBlob, newSalt } from "../../shared-ui/src/lib/sync/crypto";
 import { createSyncEngine, type SyncEngine } from "../../shared-ui/src/lib/sync/engine";
-import { toBase64, type ServerMessage } from "../../shared-ui/src/lib/sync/protocol";
+import { PROTOCOL_VERSION, toBase64, type ServerMessage } from "../../shared-ui/src/lib/sync/protocol";
 import { BASE, MemoryDevice, blobStore, connector, signIn, waitFor } from "./helpers";
 
 const salt = newSalt();
@@ -281,7 +281,7 @@ describe("vault protocol", () => {
     };
 
     const one = await rawSocket(token);
-    one.send({ t: "hello", cursor: 0, v: 1 });
+    one.send({ t: "hello", cursor: 0, v: PROTOCOL_VERSION });
     await waitFor(() => one.received.some((m) => m.t === "ready"));
     one.send({
       t: "push",
@@ -300,7 +300,7 @@ describe("vault protocol", () => {
     one.send({ t: "compact", doc: "x", upTo: ack.seq - 1, data: await blob("x", "stale") });
 
     const two = await rawSocket(token);
-    two.send({ t: "hello", cursor: 0, v: 1 });
+    two.send({ t: "hello", cursor: 0, v: PROTOCOL_VERSION });
     await waitFor(() => two.received.some((m) => m.t === "ready"));
     const entries = two.received.flatMap((m) => (m.t === "entries" ? m.entries : []));
     expect(entries.map((entry) => entry.doc)).toEqual(["y", "x"]);
@@ -309,14 +309,14 @@ describe("vault protocol", () => {
 
     // From a cursor past the compaction nothing is resent.
     const three = await rawSocket(token);
-    three.send({ t: "hello", cursor: ack.seq, v: 1 });
+    three.send({ t: "hello", cursor: ack.seq, v: PROTOCOL_VERSION });
     await waitFor(() => three.received.some((m) => m.t === "ready"));
     expect(three.received).toEqual([{ t: "ready", head: ack.seq }]);
 
     // Dropping a document forgets it.
     one.send({ t: "drop", doc: "x" });
     const four = await rawSocket(token);
-    four.send({ t: "hello", cursor: 0, v: 1 });
+    four.send({ t: "hello", cursor: 0, v: PROTOCOL_VERSION });
     await waitFor(() => four.received.some((m) => m.t === "ready"));
     expect(four.received.flatMap((m) => (m.t === "entries" ? m.entries : [])).map((e) => e.doc)).toEqual(["y"]);
     for (const socket of [one, two, three, four]) socket.ws.close();
@@ -330,7 +330,7 @@ describe("vault protocol", () => {
     expect(early.received[0]).toMatchObject({ t: "error" });
 
     const old = await rawSocket(token);
-    old.send({ t: "hello", cursor: 0, v: 0 });
+    old.send({ t: "hello", cursor: 0, v: PROTOCOL_VERSION - 1 });
     await waitFor(() => old.received.length > 0);
     expect(old.received[0]).toMatchObject({ t: "error", fatal: true });
   });

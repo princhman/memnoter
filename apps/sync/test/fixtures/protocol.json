@@ -1,7 +1,7 @@
 {
   "protocol": "memnoter.v1",
   "authPrefix": "auth.",
-  "version": 1,
+  "version": 2,
   "clientFrames": [
     "hello",
     "push",

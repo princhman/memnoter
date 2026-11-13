@@ -10,6 +10,8 @@ export { contract as SYNC_CONTRACT };
 //
 // Frames are JSON text; `data` fields are base64.
 
+// Release gate: hold this protocol-2 contract change for the worksheet
+// authoring release. The worker and native clients consume the same contract.
 export const PROTOCOL_VERSION = contract.version;
 // WebSocket subprotocols: this one, plus "auth.<token>", because browsers
 // cannot set headers on a WebSocket request.
