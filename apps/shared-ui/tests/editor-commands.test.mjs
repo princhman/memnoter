@@ -261,3 +261,22 @@ test('PRI-342: outline edits clamp at h6, split prose, promote deleted lines and
     }
   } finally { editor.destroy(); }
 });
+
+for (const command of ['joinForward', 'joinBackward']) {
+  test(`PRI-342: ${command} promotes the removed heading section`, () => {
+    const h = (level, text) => ({ type: 'heading', attrs: { level }, content: [{ type: 'text', text }] });
+    const editor = createEditor();
+    try {
+      editor.commands.setContent({ type: 'doc', content: [h(1, 'Root'), h(2, 'A'), h(2, 'B'), h(3, 'Child'), h(2, 'Later')] });
+      // Delete at A's end and Backspace at B's start share the same join.
+      editor.commands.setTextSelection(command === 'joinForward' ? 8 : 10);
+      editor.view.dispatch(closeHistory(editor.state.tr));
+      const before = editor.state.doc;
+      assert.equal(editor.commands[command](), true, command);
+      assert.deepEqual(editor.getJSON().content.filter(n => n.type === 'heading').map(n => [n.attrs.level, n.content[0].text]),
+        [[1, 'Root'], [2, 'AB'], [2, 'Child'], [2, 'Later']], command);
+      assert.equal(editor.commands.undo(), true);
+      assert.ok(editor.state.doc.eq(before), command);
+    } finally { editor.destroy(); }
+  });
+}

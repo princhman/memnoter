@@ -1,6 +1,7 @@
 import { Extension } from "@tiptap/core";
 import { canSplit } from "@tiptap/pm/transform";
-import { TextSelection } from "@tiptap/pm/state";
+import { keydownHandler } from "@tiptap/pm/keymap";
+import { Plugin, TextSelection } from "@tiptap/pm/state";
 
 const blocks = new Set(["codeBlock", "mathBlock", "blockquote", "details", "bulletList", "orderedList"]);
 
@@ -8,7 +9,7 @@ export const BlockEnter = Extension.create({
   name: "blockEnter",
   // Own these keys before node keymaps, including Details' title handling.
   priority: 1100,
-  addKeyboardShortcuts() {
+  addProseMirrorPlugins() {
     const blockDepth = () => {
       const { $head } = this.editor.state.selection;
       for (let depth = $head.depth; depth > 0; depth--) {
@@ -51,9 +52,10 @@ export const BlockEnter = Extension.create({
       return true;
     };
 
-    return {
+    const handleKeyDown = keydownHandler({
       "Mod-Enter": () => {
-        const depth = blockDepth();
+        const { $head } = this.editor.state.selection;
+        const depth = blockDepth() || ($head.parent.type.name === "heading" ? $head.depth : 0);
         return depth ? leave(depth) : false;
       },
       "Shift-Enter": () => {
@@ -111,6 +113,24 @@ export const BlockEnter = Extension.create({
           () => commands.splitBlock(),
         ]);
       },
-    };
+    });
+    return [new Plugin({
+      props: {
+        handleKeyDown: (view, event) => {
+          if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && blockDepth()) {
+            // Suggestions can use custom keys and run below node keymaps.
+            // Give their active popup the real event before splitting a block.
+            for (const plugin of view.state.plugins) {
+              const suggestion: unknown = plugin.getState(view.state);
+              if (suggestion && typeof suggestion === "object" &&
+                "active" in suggestion && suggestion.active === true &&
+                "decorationId" in suggestion && typeof suggestion.decorationId === "string" &&
+                plugin.props.handleKeyDown?.call(plugin, view, event)) return true;
+            }
+          }
+          return handleKeyDown(view, event);
+        },
+      },
+    })];
   },
 });

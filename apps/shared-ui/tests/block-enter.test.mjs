@@ -142,3 +142,20 @@ for (const kind of ['bulletList', 'orderedList']) {
     } finally { editor.destroy(); }
   });
 }
+
+for (const [key, pos] of [['Mod-Enter', 1], ['Mod-Enter', 3], ['Mod-Enter', 6], ['Enter', 6]]) {
+  test(`heading: ${key} at ${pos} preserves heading text and uses a paragraph below`, () => {
+    const editor = new Editor({ element: null, extensions: editorExtensions({ collaborative: false }), content: { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Title' }] }, p('Following')] } });
+    editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+    try {
+      editor.commands.setTextSelection(pos);
+      assert.equal(press(editor, key), true);
+      assert.equal(editor.state.doc.firstChild.type.name, 'heading');
+      assert.equal(editor.state.doc.firstChild.textContent, 'Title');
+      assert.equal(editor.state.doc.child(1).type.name, 'paragraph');
+      assert.equal(editor.state.doc.child(1).content.size, 0);
+      assert.equal(editor.state.selection.$head.parent.type.name, 'paragraph');
+      assert.equal(editor.state.doc.child(2).textContent, 'Following');
+    } finally { editor.destroy(); }
+  });
+}
