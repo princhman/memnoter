@@ -1738,11 +1738,11 @@ body {
     --highlight-purple: oklch(0.92 0.055 300);
 }
 .dark {
-    --highlight-yellow: oklch(0.39 0.055 95);
-    --highlight-green: oklch(0.36 0.045 150);
-    --highlight-blue: oklch(0.37 0.05 235);
-    --highlight-pink: oklch(0.38 0.05 355);
-    --highlight-purple: oklch(0.38 0.055 300);
+    --highlight-yellow: oklch(0.49 0.10 95);
+    --highlight-green: oklch(0.46 0.12 150);
+    --highlight-blue: oklch(0.47 0.11 235);
+    --highlight-pink: oklch(0.47 0.15 355);
+    --highlight-purple: oklch(0.47 0.15 300);
 }
 [data-color="yellow"] { --note-highlight: var(--highlight-yellow); }
 [data-color="green"] { --note-highlight: var(--highlight-green); }
@@ -1754,6 +1754,14 @@ body {
     color: inherit;
     border-radius: 0.15em;
     box-decoration-break: clone;
+}
+
+.dark .note-highlight {
+    background-color: var(--note-highlight, var(--highlight-yellow));
+}
+.dark .note-highlight a,
+.dark a .note-highlight {
+    color: var(--foreground);
 }
 
 /* Tables stay within the note column, with a touch-scrollable viewport. */
