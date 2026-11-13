@@ -55,6 +55,11 @@ there. The editor scroll/caret exception in
 - Waiting on the user (a question, or an issue in **In Review**): call
   `issue_watch` with your thread and machine. Their reply arrives as a new
   message in that thread. Don't schedule polling checks.
+- Add **Needs input** whenever progress needs the user's answer, choice or
+  visual approval. Remove it as soon as their reply arrives, before acting;
+  if another answer is needed, ask the specific remaining question and add it
+  again. In Review alone does not mean user input is needed (code review and
+  CI can be agent work). Verify removal even if Agentline automates it.
 - When the user reports a bug or request mid-session, file it in Linear before
   or while delegating: team **I build (PRI)**, project **memnoter.com**, label
   **Bug** plus the relevant platform label (for example `windows` or `marketing`).
