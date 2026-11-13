@@ -102,25 +102,6 @@ const FoldableDetails = Details.extend({
             .run(),
     };
   },
-  addKeyboardShortcuts() {
-    const parent = this.parent?.() ?? {};
-    return {
-      ...parent,
-      // Upstream inserts a new first line, which would leave the block's empty
-      // line last and stop Enter there from leaving the block. Use that line.
-      Enter: (props) => {
-        const { $head, empty } = this.editor.state.selection;
-        if (empty && $head.parent.type.name === "detailsSummary") {
-          const block = $head.node(-1);
-          const first = block.lastChild?.firstChild;
-          if (block.attrs.open && first?.type.name === "paragraph" && first.content.size === 0) {
-            return this.editor.commands.setTextSelection($head.after() + 2);
-          }
-        }
-        return parent.Enter?.(props) ?? false;
-      },
-    };
-  },
   // Replaces upstream's plugin, which moves the caret out of folded content.
   addProseMirrorPlugins() {
     return [foldableBlockReveal(), new Plugin({
