@@ -1,4 +1,4 @@
-import { action, matchesShortcut } from "@/lib/shortcuts";
+import { action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
 import {
   useEffect,
@@ -11,7 +11,7 @@ import {
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
-import { ChevronLeft, ChevronRight, FileText, Search, SquareChevronRight } from "lucide-react";
+import { ChevronLeft, FileText, Search, SquareChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useActiveEditor } from "@/lib/active-editor-context";
@@ -424,13 +424,14 @@ export function CommandPalette() {
                           </div>
                         )}
                       </div>
+                      {item === active && <kbd className="shrink-0 font-sans text-xs text-muted-foreground">{formatKeys("Mod-Enter")}</kbd>}
                     </>
                   ) : item.kind === "heading" ? (
                     <>
                       <span className="min-w-0 flex-1 truncate">{item.heading.title}
                         {trimmed && item.heading.ancestors.length > 0 && <span className="block truncate text-xs text-muted-foreground">{item.heading.ancestors.map(heading => heading.title).join(" › ")}</span>}
                       </span>
-                      {item.hasChildren && <ChevronRight className="size-4 text-muted-foreground" />}
+                      {item.hasChildren && <kbd className="shrink-0 font-sans text-xs text-muted-foreground">{formatKeys("Mod-Enter")}</kbd>}
                     </>
                   ) : (
                     <>
@@ -455,10 +456,10 @@ export function CommandPalette() {
             </div>
           )}
         </div>
-        <div className="flex gap-4 px-3 py-2 text-xs text-muted-foreground">
-          <span><kbd>↵</kbd> Open</span>
-          <span><kbd>⌘↵</kbd> Browse sections</span>
-          {scope && <span><kbd>←</kbd> Back</span>}
+        <div className="flex justify-end gap-4 px-3 py-2 text-xs text-muted-foreground">
+          {scope && <span className="flex items-center gap-2">Back <kbd className="font-sans">{formatKeys("ArrowLeft")}</kbd></span>}
+          <span className="flex items-center gap-2">Open <kbd className="font-sans">{formatKeys("Enter")}</kbd></span>
+          <span className="flex items-center gap-2">Browse sections <kbd className="font-sans">{formatKeys("Mod-Enter")}</kbd></span>
         </div>
         <div aria-live="polite" className="sr-only">
           {open && !isSearching && trimmed

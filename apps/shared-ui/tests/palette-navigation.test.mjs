@@ -33,11 +33,15 @@ test("palette drills into a closed module and opens a heading with its caret", a
     await options.filter({ hasText: "Algebra" }).hover();
     await input.press("Meta+Enter");
     await options.filter({ hasText: "Foundations" }).waitFor();
-    assert.deepEqual(await options.allTextContents(), ["Foundations", "Geometry"]);
+    assert.equal(await options.count(), 2);
+    assert.equal(await options.getByText("Foundations", { exact: true }).count(), 1);
+    assert.equal(await options.getByText("Geometry", { exact: true }).count(), 1);
     assert.ok(page.url().endsWith("/m2"));
     await input.press("ArrowRight");
     await options.filter({ hasText: "Numbers" }).waitFor();
-    assert.deepEqual(await options.allTextContents(), ["Numbers", "Equations"]);
+    assert.equal(await options.count(), 2);
+    assert.equal(await options.getByText("Numbers", { exact: true }).count(), 1);
+    assert.equal(await options.getByText("Equations", { exact: true }).count(), 1);
     await input.press("Meta+Enter");
     await options.filter({ hasText: "Integers" }).waitFor();
     await input.press("Backspace");
