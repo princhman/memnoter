@@ -41,6 +41,11 @@ there. The editor scroll/caret exception in
 
 ## Linear
 
+- Linear goes through the `agentline` MCP tools only (the `agentline-linear`
+  skill), so everything agents post shows as Agentline, not as the user.
+- Waiting on the user (a question, or an issue in **In Review**): call
+  `issue_watch` with your thread and machine. Their reply arrives as a new
+  message in that thread. Don't schedule polling checks.
 - When the user reports a bug or request mid-session, file it in Linear before
   or while delegating: team **I build (PRI)**, project **memnoter.com**, label
   **Bug** plus the relevant platform label (for example `windows` or `marketing`).
@@ -113,8 +118,8 @@ Don't restate the stack, commands or rules; the delegate already has them.
 The skills are general; the per-platform details below are what they look up.
 
 Handoff in this repo: Linear team I build (PRI). An agent waiting on the user
-comments on the issue and adds the `Needs input` label; it removes the label
-when it picks the issue up again. Each issue gets its own branch in the main
+comments on the issue, adds the `Needs input` label and watches the issue
+(`issue_watch`); it removes the label when it picks the issue up again. Each issue gets its own branch in the main
 checkout; add a worktree only to work issues in parallel, and remove it once the
 branch is pushed.
 
@@ -142,7 +147,7 @@ branch is pushed.
   changes, so drive the scenario while recording.
 - **minipc** can make Chromium/WebKit proof only (no iOS, no macOS).
 - **Uploads:** proof goes on the Linear issue, one file at a time
-  (`prepare_file_upload`, then PUT within 60 s). Delete every local video and
+  (`file_upload`, then PUT within 60 s). Delete every local video and
   screenshot after it's uploaded; none go in the repo or stay on the machine.
 
 **Profiling** (verified on the Mac 2026-11-11 unless marked):
@@ -183,6 +188,6 @@ branch is pushed.
 
 ## Tools
 
-MCP servers added during a session (Linear, for example) don't load into it.
+MCP servers added during a session (`agentline`, for example) don't load into it.
 If an expected tool is missing, tell the user to reconnect it in `/mcp` or start
 a new thread.
