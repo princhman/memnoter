@@ -59,6 +59,20 @@ Other agents often have uncommitted work in the same checkout.
   changed Rust sources before rebuilding: cargo uses mtimes and reuses stale builds.
 - Don't add plans or notes to the repo; the backlog is in Linear.
 
+## Branch names
+
+- Issue work: `pri-<n>-<slug>`, lowercase, no user prefix. Take the issue's
+  `gitBranchName` from Linear and drop everything up to the first `/`: with
+  `b=novvladkyiv/pri-366-remove-double-space-in-code-block-for`,
+  `git switch -c "${b#*/}" origin/main` gives
+  `pri-366-remove-double-space-in-code-block-for`.
+- Several issues in one PR: the lowest issue's name.
+- Work without an issue: `<type>/<slug>` (`fix/`, `feat/`, `chore/`, `docs/`,
+  `release/v<x.y.z>`).
+- A worktree tool or brief that hands you a branch with another prefix
+  (`novvladkyiv/…`, `codex/…`, `t3-…`): rename it with `git branch -m` before
+  your first push. Renaming a branch on GitHub closes its open PR.
+
 ## Data safety
 
 - `pnpm dev` and release builds open the user's real database. A migration run

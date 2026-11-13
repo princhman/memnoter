@@ -45,8 +45,9 @@ there. The editor scroll/caret exception in
   or while delegating: team **I build (PRI)**, project **memnoter.com**, label
   **Bug** plus the relevant platform label (for example `windows` or `marketing`).
   Put the issue ID in the delegate brief so it survives chat summaries.
-- Start branches from the issue: `pri-<n>-<slug>` or Linear's suggested branch
-  name (for example `novvladkyiv/pri-336-when-type-after-latex-expression-it`).
+- Branch names follow "Branch names" in `AGENTS.md`: `pri-<n>-<slug>`, never
+  Linear's `novvladkyiv/` prefix. Give delegates the exact branch name, and
+  pass it as `workspaceStrategy.branch` when launching worktree threads.
 - Include `Fixes PRI-<n>` in the PR title or body so GitHub and Linear link the
   work and close the issue through the team's configured merge automation.
 - Delegates report the issue ID back with their result.
