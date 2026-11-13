@@ -1,4 +1,6 @@
-import { createContext, useContext, useEffect, useMemo, useState, forwardRef, type ReactNode } from "react";
+import { Popover } from "@base-ui/react/popover";
+import { FileText, ArrowUpRight } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useState, useRef, forwardRef, type ReactNode } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, ReactRenderer, type NodeViewProps } from "@tiptap/react";
 import { Extension, type Editor } from "@tiptap/core";
 import { PluginKey } from "@tiptap/pm/state";
@@ -12,15 +14,12 @@ import { useMentionNotes } from "@/lib/use-mentions";
 import { useDocuments } from "@/lib/use-documents";
 import { backlinks } from "@/lib/mention-index";
 import { InsertMenu, type InsertMenuHandle, type InsertItem } from "./insert-menu";
-import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 
-const Context = createContext<ReturnType<typeof useMentionNotes> & { files: { id: string; name: string }[]; showBacklinks: (target: MentionTarget) => void } | null>(null);
+const Context = createContext<ReturnType<typeof useMentionNotes> & { files: { id: string; name: string }[] } | null>(null);
 export function MentionProvider({ children }: { children: ReactNode }) {
   const notes = useMentionNotes();
   const { data: files = [] } = useDocuments();
-  const [target, setTarget] = useState<MentionTarget | null>(null);
-  const [backlinksOpen, setBacklinksOpen] = useState(false);
-  return <Context.Provider value={{ ...notes, files, showBacklinks: target => { setTarget(target); setBacklinksOpen(true); } }}>{children}<BacklinkDialog target={target} open={backlinksOpen} close={() => setBacklinksOpen(false)} /></Context.Provider>;
+  return <Context.Provider value={{ ...notes, files }}>{children}</Context.Provider>;
 }
 function useCatalog() {
   const value = useContext(Context);
@@ -110,20 +109,60 @@ export const MentionSuggest = Extension.create({
     })];
   },
 });
-export function MentionedIn({ target }: { target: MentionTarget }) {
-  const { notes, showBacklinks } = useCatalog();
-  const sources = backlinks(notes, target);
-  if (!sources.length) return null;
-  return <button type="button" className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => showBacklinks(target)}>Mentioned in {sources.length}</button>;
-}
-function BacklinkDialog({ target, open, close }: { target: MentionTarget | null; open: boolean; close: () => void }) {
-  const { notes, loading, error } = useCatalog();
+export function MentionedIn({ target, onOpenChange }: { target: MentionTarget; onOpenChange?: (open: boolean) => void }) {
+  const catalog = useCatalog();
   const navigate = useNavigate();
-  const sources = target ? backlinks(notes, target) : [];
-  return <Dialog open={open} onOpenChange={open => { if (!open) close(); }}><DialogContent finalFocus={false}><DialogTitle>Mentioned in {sources.length}</DialogTitle>
-    {sources.map((source, index) => <button key={`${source.moduleId}:${source.mentionId}:${index}`} className="rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent" onClick={() => {
-      close(); jump.setState(() => ({ moduleId: source.moduleId, kind: "mention", id: source.mentionId })); void navigate({ to: "/$moduleId", params: { moduleId: source.moduleId } });
-    }}>{source.moduleName}{source.heading ? ` › ${source.heading}` : ""}</button>)}
-    {!sources.length && <p className="text-sm text-muted-foreground">{error ? "Could not load references" : loading ? "Loading…" : "No mentions"}</p>}
-  </DialogContent></Dialog>;
+  const [open, setOpen] = useState(false);
+  const navigating = useRef(false);
+  const sources = backlinks(catalog.notes, target);
+  const module = catalog.notes.find(note => note.id === target.id);
+  const title = target.kind === "file"
+    ? catalog.files.find(file => file.id === target.id)?.name
+    : target.kind === "heading"
+      ? module?.note.headings.find(heading => heading.id === target.nodeId)?.title
+      : module?.name;
+  const label = `${sources.length} incoming ${sources.length === 1 ? "reference" : "references"}${title ? ` to ${title}` : ""}`;
+
+  if (!sources.length && !open) return null;
+  return <Popover.Root open={open} onOpenChange={next => {
+    if (next) navigating.current = false;
+    setOpen(next);
+    onOpenChange?.(next);
+  }}>
+    <Popover.Trigger
+      data-backlink-trigger=""
+      aria-label={label}
+      title={`${label}${target.kind === "heading" ? " (Alt+F10 from heading)" : ""}`}
+      aria-keyshortcuts={target.kind === "heading" ? "Alt+F10" : undefined}
+      className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+    >{sources.length > 99 ? "99+" : sources.length}</Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Positioner side="bottom" align="end" sideOffset={8} collisionPadding={8} className="z-50">
+        <Popover.Popup
+          data-backlink-popover=""
+          finalFocus={() => !navigating.current}
+          className="floating-surface max-h-[min(24rem,60vh)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg bg-popover p-1.5 text-popover-foreground shadow-md outline-none"
+        >
+          <Popover.Title className="truncate px-2 pt-1 pb-1.5 text-xs text-muted-foreground">Linked to {title ?? "this reference"}</Popover.Title>
+          {sources.map((source, index) => <button
+            key={`${source.moduleId}:${source.mentionId}:${index}`}
+            type="button"
+            className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent focus-visible:text-accent-foreground"
+            onClick={() => {
+              navigating.current = true;
+              setOpen(false);
+              onOpenChange?.(false);
+              jump.setState(() => ({ moduleId: source.moduleId, kind: "mention", id: source.mentionId }));
+              void navigate({ to: "/$moduleId", params: { moduleId: source.moduleId } });
+            }}
+          >
+            <FileText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 break-words">{source.moduleName}{source.heading && <span className="text-muted-foreground"> › {source.heading}</span>}</span>
+            <ArrowUpRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+          </button>)}
+          {!sources.length && <p className="px-2 py-3 text-sm text-muted-foreground">No mentions</p>}
+        </Popover.Popup>
+      </Popover.Positioner>
+    </Popover.Portal>
+  </Popover.Root>;
 }

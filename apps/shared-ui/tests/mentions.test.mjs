@@ -52,8 +52,38 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await page.waitForTimeout(1600); await page.reload();
     await page.getByRole('button', { name: '@Biology › Cells', exact: true }).click(); await page.waitForURL(`${origin}/m2`);
     await page.waitForFunction(() => document.getSelection()?.anchorNode?.parentElement?.closest('h1') !== null);
-    const heading = page.locator('.tiptap h1'); await heading.waitFor(); await heading.hover();
-    await page.getByRole('button', { name: 'Mentioned in 1', exact: true }).click();
+    const heading = page.locator('.tiptap h1'); await heading.waitFor();
+    const count = page.getByRole('button', { name: '1 incoming reference to Cells', exact: true });
+    await heading.click(); await page.mouse.move(5, 5);
+    await count.waitFor();
+    await page.keyboard.press('Alt+F10');
+    await page.waitForFunction(() => document.activeElement?.hasAttribute('data-backlink-trigger'));
+    assert.equal(await count.evaluate(button => button === document.activeElement), true);
+    await page.keyboard.press('Tab');
+    assert.equal(await page.getByRole('button', { name: 'Focus on this section', exact: true }).evaluate(button => button === document.activeElement), true);
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Enter');
+    await page.getByRole('dialog').waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.hasAttribute('data-backlink-trigger'));
+    assert.equal(await count.evaluate(button => button === document.activeElement), true);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.activeElement?.classList.contains('tiptap'));
+    assert.equal(await editor.evaluate(element => element === document.activeElement), true);
+    for (const width of [360, 640, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      await heading.hover();
+      const row = await page.getByRole('toolbar', { name: 'Heading controls' }).evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right, width: window.innerWidth, rowHeight: bounds.height, centers: [...element.children].map(child => { const r = child.getBoundingClientRect(); return r.top + r.height / 2; }) };
+      });
+      assert.ok(row.left >= 0 && row.right <= row.width, JSON.stringify(row));
+      assert.ok(Math.max(...row.centers) - Math.min(...row.centers) < 1, JSON.stringify(row));
+      assert.ok(row.rowHeight <= 28, JSON.stringify(row));
+    }
+    await heading.hover();
+    await page.getByRole('button', { name: /^1 incoming reference/, exact: false }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Research', exact: true }).click(); await page.waitForURL(`${origin}/m1`);
     await page.getByRole('button', { name: '@Biology › Cells', exact: true }).click(); await page.waitForURL(`${origin}/m2`);
     await heading.click(); await page.keyboard.press('Home'); await page.keyboard.press('Shift+End'); await page.keyboard.type('Living cells');
@@ -70,14 +100,14 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await page.getByRole('button', { name: '@Field guide.pdf', exact: true }).click();
     await page.waitForURL(`${origin}/files/pdf1`);
     await page.locator('.textLayer span').first().waitFor();
-    await page.getByRole('button', { name: 'Mentioned in 1', exact: true }).click();
+    await page.getByRole('button', { name: /^1 incoming reference/, exact: false }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Research', exact: true }).click();
     await page.waitForURL(`${origin}/m1`);
     await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type(' @Life');
     await page.getByRole('option', { name: 'Life science', exact: true }).click();
     await page.getByRole('button', { name: '@Life science', exact: true }).click();
     await page.waitForURL(`${origin}/m2`);
-    await page.getByRole('button', { name: 'Mentioned in 1', exact: true }).click();
+    await page.getByRole('button', { name: /^1 incoming reference/, exact: false }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Research', exact: true }).click();
     await page.waitForURL(`${origin}/m1`);
     await page.getByRole("dialog").waitFor({ state: "hidden" });
