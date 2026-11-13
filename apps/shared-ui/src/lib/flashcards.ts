@@ -527,7 +527,7 @@ function buildDecorations(doc: Node, schedules: Schedules): DecorationsState {
       const schedule = schedules.byId.get(group.node.attrs.cardId);
       groupDecorations.push(Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-block" }));
       groupDecorations.push(Decoration.widget(group.from + 1, (view, getPos) => {
-        const description = group.kind === "list" ? "List card · Reveals one by one" : "Block card · Reveals together"; // lint-allow: middle-dot (user-requested card identity)
+        const description = group.kind === "list" ? "List card: Reveals one by one" : "Block card: Reveals together";
         const info = cardInfo([{ answer: description, schedule }], !!schedule && schedule.dueAt <= schedules.now, schedules.now, null);
         info.setAttribute("aria-label", `${description}. Card details`);
         // Pointer interaction must not move the editor's caret into the group.
