@@ -164,7 +164,10 @@ struct RootView: View {
     }
 
     var body: some View {
-        navigationWithPresentations
+        VStack(spacing: 0) {
+            UpdateNoticeView(required: store.sync?.updateRequired == true)
+            navigationWithPresentations
+        }
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
         .onChange(of: session?.requestedModule) { _, _ in handleModuleRequest() }
         .onChange(of: session?.requestedPdfImport) { _, _ in handlePdfImportRequest() }

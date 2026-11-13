@@ -88,3 +88,21 @@ describe("sync socket", () => {
     expect(response.status).toBe(401);
   });
 });
+
+it("gates file deletion by protocol without breaking headerless v0.1.5", async () => {
+  const { token } = await signIn("file-version@example.com");
+  const id = "00000000-0000-4000-8000-000000000382";
+  const url = `${BASE}/v1/files/${id}`;
+  const auth = { Authorization: `Bearer ${token}` };
+  await SELF.fetch(url, { method: "PUT", headers: { ...auth, "Content-Length": "3" }, body: "abc" });
+  for (const version of ["0", "2", "", "garbage"]) {
+    const response = await SELF.fetch(url, { method: "DELETE", headers: { ...auth, "X-Memnoter-Protocol-Version": version } });
+    expect(response.status).toBe(426);
+    expect(await response.json()).toEqual({ error: "Please update Memnoter to keep syncing" });
+    expect((await SELF.fetch(url, { headers: auth })).status).toBe(200);
+  }
+  // Legacy requests are protocol 1, permanently, including after a future bump.
+  expect((await SELF.fetch(url, { method: "DELETE", headers: auth })).status).toBe(200);
+  expect((await SELF.fetch(url, { headers: auth })).status).toBe(410);
+  expect((await SELF.fetch(url, { method: "DELETE", headers: { ...auth, "X-Memnoter-Protocol-Version": "1" } })).status).toBe(200);
+});

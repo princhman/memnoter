@@ -89,6 +89,10 @@ export function createFileSync({ generation, signal, server, token, key, onStore
           notYet.delete(fileId);
           return;
         }
+        if (error instanceof SyncApiError && error.status === 426) {
+          running = false;
+          return;
+        }
         if (error instanceof SyncApiError && error.status === 401) {
           running = false;
           onUnauthorized();
