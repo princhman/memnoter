@@ -298,3 +298,36 @@ test("a formula can be a cloze, and a foldable block can be a note as a whole", 
   assert.deepEqual(cards[0].back[2], block([{ type: "math", tex: "a = b", display: true }]));
   assert.deepEqual(cards[2].front, [text("Outside "), { type: "blank" }]);
 });
+
+test('group cards extract one schedule, preserve literal answer syntax, nesting and boundaries', () => {
+  const item = text => schema.nodes.listItem.create(null, p(text));
+  const list = schema.nodes.bulletList.create(null, [item('First {{literal}}'), item('Second :: literal')]);
+  const cards = extractCards(doc.create(null, [p('Steps? ::list', 'group'), list, p('::end'), p('Outside :: answer', 'outside')]));
+  assert.deepEqual(cards.map(c => [c.id, c.kind]), [['group', 'list'], ['outside', 'basic']]);
+  assert.equal(cards[0].back.length, 2);
+  assert.deepEqual(cards[0].front, [text('Steps?')]);
+  assert.equal(cards[0].back[0].children[0].children[0].text, 'First {{literal}}');
+  const block = extractCards(doc.create(null, [p('Why? ::block', 'block'), p('One'), p(''), p('Two'), p('::end')]));
+  assert.equal(block[0].kind, 'basic');
+  assert.equal(block[0].back.length, 3);
+  for (const blocks of [[p('Q ::list', 'x'), list], [p('Q ::list', 'x'), p('Not a list'), p('::end')], [p('Q `::block`', 'x'), p('Answer'), p('::end')]]) assert.deepEqual(extractCards(doc.create(null, blocks)), []);
+});
+
+test('group compatibility sentinel is unknown to the previous persisted schema', async () => {
+  const Y = await import('yjs');
+  const { Schema } = await import('@tiptap/pm/model');
+  const { hasUnknownContent } = await import('../src/lib/schema-compatibility.ts');
+  let nodes = schema.spec.nodes;
+  for (const name of ['paragraph','heading','mathBlock']) {
+    const spec = nodes.get(name), attrs = {...spec.attrs};
+    delete attrs.cardGroup;
+    nodes = nodes.update(name,{...spec,attrs});
+  }
+  const previous = new Schema({nodes,marks:schema.spec.marks});
+  const y = new Y.Doc(), root = y.getXmlFragment('default'), opener = new Y.XmlElement('paragraph');
+  opener.setAttribute('cardGroup','list');
+  opener.setAttribute('cardId','stable');
+  const source = new Y.XmlText(); source.insert(0,'Question ::list'); opener.insert(0,[source]); root.insert(0,[opener]);
+  assert.equal(hasUnknownContent(root,previous),true);
+  assert.equal(hasUnknownContent(root,schema),false);
+});

@@ -2064,3 +2064,9 @@ body {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.card-group-marker { color: var(--muted-foreground); }
+.card-group-hint { margin-left: 1em; color: var(--muted-foreground); font-size: 0.7em; user-select: none; }
+.card-group-placeholder { user-select: none; color: var(--muted-foreground); pointer-events: none; }
+.card-group-answer { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.card-group-step { float: right; color: var(--muted-foreground); font-size: 0.75em; user-select: none; }

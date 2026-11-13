@@ -27,7 +27,7 @@ export function isImageNode(node: Node | null | undefined): boolean {
 // and inside a cloze. A card needs a non-empty front and answer.
 
 // The review renderer switches on kind. Image occlusion adds "occlusion".
-export type CardKind = "basic" | "cloze" | "occlusion";
+export type CardKind = "basic" | "cloze" | "occlusion" | "list";
 
 export type Segment =
   | { type: "text"; text: string; marks?: string[]; highlightColor?: string }
@@ -42,7 +42,7 @@ export type Segment =
   | { type: "hidden"; children: Segment[] }
   // One block of a cloze note, in document order. List items keep their
   // nesting depth, and the first block of an item its marker.
-  | { type: "block"; children: Segment[]; depth?: number; marker?: "bullet" | number };
+  | { type: "block"; children: Segment[]; depth?: number; marker?: "bullet" | number; revealStep?: true };
 
 export type CardPayload = Segment[] | OcclusionFace;
 
@@ -446,11 +446,66 @@ function noteSide(doc: Node, note: ClozeNote, cardPos: number, targets: number[]
   return blocks;
 }
 
+export type CardGroup = Range & {
+  node: Node; kind: "list" | "block"; marker: Range;
+  closer: number | null; answers: { node: Node; pos: number }[];
+  steps: Segment[][]; valid: boolean; hint: string;
+};
+
+// Delimiters are real editable text. Only document siblings participate in v1.
+export function groupOpener(node: Node) {
+  if (!["paragraph", "heading"].includes(node.type.name)) return null;
+  const units = unitsOf(node);
+  const text = units.map(u => u.type === "char" ? u.char : "\n").join("");
+  const match = /\s(::list|::block)$/.exec(text);
+  if (!match) return null;
+  const from = text.length - match[1].length;
+  if (units.some(u => u.at >= from && (u.type !== "char" || !u.syntax))) return null;
+  return { kind: match[1] === "::list" ? "list" as const : "block" as const, from, to: node.content.size };
+}
+
+export function cardGroupsOf(doc: Node): CardGroup[] {
+  const blocks: { node: Node; pos: number }[] = [];
+  doc.forEach((node, pos) => blocks.push({ node, pos }));
+  const groups: CardGroup[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const { node, pos } = blocks[i];
+    const opener = groupOpener(node);
+    if (!opener) continue;
+    let end = i + 1;
+    while (end < blocks.length && !(blocks[end].node.type.name === "paragraph" && blocks[end].node.textContent === "::end" && unitsOf(blocks[end].node).every(u => u.type === "char" && u.syntax))) end++;
+    const closer = end < blocks.length ? blocks[end].pos : null;
+    const answers = blocks.slice(i + 1, end);
+    const supported = (n: Node): boolean => ["paragraph", "heading", "mathBlock"].includes(n.type.name) || ["bulletList", "orderedList", "listItem"].includes(n.type.name) && Array.from({ length: n.childCount }, (_, j) => n.child(j)).every(supported);
+    const faces = (n: Node, at: number): Segment[] => {
+      const face: Segment[] = [];
+      const add = (child: Node, position: number) => {
+        if (!child.isTextblock) return true;
+        face.push({ type: "block", children: child.type.name === "mathBlock" ? displayMath(child) : segmentsOf(unitsOf(child)), ...listPlace(doc, position) });
+        return false;
+      };
+      if (n.isTextblock) add(n, at); else n.descendants((child, offset) => add(child, at + 1 + offset));
+      return face;
+    };
+    const list = answers.length === 1 && ["bulletList", "orderedList"].includes(answers[0].node.type.name) ? answers[0] : null;
+    const steps: Segment[][] = [];
+    if (opener.kind === "list" && list) list.node.forEach((item, offset) => steps.push(faces(item, list.pos + 1 + offset)));
+    else if (opener.kind === "block") steps.push(answers.flatMap(({ node, pos }) => faces(node, pos)));
+    const content = opener.kind === "list" ? list !== null && steps.length > 0 && Array.from({length: list.node.childCount}, (_, j) => list.node.child(j).textContent.trim()).every(Boolean) : answers.some(b => b.node.textContent.trim());
+    const valid = closer !== null && !!node.textContent.slice(0, opener.from).trim() && !!content && answers.every(b => supported(b.node) && !groupOpener(b.node)) && !node.attrs.clozeNote;
+    groups.push({ node, kind: opener.kind, from: pos, to: closer === null ? (answers[answers.length - 1]?.pos ?? pos) + (answers[answers.length - 1]?.node.nodeSize ?? node.nodeSize) : closer + blocks[end].node.nodeSize, marker: { from: pos + 1 + opener.from, to: pos + 1 + opener.to }, closer, answers, steps, valid, hint: closer === null ? "Finish with ::end" : !node.textContent.slice(0, opener.from).trim() ? "Add a question" : opener.kind === "list" ? "Add a list item" : "Add an answer" });
+    // Suppress nested syntax only inside complete groups.
+    if (closer !== null) i = end;
+  }
+  return groups;
+}
+
 export function extractCards(doc: Node): ExtractedCard[] {
   const cards: ExtractedCard[] = [];
   const seen = new Set<string>();
   const notes = clozeNotesOf(doc);
   const headings = outline(doc);
+  const groups = cardGroupsOf(doc);
   let headingIndex = -1;
   doc.descendants((node, pos) => {
     while (headings[headingIndex + 1]?.pos <= pos) headingIndex++;
@@ -460,6 +515,14 @@ export function extractCards(doc: Node): ExtractedCard[] {
     const containing = !heading ? [] : heading.pos === pos
       ? heading.ancestors : [...heading.ancestors, heading];
     const section = containing.map(({ title }) => title);
+    const group = groups.find(g => pos >= g.from && pos < g.to);
+    if (group) {
+      if (pos === group.from && group.valid && typeof node.attrs.cardId === "string" && !seen.has(node.attrs.cardId)) {
+        seen.add(node.attrs.cardId);
+        cards.push({ id: node.attrs.cardId, blockId: node.attrs.cardId, kind: group.kind === "list" ? "list" : "basic", front: segmentsOf(trim(unitsOf(node).filter(u => u.at < group.marker.from - pos - 1))), back: group.kind === "list" ? group.steps.map(children => ({ type: "block" as const, children, revealStep: true as const })) : group.steps[0], section });
+      }
+      return false;
+    }
     if (isImageNode(node)) {
       const { imageId, fileId } = node.attrs;
       if (typeof imageId === "string" && typeof fileId === "string" && !seen.has(imageId)) {
@@ -530,7 +593,7 @@ export function planCardIds(
   });
 
   const plan: { pos: number; cardId: string | null }[] = [];
-  const withCards = touched.filter((block) => parseBlock(block.node).cards.length > 0);
+  const withCards = touched.filter((block) => parseBlock(block.node).cards.length > 0 || groupOpener(block.node) !== null);
   for (const block of withCards) {
     if (block.id && !kept.has(block.id)) {
       kept.add(block.id);
