@@ -13,6 +13,8 @@ test('foldable shortcut preserves selected blocks and markdown starts in the tit
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/tables.html`);
     await page.waitForFunction(() => window.editor);
+    const shortcut = await page.evaluate(() =>
+      /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta+Alt+Shift+f' : 'Control+Alt+Shift+f');
     await page.evaluate(() => {
       editor.commands.setContent('<p>Before</p><p><strong>First</strong> selected block</p><p>Second selected block</p><p>After</p>');
       const positions = [];
@@ -20,7 +22,7 @@ test('foldable shortcut preserves selected blocks and markdown starts in the tit
       editor.commands.setTextSelection({ from: positions[1] + 1, to: positions[2] + 5 });
       editor.view.focus();
     });
-    await page.keyboard.press('Control+Alt+Shift+f');
+    await page.keyboard.press(shortcut);
     assert.equal(await page.locator('.foldable-block').count(), 1);
     assert.deepEqual(await page.evaluate(() => editor.getJSON().content.map(node => node.type)), ['paragraph', 'details', 'paragraph']);
     assert.equal(await page.locator('.foldable-block strong').textContent(), 'First');
@@ -45,7 +47,7 @@ test('foldable shortcut preserves selected blocks and markdown starts in the tit
       editor.commands.setTextSelection(4);
       editor.view.focus();
     });
-    await page.keyboard.press('Control+Alt+Shift+f');
+    await page.keyboard.press(shortcut);
     assert.equal(await page.locator('.foldable-block [data-type="detailsContent"]').textContent(), 'Current block');
   } finally {
     await browser?.close();
