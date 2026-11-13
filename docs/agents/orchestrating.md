@@ -20,9 +20,9 @@ being asked each time:
    don't wait for it. A visual PR needs green CI only at merge time, so
    nothing waits on it before the user approves. A one-off iOS simulator
    failure in code the PR didn't touch: rerun the failed job once.
-5. Merge when green, if the user approved the feature. A PR with any issue in
-   Linear **In Review** (a visual change) waits until the user has looked at
-   it; behaviour-only PRs merge on green.
+5. Merge when green, if the user approved the feature. Every ready issue sits
+   in Linear **In Review**. A visual PR waits until the user has looked at
+   it; a behaviour-only PR merges on green once the sol loop approves.
 6. Offer release notes. Ask before tagging. A `v*` tag runs `release.yml`:
    desktop installers, TestFlight and the Linear release. memnoter.com follows
    the latest GitHub release by itself.
