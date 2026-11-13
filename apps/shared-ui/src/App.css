@@ -410,6 +410,9 @@ body {
 
 /* Quote block */
 .tiptap blockquote {
+    /* Keep wrapped images inside the quote and its bar. Text after the quote
+       must start below the image rather than flow beside it. */
+    display: flow-root;
     margin: 1.1rem 0;
     border-left: 3px solid var(--border);
     color: var(--muted-foreground);
