@@ -53,7 +53,8 @@ sync_to() {
   local before
   before=$(git -C "$preview_dir" rev-parse HEAD 2>/dev/null || echo none)
   git -C "$preview_dir" reset --quiet --hard "$ref"
-  if [ "$before" = none ] || ! git -C "$preview_dir" diff --quiet "$before" HEAD -- pnpm-lock.yaml; then
+  if [ "$before" = none ] || [ ! -d "$preview_dir/node_modules" ] ||
+    ! git -C "$preview_dir" diff --quiet "$before" HEAD -- pnpm-lock.yaml; then
     (cd "$preview_dir" && pnpm install --frozen-lockfile --silent)
   fi
 }
