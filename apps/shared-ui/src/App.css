@@ -477,8 +477,9 @@ body {
     scroll-margin-top: 2rem;
 }
 
+/* Section visibility must override block-specific display modes. */
 .tiptap .section-hidden {
-    display: none;
+    display: none !important;
 }
 
 /* Section focus marks only its heading and the block after the section. */
