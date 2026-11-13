@@ -12,8 +12,11 @@ function block(kind, empty = false) {
   if (kind.endsWith('List')) return { type: kind, content: lines.map(line => ({ type: 'listItem', content: [line] })) };
   return { type: 'blockquote', content: kind === 'callout' ? [p('Note'), ...lines] : lines };
 }
+// ProseMirror maps Mod to Cmd when navigator.platform looks like a Mac.
+const mac = /Mac|iP(hone|[oa]d)/.test(globalThis.navigator?.platform ?? '');
 function press(editor, key) {
-  const event = { key: 'Enter', keyCode: 13, shiftKey: key === 'Shift-Enter', ctrlKey: key === 'Mod-Enter', preventDefault() {} };
+  const mod = key === 'Mod-Enter';
+  const event = { key: 'Enter', keyCode: 13, shiftKey: key === 'Shift-Enter', ctrlKey: mod && !mac, metaKey: mod && mac, preventDefault() {} };
   return editor.state.plugins.some(plugin => plugin.props.handleKeyDown?.(editor.view, event));
 }
 for (const kind of kinds) {
