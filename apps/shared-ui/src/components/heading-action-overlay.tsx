@@ -1,3 +1,4 @@
+import { MentionedIn } from "./mentions";
 import { editorHost } from "@/lib/editor-host";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -17,9 +18,11 @@ const HEADING_ACTION_SIZE = 28;
 export const HeadingActionOverlay = ({
   children,
   editor,
+  moduleId,
 }: {
   children: ReactNode;
   editor: Editor | null;
+  moduleId: string;
 }) => {
   const shellRef = useRef<HTMLElement>(null);
   const hoveredHeadingRef = useRef<HTMLHeadingElement | null>(null);
@@ -201,6 +204,7 @@ export const HeadingActionOverlay = ({
       {children}
       {headingActionPosition && (
         <HeadingAction
+          backlinks={<MentionedIn target={{ kind: "heading", id: moduleId, nodeId: hoveredHeadingRef.current?.getAttribute("data-toc-id") ?? null, locator: null }} />}
           position={headingActionPosition}
           level={hoveredHeadingRef.current?.tagName ?? ""}
           onClick={onClick}
@@ -217,6 +221,7 @@ type HeadingActionPosition = {
 };
 
 type HeadingActionProps = {
+  backlinks: ReactNode;
   position: HeadingActionPosition;
   level: string;
   onClick: () => void;
@@ -224,6 +229,7 @@ type HeadingActionProps = {
 };
 
 function HeadingAction({
+  backlinks,
   position,
   level,
   onClick,
@@ -240,6 +246,7 @@ function HeadingAction({
         transform: `translateX(calc(${HEADING_ACTION_SIZE}px - 100%))`,
       }}
     >
+      {backlinks}
       <span className="text-xs text-muted-foreground">{level}</span>
       <ToolButton label={label}
           data-heading-action=""

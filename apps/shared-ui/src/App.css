@@ -2064,3 +2064,15 @@ body {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.mention-chip {
+  display: inline;
+  border-radius: 4px;
+  padding: 1px 3px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--foreground);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.mention-chip button { cursor: pointer; font: inherit; text-align: inherit; }
+.mention-chip:hover { background: color-mix(in srgb, var(--primary) 22%, transparent); }
