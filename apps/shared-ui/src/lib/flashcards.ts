@@ -53,7 +53,14 @@ export function cardSchedulesOf(state: EditorState): Schedules | undefined {
   return decorationsKey.getState(state)?.schedules;
 }
 
-type DecorationsState = { set: DecorationSet; schedules: Schedules; notes: ClozeNote[] };
+type DecorationsState = {
+  set: DecorationSet;
+  schedules: Schedules;
+  notes: ClozeNote[];
+  groups: ReturnType<typeof cardGroupsOf>;
+  hoveredGroup: string | null;
+};
+const groupHoverKey = new PluginKey<string | null>("groupCardHover");
 
 const decorationsKey = new PluginKey<DecorationsState>(
   "flashcardDecorations",
@@ -488,17 +495,46 @@ function buildDecorations(doc: Node, schedules: Schedules): DecorationsState {
     const span = document.createElement("span"); span.className = cls; span.textContent = text; span.contentEditable = "false"; return span;
   }, { side: 1, key: `${cls}:${text}` });
   for (const group of groups) {
-    groupDecorations.push(Decoration.inline(group.marker.from, group.marker.to, { class: "card-group-marker" }));
-    groupDecorations.push(hint(group.marker.to, group.valid ? group.kind === "list" ? `Reveal one by one · ${group.steps.length} items` : "Reveal together" : group.hint)); // lint-allow: middle-dot (approved PRI-334 labels)
+    groupDecorations.push(Decoration.inline(group.marker.from, group.marker.to, { class: "card-group-opener" }));
+    groupDecorations.push(Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-group-question" }));
+    if (!group.valid) groupDecorations.push(hint(group.marker.to, group.hint));
     if (!group.node.textContent.slice(0, group.marker.from - group.from - 1).trim()) groupDecorations.push(hint(group.from + 1, "Question", "card-group-placeholder"));
-    if (group.closer !== null) groupDecorations.push(Decoration.node(group.closer, group.to, { class: "card-group-marker" }));
+    if (group.closer !== null) groupDecorations.push(Decoration.node(group.closer, group.to, { class: "card-group-closer" }));
     if (!group.valid) continue;
     for (const { node, pos } of group.answers) groupDecorations.push(Decoration.node(pos, pos + node.nodeSize, { class: "card-group-answer" }));
-    if (group.kind === "list") group.answers[0].node.forEach((_item, offset, index) => groupDecorations.push(hint(group.answers[0].pos + offset + 3, `${index + 1}/${group.steps.length}`, "card-group-step")));
+    // Inline spans follow wrapped lines and math, using the same treatment as
+    // cloze answers only while this group's regular scheduling dot is hovered.
+    for (const { node, pos } of group.answers) {
+      const decorate = (block: Node, at: number) => {
+        if (!block.isTextblock) return true;
+        if (block.type.name === "mathBlock") {
+          groupDecorations.push(Decoration.node(at, at + block.nodeSize, { class: "card-group-answer-formula" }));
+        } else if (block.content.size) {
+          groupDecorations.push(Decoration.inline(at + 1, at + block.nodeSize - 1, { class: "card-group-answer-text" }));
+          block.forEach((child, offset) => {
+            if (child.type.name === "inlineMath") groupDecorations.push(Decoration.node(at + 1 + offset, at + 1 + offset + child.nodeSize, { class: "card-group-answer-math" }));
+          });
+        }
+        return false;
+      };
+      if (node.isTextblock) decorate(node, pos);
+      else node.descendants((child, offset) => decorate(child, pos + 1 + offset));
+    }
     if (group.node.attrs.cardId) {
       const schedule = schedules.byId.get(group.node.attrs.cardId);
       groupDecorations.push(Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-block" }));
-      groupDecorations.push(Decoration.widget(group.from + 1, () => cardInfo([{answer: group.kind === "list" ? `List · ${group.steps.length} steps · graded once` : "Block · graded once", schedule}], !!schedule && schedule.dueAt <= schedules.now, schedules.now, null), { side: -1, key: `group-dot:${group.node.attrs.cardId}:${JSON.stringify(schedule)}` })); // lint-allow: middle-dot (approved PRI-334 labels)
+      groupDecorations.push(Decoration.widget(group.from + 1, (view, getPos) => {
+        const info = cardInfo([{ answer: null, schedule }], !!schedule && schedule.dueAt <= schedules.now, schedules.now, null);
+        const hover = (entered: boolean) => {
+          const at = getPos();
+          if (at === undefined || view.isDestroyed) return;
+          const id = view.state.doc.resolve(at).parent.attrs.cardId;
+          view.dispatch(view.state.tr.setMeta(groupHoverKey, entered ? id : null).setMeta("addToHistory", false));
+        };
+        info.addEventListener("mouseenter", () => hover(true));
+        info.addEventListener("mouseleave", () => hover(false));
+        return info;
+      }, { side: -1, ignoreSelection: true, stopEvent: () => true, key: `group-dot:${group.node.attrs.cardId}:${JSON.stringify(schedule)}` }));
     }
   }
   const set = DecorationSet.create(doc, [
@@ -507,7 +543,7 @@ function buildDecorations(doc: Node, schedules: Schedules): DecorationsState {
       groups.some(g => pos >= g.from && pos < g.to) ? [] : blockDecorations(node, pos, schedules, places.get(pos))),
     ...foldableDecorations(doc, notes, blocks, schedules),
   ]);
-  return { set, schedules, notes };
+  return { set, schedules, notes, groups, hoveredGroup: null };
 }
 
 // The note-wide dot and line follow edits anywhere in a note, so those redraw
@@ -538,8 +574,8 @@ function touchesNotes(tr: Transaction, before: ClozeNote[], after: ClozeNote[], 
 function activeBlock(state: EditorState, set: DecorationSet) {
   const { $head } = state.selection;
   if (!$head.parent.isTextblock || $head.depth === 0) return null;
-  const group = cardGroupsOf(state.doc).find(g => g.valid && $head.pos >= g.from && $head.pos < g.to);
-  if (group) return Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-block-active" });
+  const group = cardGroupsOf(state.doc).find(g => $head.pos >= g.from && $head.pos < g.to);
+  if (group) return Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-block-active card-group-active" });
   const from = $head.before();
   const to = from + $head.parent.nodeSize;
   const hasSyntax = set.find(from, to, (spec) => spec.syntax === true).length > 0;
@@ -879,6 +915,8 @@ export const Flashcards = Extension.create({
           apply(tr, value): DecorationsState {
             const update = tr.getMeta(decorationsKey) as Schedules | undefined;
             if (update) return buildDecorations(tr.doc, update);
+            const hoveredGroup = tr.getMeta(groupHoverKey) as string | null | undefined;
+            if (hoveredGroup !== undefined) return { ...value, hoveredGroup };
             if (!tr.docChanged) return value;
             const { schedules } = value;
             // Attribute-only edits (joining clozes, assigning ids, undo) have
@@ -904,7 +942,7 @@ export const Flashcards = Extension.create({
                 next = next.remove(stale).add(tr.doc, blockDecorations(node, pos, schedules));
               }
             }
-            return { set: next, schedules, notes };
+            return { ...value, set: next, schedules, notes };
           },
         },
         props: {
@@ -940,10 +978,21 @@ export const Flashcards = Extension.create({
             return true;
           },
           decorations(state) {
-            const set = decorationsKey.getState(state)?.set;
-            if (!set) return null;
+            const value = decorationsKey.getState(state);
+            if (!value) return null;
+            const { set, groups, hoveredGroup } = value;
+            const dynamic: Decoration[] = [];
             const active = activeBlock(state, set);
-            return active ? set.add(state.doc, [active]) : set;
+            if (active) dynamic.push(active);
+            for (const group of groups) {
+              if (state.selection.head >= group.from && state.selection.head < group.to && group.closer !== null) {
+                dynamic.push(Decoration.node(group.closer, group.to, { class: "card-group-active" }));
+              }
+              if (group.node.attrs.cardId === hoveredGroup) {
+                for (const { node, pos } of group.answers) dynamic.push(Decoration.node(pos, pos + node.nodeSize, { class: "card-group-answer-hover" }));
+              }
+            }
+            return dynamic.length ? set.add(state.doc, dynamic) : set;
           },
         },
       }),

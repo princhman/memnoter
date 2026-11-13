@@ -2065,8 +2065,18 @@ body {
   overflow-wrap: anywhere;
 }
 
-.card-group-marker { color: var(--muted-foreground); }
+/* Reserve the opener's exact text width, like ordinary card separators. */
+.card-group-opener { color: transparent; }
+.card-group-active .card-group-opener { color: var(--muted-foreground); }
+/* The real closer remains in the document and returns while editing. */
+.tiptap .card-group-closer { display: none; color: var(--muted-foreground); }
+.tiptap .card-group-closer.card-group-active { display: block; }
 .card-group-hint { margin-left: 1em; color: var(--muted-foreground); font-size: 0.7em; user-select: none; }
 .card-group-placeholder { user-select: none; color: var(--muted-foreground); pointer-events: none; }
-.card-group-answer { background: color-mix(in srgb, var(--primary) 5%, transparent); }
-.card-group-step { float: right; color: var(--muted-foreground); font-size: 0.75em; user-select: none; }
+/* Match cloze answer lines, including rendered formulas, only on dot hover. */
+.card-group-answer-hover .card-group-answer-text,
+.card-group-answer-hover .card-group-answer-math .inline-math-widget,
+:is(.card-group-answer-hover.card-group-answer-formula, .card-group-answer-hover .card-group-answer-formula) .math-block-widget .katex-display {
+    background-color: var(--cloze-bg);
+    box-shadow: inset 0 -2px 0 0 var(--cloze);
+}
