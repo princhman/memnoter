@@ -236,6 +236,7 @@ enum BridgeProtocol {
     static let highlightColors = ["yellow", "green", "blue", "pink", "purple"]
     static let homeShortcuts: [(keys: String, action: String)] = [
         ("/", "Insert a block"),
+        ("⌘⌥⇧F", "Foldable block"),
         ("⌘N", "New module"),
         ("⌘F", "Find in note"),
         ("⌘K", "Search modules and commands"),

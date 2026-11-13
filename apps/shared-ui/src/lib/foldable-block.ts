@@ -1,3 +1,5 @@
+import { InputRule } from "@tiptap/core";
+import { action } from "./shortcuts.ts";
 import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-details";
 import { Plugin, PluginKey, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
@@ -102,10 +104,20 @@ const FoldableDetails = Details.extend({
             .run(),
     };
   },
+  addInputRules() {
+    return [new InputRule({
+      find: /^>>>\s$/,
+      handler: ({ chain, range }) => {
+        chain().deleteRange(range).insertFoldableBlock().run();
+      },
+    })];
+  },
   addKeyboardShortcuts() {
     const parent = this.parent?.() ?? {};
     return {
       ...parent,
+      [action("block.foldable").keys]: () =>
+        this.editor.chain().setDetails().updateAttributes(this.name, { open: true }).run(),
       // Upstream inserts a new first line, which would leave the block's empty
       // line last and stop Enter there from leaving the block. Use that line.
       Enter: (props) => {
