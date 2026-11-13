@@ -466,7 +466,7 @@ export function SavedImageView(props: NodeViewProps) {
         <ImageControlsLayer anchor={host}>
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" className="note-image-menu-button" aria-label="Image actions" />}><Ellipsis /></DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60" finalFocus={false}>
+            <DropdownMenuContent align="end" className="w-60" finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}>
               <DropdownMenuItem disabled={!src || failed} onClick={() => setPreviewOpen(true)}><Maximize2 />Open image full screen</DropdownMenuItem>
               <DropdownMenuSeparator />
               <Menu.SubmenuRoot>

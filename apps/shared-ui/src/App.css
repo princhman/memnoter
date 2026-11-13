@@ -1719,6 +1719,8 @@ body {
 
 .dark .note-highlight {
     background-color: var(--note-highlight, var(--highlight-yellow));
+    /* Opaque highlights need full-contrast text, even inside muted quotes. */
+    color: var(--foreground);
 }
 .dark .note-highlight a,
 .dark a .note-highlight {
