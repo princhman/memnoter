@@ -1759,6 +1759,10 @@ body {
 .dark .note-highlight {
     background-color: var(--note-highlight, var(--highlight-yellow));
 }
+.dark .note-highlight a,
+.dark a .note-highlight {
+    color: var(--foreground);
+}
 
 /* Tables stay within the note column, with a touch-scrollable viewport. */
 .tiptap .tableWrapper {
