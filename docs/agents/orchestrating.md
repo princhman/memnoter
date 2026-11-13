@@ -15,7 +15,12 @@ being asked each time:
    interface, so a review fix can't change what they approved unseen.
    Changes with no UI/UX effect get their sol loop straight away. You start
    the loop; don't ask delegates on visual work to run one first.
-3. `pnpm check:ci`, then open a PR into `main`.
+3. Batch: merge the round's ready branches into one
+   `batch/<yyyy-mm-dd>-<topic>` branch, `pnpm check:ci` once, and open one PR
+   listing `Fixes PRI-<n>` for each issue. Every PR and every merge to main runs
+   CI (main runs everything, iOS included), so no PR for a single small fix.
+   Keep visual and behaviour-only work in separate batches only if one would
+   hold the other up; one preview branch then covers all the visual changes.
 4. Watch CI (`watch_pull_request`) and fix red checks yourself; delegates
    don't wait for it. A visual PR needs green CI only at merge time, so
    nothing waits on it before the user approves. A one-off iOS simulator
