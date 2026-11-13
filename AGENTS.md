@@ -73,6 +73,17 @@ Other agents often have uncommitted work in the same checkout.
   (`novvladkyiv/…`, `codex/…`, `t3-…`): rename it with `git branch -m` before
   your first push. Renaming a branch on GitHub closes its open PR.
 
+## Demo recordings
+
+- Record the app itself, the way the user sees it: the desktop app on the Mac
+  (`pnpm dev:copy`), the app in the simulator, or on minipc the app's own entry
+  page served by Vite with `installTestBridge`. Never record a test fixture, a
+  bare editor page, or a wrapper page built for the demo.
+- Pace it for a person watching once: type at a readable speed (no instant
+  fills), pause about a second after each step so its result is visible, and
+  cut idle time. Keep each scenario under about 30 seconds. Use a normal window
+  size and zoom, so text is readable.
+
 ## Data safety
 
 - `pnpm dev` and release builds open the user's real database. A migration run
