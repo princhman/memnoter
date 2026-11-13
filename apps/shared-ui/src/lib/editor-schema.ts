@@ -1,3 +1,4 @@
+import { BlockEnter } from "./block-enter";
 import { MarkdownPaste } from "./markdown-paste-plugin";
 import { getSchema, type Editor, type AnyExtension } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
@@ -61,6 +62,7 @@ export function noteExtensions({
     ...NoteTables,
     MarkdownPaste,
     TabSpacing,
+    BlockEnter,
     ImageMoveHistory,
     LinkEditor,
     Arrows,
