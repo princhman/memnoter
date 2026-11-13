@@ -167,3 +167,32 @@ test("PRI-346: Enter dismisses completion and keeps editing the unchanged formul
   await page.keyboard.press("Enter");
   assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.type.name), "paragraph");
 });
+
+test("PRI-365: escaped dollars stay literal through later typing, reload and native copy", async () => {
+  await page.evaluate(() => { editor.commands.clearContent(); editor.commands.focus(); });
+  await page.keyboard.type("\\$rt \\$ra ");
+  assert.equal(await page.locator(".tiptap").innerText(), "$rt $ra ");
+  await page.keyboard.type("$x$");
+  const saved = await page.evaluate(() => editor.getJSON());
+  assert.equal(saved.content[0].content.filter(node => node.type === "inlineMath").length, 1);
+  assert.equal(saved.content[0].content.at(-1).content[0].text, "x");
+  await page.evaluate(saved => {
+    editor.commands.setContent(saved);
+    editor.commands.setTextSelection({ from: 1, to: 9 });
+    editor.view.focus();
+  }, saved);
+  await page.keyboard.press("ControlOrMeta+c");
+  await page.evaluate(() => {
+    const input = document.createElement("textarea"); input.id = "literal-copy";
+    document.body.append(input); input.focus();
+  });
+  await page.keyboard.press("ControlOrMeta+v");
+  assert.equal(await page.locator("#literal-copy").inputValue(), "$rt $ra ");
+  await page.locator("#literal-copy").evaluate(el => el.remove());
+});
+
+test("PRI-365: legacy escapes become literal dollars except in code", async () => {
+  await page.evaluate(() => editor.commands.setContent('<p>\\$rt \\$ra </p><pre><code>\\$code</code></pre>'));
+  assert.equal(await page.locator(".tiptap p").first().innerText(), "$rt $ra");
+  assert.equal(await page.locator(".tiptap pre").innerText(), "\\$code");
+});

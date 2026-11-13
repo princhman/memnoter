@@ -1,3 +1,4 @@
+import { LiteralDollar } from "./literal-dollar";
 import { MarkdownPaste } from "./markdown-paste-plugin";
 import { getSchema, type Editor, type AnyExtension } from "@tiptap/core";
 import { TabSpacing } from "@/lib/tab-spacing";
@@ -60,6 +61,7 @@ export function noteExtensions({
     NoteHighlight,
     ...NoteTables,
     MarkdownPaste,
+    LiteralDollar,
     TabSpacing,
     ImageMoveHistory,
     LinkEditor,
