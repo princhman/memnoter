@@ -499,7 +499,10 @@ function buildDecorations(doc: Node, schedules: Schedules): DecorationsState {
     groupDecorations.push(Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-group-question" }));
     if (!group.valid) groupDecorations.push(hint(group.marker.to, group.hint));
     if (!group.node.textContent.slice(0, group.marker.from - group.from - 1).trim()) groupDecorations.push(hint(group.from + 1, "Question", "card-group-placeholder"));
-    if (group.closer !== null) groupDecorations.push(Decoration.node(group.closer, group.to, { class: "card-group-closer" }));
+    if (group.closer !== null) {
+      groupDecorations.push(Decoration.node(group.closer, group.to, { class: "card-group-closer" }));
+      groupDecorations.push(Decoration.inline(group.closer + 1, group.to - 1, { class: "card-group-end-marker" }));
+    }
     if (!group.valid) continue;
     for (const { node, pos } of group.answers) groupDecorations.push(Decoration.node(pos, pos + node.nodeSize, { class: "card-group-answer" }));
     // Inline spans follow wrapped lines and math, using the same treatment as
@@ -524,15 +527,23 @@ function buildDecorations(doc: Node, schedules: Schedules): DecorationsState {
       const schedule = schedules.byId.get(group.node.attrs.cardId);
       groupDecorations.push(Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-block" }));
       groupDecorations.push(Decoration.widget(group.from + 1, (view, getPos) => {
-        const info = cardInfo([{ answer: null, schedule }], !!schedule && schedule.dueAt <= schedules.now, schedules.now, null);
-        const hover = (entered: boolean) => {
+        const description = group.kind === "list" ? "List card · Reveals one by one" : "Block card · Reveals together"; // lint-allow: middle-dot (user-requested card identity)
+        const info = cardInfo([{ answer: description, schedule }], !!schedule && schedule.dueAt <= schedules.now, schedules.now, null);
+        info.setAttribute("aria-label", `${description}. Card details`);
+        // Pointer interaction must not move the editor's caret into the group.
+        // Keyboard focus still exposes the same details and answer underline.
+        info.addEventListener("mousedown", event => event.preventDefault());
+        const hover = () => {
           const at = getPos();
           if (at === undefined || view.isDestroyed) return;
           const id = view.state.doc.resolve(at).parent.attrs.cardId;
-          view.dispatch(view.state.tr.setMeta(groupHoverKey, entered ? id : null).setMeta("addToHistory", false));
+          const shown = info.matches(":hover") || info.contains(document.activeElement);
+          view.dispatch(view.state.tr.setMeta(groupHoverKey, shown ? id : null).setMeta("addToHistory", false));
         };
-        info.addEventListener("mouseenter", () => hover(true));
-        info.addEventListener("mouseleave", () => hover(false));
+        info.addEventListener("mouseenter", hover);
+        info.addEventListener("mouseleave", hover);
+        info.addEventListener("focusin", hover);
+        info.addEventListener("focusout", () => queueMicrotask(hover));
         return info;
       }, { side: -1, ignoreSelection: true, stopEvent: () => true, key: `group-dot:${group.node.attrs.cardId}:${JSON.stringify(schedule)}` }));
     }
