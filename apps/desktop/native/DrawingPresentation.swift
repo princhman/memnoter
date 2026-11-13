@@ -5,7 +5,7 @@ import SwiftUI
 // its delegate, and the app lifecycle continue to belong to Tauri.
 @MainActor private final class DrawingPresentation {
     static var current: DrawingPresentation?
-    let model: DrawingModel
+    let model: DrawingSession
     let host: DrawingHostingView
     weak var window: NSWindow?
     weak var previousResponder: NSResponder?
@@ -16,7 +16,7 @@ import SwiftUI
         self.window = window
         self.completion = completion
         previousResponder = window.firstResponder
-        model = DrawingModel(request)
+        model = DrawingSession(request)
         host = DrawingHostingView(model: model)
         model.onFinish = { [weak self] in self?.finish() }
     }
@@ -48,9 +48,9 @@ import SwiftUI
 }
 
 @MainActor private final class DrawingHostingView: NSHostingView<DrawingScreen> {
-    let model: DrawingModel
+    let model: DrawingSession
     override var acceptsFirstResponder: Bool { true }
-    init(model: DrawingModel) {
+    init(model: DrawingSession) {
         self.model = model
         super.init(rootView: DrawingScreen(model: model))
     }

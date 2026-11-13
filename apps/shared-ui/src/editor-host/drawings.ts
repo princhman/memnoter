@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
-import { drawingReference } from "../lib/drawing";
+import { drawingReference, type DrawingOwner } from "../lib/drawing";
 
 function target(editor: Editor, imageId: string) {
   const matches: { node: Node; pos: number }[] = [];
@@ -42,4 +42,23 @@ export function discardEmptyDrawing(editor: Editor, imageId: unknown) {
   if (drawingReference(node.attrs.drawing)?.sourceId !== null) return false;
   editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize));
   return true;
+}
+
+// Note-specific reference publication. Other hosts can publish the same session
+// result against answer/canvas ownership without depending on ProseMirror.
+export function noteDrawingPersistence(editor: Editor, owner: DrawingOwner) {
+  if (owner.answerId !== undefined) throw new Error("An answer canvas is not a note drawing");
+  return {
+    publish(revision: { sourceId: string; previewId: string; expectedSourceId: string | null; asCopy: boolean }) {
+      let exists = false;
+      editor.state.doc.descendants(node => {
+        if (node.attrs.imageId === owner.canvasId && drawingReference(node.attrs.drawing)) exists = true;
+      });
+      const makingCopy = revision.asCopy || !exists;
+      const imageId = makingCopy ? crypto.randomUUID() : owner.canvasId;
+      if (makingCopy) beginDrawing(editor, imageId);
+      commitDrawing(editor, { ...revision, imageId, expectedSourceId: makingCopy ? null : revision.expectedSourceId });
+      return imageId;
+    },
+  };
 }

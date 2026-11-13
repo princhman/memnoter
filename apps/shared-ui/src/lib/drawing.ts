@@ -9,3 +9,10 @@ export function drawingReference(value: unknown): DrawingReference | null {
   if (ref.version !== 1 || !id(ref.sourceId) || !id(ref.previewId) || (ref.sourceId === null) !== (ref.previewId === null)) return null;
   return { version: 1, sourceId: ref.sourceId as string | null, previewId: ref.previewId as string | null };
 }
+
+// Runtime ownership is independent of the saved version-1 image attribute.
+export type DrawingOwner = { moduleId: string; answerId?: string; canvasId: string };
+
+export function noteDrawingOwner(moduleId: string, imageId: string): DrawingOwner {
+  return { moduleId, canvasId: imageId };
+}

@@ -17,6 +17,6 @@ cat > "$check_bundle/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 xcrun swiftc -parse-as-library -swift-version 6 -target "$(uname -m)-apple-macos14.0" \
-  apps/apple-shared/DrawingDocument.swift apps/desktop/native/DrawingEditor.swift apps/desktop/native/DrawingPresentation.swift \
+  apps/apple-shared/DrawingDocument.swift apps/desktop/native/DrawingSession.swift apps/desktop/native/DrawingCanvas.swift apps/desktop/native/EmbeddedDrawingHost.swift apps/desktop/native/DrawingEditor.swift apps/desktop/native/DrawingPresentation.swift \
   scripts/check-mac-drawing.swift -o "$check_bundle/MacOS/check"
 "$check_bundle/MacOS/check" "${1:-$check_root/source.json}"
