@@ -21,6 +21,10 @@ being asked each time:
    CI (main runs everything, iOS included), so no PR for a single small fix.
    Keep visual and behaviour-only work in separate batches only if one would
    hold the other up; one preview branch then covers all the visual changes.
+   Risk score for Linear Reviews: add to the sol brief "Also reply
+   `RISK: <1-4> <one-line reason>` for the whole diff". Post it on the PR as
+   `<!-- linear:extension {"version":1,"plugins":[{"plugin":"riskScore","sha":"<full head SHA>","level":<n>,"explanations":["<reason>"]}]} -->`,
+   and again after any new push. Don't read the diff yourself for this.
 4. Watch CI (`watch_pull_request`) and fix red checks yourself; delegates
    don't wait for it. A visual PR needs green CI only at merge time, so
    nothing waits on it before the user approves. A one-off iOS simulator
