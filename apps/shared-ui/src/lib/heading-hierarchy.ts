@@ -1,3 +1,7 @@
+import { outline } from "./outline";
+import { Mapping } from "@tiptap/pm/transform";
+import { isHistoryTransaction } from "@tiptap/pm/history";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -127,16 +131,42 @@ export const HeadingHieararchy = Extension.create({
             },
           };
         },
-        appendTransaction(transactions, __oldState, newState) {
+        appendTransaction(transactions, oldState, newState) {
           if (!transactions.some((transaction) => transaction.docChanged)) {
             return null;
           }
 
           const transaction = newState.tr;
           const correctedPositions: number[] = [];
+          // Undo and remote Yjs updates already contain the section adjustment.
+          const adjustRemoval = !transactions.some(tr =>
+            isHistoryTransaction(tr) || tr.getMeta(ySyncPluginKey) ||
+            tr.getMeta("heading-outline-adjustment") || tr.getMeta(correctionMeta));
+          if (adjustRemoval) {
+            const mapping = new Mapping();
+            for (const tr of transactions) mapping.appendMapping(tr.mapping);
+            const before = outline(oldState.doc);
+            const removed = before.filter(heading => {
+              const mapped = mapping.mapResult(heading.pos + 1);
+              return mapped.deletedAcross || newState.doc.resolve(mapped.pos).parent.type.name !== "heading";
+            });
+            for (const heading of before) {
+              const amount = removed.filter(parent => parent.pos < heading.pos && heading.pos < parent.end).length;
+              if (!amount) continue;
+              const mapped = mapping.mapResult(heading.pos + 1);
+              if (mapped.deletedAcross) continue;
+              const $pos = transaction.doc.resolve(mapped.pos);
+              if ($pos.depth !== 1 || $pos.parent.type.name !== "heading") continue;
+              const pos = $pos.before();
+              transaction.setNodeMarkup(pos, undefined, {
+                ...$pos.parent.attrs, level: Math.max(1, Number($pos.parent.attrs.level) - amount),
+              });
+              correctedPositions.push(pos);
+            }
+          }
           let previousLevel: number | null = null;
 
-          newState.doc.forEach((node, position) => {
+          transaction.doc.forEach((node, position) => {
             if (node.type.name !== "heading") {
               return;
             }

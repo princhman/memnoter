@@ -2,6 +2,7 @@ import { editorExtensions } from "./support/editor.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Editor } from '@tiptap/core';
+import { closeHistory } from '@tiptap/pm/history';
 import { execEditor, editorState } from '../src/editor-host/commands.ts';
 
 function createEditor() {
@@ -220,4 +221,43 @@ test('Backspace at a heading start removes its format in place before joining ro
       assert.equal(editor.state.doc.firstChild.textContent, 'ot');
     } finally { editor.destroy(); }
   });
+});
+
+test('PRI-342: outline edits clamp at h6, split prose, promote deleted lines and undo atomically', () => {
+  const p = text => ({ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] });
+  const h = (level, text) => ({ ...p(text), type: 'heading', attrs: { level } });
+  const editor = createEditor();
+  const levels = () => editor.getJSON().content.filter(n => n.type === 'heading').map(n => n.attrs.level);
+  try {
+    editor.commands.setContent({ type: 'doc', content: [p(''), ...[1, 2, 3, 4, 5, 6].map(n => h(n, `h${n}`)), h(1, 'Later')] });
+    editor.commands.setTextSelection(1);
+    editor.view.dispatch(closeHistory(editor.state.tr));
+    const before = editor.state.doc;
+    assert.equal(editor.commands.insertHeadingAbove(), true);
+    assert.deepEqual(levels(), [1, 2, 3, 4, 5, 6, 6, 1]);
+    assert.equal(editor.commands.undo(), true);
+    assert.ok(editor.state.doc.eq(before));
+    assert.equal(editor.commands.redo(), true);
+    assert.deepEqual(levels(), [1, 2, 3, 4, 5, 6, 6, 1]);
+
+    editor.commands.setContent({ type: 'doc', content: [p('beforeafter'), h(1, 'Child'), h(2, 'Nested'), h(1, 'Later')] });
+    editor.commands.setTextSelection(7);
+    editor.commands.insertHeadingAbove();
+    assert.deepEqual(editor.getJSON().content.slice(0, 3).map(n => [n.type, n.content?.[0]?.text ?? '']),
+      [['paragraph', 'before'], ['heading', ''], ['paragraph', 'after']]);
+    assert.deepEqual(levels(), [1, 2, 3, 1]);
+
+    for (const operation of ['line', 'empty', 'paragraph']) {
+      editor.commands.setContent({ type: 'doc', content: [h(1, operation === 'empty' ? '' : 'Root'), h(2, 'A'), h(3, 'B'), h(2, 'C'), h(3, 'D'), h(1, 'Later')] });
+      editor.commands.setTextSelection(1);
+      editor.view.dispatch(closeHistory(editor.state.tr));
+      const original = editor.state.doc;
+      if (operation === 'line') editor.commands.deleteRange({ from: 0, to: editor.state.doc.firstChild.nodeSize });
+      else if (operation === 'empty') pressBackspace(editor);
+      else editor.chain().deleteRange({ from: 1, to: 5 }).setParagraph().run();
+      assert.deepEqual(levels(), [1, 2, 1, 2, 1], operation);
+      assert.equal(editor.commands.undo(), true);
+      assert.ok(editor.state.doc.eq(original), operation);
+    }
+  } finally { editor.destroy(); }
 });
