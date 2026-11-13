@@ -38,7 +38,7 @@ test("dragging block and inline images moves them with assets, descriptions and 
 
       // A press without moving selects the image and shows its toolbar.
       await img.click();
-      await page.locator(".note-image-toolbar").waitFor();
+      await page.getByRole("button", { name: "Image actions", exact: true }).waitFor();
       assert.equal(await page.evaluate(() => editor.state.selection.node?.type.name), type);
       assert.deepEqual(await page.evaluate(() => editor.getJSON()), before);
 
