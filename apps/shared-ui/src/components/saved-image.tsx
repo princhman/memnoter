@@ -2,7 +2,7 @@ import { TAP_DURATION_MS, TAP_MOVEMENT_PX, DOUBLE_TAP_MS, DOUBLE_TAP_DISTANCE_PX
 import { useEditorHost } from "@/lib/editor-host-context";
 import { parsePdfSource } from "@/lib/pdf-quote";
 import { PdfSourceCaption } from "./pdf-source-caption";
-import { ToolButton } from "./ui/tool-button";
+import { Menu } from "@base-ui/react/menu";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { SavedImage as ImageSchema, InlineImage as InlineImageSchema } from "@/lib/editor-schema/images";
 import { occlusionCardId } from "@/lib/card-id";
@@ -13,15 +13,15 @@ import { maskCards, validMasks } from "@/lib/occlusion";
 import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
 import { CropDialog, type Crop as ImageCrop } from "./image-crop-dialog";
 import { copyImageAttrs } from "@/lib/editor-schema/images";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { call as invoke, fileUrl as convertFileSrc, postNativeEvent } from "../lib/backend.ts";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronDown, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Ellipsis, Scan, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
 import type { FileType } from "@/lib/content";
 import { startImagePointerMove } from "@/lib/image-pointer-move";
 import { adaptedUrl, cachedAdaptedUrl, scheduleTrim } from "@/lib/image-adapt";
@@ -464,40 +464,45 @@ export function SavedImageView(props: NodeViewProps) {
       {node.attrs.pdfSource && <PdfSourceCaption value={node.attrs.pdfSource} />}
       {selected && editor.isEditable && (
         <ImageControlsLayer anchor={host}>
-          <div className="note-image-toolbar">
-            <div className="note-image-toolbar-scroll">
-              <DropdownMenu>
-                <DropdownMenuTrigger render={<Button size="sm" variant="ghost" disabled={!src || failed} />}>
-                  Size<ChevronDown data-icon="inline-end" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-auto">
-                  {IMAGE_SIZES.map(([fraction, label]) => (
-                    <DropdownMenuItem key={label} onClick={() => resizeTo(fraction)}>{label}</DropdownMenuItem>
-                  ))}
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" className="note-image-menu-button" aria-label="Image actions" />}><Ellipsis /></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-60" finalFocus={false}>
+              <DropdownMenuItem disabled={!src || failed} onClick={() => setPreviewOpen(true)}><Maximize2 />Open image full screen</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <Menu.SubmenuRoot>
+                <Menu.SubmenuTrigger render={<DropdownMenuItem />} disabled={!src || failed}><Maximize2 />Size<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
+                <DropdownMenuContent className="w-48">
+                  {IMAGE_SIZES.map(([fraction, label]) => <DropdownMenuItem key={label} onClick={() => resizeTo(fraction)}>{label}</DropdownMenuItem>)}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => updateAttributes({ width: null, height: null })}>Original size</DropdownMenuItem>
                 </DropdownMenuContent>
-              </DropdownMenu>
-              <span className="note-image-divider" />
-              {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => (
-                <ToolbarButton key={value} label={label} hint={hint} pressed={layout === value} disabled={inTableCell && value === "wrap"} onClick={() => setLayout(value)}><Icon /></ToolbarButton>
-              ))}
-              {!isInline && <span className="note-image-divider" />}
-              {!isInline && IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => (
-                <ToolbarButton key={alignment} label={layout === "wrap" ? `Image on the ${alignment}, text beside it` : label} pressed={node.attrs.alignment === alignment} onClick={() => updateAttributes({ alignment })}><Icon /></ToolbarButton>
-              ))}
-              <span className="note-image-divider" />
-              <ToolbarButton label="Open image full screen" disabled={!src || failed} onClick={() => { setPreviewOpen(true); }}><Maximize2 /></ToolbarButton>
-              <ToolbarButton label="Adapt to theme" hint="Swaps the image's background for the page's and recolors it for dark or light mode" pressed={adaptive} disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast /></ToolbarButton>
-              <Button size="sm" variant="ghost" disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}>Occlusion ({validMasks(node.attrs.masks).length})</Button>
-              <ToolbarButton label="Crop" disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop /></ToolbarButton>
-              <ToolbarButton label="Alt text and title" pressed={describing} onClick={() => setDescribing((open) => !open)}><Captions /></ToolbarButton>
-            </div>
-            <div className="note-image-toolbar-actions">
-              {drawing && (canEditDrawing ? <ToolbarButton label="Edit drawing" onClick={openDrawing}><Pencil /></ToolbarButton> : <span className="text-xs text-muted-foreground">Edit on iPad</span>)}
-              <ToolbarButton label="Remove image" onClick={deleteNode}><Trash2 /></ToolbarButton>
-            </div>
-          </div>
+              </Menu.SubmenuRoot>
+              <Menu.SubmenuRoot>
+                <Menu.SubmenuTrigger render={<DropdownMenuItem />}><WrapText />Text wrapping<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
+                <DropdownMenuContent className="w-48">
+                  <DropdownMenuRadioGroup value={layout}>
+                    {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => <DropdownMenuRadioItem closeOnClick key={value} value={value} title={hint} disabled={inTableCell && value === "wrap"} onClick={() => setLayout(value)}><Icon />{label}</DropdownMenuRadioItem>)}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </Menu.SubmenuRoot>
+              {!isInline && <Menu.SubmenuRoot>
+                <Menu.SubmenuTrigger render={<DropdownMenuItem />}><AlignLeft />Alignment<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
+                <DropdownMenuContent className="w-60">
+                  <DropdownMenuRadioGroup value={node.attrs.alignment}>
+                    {IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => <DropdownMenuRadioItem closeOnClick key={alignment} value={alignment} onClick={() => updateAttributes({ alignment })}><Icon />{layout === "wrap" ? `Image on the ${alignment}, text beside it` : label}</DropdownMenuRadioItem>)}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </Menu.SubmenuRoot>}
+              <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}><Scan />Occlusion ({validMasks(node.attrs.masks).length})</DropdownMenuItem>
+              <DropdownMenuItem disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop />Crop</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setDescribing(open => !open)}><Captions />Alt text and title</DropdownMenuItem>
+              {drawing && <DropdownMenuItem disabled={!canEditDrawing} onClick={openDrawing}><Pencil />{canEditDrawing ? "Edit drawing" : "Edit on iPad"}</DropdownMenuItem>}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={deleteNode}><Trash2 />Remove image</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {describing && (
             <div className="note-image-description">
               <label>Alt text<input key={`alt-${node.attrs.alt}`} defaultValue={node.attrs.alt ?? ""} placeholder="Describe the image" onBlur={(event) => { if (event.target.value !== (node.attrs.alt ?? "")) updateAttributes({ alt: event.target.value }); }} /></label>
@@ -590,17 +595,6 @@ const IMAGE_SIZES = [
   [0.75, "Large (75%)"],
   [1, "Full width"],
 ] as const;
-
-function ToolbarButton({ label, hint, pressed, disabled, onClick, children }: {
-  label: string;
-  hint?: string;
-  pressed?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (<ToolButton label={label} hint={hint} pressed={pressed} disabled={disabled} onClick={onClick}>{children}</ToolButton>);
-}
 
 // Images move with pointer events (see image-pointer-move.ts), never native
 // drag and drop: ProseMirror would make the node draggable on mousedown, and

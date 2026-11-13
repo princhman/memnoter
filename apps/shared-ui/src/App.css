@@ -716,71 +716,28 @@ body {
     margin: 0 0.15em;
     vertical-align: text-bottom;
 }
-/* A compact toolbar below the selected image, so it never hides the image. */
+/* One floating action button inside the selected image's top-right corner. */
 .note-image-controls {
     position: absolute;
     z-index: var(--z-image);
-    top: calc(100% + 0.5rem);
-    left: 0;
     display: grid;
+    justify-items: end;
     gap: 0.25rem;
     width: max-content;
-    max-width: min(40rem, 90vw);
-    padding: 0.25rem;
-    border-radius: 0.6rem;
-    background: var(--popover);
     color: var(--popover-foreground);
-    box-shadow: 0 4px 16px color-mix(in oklch, black 18%, transparent);
-    font-size: 0.8rem;
 }
-.note-image-block[data-align="center"] .note-image-controls {
-    left: 50%;
-    transform: translateX(-50%);
-}
-.note-image-block[data-align="right"] .note-image-controls {
-    right: 0;
-    left: auto;
-}
-.note-image-toolbar {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 0.25rem;
-}
-.note-image-toolbar-scroll {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 0.125rem;
-    overflow-x: auto;
-    scrollbar-width: none;
-}
-.note-image-toolbar-scroll > * {
-    flex-shrink: 0;
-}
-.note-image-toolbar-actions {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    gap: 0.125rem;
-    padding-left: 0.25rem;
-    border-left: 1px solid var(--border);
-}
-.note-image-toolbar [aria-pressed="true"] {
-    background: var(--accent);
-    color: var(--accent-foreground);
-}
-.note-image-divider {
-    width: 1px;
-    height: 1.25rem;
-    margin: 0 0.25rem;
-    background: var(--border);
+.note-image-menu-button {
+    border-radius: 50%;
+    background: var(--popover);
+    box-shadow: var(--floating-shadow);
 }
 .note-image-description {
     display: grid;
     gap: 0.5rem;
-    padding: 0.5rem 0.4rem 0.4rem;
-    border-top: 1px solid var(--border);
+    padding: 0.75rem;
+    border-radius: 0.6rem;
+    background: var(--popover);
+    box-shadow: var(--floating-shadow);
 }
 .note-image-description label {
     display: grid;
@@ -1722,7 +1679,7 @@ body {
         color: var(--popover-foreground);
     }
 }
-.dark :is(.floating-surface, .note-image-controls, .toc-popup, .card-info-popup,
+.dark :is(.floating-surface, .note-image-menu-button, .toc-popup, .card-info-popup,
           .image-crop-dialog, .occlusion-dialog, .inline-math-preview > span) {
     --muted: var(--accent);
     --ghost-hover: var(--accent);
