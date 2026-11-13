@@ -131,8 +131,8 @@ const ITEMS: InsertItem[] = [
   {
     group: "Blocks",
     title: "Foldable block",
-    keywords: ["fold", "foldable", "toggle", "example", "collapse", "details"],
-    hint: "",
+    keywords: ["fold", "foldable", "toggle", "example", "collapse", "details", ">>>"],
+    hint: formatKeys(action("block.foldable").keys),
     run: (editor, range) =>
       editor.chain().focus().deleteRange(range).insertFoldableBlock().run(),
   },
