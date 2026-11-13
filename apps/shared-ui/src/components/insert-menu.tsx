@@ -46,6 +46,14 @@ function pickImages(onPick: (files: File[]) => void) {
 const ITEMS: InsertItem[] = [
   {
     group: "Sections",
+    title: "Insert heading above",
+    keywords: ["insert title", "insert heading above", "parent", "adopt"],
+    hint: "Nest the next section",
+    when: editor => editor.state.selection.$from.depth === 1,
+    run: (editor, range) => editor.chain().focus().deleteRange(range).insertHeadingAbove().run(),
+  },
+  {
+    group: "Sections",
     title: "Sibling section",
     keywords: ["section", "same", "next", "heading"],
     hint: formatKeys(action("section.sibling").keys),
