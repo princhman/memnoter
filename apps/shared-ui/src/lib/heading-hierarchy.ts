@@ -148,7 +148,10 @@ export const HeadingHieararchy = Extension.create({
             const before = outline(oldState.doc);
             const removed = before.filter(heading => {
               const mapped = mapping.mapResult(heading.pos + 1);
-              return mapped.deletedAcross || newState.doc.resolve(mapped.pos).parent.type.name !== "heading";
+              // A join removes the opening boundary even though its text survives
+              // inside the previous heading.
+              return mapping.mapResult(heading.pos).deletedAcross || mapped.deletedAcross ||
+                newState.doc.resolve(mapped.pos).parent.type.name !== "heading";
             });
             for (const heading of before) {
               const amount = removed.filter(parent => parent.pos < heading.pos && heading.pos < parent.end).length;
