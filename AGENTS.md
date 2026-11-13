@@ -58,6 +58,8 @@ Other agents often have uncommitted work in the same checkout.
 - No `git stash` / `reset` / `checkout --` here. If it happened anyway, `touch`
   changed Rust sources before rebuilding: cargo uses mtimes and reuses stale builds.
 - Don't add plans or notes to the repo; the backlog is in Linear.
+- Read and write Linear only through the `agentline` tools (see the
+  `agentline-linear` skill). Never post as the user.
 
 ## Branch names
 
