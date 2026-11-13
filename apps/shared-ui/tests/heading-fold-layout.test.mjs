@@ -39,3 +39,35 @@ test("heading fold toggles sit left of numbered heading text", { timeout: 60_000
 
   }
 });
+
+test("PRI-379 heading folds hide foldable blocks and preserve their open state", { timeout: 60_000 }, async () => {
+  const server = await createServer({ logLevel: "error", server: { port: 0, strictPort: false } });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/tables.html`);
+    await page.waitForFunction(() => window.editor);
+    for (const open of [true, false]) {
+      await page.evaluate(open => {
+        editor.commands.setContent(`<h1>Chapter</h1><h2>Assembly</h2><h3>Calling conventions</h3><h4>Functions</h4><details ${open ? 'open' : ''}><summary>Function example using register conventions</summary><div data-type="detailsContent"><p>Example body</p></div></details><h3>Stack</h3><p>Next section</p>`);
+        editor.commands.setTextSelection(1);
+      }, open);
+      const block = page.locator('.foldable-block');
+      assert.equal(await block.isVisible(), true);
+      if (process.env.PROOF_DIR) await page.waitForTimeout(500);
+      await page.locator('h4 .heading-fold-toggle').click();
+      if (process.env.PROOF_DIR) await page.waitForTimeout(500);
+      assert.equal(await block.isVisible(), false, 'entire block disappears with its heading section');
+      assert.equal(await page.getByRole('heading', { name: 'Stack', exact: false }).isVisible(), true, 'next higher heading remains visible');
+      await page.locator('h4 .heading-fold-toggle').click();
+      assert.equal(await block.isVisible(), true);
+      assert.equal(await page.evaluate(() => editor.state.doc.child(4).attrs.open), open);
+      if (process.env.PROOF_DIR) await page.waitForTimeout(500);
+    }
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});
