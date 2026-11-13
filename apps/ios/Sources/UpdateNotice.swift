@@ -51,24 +51,57 @@ import SwiftUI
 struct UpdateNoticeView: View {
     let required: Bool
     @State private var release = ReleaseNotice()
-    @Environment(\.colorScheme) private var colorScheme
+    @State private var showing = false
+    @State private var requiredShown = false
+    @State private var optionalShown = false
+    @State private var replacingOptional = false
+
     var body: some View {
-        Group {
-            if required || release.available != nil {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(required ? "Memnoter needs an update to keep syncing" : "Update available")
-                        .font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        Button { UIApplication.shared.open(URL(string: "itms-beta://")!) } label: {
-                            Text("Open TestFlight").foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
-                        }
-                        .buttonStyle(.borderedProminent).tint(Color("BrandAccent"))
-                        if !required { Button("Dismiss") { release.dismiss() }.tint(.primary) }
-                    }
+        Color.clear.frame(width: 0, height: 0)
+            .alert(required ? "Memnoter needs an update to keep syncing" : "Update available", isPresented: $showing) {
+                Button("Open TestFlight") {
+                    if !required { release.dismiss() }
+                    UIApplication.shared.open(URL(string: "itms-beta://")!)
                 }
-                .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.regularMaterial)
+                Button("Later", role: .cancel) {
+                    if !required { release.dismiss() }
+                }
+            } message: {
+                Text(required
+                     ? "Your notes are still available on this device. Update Memnoter in TestFlight to resume syncing."
+                     : "A newer version of Memnoter is available in TestFlight.")
             }
+            .tint(Color("BrandAccent"))
+            .task {
+                presentIfNeeded()
+                await release.check()
+                presentIfNeeded()
+            }
+            .onChange(of: required) { _, _ in presentIfNeeded() }
+            .onChange(of: release.available) { _, _ in presentIfNeeded() }
+    }
+
+    private func presentIfNeeded() {
+        if required {
+            guard !requiredShown else { return }
+            requiredShown = true
+            if showing {
+                // Replace the optional alert after its native dismissal finishes.
+                showing = false
+                replacingOptional = true
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    replacingOptional = false
+                    showing = true
+                }
+            } else { showing = true }
+        } else if !requiredShown && !optionalShown && !replacingOptional && release.available != nil {
+            let now = Date().timeIntervalSince1970
+            let defaults = UserDefaults.standard
+            guard now - defaults.double(forKey: "releasePopupShown") >= 86_400 else { return }
+            defaults.set(now, forKey: "releasePopupShown")
+            optionalShown = true
+            showing = true
         }
-        .task { await release.check() }
     }
 }
