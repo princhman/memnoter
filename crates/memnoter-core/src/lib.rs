@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use uuid::Uuid;
 pub mod anki;
 mod asset_refs;
+pub mod worksheets;
 pub mod backups;
 mod cards;
 pub mod sidebar;

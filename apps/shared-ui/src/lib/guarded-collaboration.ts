@@ -32,7 +32,7 @@ export const GuardedCollaboration = Collaboration.extend({
       };
     };
     const check = (transaction: Transaction) => {
-      if (blocked || transaction.changed.size === 0 || transaction.origin === ySyncPluginKey || !hasUnknownContent(fragment, editor.schema)) return;
+      if (blocked || transaction.changed.size === 0 || !hasUnknownContent(fragment, editor.schema)) return;
       blocked = true;
       // beforeObserverCalls runs before XmlFragment.observeDeep, for every
       // source of updates (disk/cache, sync, native applyRemote, pending saves).

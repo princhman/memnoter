@@ -109,6 +109,29 @@ pub fn retain_module(
                 encoded_assets.insert(*id);
             }
         }
+        if txn
+            .root_refs()
+            .any(|(name, _)| name == crate::worksheets::ROOT)
+        {
+            // Retain same-module assets from retired revisions/conflict copies
+            // even when insertion and deletion share a single saved payload.
+            let ids = conn
+                .prepare("select id from files")
+                .map_err(db_err)?
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(db_err)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(db_err)?;
+            for id in ids {
+                if !id.is_empty() && bytes.windows(id.len()).any(|part| part == id.as_bytes()) {
+                    conn.execute(
+                        "insert or ignore into shared_image_refs(module_id,file_id) values (?1,?2)",
+                        params![module_id, id],
+                    )
+                    .map_err(db_err)?;
+                }
+            }
+        }
         for id in encoded_assets {
             conn.execute(
                 "insert or ignore into shared_image_refs (module_id, file_id) values (?1, ?2)",
@@ -116,6 +139,25 @@ pub fn retain_module(
             )
             .map_err(db_err)?;
         }
+        drop(txn);
+        // Unknown roots/versions may refer to any managed file. Quarantine
+        // cleanup conservatively, including assets owned by this same module.
+        let worksheet_assets = match crate::worksheets::read(&doc) {
+            Ok(Some(bank)) => bank.assets(),
+            Ok(None) => std::collections::HashSet::new(),
+            Err(_) => conn
+                .prepare("select id from files")
+                .map_err(db_err)?
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(db_err)?
+                .collect::<rusqlite::Result<std::collections::HashSet<_>>>()
+                .map_err(db_err)?,
+        };
+        for id in worksheet_assets {
+            conn.execute("insert or ignore into shared_image_refs (module_id,file_id) select ?1,id from files where id=?2",
+                params![module_id,id]).map_err(db_err)?;
+        }
+        let txn = doc.transact();
         for id in crate::files::assets::note_images(&root, &txn) {
             conn.execute(
                 "insert or ignore into shared_image_refs (module_id, file_id)
@@ -130,7 +172,19 @@ pub fn retain_module(
             "Incomplete persisted image references in module {module_id}"
         ));
     }
-    let current_assets = crate::files::assets::note_images(&root, &doc.transact());
+    let mut current_assets = crate::files::assets::note_images(&root, &doc.transact());
+    match crate::worksheets::read(&doc) {
+        Ok(Some(bank)) => current_assets.extend(bank.assets()),
+        Ok(None) => {}
+        Err(_) => current_assets.extend(
+            conn.prepare("select id from files")
+                .map_err(db_err)?
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(db_err)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(db_err)?,
+        ),
+    }
     Ok(current_assets)
 }
 
@@ -148,4 +202,25 @@ pub fn retain_all(conn: &Connection, excluded_module: Option<&str>) -> CommandRe
         retain_module(conn, &module)?;
     }
     Ok(())
+}
+
+// PDFs can be source provenance for worksheets or unknown future roots.
+pub(crate) fn is_leased(conn: &Connection, id: &str) -> CommandResult<bool> {
+    retain_all(conn, None)?;
+    let modules = conn
+        .prepare("select module_id from shared_image_refs where file_id=?1")
+        .map_err(db_err)?
+        .query_map([id], |r| r.get::<_, String>(0))
+        .map_err(db_err)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_err)?;
+    for module in modules {
+        if !matches!(
+            crate::worksheets::read(&crate::worksheets::load(conn, &module)?),
+            Ok(None)
+        ) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

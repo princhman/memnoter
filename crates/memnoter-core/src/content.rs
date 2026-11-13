@@ -123,6 +123,42 @@ fn delete_module_data_inner(
         [module_id],
     )
     .map_err(db_err)?;
+    // Ordinary stale image leases must not move a PDF. Only worksheet/future
+    // modules can retain PDF provenance outside the deleting module.
+    let survivors = tx
+        .prepare("select module_id from contents where module_id<>?1 order by module_id")
+        .map_err(db_err)?
+        .query_map([module_id], |r| r.get::<_, String>(0))
+        .map_err(db_err)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_err)?;
+    for survivor in survivors {
+        let doc = crate::worksheets::load(&tx, &survivor)?;
+        if matches!(crate::worksheets::read(&doc), Ok(None)) {
+            continue;
+        }
+        tx.execute(
+            "update files set module_id=?2 where module_id=?1 and file_type='application/pdf'
+            and exists(select 1 from shared_image_refs where module_id=?2 and file_id=files.id)",
+            params![module_id, survivor],
+        )
+        .map_err(db_err)?;
+    }
+    let moved_documents = tx
+        .prepare(
+            "select documents.id from documents join files on files.id=documents.id
+        where documents.module_id=?1 and files.module_id<>?1",
+        )
+        .map_err(db_err)?
+        .query_map([module_id], |r| r.get::<_, String>(0))
+        .map_err(db_err)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_err)?;
+    tx.execute("update documents set module_id=(select files.module_id from files where files.id=documents.id)
+        where module_id=?1 and exists(select 1 from files where files.id=documents.id and files.module_id<>?1)", [module_id]).map_err(db_err)?;
+    for id in moved_documents {
+        sync::record_document(&tx, &id, false)?;
+    }
     // Other devices learn the new owner, or a new device would look for the
     // image under the deleted note and never download it.
     sync::publish_file_owners(&tx)?;
@@ -180,6 +216,7 @@ fn delete_module_data_inner(
 pub fn delete_module(data_dir: &Path, db: &Db, module_id: String) -> CommandResult<()> {
     let files_dir = data_dir.join("files");
     let mut conn = db.lock()?;
+    crate::worksheets::read(&crate::worksheets::load(&conn, &module_id)?)?;
     // Recorded first: if deleting fails halfway, reconciling finishes it.
     sync::record_module(&conn, &module_id, sync::VaultChange::Deleted)?;
     delete_module_data(&mut conn, &files_dir, &module_id)?;
@@ -247,6 +284,16 @@ pub fn add_update(db: &Db, module_id: String, bytes: Vec<u8>) -> CommandResult<C
     // The outbox row commits with the update, so no saved edit goes unsynced.
     let tx = conn.transaction().map_err(db_err)?;
 
+    let after = crate::worksheets::load(&tx, &module_id)?;
+    let before = crate::worksheets::read(&after)?;
+    if !bytes.is_empty() {
+        use yrs::{updates::decoder::Decode, Transact, Update};
+        after
+            .transact_mut()
+            .apply_update(Update::decode_v1(&bytes).map_err(db_err)?)
+            .map_err(db_err)?;
+    }
+    crate::worksheets::admit(&tx, &module_id, before, &after)?;
     tx.execute(
         "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
         params![module_id, bytes, Utc::now().timestamp_millis()],
@@ -270,6 +317,16 @@ pub fn save_compaction(
     let tx = conn.transaction().map_err(db_err)?;
     // Keep leases and snapshot replacement atomic. Capture intermediate saved
     // revisions before discarding them, then validate/capture the new snapshot.
+    let before = crate::worksheets::load(&tx, &module_id)?;
+    let after = yrs::Doc::new();
+    if !new_state.is_empty() {
+        use yrs::{updates::decoder::Decode, Transact, Update};
+        after
+            .transact_mut()
+            .apply_update(Update::decode_v1(&new_state).map_err(db_err)?)
+            .map_err(db_err)?;
+    }
+    crate::worksheets::admit(&tx, &module_id, crate::worksheets::read(&before)?, &after)?;
     asset_refs::retain_module(&tx, &module_id)?;
     tx.execute(
         "update contents set state = ?1 where module_id = ?2",

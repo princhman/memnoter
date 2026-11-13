@@ -25,6 +25,8 @@ function note(kind) {
   // Stable IDs ensure byte changes indicate data loss, not card ID assignment.
   paragraph.setAttribute('cardId', 'known-card');
   if (kind === 'attribute') paragraph.setAttribute('futureAttribute', { source: 'retain me' });
+  if (kind === 'root') doc.getMap('futureWorksheetRoot').set('fileId', 'future-file');
+  if (kind === 'worksheet') doc.getMap('worksheets').set('schemaVersion', 1);
   const root = doc.getXmlFragment('default');
   if (kind === 'node') {
     const unknown = new Y.XmlElement('futureBlock');
@@ -74,7 +76,7 @@ async function liveState(page) {
   return page.evaluate(async () => (await import('/tests/browser/unknown-schema.ts')).liveState());
 }
 
-for (const [kind, native] of [['node', false], ['mark', false], ['attribute', false], ['text attribute', false], ['mark attribute', false], ['node', true]]) {
+for (const [kind, native] of [['node', false], ['mark', false], ['attribute', false], ['text attribute', false], ['mark attribute', false], ['root', false], ['worksheet', false], ['node', true]]) {
   test(`opening an unknown ${kind}${native ? ' in the iOS host' : ''} preserves every byte through edits and idle`, async t => {
     const source = note(kind);
     const state = [...Y.encodeStateAsUpdate(source)];
@@ -117,8 +119,8 @@ test('hidden startup backfill leaves an unknown note and its indexes untouched',
   source.destroy();
 });
 
-for (const native of [false, true]) {
-  test(`${native ? 'iOS host' : 'desktop'} quarantines a remote unknown node before conversion`, async t => {
+for (const [native, kind] of [[false, "node"], [true, "node"], [false, "root"]]) {
+  test(`${native ? 'iOS host' : 'desktop'} quarantines a remote unknown ${kind} before conversion`, async t => {
     const source = note('normal');
     const page = await open(t, [...Y.encodeStateAsUpdate(source)], native);
     await page.waitForFunction(() => document.querySelector('.tiptap')?.editor?.isEditable);
@@ -134,7 +136,8 @@ for (const native of [false, true]) {
     const unknown = new Y.XmlElement('futureBlock');
     const text = new Y.XmlText(); text.insert(0, 'must survive sync');
     unknown.insert(0, [text]);
-    remote.getXmlFragment('default').insert(1, [unknown]);
+    if (kind === 'root') remote.getMap('futureWorksheetRoot').set('fileId', 'future-file');
+    else remote.getXmlFragment('default').insert(1, [unknown]);
     const update = [...Y.encodeStateAsUpdate(remote, vector)];
     await page.evaluate(async ({ native, bytes }) => {
       const result = { updates: [{ moduleId: 'm1', update: { id: 9000, bytes } }], modulesChanged: false, deleted: [], reviewsChanged: false, filesChanged: false };

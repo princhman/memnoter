@@ -1203,6 +1203,7 @@ fn apply_remote(
 
     let now = chrono::Utc::now().timestamp_millis();
     let mut touched = HashSet::new();
+    let mut worksheet_history = BTreeMap::new();
     for entry in content_entries {
         if vault.get(&entry.doc).is_some_and(|module| module.deleted) {
             continue;
@@ -1212,6 +1213,13 @@ fn apply_remote(
             // example after the vault was compacted. The name follows later.
             crate::content::module_rows::insert(&tx, &entry.doc, "Untitled", &[])?;
             result.modules_changed = true;
+        }
+        if !touched.contains(&entry.doc) {
+            if let Ok(before) = crate::worksheets::load(&tx, &entry.doc) {
+                if let Ok(Some(bank)) = crate::worksheets::read(&before) {
+                    worksheet_history.insert(entry.doc.clone(), bank);
+                }
+            }
         }
         tx.execute(
             "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
@@ -1226,6 +1234,14 @@ fn apply_remote(
             },
         });
         touched.insert(entry.doc);
+    }
+    for (module, old) in worksheet_history {
+        let after = crate::worksheets::load(&tx, &module)?;
+        match crate::worksheets::read(&after) {
+            Ok(Some(new)) => crate::worksheets::preserve_history(&old, &new)?,
+            Ok(None) => return Err("Worksheet history cannot be removed".into()),
+            Err(_) => {} // Future roots/fields remain opaque and quarantined.
+        }
     }
     let mut reviews: BTreeMap<String, Vec<RemoteEntry>> = BTreeMap::new();
     for entry in review_entries {
