@@ -3,9 +3,9 @@ import { updatePdfPane, requestPdfPage } from "@/lib/pdf-pane";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, FileText, Trash2 } from "lucide-react";
+import { ChevronRight, ArrowDown, ArrowUp, FileText, Trash2 } from "lucide-react";
 import { call, fileUrl } from "@/lib/backend";
-import { bankTarget, partOutline, useBank, useBankEdit, type BankEdit } from "@/lib/question-bank";
+import { questionLabel, bankTarget, partOutline, useBank, useBankEdit, type BankEdit } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 import { ToolButton } from "./ui/tool-button";
 
@@ -25,6 +25,8 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
   const edit = useBankEdit(moduleId);
   const target = useSelector(bankTarget, s => s?.moduleId === moduleId ? s : null);
   const [busy, setBusy] = useState(false); const [failure, setFailure] = useState("");
+  const [folds, setFolds] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("bank-folds") || "{}"); } catch { return {}; } });
+  const toggle = (key: string) => setFolds(previous => { const next = { ...previous, [key]: !previous[key] }; try { localStorage.setItem("bank-folds", JSON.stringify(next)); } catch {} return next; });
   const questions = Object.entries(bank?.questions ?? {}).filter(([, q]) => !q.deleted).sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]));
   useEffect(() => { setFailure(""); }, [moduleId]);
   const run = async (args: BankEdit) => {
@@ -38,16 +40,23 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
     {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
     {!isLoading && !questions.length && <p className="text-sm text-muted-foreground">Open a PDF and choose <span className="text-foreground">Crop question</span> to add questions.</p>}
     <div className="space-y-12">{questions.map(([qid, question], index) => {
-      const revision = bank!.revisions[question.revisionId]; const outline = partOutline(revision, index + 1);
+      const revision = bank!.revisions[question.revisionId]; const outline = partOutline(revision, questionLabel(question.title, index + 1));
       return <article key={qid} aria-label={`Question ${index + 1}`} className="group/question">
-        {outline.map(part => {
+        {outline.map((part, position) => {
+          const ancestors: typeof outline = [];
+          for (const preceding of outline.slice(0, position)) { ancestors[preceding.depth] = preceding; ancestors.length = preceding.depth + 1; }
+          if (ancestors.slice(0, part.depth).some(parent => folds[`${moduleId}:${qid}:${parent.id}`])) return null;
+          const key = `${moduleId}:${qid}:${part.id}`; const folded = !!folds[key];
+          const descendants = outline.slice(position + 1); const end = descendants.findIndex(child => child.depth <= part.depth);
+          const count = [part, ...descendants.slice(0, end < 0 ? undefined : end)].reduce((sum, child) => sum + revision.parts[child.id].cropIds.length, 0);
           const root = part.depth === 0; const current = target?.questionId === qid && target.partId === part.id;
           const cropIds = revision.parts[part.id].cropIds;
           return <div key={part.id} style={{ marginLeft: Math.max(0, part.depth - 1) * 24 }} className={cn("flex gap-3 border-l-2 py-1.5 pl-3", current ? "border-primary" : "border-transparent", !root && "mt-3")}>
-            <button type="button" aria-label={`Add next crops to ${part.label}`} aria-pressed={current} className={cn("w-10 shrink-0 text-left font-semibold tabular-nums", root ? "text-xl" : "text-base text-muted-foreground", current && "text-foreground")} onClick={() => bankTarget.setState(() => ({ moduleId, questionId: qid, partId: part.id }))}>{root ? index + 1 : own(revision.parts[part.id].label)}</button>
+            <button type="button" aria-label={`${folded ? "Expand" : "Fold"} ${part.label}`} aria-expanded={!folded} className="self-start mt-1 text-muted-foreground" onClick={() => toggle(key)}><ChevronRight size={14} className={folded ? "" : "rotate-90"} /></button>
+            <button type="button" aria-label={`Add next crops to ${part.label}`} aria-pressed={current} className={cn("w-10 shrink-0 text-left font-semibold tabular-nums", root ? "text-xl" : "text-base text-muted-foreground", current && "text-foreground")} onClick={() => bankTarget.setState(() => ({ moduleId, questionId: qid, partId: part.id }))}>{root ? questionLabel(question.title, index + 1) : own(revision.parts[part.id].label)}</button>
             <div className="min-w-0 flex-1 space-y-3">
-              {root && question.title && <p className="text-sm text-muted-foreground">{question.title}</p>}
-              {cropIds.map((cid, cropIndex) => {
+              {folded && <span className="text-sm text-muted-foreground">{count} crops</span>}
+              {!folded && cropIds.map((cid, cropIndex) => {
                 const crop = revision.crops[cid];
                 const pin = { questionId: qid, partId: part.id, expectedRevisionId: question.revisionId, cropId: cid };
                 return <figure key={cid} className="group/crop relative">
@@ -62,7 +71,7 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
                   </div>
                 </figure>;
               })}
-              {!cropIds.length && !root && <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground">No crops yet<ToolButton size="icon-xs" label={`Remove part ${part.label}`} disabled={busy} onClick={() => void run({ kind: "removePart", questionId: qid, partId: part.id, expectedRevisionId: question.revisionId })}><Trash2 /></ToolButton></div>}
+              {!folded && !cropIds.length && !root && <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground">No crops yet<ToolButton size="icon-xs" label={`Remove part ${part.label}`} disabled={busy} onClick={() => void run({ kind: "removePart", questionId: qid, partId: part.id, expectedRevisionId: question.revisionId })}><Trash2 /></ToolButton></div>}
             </div>
             {root && <ToolButton size="icon-xs" className="opacity-0 transition-opacity group-hover/question:opacity-100 focus-visible:opacity-100" label={`Delete question ${index + 1}`} disabled={busy} onClick={() => void run({ kind: "deleteQuestion", questionId: qid, expectedRevisionId: question.revisionId })}><Trash2 /></ToolButton>}
           </div>;

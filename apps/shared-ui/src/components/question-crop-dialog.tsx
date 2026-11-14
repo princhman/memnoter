@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { bankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
+import { questionLabel, bankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
 import { Button } from "./ui/button";
 
 type Choice = { key: string; label: string; edit: Omit<BankEdit, "crop"> };
@@ -16,7 +16,7 @@ function choices(bank: Bank | null | undefined, target: { questionId: string; pa
   const question = live[index][1]; const revision = bank.revisions[question.revisionId];
   const part = revision.parts[target!.partId];
   if (!part) return result;
-  const outline = partOutline(revision, index + 1);
+  const outline = partOutline(revision, questionLabel(live[index][1].title, index + 1));
   const name = (id: string) => outline.find(p => p.id === id)?.label ?? "";
   const pin = { questionId: target!.questionId, expectedRevisionId: question.revisionId };
   const siblingParent = part.parentId ?? target!.partId;

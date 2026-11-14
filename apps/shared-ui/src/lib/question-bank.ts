@@ -53,7 +53,7 @@ export function nextPartLabel(revision: WorksheetRevision, parentId: string) {
   for (let index = 0; index < 52; index++) if (used.has(label(index).toLowerCase())) next = index + 1;
   return label(next);
 }
-export function partOutline(revision: WorksheetRevision, number: number) {
+export function partOutline(revision: WorksheetRevision, number: number | string) {
   const result: { id: string; label: string; depth: number; leaf: boolean }[] = [];
   const visit = (id: string, label: string, depth: number) => {
     const children = Object.entries(revision.parts).filter(([, p]) => p.parentId === id).sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]));
@@ -63,3 +63,5 @@ export function partOutline(revision: WorksheetRevision, number: number) {
   visit(revision.rootPartId, String(number), 0);
   return result;
 }
+
+export function questionLabel(title: string | undefined, number: number): string { return title?.trim() || String(number); }
