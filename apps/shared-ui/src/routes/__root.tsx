@@ -1,4 +1,5 @@
 import { MentionProvider } from "@/components/mentions";
+import { UpdateNotice } from "@/components/update-notice";
 import { isShowingModule } from "@/lib/open-module";
 import { AddPdf } from "@/components/add-pdf";
 import { FilesPanelButton, PdfHeaderActions } from "@/components/pdf-header-actions";
@@ -125,6 +126,7 @@ const RootLayout = () => {
               </div>
             </header>
 
+            <UpdateNotice />
             <FindBar />
 
             <main className={ownScroll ? "min-h-0 flex-1 overflow-hidden" : "app-scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8"}>
