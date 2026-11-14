@@ -2035,3 +2035,52 @@ body {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* Reserve the opener's exact text width, like ordinary card separators. */
+.card-group-opener { color: transparent; }
+.card-group-active .card-group-opener { color: var(--muted-foreground); }
+/* Keep the real, editable closer out of flow in every state. Its source
+   appears in the gutter at the answer's end, without opening a blank line. */
+.tiptap .card-group-closer {
+    position: relative;
+    height: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    line-height: 0;
+}
+.card-group-end-marker {
+    position: absolute;
+    inset-inline-end: calc(100% + 0.35rem);
+    inset-block-end: 0;
+    width: max-content;
+    font-size: 1rem;
+    line-height: 1.25rem;
+    color: var(--muted-foreground);
+    visibility: hidden;
+}
+.card-group-closer.card-group-active .card-group-end-marker { visibility: visible; }
+/* Status details and focus styling must never resize the dot's hit area. */
+.card-group-question > .card-info { height: 1.25rem; line-height: 1.25rem; }
+.card-group-question > .card-info::before { flex: none; }
+.card-group-hint { margin-left: 1em; color: var(--muted-foreground); font-size: 0.7em; user-select: none; }
+.card-group-placeholder { user-select: none; color: var(--muted-foreground); pointer-events: none; }
+/* Match cloze answer lines, including rendered formulas, only on dot hover. */
+.card-group-answer-hover .card-group-answer-text,
+.card-group-answer-hover .card-group-answer-math .inline-math-widget,
+:is(.card-group-answer-hover.card-group-answer-formula, .card-group-answer-hover .card-group-answer-formula) .math-block-widget .katex-display {
+    background-color: var(--cloze-bg);
+    box-shadow: inset 0 -2px 0 0 var(--cloze);
+}
+
+.mention-chip {
+  display: inline;
+  border-radius: 4px;
+  padding: 1px 3px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--foreground);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.mention-chip button { cursor: pointer; font: inherit; text-align: inherit; }
+.mention-chip:hover { background: color-mix(in srgb, var(--primary) 22%, transparent); }

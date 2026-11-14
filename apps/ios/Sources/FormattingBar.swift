@@ -93,6 +93,31 @@ struct FormattingBar: View {
         .disabled(!session.state.inCloze && !session.state.canMakeCard)
         .accessibilityLabel(session.state.inCloze ? "Remove cloze" : "Make cloze from selection")
         .accessibilityAddTraits(session.state.inCloze ? .isSelected : [])
+        Menu {
+            Button("List card", systemImage: "list.bullet") { session.exec(.insertListCard, focusAfter: true) }
+                .disabled(!session.state.canInsertListCard)
+            Button("Block card", systemImage: "text.alignleft") { session.exec(.insertBlockCard, focusAfter: true) }
+                .disabled(!session.state.canInsertBlockCard)
+            if session.state.canMakeListCard {
+                Button("Make list card", systemImage: "list.bullet") { session.exec(.makeListCard, focusAfter: true) }
+            }
+            if session.state.canMakeBlockCard {
+                Button("Make block card", systemImage: "text.alignleft") { session.exec(.makeBlockCard, focusAfter: true) }
+            }
+            if session.state.inListCard {
+                Button("Remove list card", systemImage: "list.bullet") { session.exec(.removeListCard, focusAfter: true) }
+            }
+            if session.state.inBlockCard {
+                Button("Remove block card", systemImage: "text.alignleft") { session.exec(.removeBlockCard, focusAfter: true) }
+            }
+        } label: {
+            Label("Cards", systemImage: "rectangle.on.rectangle")
+                .labelStyle(.titleAndIcon)
+                .fixedSize()
+                .padding(.horizontal, 4)
+        }
+        .buttonStyle(FormatButtonStyle())
+        .accessibilityLabel("Cards")
         if session.state.canJoinClozes {
             formatButton("Join clozes", "rectangle.stack", .joinClozes)
         }

@@ -38,6 +38,7 @@ export class ReviewSession {
   private pending = false;
   private loading = false;
   private revealed = false;
+  private revealedSteps = 0;
   private reviewed = 0;
   private error: string | null = null;
   private unindexed: { id: string; name: string }[] = [];
@@ -56,7 +57,7 @@ export class ReviewSession {
       return dueAt > this.now && (soonest === null || dueAt < soonest) ? dueAt : soonest;
     }, null) ?? null;
     return {
-      queue: this.queue, card, now: this.now, revealed: this.revealed, reviewed: this.reviewed,
+      queue: this.queue, card, now: this.now, revealed: this.revealed, revealedSteps: this.revealedSteps, reviewed: this.reviewed,
       error: this.error, unindexed: this.unindexed, loading: this.loading, busy: this.pending,
       counts: this.queue ? countByState(this.queue, this.now) : null,
       currentKind: card ? cardCountKind(card.state) : null,
@@ -102,16 +103,25 @@ export class ReviewSession {
       ]);
       if (token !== this.loadGeneration) return;
       const previous = this.snapshot.card;
-      const cards = same && previous ? [previous, ...loadedCards.filter(card => card.id !== previous.id)] : loadedCards;
+      const compatibleCards = loadedCards.map(card => card.kind === "basic" && Array.isArray(card.back) && card.back.length > 0 && card.back.every(segment => segment.type === "block" && segment.revealStep === true)
+        ? { ...card, kind: "list" as const } : card);
+      const cards = same && previous ? [previous, ...compatibleCards.filter(card => card.id !== previous.id)] : compatibleCards;
       this.retained = same ? previous : undefined;
       const next = same ? previous : nextInQueue(cards, Date.now(), this.learnAhead);
-      if (next?.id !== previous?.id || next?.reps !== previous?.reps) { this.revealed = false; this.now = Date.now(); }
+      if (next?.id !== previous?.id || next?.reps !== previous?.reps) { this.revealed = false; this.revealedSteps = 0; this.now = Date.now(); }
       this.scheduler = scheduler; this.queue = cards; this.loadedGeneration = this.generation;
       this.unindexed = unindexed.filter(note => !moduleId || note.id === moduleId);
     } catch (error) { if (token === this.loadGeneration) this.error = String(error); }
     finally { if (token === this.loadGeneration) { this.loading = false; this.emit(); } }
   }
-  reveal = () => { if (this.snapshot.card) { this.now = Date.now(); this.revealed = true; this.emit(); } };
+  reveal = () => {
+    const { card } = this.snapshot;
+    if (!card || this.revealed) return;
+    this.now = Date.now();
+    this.revealedSteps++;
+    this.revealed = card.kind !== "list" || Array.isArray(card.back) && this.revealedSteps >= card.back.length;
+    this.emit();
+  };
   showNow = () => { this.earlyUntil = this.snapshot.nextDueAt; this.emit(); };
   private async action(run: (mine: number) => Promise<void>) {
     if (this.pending || this.loading) return;
@@ -125,7 +135,7 @@ export class ReviewSession {
       finally {
         this.pending = false;
         void queryClient.invalidateQueries({ queryKey: dueCountsKey });
-        if (mine === this.generation) { this.revealed = false; this.now = Date.now(); this.earlyUntil = null; }
+        if (mine === this.generation) { this.revealed = false; this.revealedSteps = 0; this.now = Date.now(); this.earlyUntil = null; }
         this.emit();
       }
     })();

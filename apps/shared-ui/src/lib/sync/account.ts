@@ -1,7 +1,8 @@
 // Talks to the sync server's HTTP API: email sign-in and the encryption
 // parameters. The passphrase and the derived key never leave the device.
 
-import { SYNC_CONTRACT } from "./protocol";
+import { PROTOCOL_HEADER, PROTOCOL_VERSION, SYNC_CONTRACT } from "./protocol";
+import { reportSyncRefusal } from "../update-required.ts";
 import { syncRequest, transferTimeout, readTransfer } from "./http";
 import { deriveKey, exportKey, makeKeyCheck, newSalt, verifyKeyCheck } from "./crypto";
 
@@ -17,11 +18,14 @@ export type SyncAccount = {
 type KeyInfo = { salt: string; check: string };
 
 export const DEFAULT_SYNC_SERVER: string =
-  import.meta.env.VITE_SYNC_SERVER ?? (import.meta.env.DEV ? "http://localhost:8787" : SYNC_CONTRACT.defaultServer);
+  import.meta.env?.VITE_SYNC_SERVER ?? (import.meta.env?.DEV ? "http://localhost:8787" : SYNC_CONTRACT.defaultServer);
 
 export class SyncApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  readonly status: number;
+  constructor(message: string, status: number) {
     super(message);
+    this.status = status;
+    reportSyncRefusal(message, status);
   }
 }
 
@@ -30,7 +34,7 @@ async function api<T>(server: string, path: string, init: { method?: string; bod
     method: init.method ?? (init.body === undefined ? "GET" : "POST"),
     headers: {
       ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...(init.token ? { Authorization: `Bearer ${init.token}` } : {}),
+      ...(init.token ? { Authorization: `Bearer ${init.token}`, [PROTOCOL_HEADER]: String(PROTOCOL_VERSION) } : {}),
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   }, async response => {
@@ -67,7 +71,7 @@ export async function isTokenValid(server: string, token: string, signal?: Abort
 export async function putObject(server: string, token: string, kind: "files" | "blobs", id: string, bytes: Uint8Array, signal?: AbortSignal) {
   return syncRequest(`${server.replace(/\/+$/, "")}${SYNC_CONTRACT.paths[kind]}${id}`, {
     method: "PUT",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream" },
+    headers: { Authorization: `Bearer ${token}`, [PROTOCOL_HEADER]: String(PROTOCOL_VERSION), "Content-Type": "application/octet-stream" },
     body: bytes,
   }, async response => {
     // Consume even success responses under the same cancellation deadline.
@@ -84,7 +88,7 @@ export function deleteObject(server: string, token: string, id: string, signal?:
 // null when the server has no such object (yet).
 export async function getObject(server: string, token: string, kind: "files" | "blobs", id: string, signal?: AbortSignal) {
   return syncRequest(`${server.replace(/\/+$/, "")}${SYNC_CONTRACT.paths[kind]}${id}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${token}`, [PROTOCOL_HEADER]: String(PROTOCOL_VERSION) },
   }, async (response, progress, requestSignal) => {
     const bytes = await readTransfer(response, progress, requestSignal);
     if (response.status === 404) return null;

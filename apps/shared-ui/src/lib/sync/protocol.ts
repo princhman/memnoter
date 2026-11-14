@@ -11,6 +11,8 @@ export { contract as SYNC_CONTRACT };
 // Frames are JSON text; `data` fields are base64.
 
 export const PROTOCOL_VERSION = contract.version;
+export const PROTOCOL_HEADER = "X-Memnoter-Protocol-Version";
+export const UPDATE_REQUIRED_MESSAGE = "Please update Memnoter to keep syncing";
 // WebSocket subprotocols: this one, plus "auth.<token>", because browsers
 // cannot set headers on a WebSocket request.
 export const SYNC_PROTOCOL = contract.protocol;

@@ -96,6 +96,7 @@ struct SyncKeychain {
     var account: SyncAccount?
     var status = "Not running."
     var error: String?
+    var updateRequired = false
     var pending = 0
     var lastSynced: Date?
     private(set) var isSyncingNow = false
@@ -149,9 +150,15 @@ struct SyncKeychain {
         guard let url = URL(string: SyncConfiguration.server(server) + path), ["https", "http"].contains(url.scheme) else { throw SyncFailure(message: "Invalid sync server") }
         var req = URLRequest(url: url); req.httpMethod = method; req.httpBody = body; req.timeoutInterval = 20
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if path.hasPrefix(SyncConfiguration.path("files")) || path.hasPrefix(SyncConfiguration.path("blobs")) {
+            req.setValue(String(SyncConfiguration.integer("version")), forHTTPHeaderField: "X-Memnoter-Protocol-Version")
+        }
         if body != nil { req.setValue(binary ? "application/octet-stream" : "application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await session.data(for: req)
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+            if (response as? HTTPURLResponse)?.statusCode == 426 {
+                updateRequired = true; fatal = true; stop(); status = "Sync stopped."
+            }
             var message: String?
             do { message = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String }
             catch { NSLog("Sync HTTP error response was not JSON: %@", error.localizedDescription) }
@@ -169,6 +176,13 @@ struct SyncKeychain {
     }
     func start() async {
         do {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--simulate-sync-update-required") {
+                engine = try SyncSession(key: Data(repeating: 0, count: 32), cursor: 0)
+                try await execute(drive("frame", "{\"t\":\"error\",\"fatal\":true,\"message\":\"Please update Memnoter to keep syncing\"}"), owner: generation)
+                return
+            }
+            #endif
             account = try keychain.load()
             if let account {
                 let state = try await command("sync_status") as? [String: Any] ?? [:]
@@ -386,6 +400,7 @@ struct SyncKeychain {
                 try await execute(drive("compact", ["doc": doc, "cursor": action["cursor"] ?? 0, "bytes": bytes]), owner: owner)
             case "ready": ready = true; error = nil; lastSynced = Date(); status = "Up to date"; nudge()
             case "close":
+                if action["reason"] as? String == "Please update Memnoter to keep syncing" { updateRequired = true }
                 if action["code"] as? Int == SyncConfiguration.integer("closePolicy") { fatal = true }
                 socket?.cancel(with: .init(rawValue: action["code"] as? Int ?? 4000) ?? .goingAway, reason: nil)
                 throw SyncFailure(message: action["reason"] as? String ?? "Sync stopped")

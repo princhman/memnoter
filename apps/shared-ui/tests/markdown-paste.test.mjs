@@ -115,3 +115,13 @@ test("Obsidian one-line cards on consecutive lines become separate paragraphs", 
     assert.equal(markdownToJSON(source).content.length, 1, source);
   }
 });
+
+test('group card boundaries survive Markdown soft breaks and list continuation', () => {
+  const result = markdownToJSON('Q ::list\n- First\n- Second\n::end\nAfter\n\nWhy ::block\nAnswer\n::end');
+  assert.deepEqual(result.content.map(n => n.type), ['paragraph','bulletList','paragraph','paragraph','paragraph','paragraph','paragraph']);
+  assert.equal(result.content[2].content[0].text,'::end');
+  assert.equal(result.content[4].content[0].text,'Why ::block');
+  const literal = markdownToJSON('```\nQ ::list\n::end\n```');
+  assert.equal(literal.content[0].type,'codeBlock');
+  assert.equal(literal.content[0].content[0].text,'Q ::list\n::end');
+});

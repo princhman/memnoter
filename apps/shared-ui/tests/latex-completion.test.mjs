@@ -167,3 +167,100 @@ test("PRI-346: Enter dismisses completion and keeps editing the unchanged formul
   await page.keyboard.press("Enter");
   assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.type.name), "paragraph");
 });
+
+test("PRI-365: escaped dollars stay literal through later typing, reload and native copy", async () => {
+  await page.evaluate(() => { editor.commands.clearContent(); editor.commands.focus(); });
+  await page.keyboard.type("\\$rt \\$ra ");
+  assert.equal(await page.locator(".tiptap").innerText(), "$rt $ra ");
+  await page.keyboard.type("$x$");
+  const saved = await page.evaluate(() => editor.getJSON());
+  assert.equal(saved.content[0].content.filter(node => node.type === "inlineMath").length, 1);
+  assert.equal(saved.content[0].content.at(-1).content[0].text, "x");
+  await page.evaluate(saved => {
+    editor.commands.setContent(saved);
+    editor.commands.setTextSelection({ from: 1, to: 9 });
+    editor.view.focus();
+  }, saved);
+  await page.keyboard.press("ControlOrMeta+c");
+  await page.evaluate(() => {
+    const input = document.createElement("textarea"); input.id = "literal-copy";
+    document.body.append(input); input.focus();
+  });
+  await page.keyboard.press("ControlOrMeta+v");
+  assert.equal(await page.locator("#literal-copy").inputValue(), "$rt $ra ");
+  await page.locator("#literal-copy").evaluate(el => el.remove());
+});
+
+test("PRI-365: legacy escapes become literal dollars except in code", async () => {
+  await page.evaluate(() => editor.commands.setContent('<p>\\$rt \\$ra </p><pre><code>\\$code</code></pre>'));
+  assert.equal(await page.locator(".tiptap p").first().innerText(), "$rt $ra");
+  assert.equal(await page.locator(".tiptap pre").innerText(), "\\$code");
+});
+
+for (const type of ["paragraph", "inlineMath", "mathBlock"]) {
+  test(`PRI-384: environment completion survives braces in ${type}`, async () => {
+    await page.evaluate(type => {
+      editor.commands.setContent({ type: "doc", content: type === "inlineMath"
+        ? [{ type: "paragraph", content: [{ type }] }]
+        : [{ type }] });
+      editor.commands.setTextSelection(type === "inlineMath" ? 2 : 1);
+      editor.view.focus();
+    }, type);
+    await page.keyboard.type("\\begin");
+    const menu = page.getByRole("listbox", { name: "LaTeX commands" });
+    await menu.waitFor();
+    for (const character of "{matrix}") {
+      await page.keyboard.type(character);
+      await menu.waitFor({ timeout: 3000 });
+      assert.equal(await menu.getByRole("option", { name: "\\begin{matrix}", exact: true }).count(), 1);
+    }
+    await page.keyboard.press("Tab");
+    assert.deepEqual(await page.evaluate(() => ({
+      text: editor.state.selection.$from.parent.textContent,
+      offset: editor.state.selection.$from.parentOffset,
+      parent: editor.state.selection.$from.parent.type.name,
+    })), { text: "\\begin{matrix}  \\end{matrix}", offset: 15,
+      parent: type === "paragraph" ? "inlineMath" : type });
+    await menu.waitFor({ state: "hidden" });
+  });
+}
+
+test("PRI-384: editing an environment replaces its suffix and closing brace", async () => {
+  await page.evaluate(() => {
+    const text = "\\begin{pmatrix}+x";
+    editor.commands.setContent({ type: "doc", content: [{ type: "mathBlock", content: [{ type: "text", text }] }] });
+    editor.commands.setTextSelection(9);
+    editor.view.focus();
+  });
+  await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor();
+  await page.keyboard.press("Tab");
+  assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.textContent), "\\begin{pmatrix}  \\end{pmatrix}+x");
+});
+
+test("PRI-384: dismissal preserves environment source and ordinary braces stay literal", async () => {
+  const menu = page.getByRole("listbox", { name: "LaTeX commands" });
+  for (const key of ["Escape", "Enter"]) {
+    await page.evaluate(() => {
+      editor.commands.setContent({ type: "doc", content: [{ type: "mathBlock" }] });
+      editor.commands.setTextSelection(1);
+      editor.view.focus();
+    });
+    await page.keyboard.type("\\begin{ma");
+    await menu.waitFor();
+    await page.keyboard.press(key);
+    await menu.waitFor({ state: "hidden" });
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent), "\\begin{ma");
+    await page.keyboard.type("trix}");
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent), "\\begin{matrix}");
+  }
+  for (const source of ["\\frac{", "\\\\begin{matrix}", "{matrix}"]) {
+    await page.evaluate(() => {
+      editor.commands.setContent({ type: "doc", content: [{ type: "mathBlock" }] });
+      editor.commands.setTextSelection(1);
+      editor.view.focus();
+    });
+    await page.keyboard.type(source);
+    await menu.waitFor({ state: "hidden" });
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent), source);
+  }
+});

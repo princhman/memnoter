@@ -78,6 +78,12 @@ export function editorState(editor: Editor): EditorState {
     canMakeCard: editor.can().makeCloze(), inCloze: editor.can().removeCloze(),
     canJoinClozes: editor.can().joinClozes(),
     canMakeClozeNote: editor.can().makeClozeNote(),
+    canInsertListCard: editor.isEditable && editor.can().insertGroupCard("list"),
+    canInsertBlockCard: editor.isEditable && editor.can().insertGroupCard("block"),
+    canMakeListCard: editor.isEditable && editor.can().makeGroupCard("list"),
+    canMakeBlockCard: editor.isEditable && editor.can().makeGroupCard("block"),
+    inListCard: editor.isEditable && editor.can().removeGroupCard("list"),
+    inBlockCard: editor.isEditable && editor.can().removeGroupCard("block"),
     folded: editor.can().unfoldCurrentSection(),
     canFold: editor.can().foldCurrentSection(),
     canUndo: editor.can().undo(), canRedo: editor.can().redo(),
@@ -127,6 +133,12 @@ export function execEditor(editor: Editor, command: ExecCommand, args: Record<st
       return commands.setLink({ href: args.href });
     case "undo": return commands.undo();
     case "redo": return commands.redo();
+    case "insertListCard": return commands.insertGroupCard("list");
+    case "insertBlockCard": return commands.insertGroupCard("block");
+    case "makeListCard": return commands.makeGroupCard("list");
+    case "makeBlockCard": return commands.makeGroupCard("block");
+    case "removeListCard": return commands.removeGroupCard("list");
+    case "removeBlockCard": return commands.removeGroupCard("block");
     case "makeCard": return commands.makeCloze();
     case "removeCard": return commands.removeCloze();
     case "joinClozes": return commands.joinClozes();

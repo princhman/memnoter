@@ -1,3 +1,4 @@
+import { insertGroupCard, makeGroupCard, removeGroupCard, type GroupKind } from "./group-card-commands";
 import { action } from "./shortcuts.ts";
 import { isImageNode } from "./cards.ts";
 import { Fragment, Slice } from "@tiptap/pm/model";
@@ -9,7 +10,7 @@ import { Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { renderKatex } from "./inline-math.ts";
-import { isCardBlock, cardIdsOf, changedRanges, clozeIdsOf, clozeNotesOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, validatedClozeNote, type ClozeId, type ClozeNote, type Range, type Segment } from "./cards.ts";
+import { cardGroupsOf, groupOpener, isCardBlock, cardIdsOf, changedRanges, clozeIdsOf, clozeNotesOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, validatedClozeNote, type ClozeId, type ClozeNote, type Range, type Segment } from "./cards.ts";
 import { CardState, formatInterval } from "./fsrs.ts";
 
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
@@ -17,6 +18,9 @@ const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     flashcards: {
+      insertGroupCard: (kind: GroupKind) => ReturnType;
+      makeGroupCard: (kind: GroupKind) => ReturnType;
+      removeGroupCard: (kind: GroupKind) => ReturnType;
       // Wrap the selection in {{…}}, making it a cloze card.
       makeCloze: () => ReturnType;
       joinClozes: () => ReturnType;
@@ -49,7 +53,14 @@ export function cardSchedulesOf(state: EditorState): Schedules | undefined {
   return decorationsKey.getState(state)?.schedules;
 }
 
-type DecorationsState = { set: DecorationSet; schedules: Schedules; notes: ClozeNote[] };
+type DecorationsState = {
+  set: DecorationSet;
+  schedules: Schedules;
+  notes: ClozeNote[];
+  groups: ReturnType<typeof cardGroupsOf>;
+  hoveredGroup: string | null;
+};
+const groupHoverKey = new PluginKey<string | null>("groupCardHover");
 
 const decorationsKey = new PluginKey<DecorationsState>(
   "flashcardDecorations",
@@ -478,12 +489,72 @@ function repairClozeIds(
 function buildDecorations(doc: Node, schedules: Schedules): DecorationsState {
   const notes = clozeNotesOf(doc);
   const { places, blocks } = notePlaces(doc, notes);
+  const groups = cardGroupsOf(doc);
+  const groupDecorations: Decoration[] = [];
+  const hint = (at: number, text: string, cls = "card-group-hint") => Decoration.widget(at, () => {
+    const span = document.createElement("span"); span.className = cls; span.textContent = text; span.contentEditable = "false"; return span;
+  }, { side: 1, key: `${cls}:${text}` });
+  for (const group of groups) {
+    groupDecorations.push(Decoration.inline(group.marker.from, group.marker.to, { class: "card-group-opener" }));
+    groupDecorations.push(Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-group-question" }));
+    if (!group.valid) groupDecorations.push(hint(group.marker.to, group.hint));
+    if (!group.node.textContent.slice(0, group.marker.from - group.from - 1).trim()) groupDecorations.push(hint(group.from + 1, "Question", "card-group-placeholder"));
+    if (group.closer !== null) {
+      groupDecorations.push(Decoration.node(group.closer, group.to, { class: "card-group-closer" }));
+      groupDecorations.push(Decoration.inline(group.closer + 1, group.to - 1, { class: "card-group-end-marker" }));
+    }
+    if (!group.valid) continue;
+    for (const { node, pos } of group.answers) groupDecorations.push(Decoration.node(pos, pos + node.nodeSize, { class: "card-group-answer" }));
+    // Inline spans follow wrapped lines and math, using the same treatment as
+    // cloze answers only while this group's regular scheduling dot is hovered.
+    for (const { node, pos } of group.answers) {
+      const decorate = (block: Node, at: number) => {
+        if (!block.isTextblock) return true;
+        if (block.type.name === "mathBlock") {
+          groupDecorations.push(Decoration.node(at, at + block.nodeSize, { class: "card-group-answer-formula" }));
+        } else if (block.content.size) {
+          groupDecorations.push(Decoration.inline(at + 1, at + block.nodeSize - 1, { class: "card-group-answer-text" }));
+          block.forEach((child, offset) => {
+            if (child.type.name === "inlineMath") groupDecorations.push(Decoration.node(at + 1 + offset, at + 1 + offset + child.nodeSize, { class: "card-group-answer-math" }));
+          });
+        }
+        return false;
+      };
+      if (node.isTextblock) decorate(node, pos);
+      else node.descendants((child, offset) => decorate(child, pos + 1 + offset));
+    }
+    if (group.node.attrs.cardId) {
+      const schedule = schedules.byId.get(group.node.attrs.cardId);
+      groupDecorations.push(Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-block" }));
+      groupDecorations.push(Decoration.widget(group.from + 1, (view, getPos) => {
+        const description = group.kind === "list" ? "List card: Reveals one by one" : "Block card: Reveals together";
+        const info = cardInfo([{ answer: description, schedule }], !!schedule && schedule.dueAt <= schedules.now, schedules.now, null);
+        info.setAttribute("aria-label", `${description}. Card details`);
+        // Pointer interaction must not move the editor's caret into the group.
+        // Keyboard focus still exposes the same details and answer underline.
+        info.addEventListener("mousedown", event => event.preventDefault());
+        const hover = () => {
+          const at = getPos();
+          if (at === undefined || view.isDestroyed) return;
+          const id = view.state.doc.resolve(at).parent.attrs.cardId;
+          const shown = info.matches(":hover") || info.contains(document.activeElement);
+          view.dispatch(view.state.tr.setMeta(groupHoverKey, shown ? id : null).setMeta("addToHistory", false));
+        };
+        info.addEventListener("mouseenter", hover);
+        info.addEventListener("mouseleave", hover);
+        info.addEventListener("focusin", hover);
+        info.addEventListener("focusout", () => queueMicrotask(hover));
+        return info;
+      }, { side: -1, ignoreSelection: true, stopEvent: () => true, key: `group-dot:${group.node.attrs.cardId}:${JSON.stringify(schedule)}` }));
+    }
+  }
   const set = DecorationSet.create(doc, [
+    ...groupDecorations,
     ...collectBlocks(doc, 0, doc.content.size).flatMap(({ node, pos }) =>
-      blockDecorations(node, pos, schedules, places.get(pos))),
+      groups.some(g => pos >= g.from && pos < g.to) ? [] : blockDecorations(node, pos, schedules, places.get(pos))),
     ...foldableDecorations(doc, notes, blocks, schedules),
   ]);
-  return { set, schedules, notes };
+  return { set, schedules, notes, groups, hoveredGroup: null };
 }
 
 // The note-wide dot and line follow edits anywhere in a note, so those redraw
@@ -514,6 +585,8 @@ function touchesNotes(tr: Transaction, before: ClozeNote[], after: ClozeNote[], 
 function activeBlock(state: EditorState, set: DecorationSet) {
   const { $head } = state.selection;
   if (!$head.parent.isTextblock || $head.depth === 0) return null;
+  const group = cardGroupsOf(state.doc).find(g => $head.pos >= g.from && $head.pos < g.to);
+  if (group) return Decoration.node(group.from, group.from + group.node.nodeSize, { class: "card-block-active card-group-active" });
   const from = $head.before();
   const to = from + $head.parent.nodeSize;
   const hasSyntax = set.find(from, to, (spec) => spec.syntax === true).length > 0;
@@ -558,6 +631,11 @@ export const Flashcards = Extension.create({
               return groups.length ? { "data-cloze-groups": JSON.stringify(groups) } : {};
             },
           },
+          cardGroup: {
+            default: null, keepOnSplit: false,
+            parseHTML: element => element.getAttribute("data-card-group"),
+            renderHTML: attrs => attrs.cardGroup ? { "data-card-group": attrs.cardGroup } : {},
+          },
           // Stable block identity, including outside card syntax.
           cardId: {
             default: null,
@@ -600,6 +678,7 @@ export const Flashcards = Extension.create({
 
   addCommands() {
     return {
+      insertGroupCard, makeGroupCard, removeGroupCard,
       joinClozes:
         () =>
         ({ state, tr, dispatch }) => {
@@ -797,6 +876,11 @@ export const Flashcards = Extension.create({
           }));
           const oldBlocks = collectChangedBlocks(oldState.doc, oldRanges);
           carryMergedCardIds(tr, oldState.doc, mapping, oldBlocks);
+          // Persist the compatibility sentinel before this document is saved.
+          tr.doc.forEach((node, pos) => {
+            const opener = groupOpener(node);
+            if (opener && node.attrs.cardGroup !== opener.kind) tr.setNodeAttribute(pos, "cardGroup", opener.kind);
+          });
           const plan = planCardIds(tr.doc, ranges, () => crypto.randomUUID());
           const images: { pos: number; attrs: Record<string, unknown>; touched: boolean }[] = [];
           tr.doc.descendants((node, pos) => {
@@ -842,6 +926,8 @@ export const Flashcards = Extension.create({
           apply(tr, value): DecorationsState {
             const update = tr.getMeta(decorationsKey) as Schedules | undefined;
             if (update) return buildDecorations(tr.doc, update);
+            const hoveredGroup = tr.getMeta(groupHoverKey) as string | null | undefined;
+            if (hoveredGroup !== undefined) return { ...value, hoveredGroup };
             if (!tr.docChanged) return value;
             const { schedules } = value;
             // Attribute-only edits (joining clozes, assigning ids, undo) have
@@ -849,7 +935,7 @@ export const Flashcards = Extension.create({
             const ranges = changedRanges(tr.mapping.maps);
             if (!ranges.length) return buildDecorations(tr.doc, schedules);
             const notes = clozeNotesOf(tr.doc);
-            if (touchesNotes(tr, value.notes, notes, ranges)) {
+            if (cardGroupsOf(tr.doc).length || cardGroupsOf(tr.before).length || touchesNotes(tr, value.notes, notes, ranges)) {
               return buildDecorations(tr.doc, schedules);
             }
             let next = value.set.map(tr.mapping, tr.doc);
@@ -867,7 +953,7 @@ export const Flashcards = Extension.create({
                 next = next.remove(stale).add(tr.doc, blockDecorations(node, pos, schedules));
               }
             }
-            return { set: next, schedules, notes };
+            return { ...value, set: next, schedules, notes };
           },
         },
         props: {
@@ -903,10 +989,21 @@ export const Flashcards = Extension.create({
             return true;
           },
           decorations(state) {
-            const set = decorationsKey.getState(state)?.set;
-            if (!set) return null;
+            const value = decorationsKey.getState(state);
+            if (!value) return null;
+            const { set, groups, hoveredGroup } = value;
+            const dynamic: Decoration[] = [];
             const active = activeBlock(state, set);
-            return active ? set.add(state.doc, [active]) : set;
+            if (active) dynamic.push(active);
+            for (const group of groups) {
+              if (state.selection.head >= group.from && state.selection.head < group.to && group.closer !== null) {
+                dynamic.push(Decoration.node(group.closer, group.to, { class: "card-group-active" }));
+              }
+              if (group.node.attrs.cardId === hoveredGroup) {
+                for (const { node, pos } of group.answers) dynamic.push(Decoration.node(pos, pos + node.nodeSize, { class: "card-group-answer-hover" }));
+              }
+            }
+            return dynamic.length ? set.add(state.doc, dynamic) : set;
           },
         },
       }),

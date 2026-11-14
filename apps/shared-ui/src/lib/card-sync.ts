@@ -45,7 +45,9 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
   const snapshot = () =>
     extractCards(editor.state.doc).map(({ id, kind, front, back, section }) => ({
       id,
-      kind,
+      // Older review screens understand basic block segments and reveal the
+      // complete list together. New screens recognize the revealStep payload.
+      kind: kind === "list" ? "basic" : kind,
       front,
       back,
       section,
