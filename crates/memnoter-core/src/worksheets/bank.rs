@@ -209,9 +209,55 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
                 revision.crops.get_mut(cid).unwrap().part_id = target;
             }
         }
-        "deleteQuestion" => {
+        "deleteQuestion" | "renameQuestion" | "moveQuestion" => {
             if edit.crop.is_some() {
                 return Err(invalid().into());
+            }
+            if edit.kind == "renameQuestion"
+                && edit
+                    .title
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .chars()
+                    .count()
+                    > 120
+            {
+                return Err("Enter a shorter question title".into());
+            }
+            if edit.kind == "moveQuestion" && edit.index.is_none() {
+                return Err(invalid().into());
+            }
+        }
+        "renamePart" | "movePart" => {
+            if edit.crop.is_some() {
+                return Err(invalid().into());
+            }
+            let parent = revision
+                .parts
+                .get(&pid)
+                .and_then(|p| p.parent_id.clone())
+                .ok_or_else(invalid)?;
+            if edit.kind == "renamePart" {
+                let label = required(&edit.label)?.trim();
+                if label.is_empty() || label.chars().count() > 80 {
+                    return Err("Enter a short part label".into());
+                }
+                revision.parts.get_mut(&pid).unwrap().label = label.to_owned();
+            } else {
+                let mut siblings: Vec<_> = revision
+                    .parts
+                    .iter()
+                    .filter(|(_, p)| p.parent_id.as_ref() == Some(&parent))
+                    .map(|(id, p)| (p.order, id.clone()))
+                    .collect();
+                siblings.sort();
+                siblings.retain(|(_, id)| id != &pid);
+                let position = edit.index.ok_or_else(invalid)?.min(siblings.len());
+                siblings.insert(position, (0, pid.clone()));
+                for (order, (_, id)) in siblings.iter().enumerate() {
+                    revision.parts.get_mut(id).unwrap().order = order as _;
+                }
             }
         }
         "removePart" => {
@@ -225,6 +271,13 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
         _ => return Err(invalid().into()),
     }
     let mut written = None;
+    // Rename and move change the question record only; every other kind
+    // (but delete) writes a new immutable revision.
+    let content = !matches!(
+        edit.kind.as_str(),
+        "deleteQuestion" | "renameQuestion" | "moveQuestion"
+    );
+    let mut touched = vec![qid.clone()];
     let result = (|| -> CommandResult<Receipt> {
         if let Some(crop) = &edit.crop {
             if !matches!(edit.kind.as_str(), "newQuestion" | "newPart" | "addCrop") {
@@ -281,6 +334,28 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
         }
         if edit.kind == "deleteQuestion" {
             bank.questions.get_mut(&qid).ok_or_else(invalid)?.deleted = true;
+        } else if edit.kind == "renameQuestion" {
+            bank.questions.get_mut(&qid).ok_or_else(invalid)?.title =
+                edit.title.as_deref().unwrap_or_default().trim().to_owned();
+        } else if edit.kind == "moveQuestion" {
+            let mut live: Vec<_> = bank
+                .questions
+                .iter()
+                .filter(|(_, q)| !q.deleted)
+                .map(|(id, q)| (q.order, id.clone()))
+                .collect();
+            live.sort();
+            live.retain(|(_, id)| id != &qid);
+            let position = edit.index.ok_or_else(invalid)?.min(live.len());
+            live.insert(position, (0, qid.clone()));
+            touched = live.iter().map(|(_, id)| id.clone()).collect();
+            for (order, id) in touched.iter().enumerate() {
+                bank.questions.get_mut(id).unwrap().order = order as _;
+            }
+            touched.retain(|id| {
+                id == &qid
+                    || old.as_ref().and_then(|o| o.questions.get(id)) != bank.questions.get(id)
+            });
         } else {
             let rid = uuid::Uuid::new_v4().to_string();
             let order = bank
@@ -313,12 +388,14 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
         let Out::YMap(questions) = root.get(&txn, "questions").ok_or_else(invalid)? else {
             return Err(invalid());
         };
-        questions.insert(
-            &mut txn,
-            qid.as_str(),
-            input(serde_json::to_value(&bank.questions[&qid]).map_err(db_err)?),
-        );
-        if edit.kind != "deleteQuestion" {
+        for id in &touched {
+            questions.insert(
+                &mut txn,
+                id.as_str(),
+                input(serde_json::to_value(&bank.questions[id]).map_err(db_err)?),
+            );
+        }
+        if content {
             let rid = &bank.questions[&qid].revision_id;
             let Out::YMap(revisions) = root.get(&txn, "revisions").ok_or_else(invalid)? else {
                 return Err(invalid());
@@ -636,5 +713,162 @@ mod tests {
         .unwrap();
         assert!(deleted.bank.questions[&first.question_id].deleted);
         assert!(deleted.bank.answers.is_empty() && deleted.bank.attempts.is_empty());
+
+        // Rename and reorder: questions change only their record, parts get
+        // a new revision, and published revisions never change.
+        let live = |bank: &Bank| {
+            let mut ids: Vec<_> = bank
+                .questions
+                .iter()
+                .filter(|(_, q)| !q.deleted)
+                .map(|(id, q)| (q.order, id.clone()))
+                .collect();
+            ids.sort();
+            ids.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
+        };
+        let third = apply(
+            &core,
+            &module,
+            None,
+            json!({"kind":"newQuestion","crop":crop}),
+        )
+        .unwrap();
+        let base = third.bank.clone();
+        let ids = live(&base);
+        assert_eq!(ids.len(), 2);
+        let revision_of = |bank: &Bank, id: &str| bank.questions[id].revision_id.clone();
+        let renamed = apply(
+            &core,
+            &module,
+            Some(&third),
+            json!({"kind":"renameQuestion","title":"  A1  "}),
+        )
+        .unwrap();
+        assert_eq!(renamed.bank.questions[&third.question_id].title, "A1");
+        assert_eq!(
+            revision_of(&renamed.bank, &third.question_id),
+            revision_of(&base, &third.question_id),
+            "renaming a question writes no revision"
+        );
+        assert_eq!(renamed.bank.revisions, base.revisions);
+        let cleared = apply(
+            &core,
+            &module,
+            Some(&renamed),
+            json!({"kind":"renameQuestion","title":"   "}),
+        )
+        .unwrap();
+        assert_eq!(cleared.bank.questions[&third.question_id].title, "");
+        assert!(apply(
+            &core,
+            &module,
+            Some(&cleared),
+            json!({"kind":"renameQuestion","title":"x".repeat(121)})
+        )
+        .is_err());
+        let moved_first = apply(
+            &core,
+            &module,
+            Some(&cleared),
+            json!({"kind":"moveQuestion","index":0}),
+        )
+        .unwrap();
+        let order = live(&moved_first.bank);
+        assert_eq!(order[0], third.question_id);
+        assert_eq!(order[1], ids[0]);
+        assert_eq!(moved_first.bank.revisions, base.revisions);
+        let clamped = apply(
+            &core,
+            &module,
+            Some(&moved_first),
+            json!({"kind":"moveQuestion","index":99}),
+        )
+        .unwrap();
+        assert_eq!(live(&clamped.bank).last(), Some(&third.question_id));
+        assert!(apply(
+            &core,
+            &module,
+            Some(&clamped),
+            json!({"kind":"moveQuestion"})
+        )
+        .is_err());
+        // Persisted: a fresh read agrees with the receipt.
+        assert_eq!(get(&core, module.clone()).unwrap().unwrap(), clamped.bank);
+
+        let with_a = apply(
+            &core,
+            &module,
+            Some(&clamped),
+            json!({"kind":"newPart","label":"a","crop":crop}),
+        )
+        .unwrap();
+        let part_a = with_a.part_id.clone();
+        let with_b = apply(
+            &core,
+            &module,
+            Some(&with_a),
+            json!({"kind":"newPart","partId":with_a.bank.revisions[&revision_of(&with_a.bank,&with_a.question_id)].root_part_id,"label":"b","crop":crop}),
+        )
+        .unwrap();
+        let part_b = with_b.part_id.clone();
+        let before_rev = revision_of(&with_b.bank, &with_b.question_id);
+        let rename_part = apply(
+            &core,
+            &module,
+            Some(&with_b),
+            json!({"kind":"renamePart","partId":part_a,"label":" (z) "}),
+        )
+        .unwrap();
+        let after_rev = revision_of(&rename_part.bank, &with_b.question_id);
+        assert_ne!(before_rev, after_rev);
+        assert_eq!(
+            rename_part.bank.revisions[&after_rev].parts[&part_a].label,
+            "(z)"
+        );
+        assert_eq!(
+            rename_part.bank.revisions[&before_rev].parts[&part_a].label, "a",
+            "the earlier revision is untouched"
+        );
+        let root_id = rename_part.bank.revisions[&after_rev].root_part_id.clone();
+        assert!(apply(
+            &core,
+            &module,
+            Some(&rename_part),
+            json!({"kind":"renamePart","partId":root_id,"label":"x"})
+        )
+        .is_err());
+        assert!(apply(
+            &core,
+            &module,
+            Some(&rename_part),
+            json!({"kind":"renamePart","partId":part_a,"label":"  "})
+        )
+        .is_err());
+        assert!(apply(
+            &core,
+            &module,
+            Some(&rename_part),
+            json!({"kind":"renamePart","partId":part_a,"label":"y".repeat(81)})
+        )
+        .is_err());
+        let move_part = apply(
+            &core,
+            &module,
+            Some(&rename_part),
+            json!({"kind":"movePart","partId":part_b,"index":0}),
+        )
+        .unwrap();
+        let moved_rev =
+            &move_part.bank.revisions[&revision_of(&move_part.bank, &with_b.question_id)];
+        assert_eq!(moved_rev.parts[&part_b].order, 0);
+        assert_eq!(moved_rev.parts[&part_a].order, 1);
+        assert_ne!(revision_of(&move_part.bank, &with_b.question_id), after_rev);
+        assert!(apply(
+            &core,
+            &module,
+            Some(&move_part),
+            json!({"kind":"movePart","partId":root_id,"index":0})
+        )
+        .is_err());
     }
 }

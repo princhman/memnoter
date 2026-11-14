@@ -1,4 +1,4 @@
-import { createStore } from "@tanstack/react-store";
+import { createStore, useSelector } from "@tanstack/react-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { call } from "./backend";
 import { IS_MAC } from "./platform";
@@ -12,10 +12,43 @@ export type Bank = {
 };
 export type Target = { moduleId: string; questionId: string; partId: string };
 export const bankTarget = createStore<Target | null>(null);
+const targetKey = (moduleId: string) => `bank-target:${moduleId}`;
+/** Where the next crop goes. Remembered per module so it survives a reload. */
+export function setBankTarget(target: Target) {
+  bankTarget.setState(() => target);
+  try { localStorage.setItem(targetKey(target.moduleId), JSON.stringify({ questionId: target.questionId, partId: target.partId })); } catch {}
+}
+function storedTarget(moduleId: string): Target | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(targetKey(moduleId)) || "null");
+    return value && typeof value.questionId === "string" && typeof value.partId === "string" ? { moduleId, questionId: value.questionId, partId: value.partId } : null;
+  } catch { return null; }
+}
+const exists = (bank: Bank, target: Target) => {
+  const question = bank.questions[target.questionId];
+  return !!question && !question.deleted && !!bank.revisions[question.revisionId]?.parts[target.partId];
+};
+/**
+ * The target if it still exists (in memory, else remembered), otherwise the
+ * last part of the last question: the end of the worksheet, where the next
+ * crop most likely continues.
+ */
+export function resolveTarget(bank: Bank | null | undefined, moduleId: string, current: Target | null): Target | null {
+  if (!bank) return null;
+  for (const candidate of [current, storedTarget(moduleId)]) if (candidate && candidate.moduleId === moduleId && exists(bank, candidate)) return candidate;
+  const last = Object.entries(bank.questions).filter(([, q]) => !q.deleted).sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0])).pop();
+  if (!last) return null;
+  const outline = partOutline(bank.revisions[last[1].revisionId], 1);
+  return { moduleId, questionId: last[0], partId: outline[outline.length - 1].id };
+}
+export function useBankTarget(moduleId: string, bank: Bank | null | undefined) {
+  const current = useSelector(bankTarget, s => s?.moduleId === moduleId ? s : null);
+  return resolveTarget(bank, moduleId, current);
+}
 export const bankView = createStore<string | null>(null);
 export type CropDraft = Omit<WorksheetCrop, "partId" | "assetId"> & { blob: Blob; url: string };
 export type BankEdit = {
-  kind: "newQuestion" | "newPart" | "addCrop" | "moveCrop" | "reorderCrop" | "removeCrop" | "removePart" | "deleteQuestion";
+  kind: "newQuestion" | "newPart" | "addCrop" | "moveCrop" | "reorderCrop" | "removeCrop" | "removePart" | "deleteQuestion" | "renameQuestion" | "moveQuestion" | "renamePart" | "movePart";
   questionId?: string; partId?: string; expectedRevisionId?: string; label?: string; title?: string;
   cropId?: string; index?: number; crop?: Omit<CropDraft, "blob" | "url"> & { bytes: number[] };
 };
@@ -32,7 +65,7 @@ export function useBankEdit(moduleId: string) {
     assertWritable(permit);
     const receipt = await call<{ bank: Bank; questionId: string; partId: string }>("question_bank_edit", { moduleId, edit });
     client.setQueryData(bankKey(moduleId), receipt.bank);
-    bankTarget.setState(() => ({ moduleId, questionId: receipt.questionId, partId: receipt.partId }));
+    setBankTarget({ moduleId, questionId: receipt.questionId, partId: receipt.partId });
     bankView.setState(() => moduleId);
     return receipt;
   });

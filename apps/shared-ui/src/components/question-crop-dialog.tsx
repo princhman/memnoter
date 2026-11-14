@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useSelector } from "@tanstack/react-store";
-import { questionLabel, bankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
+import { ChevronsUpDown } from "lucide-react";
+import { questionLabel, setBankTarget, useBankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 
@@ -31,11 +31,20 @@ function choices(bank: Bank | null | undefined, target: { questionId: string; pa
   return result;
 }
 
+// Every question and part, named as the bank names them, to pick a target from.
+function targets(bank: Bank | null | undefined) {
+  return Object.entries(bank?.questions ?? {}).filter(([, q]) => !q.deleted).sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]))
+    .flatMap(([questionId, question], index) => partOutline(bank!.revisions[question.revisionId], questionLabel(question.title, index + 1)).map(part => ({ questionId, partId: part.id, label: part.label, depth: part.depth })));
+}
+
 export function QuestionCropDialog({ moduleId, draft, onClose, onSaved }: { moduleId: string; draft: CropDraft; onClose: () => void; onSaved?: () => void }) {
   const query = useBank(moduleId, true); const edit = useBankEdit(moduleId);
-  const target = useSelector(bankTarget, s => s?.moduleId === moduleId ? s : null);
+  const target = useBankTarget(moduleId, query.data);
+  const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const options = choices(query.data, target);
+  const list = picking ? targets(query.data) : [];
+  const targetName = target ? targets(query.data).find(t => t.partId === target.partId && t.questionId === target.questionId)?.label : undefined;
   const save = async (choice: Choice) => {
     if (busy) return;
     setBusy(true); setError("");
@@ -49,7 +58,7 @@ export function QuestionCropDialog({ moduleId, draft, onClose, onSaved }: { modu
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || (event.target as HTMLElement | null)?.closest("input, textarea, [contenteditable=true]")) return;
-      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if (event.key === "Escape") { event.preventDefault(); if (picking) setPicking(false); else onClose(); return; }
       const choice = options.find(o => o.key === event.key.toLowerCase());
       if (choice && !query.isLoading) { event.preventDefault(); void save(choice); }
     };
@@ -57,8 +66,12 @@ export function QuestionCropDialog({ moduleId, draft, onClose, onSaved }: { modu
     return () => window.removeEventListener("keydown", onKey, true);
   });
   return <section role="dialog" aria-label="Add crop to question bank" className="absolute inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-center gap-3 rounded-xl floating-surface bg-popover p-2 text-popover-foreground shadow-lg">
+    {picking && <ul aria-label="Choose where crops go" className="absolute inset-x-0 bottom-full mb-1 max-h-56 overflow-y-auto rounded-xl floating-surface bg-popover p-1 shadow-lg">
+      {list.map(item => <li key={`${item.questionId}:${item.partId}`}><button type="button" style={{ paddingLeft: 8 + item.depth * 12 }} aria-current={item.questionId === target?.questionId && item.partId === target.partId} className="w-full rounded-md py-1 pr-2 text-left text-sm hover:bg-accent aria-[current=true]:font-semibold" onClick={() => { setBankTarget({ moduleId, questionId: item.questionId, partId: item.partId }); setPicking(false); }}>{item.label}</button></li>)}
+    </ul>}
     <img src={draft.url} alt="Selected crop" className="h-12 w-16 shrink-0 rounded bg-white object-contain" />
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+      {targetName && <Button size="xs" variant="outline" aria-expanded={picking} aria-label={`Target ${targetName}, change`} onClick={() => setPicking(open => !open)}>{targetName}<ChevronsUpDown className="size-3 opacity-60" /></Button>}
       {options.map(choice => <Button key={choice.key} size="xs" variant={choice.key === "a" ? "secondary" : "ghost"} disabled={busy || query.isLoading || !!query.error} onClick={() => void save(choice)}>{choice.label}<Kbd>{choice.key.toUpperCase()}</Kbd></Button>)}
       {(error || query.error) && <p role="alert" className="w-full px-2 text-xs text-destructive">{error || query.error?.message}</p>}
     </div>
