@@ -41,7 +41,7 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
         if (command === 'list_documents') return [{ id: 'pdf1', moduleId: 'm2', moduleName: 'Biology', name: 'Field guide.pdf', size: 1, pageCount: 1, available: true }];
         return [];
       } } });
-    }, { source: seed([['paragraph', 'See ']]), destination: seed([...Array.from({ length: 50 }, (_, i) => ['paragraph', `Background ${i}`]), ['heading', 'Cells', { level: 1, id: 'stable-heading', 'data-toc-id': 'stable-heading' }], ['paragraph', 'Cell notes']]) });
+    }, { source: seed([['paragraph', 'See ']]), destination: seed([...Array.from({ length: 50 }, (_, i) => ['paragraph', `Background ${i}`]), ['heading', 'Cells', { level: 1, id: 'stable-heading', 'data-toc-id': 'stable-heading' }], ['heading', 'Organelles', { level: 2, 'data-toc-id': 'child-heading' }], ['paragraph', 'Cell notes']]) });
     await page.route('**/mention-guide.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
     const origin = `http://localhost:${server.httpServer.address().port}`;
     // Persist a saved view near the top before following a reference far below it.
@@ -52,7 +52,20 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await page.getByRole('link', { name: 'Research', exact: true }).click();
     await page.waitForURL(`${origin}/m1`);
     const editor = page.locator('.tiptap[contenteditable=true]'); await editor.waitFor();
-    await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('@Cells');
+    await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('@');
+    const parentOption = page.getByRole('option', { name: /^Biology › Cells/ });
+    await parentOption.waitFor();
+    assert.equal(await page.getByRole('option', { name: 'Biology › Cells / Organelles', exact: true }).count(), 0);
+    await parentOption.hover();
+    await page.keyboard.press('ArrowRight');
+    await page.getByRole('option', { name: 'Biology › Cells / Organelles', exact: true }).waitFor();
+    await page.keyboard.press('ArrowLeft');
+    await parentOption.waitFor();
+    await page.keyboard.type('Organelles');
+    await page.getByRole('option', { name: 'Biology › Cells / Organelles', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    for (let i = 0; i < '@Organelles'.length; i++) await page.keyboard.press('Backspace');
+    await page.keyboard.type('@Cells');
     await page.getByRole('option', { name: 'Biology › Cells', exact: true }).click();
     await page.getByRole('button', { name: '@Biology › Cells', exact: true }).waitFor();
     await page.waitForTimeout(1600); await page.reload();

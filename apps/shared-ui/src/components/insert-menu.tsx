@@ -1,7 +1,7 @@
 import { IMAGE_TYPES } from "@/lib/editor-schema/images";
 import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
-import { forwardRef, Fragment, useEffect, useId, useImperativeHandle, useRef, useState, type RefObject } from "react";
+import { forwardRef, Fragment, useEffect, useId, useImperativeHandle, useRef, useState, type RefObject, type ReactNode } from "react";
 import type { Editor, Range } from "@tiptap/core";
 import { capabilities } from "@/lib/backend";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,8 @@ export type InsertCommandOptions = {
 export type InsertItem = {
   group: string;
   retainSelection?: boolean;
+  label?: ReactNode;
+  drillDown?: () => void;
   title: string;
   keywords: string[];
   hint: string;
@@ -240,6 +242,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }) => {
         if (!items.length) return false;
+        if (event.key === "ArrowRight" && items[selected]?.drillDown) { items[selected].drillDown?.(); return true; }
         if (event.key === "ArrowUp") {
           setSelected((index) => (index + items.length - 1) % items.length);
           return true;
@@ -302,7 +305,8 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
               onMouseEnter={() => setSelected(index)}
               onClick={() => command(item)}
             >
-              <span className="shrink-0">{item.title}</span>
+              <span className="shrink-0">{item.label ?? item.title}</span>
+              {item.drillDown && <span role="button" aria-label={`Show subsections of ${item.title}`} onClick={event => { event.stopPropagation(); item.drillDown?.(); }} className="ml-auto px-2">›</span>}
               {item.hint && (
                 <kbd className="min-w-0 truncate font-sans text-xs text-muted-foreground">
                   {item.hint}
