@@ -46,7 +46,7 @@ test("real card decorations hide braces and tint prose and rendered math in eith
   } finally { await browser?.close(); await server.close(); }
 });
 
-test("group markers follow the caret, closers collapse, and only the hovered dot underlines its answers", async () => {
+test("group editing, hover and dot focus preserve geometry while exposing syntax and answer details", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
@@ -66,9 +66,12 @@ test("group markers follow the caret, closers collapse, and only the hovered dot
     const metrics = () => page.evaluate(() => {
       const read = selector => [...document.querySelectorAll(selector)].map(el => {
         const s = getComputedStyle(el), r = el.getBoundingClientRect();
-        return { color: s.color, height: r.height, width: r.width, x: r.x, y: r.y, shadow: s.boxShadow, background: s.backgroundColor };
+        return { visibility: s.visibility, color: s.color, height: r.height, width: r.width, x: r.x, y: r.y, shadow: s.boxShadow, background: s.backgroundColor };
       });
-      return { markers: read(".card-group-opener"), closers: read(".card-group-closer"), answers: read(".card-group-answer-text"), content: editor.state.doc.toJSON() };
+      const geometry = selector => [...document.querySelectorAll(selector)].map(el => {
+        const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height];
+      });
+      return { geometry: { blocks: geometry('.tiptap > :not(.card-group-closer), .tiptap li > p'), dots: geometry('.card-group-question > .card-info') }, endMarkers: read('.card-group-end-marker'), markers: read(".card-group-opener"), closers: read(".card-group-closer"), answers: read(".card-group-answer-text"), content: editor.state.doc.toJSON() };
     });
     for (const dark of [false, true]) {
       await page.evaluate(dark => document.documentElement.classList.toggle("dark", dark), dark);
@@ -88,7 +91,10 @@ test("group markers follow the caret, closers collapse, and only the hovered dot
         }, groupIndex);
         const active = await metrics();
         assert.notEqual(active.markers[groupIndex].color, "rgba(0, 0, 0, 0)");
-        assert.ok(active.closers[groupIndex].height > 0);
+        assert.ok(active.closers.every(s => s.height === 0), "editing source stays out of flow");
+        assert.equal(active.endMarkers[groupIndex].visibility, 'visible');
+        assert.equal(active.endMarkers[1 - groupIndex].visibility, 'hidden');
+        assert.deepEqual(active.geometry, resting.geometry, "editing must not move or resize any block or dot");
         assert.equal(active.closers[1 - groupIndex].height, 0);
         assert.deepEqual([active.markers[groupIndex].x, active.markers[groupIndex].width], [resting.markers[groupIndex].x, resting.markers[groupIndex].width]);
         // Opening the closer must not move that group's question or answers.
@@ -107,6 +113,15 @@ test("group markers follow the caret, closers collapse, and only the hovered dot
         }
         assert.equal(hovered.answers[groupIndex ? 0 : 2].shadow, "none", "the other card stays plain");
         assert.ok(hovered.closers.every(s => s.height === 0), "hovering does not reveal syntax");
+        assert.deepEqual(hovered.geometry, resting.geometry);
+        await page.mouse.move(5, 5);
+        await dot.focus();
+        const focused = await metrics();
+        assert.deepEqual(focused.geometry, resting.geometry, "keyboard focus keeps all geometry fixed");
+        assert.equal(focused.answers[answerIndex].shadow, clozeShadow);
+        const description = groupIndex ? 'Block card: Reveals together' : 'List card: Reveals one by one';
+        assert.equal(await dot.getAttribute('aria-label'), `${description}. Card details`);
+        assert.equal(await dot.getByText(description, { exact: true }).isVisible(), true);
         assert.deepEqual(hovered.content, resting.content, "focus and hover do not edit saved syntax or identities");
       }
     }
