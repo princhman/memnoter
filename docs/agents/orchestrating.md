@@ -146,8 +146,10 @@ branch is pushed.
 - **Chromium/WebKit proof:** `PROOF_DIR=<dir>` makes every page a shared-ui test
   opens record a `.webm` into `<dir>`. Write a throwaway test for the scenario if
   no existing one shows it, run it from `apps/shared-ui` with the usual
-  `node … --test`, and delete it afterwards. These pages use test data, so they
-  prove the shared-ui layout and behaviour, not the native shell.
+  `node … --test`, and delete it afterwards. The test must open the app's own
+  entry page, not a fixture or demo wrapper ("Demo recordings" in `AGENTS.md`).
+  It uses test data, so it proves the shared-ui layout and behaviour, not the
+  native shell.
 - **Simulator build:** `xcodebuild -project apps/ios/Memnoter.xcodeproj -scheme
   Memnoter -destination id=<udid> -derivedDataPath apps/ios/build build`, then
   `agent-device install com.vladyslavnalyvaiko.memnoter.ipad
