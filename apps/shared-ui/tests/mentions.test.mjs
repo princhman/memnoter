@@ -2,7 +2,7 @@ import { textPdfBytes } from "./browser/pdf-text-selection-pdf.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as Y from 'yjs';
-import { extractMentions, backlinks } from '../src/lib/mention-index.ts';
+import { extractMentions, backlinks, mentionLabel } from '../src/lib/mention-index.ts';
 import { browserHarness } from './support/browser.mjs';
 const target = { kind: 'heading', id: 'm2', nodeId: 'stable-heading', locator: null };
 test('backlinks track the exact node and source location, and disappear on deletion', () => {
@@ -12,6 +12,13 @@ test('backlinks track the exact node and source location, and disappear on delet
   assert.equal(backlinks(notes, { ...target, nodeId: 'other' }).length, 0);
   assert.equal(backlinks(notes, { ...target, kind: 'module', nodeId: null }).length, 0);
   doc.content.pop(); assert.equal(backlinks([{ ...notes[0], note: extractMentions(doc) }], target).length, 0);
+});
+test('a nested section reference is labelled with its full path', () => {
+  const notes = [{ id: 'm1', name: 'Logic', note: { headings: [{ id: 'h1', title: 'Hello', path: [] }, { id: 'h2', title: 'Hello 2', path: ['Hello'] }], mentions: [] } }];
+  const heading = id => ({ kind: 'heading', id: 'm1', nodeId: id, locator: null });
+  assert.equal(mentionLabel(notes, [], heading('h2')), 'Logic › Hello / Hello 2');
+  assert.equal(mentionLabel(notes, [], heading('h1')), 'Logic › Hello');
+  assert.equal(mentionLabel(notes, [], { kind: 'module', id: 'm1', nodeId: null, locator: null }), 'Logic');
 });
 function seed(blocks) {
   const doc = new Y.Doc();

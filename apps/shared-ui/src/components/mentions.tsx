@@ -14,7 +14,7 @@ import { stopScrollRestore } from "@/lib/view-persistence";
 import { Mention, mentionTarget, type MentionTarget } from "@/lib/mention";
 import { useMentionNotes } from "@/lib/use-mentions";
 import { useDocuments } from "@/lib/use-documents";
-import { backlinks } from "@/lib/mention-index";
+import { backlinks, mentionLabel } from "@/lib/mention-index";
 import { InsertMenu, type InsertMenuHandle, type InsertItem } from "./insert-menu";
 
 const Context = createContext<ReturnType<typeof useMentionNotes> & { files: { id: string; name: string }[] } | null>(null);
@@ -69,9 +69,7 @@ function MentionChip({ node }: NodeViewProps) {
   const catalog = useCatalog();
   const open = useOpenReference();
   const target = mentionTarget(node.attrs.target);
-  const module = catalog.notes.find(note => note.id === target?.id);
-  const title = target?.kind === "file" ? catalog.files.find(file => file.id === target.id)?.name : target?.kind === "heading" ? module?.note.headings.find(heading => heading.id === target.nodeId)?.title : module?.name;
-  const label = target?.kind === "heading" && title ? `${module?.name} › ${title}` : title;
+  const label = target ? mentionLabel(catalog.notes, catalog.files, target) : undefined;
   return <NodeViewWrapper as="span" className="mention-chip" contentEditable={false}><button type="button" onMouseDown={event => event.preventDefault()} onClick={() => target && open(target)} title={label ?? "Reference unavailable"}>@{label ?? (catalog.loading ? "Loading…" : "Reference unavailable")}</button></NodeViewWrapper>;
 }
 export const MentionView = Mention.extend({ addNodeView: () => ReactNodeViewRenderer(MentionChip) });
@@ -173,6 +171,7 @@ export function MentionedIn({ target, onOpenChange }: { target: MentionTarget; o
     : target.kind === "heading"
       ? module?.note.headings.find(heading => heading.id === target.nodeId)?.title
       : module?.name;
+  const fullLabel = mentionLabel(catalog.notes, catalog.files, target);
   const label = `${sources.length} incoming ${sources.length === 1 ? "reference" : "references"}${title ? ` to ${title}` : ""}`;
 
   if (!sources.length && !open) return null;
@@ -194,7 +193,7 @@ export function MentionedIn({ target, onOpenChange }: { target: MentionTarget; o
           finalFocus={() => !navigating.current}
           className="floating-surface max-h-[min(24rem,60vh)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg bg-popover p-1.5 text-popover-foreground shadow-md outline-none"
         >
-          <Popover.Title className="truncate px-2 pt-1 pb-1.5 text-xs text-muted-foreground">Linked to {title ?? "this reference"}</Popover.Title>
+          <Popover.Title className="truncate px-2 pt-1 pb-1.5 text-xs text-muted-foreground">Linked to {fullLabel ?? "this reference"}</Popover.Title>
           {sources.map((source, index) => <button
             key={`${source.moduleId}:${source.mentionId}:${index}`}
             type="button"

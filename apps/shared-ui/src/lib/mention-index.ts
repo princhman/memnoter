@@ -31,3 +31,12 @@ export function backlinks(notes: { id: string; name: string; note: MentionNote }
   const key = targetKey(target);
   return notes.flatMap(source => source.note.mentions.filter(mention => targetKey(mention.target) === key).map(mention => ({ moduleId: source.id, moduleName: source.name, ...mention })));
 }
+
+/** Display label for a reference, computed live from the target: sections show `Module › Parent / Section`. */
+export function mentionLabel(notes: { id: string; name: string; note: MentionNote }[], files: { id: string; name: string }[], target: MentionTarget): string | undefined {
+  if (target.kind === "file") return files.find(file => file.id === target.id)?.name;
+  const module = notes.find(note => note.id === target.id);
+  if (target.kind !== "heading") return module?.name;
+  const heading = module?.note.headings.find(item => item.id === target.nodeId);
+  return module && heading ? `${module.name} › ${[...(heading.path ?? []), heading.title].join(" / ")}` : undefined;
+}
