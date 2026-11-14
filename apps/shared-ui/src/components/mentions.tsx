@@ -9,6 +9,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { createStore } from "@tanstack/react-store";
 import { getFoldedRanges, getFoldedIds } from "@/lib/heading-fold";
+import { stopScrollRestore } from "@/lib/view-persistence";
 import { Mention, mentionTarget, type MentionTarget } from "@/lib/mention";
 import { useMentionNotes } from "@/lib/use-mentions";
 import { useDocuments } from "@/lib/use-documents";
@@ -45,6 +46,9 @@ export function MentionNavigation({ editor, moduleId, ready }: { editor: Editor 
       if (request.kind === "heading" ? node.type.name === "heading" && node.attrs["data-toc-id"] === request.id : node.type.name === "mention" && node.attrs.mentionId === request.id) position = pos;
     });
     if (position !== null) {
+      // A pending restore of this note's saved scroll would pull the view
+      // back off the reference destination once layout settles.
+      stopScrollRestore();
       editor.commands.showDocument();
       const destination = position;
       const hiddenBy = new Set(getFoldedRanges(editor.state).filter(range => destination >= range.from && destination < range.to).map(range => range.id));

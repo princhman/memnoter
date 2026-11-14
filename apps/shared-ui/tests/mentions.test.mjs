@@ -41,18 +41,40 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
         if (command === 'list_documents') return [{ id: 'pdf1', moduleId: 'm2', moduleName: 'Biology', name: 'Field guide.pdf', size: 1, pageCount: 1, available: true }];
         return [];
       } } });
-    }, { source: seed([['paragraph', 'See ']]), destination: seed([['heading', 'Cells', { level: 1, id: 'stable-heading', 'data-toc-id': 'stable-heading' }], ['paragraph', 'Cell notes']]) });
+    }, { source: seed([['paragraph', 'See ']]), destination: seed([...Array.from({ length: 50 }, (_, i) => ['paragraph', `Background ${i}`]), ['heading', 'Cells', { level: 1, id: 'stable-heading', 'data-toc-id': 'stable-heading' }], ['paragraph', 'Cell notes']]) });
     await page.route('**/mention-guide.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
     const origin = `http://localhost:${server.httpServer.address().port}`;
-    await page.goto(`${origin}/m1`);
+    // Persist a saved view near the top before following a reference far below it.
+    await page.goto(`${origin}/m2`);
+    await page.locator('.tiptap').waitFor();
+    await page.locator('.tiptap p').nth(2).hover(); await page.mouse.wheel(0, 200);
+    await page.waitForTimeout(400);
+    await page.getByRole('link', { name: 'Research', exact: true }).click();
+    await page.waitForURL(`${origin}/m1`);
     const editor = page.locator('.tiptap[contenteditable=true]'); await editor.waitFor();
     await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('@Cells');
     await page.getByRole('option', { name: 'Biology › Cells', exact: true }).click();
     await page.getByRole('button', { name: '@Biology › Cells', exact: true }).waitFor();
     await page.waitForTimeout(1600); await page.reload();
+    await page.evaluate(async () => {
+      const { saveModuleView } = await import('/src/lib/store.ts');
+      saveModuleView('m2', { scrollTop: 0, anchor: 1, head: 1, focusedSection: null, foldedSections: [] });
+    });
     await page.getByRole('button', { name: '@Biology › Cells', exact: true }).click(); await page.waitForURL(`${origin}/m2`);
     await page.waitForFunction(() => document.getSelection()?.anchorNode?.parentElement?.closest('h1') !== null);
     const heading = page.locator('.tiptap h1'); await heading.waitFor();
+    // A later layout/backlink render must not restore the old top-of-note view.
+    await page.waitForTimeout(300);
+    const destinationTop = await heading.evaluate(el => el.getBoundingClientRect().top);
+    await page.evaluate(async () => {
+      const { queryClient } = await import('/src/lib/query-client.ts');
+      await queryClient.invalidateQueries({ queryKey: ['mention-note', 'm1'] });
+      const editor = document.querySelector('.tiptap');
+      editor.style.height = `${editor.scrollHeight + 100}px`;
+    });
+    await page.waitForTimeout(300);
+    assert.ok(Math.abs(await heading.evaluate(el => el.getBoundingClientRect().top) - destinationTop) < 2, 'reference destination moved after layout refresh');
+    assert.ok(destinationTop >= 0 && destinationTop < 800, `destination outside viewport: ${destinationTop}`);
     const count = page.getByRole('button', { name: '1 incoming reference to Cells', exact: true });
     await heading.click(); await page.mouse.move(5, 5);
     await count.waitFor();
@@ -86,7 +108,8 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await page.getByRole('button', { name: /^1 incoming reference/, exact: false }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Research', exact: true }).click(); await page.waitForURL(`${origin}/m1`);
     await page.getByRole('button', { name: '@Biology › Cells', exact: true }).click(); await page.waitForURL(`${origin}/m2`);
-    await heading.click(); await page.keyboard.press('Home'); await page.keyboard.press('Shift+End'); await page.keyboard.type('Living cells');
+    await heading.click({ clickCount: 3 }); await page.keyboard.type('Living cells');
+    assert.equal(await heading.innerText(), 'Living cells');
     await page.waitForTimeout(1600);
     await page.getByRole('button', { name: 'Actions for Biology', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
@@ -107,7 +130,7 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await page.getByRole('option', { name: 'Life science', exact: true }).click();
     await page.getByRole('button', { name: '@Life science', exact: true }).click();
     await page.waitForURL(`${origin}/m2`);
-    await page.getByRole('button', { name: /^1 incoming reference/, exact: false }).click();
+    await page.getByRole('button', { name: '1 incoming reference to Life science', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Research', exact: true }).click();
     await page.waitForURL(`${origin}/m1`);
     await page.getByRole("dialog").waitFor({ state: "hidden" });
@@ -116,5 +139,40 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
       await page.evaluate(() => document.documentElement.classList.add('dark'));
       await page.screenshot({ path: `${process.env.PROOF_DIR}/dark.png` });
     }
+  } finally { await browser?.close(); await server.close(); }
+});
+
+test('remote source changes refresh backlinks', async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' }); let browser;
+  const source = seed([['heading', 'Original source', { level: 1 }], ['mention', '', { target, mentionId: 'remote-link' }]]);
+  const remote = new Y.Doc(); Y.applyUpdate(remote, Uint8Array.from(source));
+  const vector = Y.encodeStateVector(remote);
+  const text = remote.getXmlFragment('default').get(0).get(0);
+  text.delete(0, text.length); text.insert(0, 'Renamed remotely');
+  const bytes = [...Y.encodeStateAsUpdate(remote, vector)]; remote.destroy();
+  try {
+    await server.listen(); browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(({ source, destination }) => {
+      const contents = { m1: { state: source, updates: [], files: [] }, m2: { state: destination, updates: [], files: [] } };
+      window.remoteContents = contents;
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
+        if (command.startsWith('plugin:')) return 1;
+        if (command === 'modules') return [{ id: 'm1', name: 'Research' }, { id: 'm2', name: 'Biology' }];
+        if (command === 'get_content') return structuredClone(contents[args.moduleId]);
+        if (command === 'add_update') { const update = { id: Date.now(), bytes: args.bytes }; contents[args.moduleId].updates.push(update); return update; }
+        return [];
+      } } });
+    }, { source, destination: seed([['heading', 'Cells', { level: 1, 'data-toc-id': 'stable-heading' }], ['paragraph', 'Cell notes']]) });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/m2`);
+    await page.locator('.tiptap h1').hover();
+    await page.getByRole('button', { name: '1 incoming reference to Cells', exact: true }).click();
+    await page.getByRole('dialog').getByText('› Original source', { exact: true }).waitFor();
+    await page.evaluate(async bytes => {
+      const update = { id: 9000, bytes }; window.remoteContents.m1.updates.push(update);
+      (await import('/src/lib/sync/apply-remote.ts')).onRemote({ updates: [{ moduleId: 'm1', update }], modulesChanged: false, deleted: [], reviewsChanged: false, filesChanged: false });
+    }, bytes);
+    await page.getByRole('dialog').getByText('› Renamed remotely', { exact: true }).waitFor({ timeout: 5000 });
+    assert.equal(await page.getByRole('dialog').getByText('› Original source', { exact: true }).count(), 0);
   } finally { await browser?.close(); await server.close(); }
 });
