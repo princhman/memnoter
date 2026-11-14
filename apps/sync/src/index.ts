@@ -4,6 +4,7 @@ import type { Env } from "./env";
 import type { KeyInfo } from "./vault";
 import { blobKey, fileKey, goneKey } from "./storage";
 import {
+  PROTOCOL_VERSION, PROTOCOL_HEADER, UPDATE_REQUIRED_MESSAGE,
   AUTH_PROTOCOL_PREFIX,
   MAX_FILE_BYTES,
   MAX_LARGE_BLOB_BYTES,
@@ -19,7 +20,7 @@ export { Account } from "./account";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Memnoter-Protocol-Version",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -78,6 +79,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (!valid) return json({ error: "Invalid id" }, 400);
     const key = kind === "files" ? fileKey(claims.sub, id) : blobKey(claims.sub, id);
     if (kind === "files" && method === "DELETE") {
+      // Headerless v0.1.5 uses protocol 1. Keep this fixed when the server
+      // protocol advances: legacy clients must then lose deletion access too.
+      const version = request.headers.get(PROTOCOL_HEADER) ?? "1";
+      if (version !== String(PROTOCOL_VERSION)) return json({ error: UPDATE_REQUIRED_MESSAGE }, 426);
       // Publish permanence before removing bytes, including when deletion is retried.
       await env.FILES.put(goneKey(claims.sub, id), new Uint8Array());
       await env.FILES.delete(key);

@@ -110,6 +110,7 @@ export const capabilities = {
 };
 
 export function openExternalLink(href: string) {
+  if (isNativeHost()) { void call("open_external_link", { href }).catch(error => console.error("Failed to open link", error)); return; }
   if (!isTauri()) { window.open(href, "_blank", "noopener,noreferrer"); return; }
   void import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(href))
     .catch(error => console.error("Failed to open external link:", error));
