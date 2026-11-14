@@ -15,7 +15,7 @@ export const bankTarget = createStore<Target | null>(null);
 export const bankView = createStore<string | null>(null);
 export type CropDraft = Omit<WorksheetCrop, "partId" | "assetId"> & { blob: Blob; url: string };
 export type BankEdit = {
-  kind: "newQuestion" | "newPart" | "addCrop" | "moveCrop" | "reorderCrop" | "removeCrop" | "deleteQuestion";
+  kind: "newQuestion" | "newPart" | "addCrop" | "moveCrop" | "reorderCrop" | "removeCrop" | "removePart" | "deleteQuestion";
   questionId?: string; partId?: string; expectedRevisionId?: string; label?: string; title?: string;
   cropId?: string; index?: number; crop?: Omit<CropDraft, "blob" | "url"> & { bytes: number[] };
 };
@@ -42,10 +42,16 @@ const ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi"
 export function nextPartLabel(revision: WorksheetRevision, parentId: string) {
   let depth = 0;
   for (let id: string | null = parentId; id && revision.parts[id]?.parentId; id = revision.parts[id].parentId) depth++;
-  const count = Object.values(revision.parts).filter(p => p.parentId === parentId).length;
-  if (depth % 3 === 1) return ROMAN[count] ?? String(count + 1);
-  const letter = String.fromCharCode(97 + (count % 26));
-  return depth % 3 === 2 ? letter.toUpperCase() : letter;
+  const label = (index: number) => {
+    if (depth % 3 === 1) return ROMAN[index] ?? String(index + 1);
+    const letter = String.fromCharCode(97 + (index % 26));
+    return depth % 3 === 2 ? letter.toUpperCase() : letter;
+  };
+  // After the last label in use, so removing (b) from (a)-(c) never gives a second (c).
+  const used = new Set(Object.values(revision.parts).filter(p => p.parentId === parentId).map(p => p.label.replace(/^\((.*)\)$/, "$1").toLowerCase()));
+  let next = 0;
+  for (let index = 0; index < 52; index++) if (used.has(label(index).toLowerCase())) next = index + 1;
+  return label(next);
 }
 export function partOutline(revision: WorksheetRevision, number: number) {
   const result: { id: string; label: string; depth: number; leaf: boolean }[] = [];

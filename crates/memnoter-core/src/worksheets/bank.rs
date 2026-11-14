@@ -59,6 +59,16 @@ pub struct Receipt {
     pub question_id: String,
     pub part_id: String,
 }
+/// The parent of an empty, childless, non-root part, i.e. one that can go.
+fn removable_parent(revision: &Revision, part: &str) -> Option<String> {
+    let found = revision.parts.get(part)?;
+    let parent = found.parent_id.clone()?;
+    let childless = !revision
+        .parts
+        .values()
+        .any(|p| p.parent_id.as_deref() == Some(part));
+    (found.crop_ids.is_empty() && childless).then_some(parent)
+}
 fn required(value: &Option<String>) -> CommandResult<&str> {
     value
         .as_deref()
@@ -177,6 +187,12 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             source.crop_ids.retain(|id| id != cid);
             if edit.kind == "removeCrop" {
                 revision.crops.remove(cid);
+                // A part is made of its crops: removing the last one of a
+                // childless part removes the part, leaving no empty rows.
+                if let Some(parent) = removable_parent(&revision, &crop.part_id) {
+                    revision.parts.remove(&crop.part_id);
+                    pid = parent;
+                }
             } else {
                 let target = if edit.kind == "reorderCrop" {
                     crop.part_id
@@ -197,6 +213,14 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             if edit.crop.is_some() {
                 return Err(invalid().into());
             }
+        }
+        "removePart" => {
+            if edit.crop.is_some() {
+                return Err(invalid().into());
+            }
+            let parent = removable_parent(&revision, &pid).ok_or_else(invalid)?;
+            revision.parts.remove(&pid);
+            pid = parent;
         }
         _ => return Err(invalid().into()),
     }
@@ -498,6 +522,55 @@ mod tests {
             removed.bank.revisions[&first.bank.questions[&first.question_id].revision_id],
             original
         );
+        // Parts are made of crops: removing a part's last crop removes the
+        // part, and an empty leaf part can be removed; the root cannot.
+        let other = apply(
+            &core,
+            &module,
+            None,
+            json!({"kind":"newQuestion","crop":crop}),
+        )
+        .unwrap();
+        let other_root = other.part_id.clone();
+        let with_part = apply(
+            &core,
+            &module,
+            Some(&other),
+            json!({"kind":"newPart","label":"a","crop":crop}),
+        )
+        .unwrap();
+        let rev = &with_part.bank.revisions
+            [&with_part.bank.questions[&with_part.question_id].revision_id];
+        let part_crop = rev.parts[&with_part.part_id].crop_ids[0].clone();
+        let emptied = apply(
+            &core,
+            &module,
+            Some(&with_part),
+            json!({"kind":"removeCrop","cropId":part_crop}),
+        )
+        .unwrap();
+        let rev =
+            &emptied.bank.revisions[&emptied.bank.questions[&emptied.question_id].revision_id];
+        assert!(!rev.parts.contains_key(&with_part.part_id));
+        assert_eq!(emptied.part_id, other_root);
+        let bare = apply(
+            &core,
+            &module,
+            Some(&emptied),
+            json!({"kind":"newPart","label":"b"}),
+        )
+        .unwrap();
+        assert!(apply(
+            &core,
+            &module,
+            Some(&bare),
+            json!({"kind":"removePart","partId":other_root})
+        )
+        .is_err());
+        let gone = apply(&core, &module, Some(&bare), json!({"kind":"removePart"})).unwrap();
+        let rev = &gone.bank.revisions[&gone.bank.questions[&gone.question_id].revision_id];
+        assert_eq!(rev.parts.len(), 1);
+        assert_eq!(gone.part_id, other_root);
         let file_count = || std::fs::read_dir(dir.join("files")).unwrap().count();
         let count = file_count();
         let mut bad = crop.clone();
@@ -546,7 +619,7 @@ mod tests {
         .is_empty());
         std::fs::remove_file(crate::files::assets::path(&dir, &pdf.id).unwrap()).unwrap();
         let offline = get(&core, module.clone()).unwrap().unwrap();
-        assert_eq!(offline, removed.bank);
+        assert_eq!(offline, gone.bank);
         for revision in offline.revisions.values() {
             for crop in revision.crops.values() {
                 assert!(crate::files::assets::path(&dir, &crop.asset_id)

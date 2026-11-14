@@ -62,7 +62,7 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
                   </div>
                 </figure>;
               })}
-              {!cropIds.length && !root && <p className="py-1 text-sm text-muted-foreground">Empty</p>}
+              {!cropIds.length && !root && <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground">No crops yet<ToolButton size="icon-xs" label={`Remove part ${part.label}`} disabled={busy} onClick={() => void run({ kind: "removePart", questionId: qid, partId: part.id, expectedRevisionId: question.revisionId })}><Trash2 /></ToolButton></div>}
             </div>
             {root && <ToolButton size="icon-xs" className="opacity-0 transition-opacity group-hover/question:opacity-100 focus-visible:opacity-100" label={`Delete question ${index + 1}`} disabled={busy} onClick={() => void run({ kind: "deleteQuestion", questionId: qid, expectedRevisionId: question.revisionId })}><Trash2 /></ToolButton>}
           </div>;
