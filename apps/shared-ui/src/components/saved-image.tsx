@@ -471,7 +471,7 @@ export function SavedImageView(props: NodeViewProps) {
               <DropdownMenuSeparator />
               <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />} disabled={!src || failed}><Maximize2 />Size<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent className="w-48">
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-48">
                   {IMAGE_SIZES.map(([fraction, label]) => <DropdownMenuItem key={label} onClick={() => resizeTo(fraction)}>{label}</DropdownMenuItem>)}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => updateAttributes({ width: null, height: null })}>Original size</DropdownMenuItem>
@@ -479,7 +479,7 @@ export function SavedImageView(props: NodeViewProps) {
               </Menu.SubmenuRoot>
               <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />}><WrapText />Text wrapping<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent className="w-48">
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-48">
                   <DropdownMenuRadioGroup value={layout}>
                     {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => <DropdownMenuRadioItem closeOnClick key={value} value={value} title={hint} disabled={inTableCell && value === "wrap"} onClick={() => setLayout(value)}><Icon />{label}</DropdownMenuRadioItem>)}
                   </DropdownMenuRadioGroup>
@@ -487,7 +487,7 @@ export function SavedImageView(props: NodeViewProps) {
               </Menu.SubmenuRoot>
               {!isInline && <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />}><AlignLeft />Alignment<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent className="w-60">
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-60">
                   <DropdownMenuRadioGroup value={node.attrs.alignment}>
                     {IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => <DropdownMenuRadioItem closeOnClick key={alignment} value={alignment} onClick={() => updateAttributes({ alignment })}><Icon />{layout === "wrap" ? `Image on the ${alignment}, text beside it` : label}</DropdownMenuRadioItem>)}
                   </DropdownMenuRadioGroup>
