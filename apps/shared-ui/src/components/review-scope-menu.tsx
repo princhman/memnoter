@@ -24,7 +24,7 @@ export function ReviewScopeMenu({ page = "review", current }: { page?: "review" 
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="xs" className="-mx-2 min-w-0 max-w-56 text-sm font-bold text-foreground" aria-label={page === "files" ? "Select files module" : "Select review module"}>
+          <Button variant="ghost" size="xs" className="-mx-2 inline-flex! min-w-0 max-w-full text-sm font-bold text-foreground" aria-label={page === "files" ? "Select files module" : "Select review module"}>
             <MiddleTruncate text={selected ? (modules.find((module) => module.id === selected)?.name || "Module") : "All modules"} />
             <ChevronDown className="size-3 shrink-0" />
           </Button>
