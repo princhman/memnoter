@@ -53,15 +53,20 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await page.waitForURL(`${origin}/m1`);
     const editor = page.locator('.tiptap[contenteditable=true]'); await editor.waitFor();
     await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('@');
-    const parentOption = page.getByRole('option', { name: /^Biology › Cells/ });
-    await parentOption.waitFor();
+    // Browsing groups sections under their module, the edited module first.
+    const names = async () => page.getByRole('option').evaluateAll(options => options.map(option => option.textContent));
     await page.getByRole('option', { name: 'Organelles', exact: true }).waitFor();
-    await page.keyboard.type('Organelles');
-    await page.getByRole('option', { name: 'Biology › Cells / Organelles', exact: true }).waitFor();
+    assert.deepEqual(await names(), ['Research', 'Biology', 'Cells', 'Organelles', 'Field guide.pdf']);
+    const indent = await page.getByRole('option').evaluateAll(options => options.map(option => parseFloat(getComputedStyle(option).paddingLeft)));
+    assert.ok(indent[3] > indent[2] && indent[2] > indent[1], JSON.stringify(indent));
+    // Searching matches the full path and shows where each section lives.
+    await page.keyboard.type('biology organelles');
+    await page.getByRole('option', { name: 'Organelles Biology / Cells', exact: true }).waitFor();
+    assert.deepEqual(await names(), ['OrganellesBiology / Cells']);
     await page.keyboard.press('Escape');
-    for (let i = 0; i < '@Organelles'.length; i++) await page.keyboard.press('Backspace');
+    for (let i = 0; i < '@biology organelles'.length; i++) await page.keyboard.press('Backspace');
     await page.keyboard.type('@Cells');
-    await page.getByRole('option', { name: 'Biology › Cells', exact: true }).click();
+    await page.getByRole('option', { name: 'Cells Biology', exact: true }).click();
     await page.getByRole('button', { name: '@Biology › Cells', exact: true }).waitFor();
     await page.waitForTimeout(1600); await page.reload();
     await page.evaluate(async () => {

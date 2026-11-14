@@ -27,6 +27,8 @@ function useCatalog() {
   if (!value) throw new Error("MentionProvider missing");
   return value;
 }
+// The module open in the editor, so @ lists it first.
+let editingModule = "";
 const jump = createStore<{ moduleId: string; kind: "heading" | "mention"; id: string } | null>(null);
 function useOpenReference() {
   const navigate = useNavigate();
@@ -39,6 +41,7 @@ function useOpenReference() {
 }
 export function MentionNavigation({ editor, moduleId, ready }: { editor: Editor | null; moduleId: string; ready: boolean }) {
   const request = useSelector(jump, state => state);
+  useEffect(() => { editingModule = moduleId; }, [moduleId]);
   useEffect(() => {
     if (!editor || !ready || request?.moduleId !== moduleId) return;
     let position: number | null = null;
@@ -77,27 +80,30 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
   const menu = useRef<InsertMenuHandle>(null);
   useImperativeHandle(ref, () => ({ onKeyDown: args => menu.current?.onKeyDown(args) ?? false }));
   const items = useMemo(() => {
-    const candidates: { title: string; group: string; target: MentionTarget; label?: ReactNode }[] = [];
-    for (const note of catalog.notes) {
-      candidates.push({ title: note.name, group: "Modules", target: { kind: "module", id: note.id, nodeId: null, locator: null } });
-    }
-    const query = props.query.trim().toLocaleLowerCase();
-    for (const note of catalog.notes) for (const heading of note.note.headings) {
-      const path = [...(heading.path ?? []), heading.title].join(" / ");
-      const title = `${note.name} › ${path}`;
-      candidates.push({ title, label: !query && heading.path.length ? <span style={{ paddingLeft: heading.path.length * 20 }}>{heading.title}</span> : <><span className="font-bold">{note.name}</span> › {path}</>, group: "Sections",
-        target: { kind: "heading", id: note.id, nodeId: heading.id, locator: null },
-      });
-    }
-    for (const file of catalog.files) candidates.push({ title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
+    // The module being edited comes first; the rest keep their order.
+    const notes = [...catalog.notes].sort((a, b) => Number(b.id === editingModule) - Number(a.id === editingModule));
     const terms = props.query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    return candidates.filter(item => terms.every(term => item.title.toLocaleLowerCase().includes(term))).slice(0, 100).map((item): InsertItem => ({
+    const searching = terms.length > 0;
+    const matches = (path: string[]) => { const text = path.join(" / ").toLocaleLowerCase(); return terms.every(term => text.includes(term)); };
+    // Browsing nests sections under their module; searching lists matches flat with their location.
+    const candidates: { id: string; title: string; group: string; depth?: number; detail?: string; strong?: boolean; target: MentionTarget }[] = [];
+    for (const note of notes) {
+      if (matches([note.name])) candidates.push({ id: `module:${note.id}`, title: note.name, group: "", depth: 0, strong: true, target: { kind: "module", id: note.id, nodeId: null, locator: null } });
+      for (const heading of note.note.headings) {
+        const path = [note.name, ...(heading.path ?? [])];
+        if (!matches([...path, heading.title])) continue;
+        candidates.push({ id: `heading:${note.id}:${heading.id}`, title: heading.title, group: "", ...(searching ? { detail: path.join(" / ") } : { depth: path.length }),
+          target: { kind: "heading", id: note.id, nodeId: heading.id, locator: null } });
+      }
+    }
+    for (const file of catalog.files) if (matches([file.name])) candidates.push({ id: `file:${file.id}`, title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
+    return candidates.slice(0, 100).map(({ target, ...item }): InsertItem => ({
       ...item, hint: "", keywords: [],
-      run: (editor, range) => { editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target: item.target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
+      run: (editor, range) => { editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
     }));
   }, [catalog.notes, catalog.files, props.query]);
   if (!items.length) return <div role="status" className="rounded-lg bg-popover p-3 text-sm text-muted-foreground shadow-md">{catalog.error ? "Could not load references" : catalog.loading ? "Loading…" : "No matches"}</div>;
-  return <InsertMenu ref={menu} editor={props.editor} items={items} command={item => props.command(item)} />;
+  return <InsertMenu ref={menu} editor={props.editor} items={items} wide command={item => props.command(item)} />;
 });
 export const MentionSuggest = Extension.create({
   name: "mention-suggest", priority: 201,

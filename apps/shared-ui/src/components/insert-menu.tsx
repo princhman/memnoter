@@ -17,6 +17,11 @@ export type InsertItem = {
   group: string;
   retainSelection?: boolean;
   label?: ReactNode;
+  // Optional, for lists that nest rows or show where a match lives (the @ menu).
+  id?: string;
+  depth?: number;
+  detail?: string;
+  strong?: boolean;
   title: string;
   keywords: string[];
   hint: string;
@@ -209,6 +214,7 @@ export function filterItems(query: string, editor: Editor) {
 
 export type InsertMenuProps = {
   embedded?: boolean;
+  wide?: boolean;
   focusTarget?: RefObject<HTMLElement | null>;
   items: InsertItem[];
   command: (item: InsertItem) => void;
@@ -219,7 +225,7 @@ export type InsertMenuHandle = {
 };
 
 export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
-  ({ items, command, editor, embedded = false, focusTarget }, ref) => {
+  ({ items, command, editor, embedded = false, wide = false, focusTarget }, ref) => {
     const [selected, setSelected] = useState(0);
     const listRef = useRef<HTMLDivElement>(null);
     const listboxId = useId();
@@ -262,7 +268,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
 
     return (
       <div
-        className={cn(!embedded && surfaceClass, "w-56 py-1 pl-1", embedded && "flex min-h-0 flex-col")}
+        className={cn(!embedded && surfaceClass, wide ? "w-[min(22rem,calc(100vw-1rem))]" : "w-56", "py-1 pl-1", embedded && "flex min-h-0 flex-col")}
         // Keep the editor focused while clicking items.
         onMouseDown={(event) => event.preventDefault()}
       >
@@ -276,8 +282,8 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
           className="min-h-0 max-h-72 overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
         >
         {items.map((item, index) => (
-          <Fragment key={item.title}>
-            {item.group !== items[index - 1]?.group && (
+          <Fragment key={item.id ?? item.title}>
+            {item.group && item.group !== items[index - 1]?.group && (
               // Each option's name says what it is; the label is visual only.
               <div
                 aria-hidden="true"
@@ -299,11 +305,14 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
               className={cn(
                 "flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 text-left text-sm",
                 index === selected && "bg-accent text-accent-foreground",
+                item.strong && "font-medium",
               )}
+              style={item.depth ? { paddingLeft: `${0.5 + item.depth * 0.875}rem` } : undefined}
               onMouseEnter={() => setSelected(index)}
               onClick={() => command(item)}
             >
-              <span className="shrink-0">{item.label ?? item.title}</span>
+              <span className={item.depth !== undefined || item.detail !== undefined ? "min-w-0 break-words" : "shrink-0"}>{item.label ?? item.title}</span>
+              {item.detail && <span className="min-w-0 truncate text-xs text-muted-foreground">{item.detail}</span>}
               {item.hint && (
                 <kbd className="min-w-0 truncate font-sans text-xs text-muted-foreground">
                   {item.hint}
