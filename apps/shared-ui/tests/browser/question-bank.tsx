@@ -6,9 +6,12 @@ import { queryClient } from "@/lib/query-client";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { NoteWithPdfs } from "@/components/note-with-pdfs";
 import { updatePdfPane } from "@/lib/pdf-pane";
+import { bankView } from "@/lib/question-bank";
 const params = new URLSearchParams(location.search);
 const moduleId = params.get("module")!;
 updatePdfPane(moduleId, { open: true, active: params.get("pdf"), width: 560 });
+// The app opens the bank from its header button, which this page has no room for.
+bankView.setState(() => moduleId);
 function Fixture() { return <ActiveEditorProvider><div style={{ height: "100vh" }}><NoteWithPdfs moduleId={moduleId}><p>Notes for this test module</p></NoteWithPdfs></div></ActiveEditorProvider>; }
 const root = createRootRoute({ component: Fixture });
 const router = createRouter({ routeTree: root });

@@ -37,6 +37,16 @@ export function useBankEdit(moduleId: string) {
     return receipt;
   });
 }
+const ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"];
+/** The next label under a part: (a), (b)… then (i), (ii)… then (A), (B)…, like paper worksheets. */
+export function nextPartLabel(revision: WorksheetRevision, parentId: string) {
+  let depth = 0;
+  for (let id: string | null = parentId; id && revision.parts[id]?.parentId; id = revision.parts[id].parentId) depth++;
+  const count = Object.values(revision.parts).filter(p => p.parentId === parentId).length;
+  if (depth % 3 === 1) return ROMAN[count] ?? String(count + 1);
+  const letter = String.fromCharCode(97 + (count % 26));
+  return depth % 3 === 2 ? letter.toUpperCase() : letter;
+}
 export function partOutline(revision: WorksheetRevision, number: number) {
   const result: { id: string; label: string; depth: number; leaf: boolean }[] = [];
   const visit = (id: string, label: string, depth: number) => {

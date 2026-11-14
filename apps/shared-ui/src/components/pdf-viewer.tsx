@@ -764,7 +764,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       {annotations.error || (annotations.saving ? "Saving annotations…" : "Loading annotations…")}
       {annotations.error && <button type="button" className="ml-2 underline" disabled={writeBlocked} onClick={() => { try { annotations.retry(); } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); } }}>Retry annotations</button>}
     </div>}
-    {bankEnabled && questionDraft && <QuestionCropDialog moduleId={doc.moduleId} draft={questionDraft} onClose={() => setQuestionDraft(null)} onSaved={fullscreen ? openBeside : undefined} />}
+    {bankEnabled && questionDraft && <QuestionCropDialog moduleId={doc.moduleId} draft={questionDraft} onClose={() => setQuestionDraft(null)} onSaved={() => { setQuestionCropping(true); setAnnotationArea(false); setSelecting(true); }} />}
     {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
       <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pages.length || doc.pageCount || 0).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;

@@ -1,41 +1,66 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { bankTarget, useBank, useBankEdit, type CropDraft, type BankEdit } from "@/lib/question-bank";
-import { targetOptions } from "./question-bank";
+import { bankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
 import { Button } from "./ui/button";
+
+type Choice = { key: string; label: string; edit: Omit<BankEdit, "crop"> };
+
+// What the crop can become, worded from where the user is in the worksheet:
+// the next question, the next part at the current level, a sub-part of the
+// current part, or more of the current question/part.
+function choices(bank: Bank | null | undefined, target: { questionId: string; partId: string } | null): Choice[] {
+  const live = Object.entries(bank?.questions ?? {}).filter(([, q]) => !q.deleted).sort((a, b) => a[1].order - b[1].order);
+  const result: Choice[] = [{ key: "q", label: `Question ${live.length + 1}`, edit: { kind: "newQuestion", title: "" } }];
+  const index = target ? live.findIndex(([id]) => id === target.questionId) : -1;
+  if (!bank || index < 0) return result;
+  const question = live[index][1]; const revision = bank.revisions[question.revisionId];
+  const part = revision.parts[target!.partId];
+  if (!part) return result;
+  const outline = partOutline(revision, index + 1);
+  const name = (id: string) => outline.find(p => p.id === id)?.label ?? "";
+  const pin = { questionId: target!.questionId, expectedRevisionId: question.revisionId };
+  const siblingParent = part.parentId ?? target!.partId;
+  const sibling = nextPartLabel(revision, siblingParent);
+  result.push({ key: "p", label: `Part ${name(siblingParent)}(${sibling})`, edit: { kind: "newPart", ...pin, partId: siblingParent, label: sibling } });
+  if (part.parentId) {
+    const child = nextPartLabel(revision, target!.partId);
+    result.push({ key: "s", label: `Sub-part ${name(target!.partId)}(${child})`, edit: { kind: "newPart", ...pin, partId: target!.partId, label: child } });
+  }
+  result.push({ key: "a", label: `Add to ${name(target!.partId)}`, edit: { kind: "addCrop", ...pin, partId: target!.partId } });
+  return result;
+}
 
 export function QuestionCropDialog({ moduleId, draft, onClose, onSaved }: { moduleId: string; draft: CropDraft; onClose: () => void; onSaved?: () => void }) {
   const query = useBank(moduleId, true); const edit = useBankEdit(moduleId);
-  const selected = useSelector(bankTarget, s => s?.moduleId === moduleId ? s : null);
-  const [kind, setKind] = useState<"newQuestion" | "addCrop" | "newPart">(selected ? "addCrop" : "newQuestion");
-  const [target, setTarget] = useState(selected ? `${selected.questionId}/${selected.partId}` : "");
-  const [label, setLabel] = useState(""); const [title, setTitle] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const options = targetOptions(query.data); const choice = options.find(p => `${p.questionId}/${p.partId}` === target);
-  const save = async () => {
+  const target = useSelector(bankTarget, s => s?.moduleId === moduleId ? s : null);
+  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const options = choices(query.data, target);
+  const save = async (choice: Choice) => {
+    if (busy) return;
     setBusy(true); setError("");
     try {
       const bytes = [...new Uint8Array(await draft.blob.arrayBuffer())];
       const crop = { sourcePdfFileId: draft.sourcePdfFileId, pageIndex: draft.pageIndex, rect: draft.rect, rotation: draft.rotation, pixelSize: draft.pixelSize, bytes };
-      const args: BankEdit = { kind, title, label, crop };
-      if (kind !== "newQuestion") {
-        if (!choice || !query.data) throw new Error("Choose a question or part first");
-        Object.assign(args, { questionId: choice.questionId, partId: choice.partId, expectedRevisionId: query.data.questions[choice.questionId].revisionId });
-      }
-      await edit(args); onClose(); onSaved?.();
+      await edit({ ...choice.edit, crop }); onClose(); onSaved?.();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); await query.refetch(); }
     finally { setBusy(false); }
   };
-  return <section role="dialog" aria-label="Add PDF crop to question bank" className="absolute inset-x-3 bottom-3 z-40 mx-auto max-w-md rounded-xl bg-background p-4 text-foreground shadow-xl">
-    <h2 className="text-base font-semibold">Add to question bank</h2>
-    <img src={draft.url} alt="Selected question crop" className="my-3 max-h-36 w-full rounded-md bg-white object-contain" />
-    <p className="mb-3 text-xs text-muted-foreground">Page {draft.pageIndex + 1} · saved as an offline crop</p>
-    <div className="grid gap-2 text-sm"><label className="flex items-center gap-2"><input className="accent-primary" type="radio" name="crop-action" checked={kind === "newQuestion"} onChange={() => setKind("newQuestion")} />New question</label>
-      <label className="flex items-center gap-2"><input className="accent-primary" type="radio" name="crop-action" checked={kind === "addCrop"} disabled={!options.length} onChange={() => setKind("addCrop")} />Add crop to current question / part</label>
-      <label className="flex items-center gap-2"><input className="accent-primary" type="radio" name="crop-action" checked={kind === "newPart"} disabled={!options.length} onChange={() => setKind("newPart")} />New part…</label>
-      {kind === "newQuestion" ? <input aria-label="Question title" className="mt-1 rounded-md bg-muted px-3 py-2" placeholder="Question title (optional)" value={title} onChange={e => setTitle(e.target.value)} maxLength={120} /> : <label className="mt-1 grid gap-1 text-xs text-muted-foreground">{kind === "newPart" ? "Add a child under" : "Crop target"}<select className="rounded-md bg-muted px-3 py-2 text-sm text-foreground" aria-label="Crop target" value={target} onChange={e => setTarget(e.target.value)}><option value="">Choose a question or part</option>{options.map(p => <option key={`${p.questionId}/${p.partId}`} value={`${p.questionId}/${p.partId}`}>{p.label}</option>)}</select></label>}
-      {kind === "newPart" && <input aria-label="Part label" className="rounded-md bg-muted px-3 py-2" placeholder="Part label, e.g. (b) or (ii)" value={label} onChange={e => setLabel(e.target.value)} maxLength={80} />}
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || (event.target as HTMLElement | null)?.closest("input, textarea, [contenteditable=true]")) return;
+      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      const choice = options.find(o => o.key === event.key.toLowerCase());
+      if (choice && !query.isLoading) { event.preventDefault(); void save(choice); }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+  return <section role="dialog" aria-label="Add crop to question bank" className="absolute inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-center gap-3 rounded-xl floating-surface bg-popover p-2 text-popover-foreground shadow-lg">
+    <img src={draft.url} alt="Selected crop" className="h-12 w-16 shrink-0 rounded bg-white object-contain" />
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+      {options.map(choice => <Button key={choice.key} size="xs" variant={choice.key === "a" ? "secondary" : "ghost"} disabled={busy || query.isLoading || !!query.error} onClick={() => void save(choice)}>{choice.label}<kbd className="ml-1 font-sans text-[10px] text-muted-foreground">{choice.key.toUpperCase()}</kbd></Button>)}
+      {(error || query.error) && <p role="alert" className="w-full px-2 text-xs text-destructive">{error || query.error?.message}</p>}
     </div>
-    {(error || query.error) && <p role="alert" className="mt-3 text-sm text-destructive">{error || query.error?.message}</p>}
-    <div className="mt-4 flex justify-end gap-2"><Button size="sm" variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button><Button size="sm" disabled={busy || query.isLoading || !!query.error || (kind !== "newQuestion" && !choice) || (kind === "newPart" && !label.trim())} onClick={() => void save()}>{busy ? "Saving…" : kind === "newQuestion" ? "Create question" : kind === "newPart" ? "Create part" : "Add crop"}</Button></div>
+    <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={onClose}>Discard<kbd className="ml-1 font-sans text-[10px]">Esc</kbd></Button>
   </section>;
 }
