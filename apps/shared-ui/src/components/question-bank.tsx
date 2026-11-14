@@ -1,3 +1,5 @@
+import { useDocuments } from "@/lib/use-documents";
+import { updatePdfPane, requestPdfPage } from "@/lib/pdf-pane";
 import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { useQuery } from "@tanstack/react-query";
@@ -12,7 +14,8 @@ function CropImage({ id, alt }: { id: string; alt: string }) {
   return data ? <img className="max-h-64 max-w-full object-contain object-left" src={data} alt={alt} /> : <p className="rounded-lg bg-muted p-5 text-sm text-muted-foreground">{isError ? "Crop unavailable on this device" : "Loading crop…"}</p>;
 }
 export function QuestionBank({ moduleId }: { moduleId: string }) {
-  const { data: bank, error, isLoading } = useBank(moduleId, true);
+  const { data: bank, error, isLoading, refetch } = useBank(moduleId, true);
+  const { data: documents = [] } = useDocuments(moduleId);
   const edit = useBankEdit(moduleId);
   const target = useSelector(bankTarget, s => s?.moduleId === moduleId ? s : null);
   const [busy, setBusy] = useState(false); const [failure, setFailure] = useState(""); const [label, setLabel] = useState("");
@@ -20,7 +23,7 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
   useEffect(() => { setFailure(""); }, [moduleId]);
   const run = async (args: Parameters<typeof edit>[0]) => {
     setBusy(true); setFailure("");
-    try { await edit(args); setLabel(""); } catch (error) { setFailure(error instanceof Error ? error.message : String(error)); }
+    try { await edit(args); setLabel(""); } catch (error) { setFailure(error instanceof Error ? error.message : String(error)); await refetch(); }
     finally { setBusy(false); }
   };
   return <section aria-label="Question bank" className="mx-auto w-full max-w-3xl pb-16">
@@ -35,7 +38,7 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
           <button className={`mb-3 flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm font-medium ${target?.questionId === qid && target.partId === part.id ? "bg-primary/10 text-primary" : "hover:bg-muted"}`} onClick={() => bankTarget.setState(() => ({ moduleId, questionId: qid, partId: part.id }))}><span>{part.depth ? part.label : `Question ${index + 1}`}</span><span className="text-xs font-normal text-muted-foreground">{target?.questionId === qid && target.partId === part.id ? "Crop target" : part.leaf ? "Leaf part" : "Shared context"}</span></button>
           <div className="space-y-4">{revision.parts[part.id].cropIds.map((cid, cropIndex, crops) => {
             const crop = revision.crops[cid];
-            return <div key={cid}><CropImage id={crop.assetId} alt={`Question ${part.label}, crop ${cropIndex + 1}`} /><div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground"><span className="mr-auto">Source PDF · page {crop.pageIndex + 1}{crop.rotation ? ` · ${crop.rotation}°` : ""}</span>
+            return <div key={cid}><CropImage id={crop.assetId} alt={`Question ${part.label}, crop ${cropIndex + 1}`} /><div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground"><button className="mr-auto text-left hover:text-foreground" onClick={() => { updatePdfPane(moduleId, { open: true, active: crop.sourcePdfFileId }); requestPdfPage(crop.sourcePdfFileId, crop.pageIndex + 1); }}>{documents.find(d => d.id === crop.sourcePdfFileId)?.name ?? "Source PDF"} · page {crop.pageIndex + 1}{crop.rotation ? ` · ${crop.rotation}°` : ""}</button>
               <ToolButton label="Move crop earlier" disabled={busy || cropIndex === 0} onClick={() => void run({ kind: "reorderCrop", questionId: qid, partId: part.id, expectedRevisionId: question.revisionId, cropId: cid, index: cropIndex - 1 })}><ArrowUp /></ToolButton>
               <ToolButton label="Move crop later" disabled={busy || cropIndex === crops.length - 1} onClick={() => void run({ kind: "reorderCrop", questionId: qid, partId: part.id, expectedRevisionId: question.revisionId, cropId: cid, index: cropIndex + 1 })}><ArrowDown /></ToolButton>
               <select aria-label={`Move crop ${cropIndex + 1} to part`} className="max-w-32 rounded bg-transparent p-1 text-xs" disabled={busy} value={part.id} onChange={event => void run({ kind: "moveCrop", questionId: qid, partId: event.target.value, expectedRevisionId: question.revisionId, cropId: cid })}>{outline.map(p => <option key={p.id} value={p.id}>Part {p.label}</option>)}</select>
@@ -46,7 +49,7 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
         </div>)}
       </article>;
     })}</div>
-    {target && bank && bank.questions[target.questionId] && !bank.questions[target.questionId].deleted && <form className="mt-6 flex items-center gap-2" onSubmit={event => { event.preventDefault(); void run({ kind: "newPart", questionId: target.questionId, partId: target.partId, expectedRevisionId: bank.questions[target.questionId].revisionId, label }); }}><input aria-label="New part label" placeholder="New part label, e.g. (b)" className="min-w-0 flex-1 rounded-md bg-muted px-3 py-2 text-sm" value={label} onChange={event => setLabel(event.target.value)} maxLength={80} /><Button size="sm" variant="secondary" disabled={busy || !label.trim()}><Plus />Add part under selected target</Button></form>}
+    {target && bank && bank.questions[target.questionId] && !bank.questions[target.questionId].deleted && <form aria-label={`Add a part under ${targetOptions(bank).find(p => p.partId === target.partId && p.questionId === target.questionId)?.label ?? "selected target"}`} className="mt-6 flex items-center gap-2" onSubmit={event => { event.preventDefault(); void run({ kind: "newPart", questionId: target.questionId, partId: target.partId, expectedRevisionId: bank.questions[target.questionId].revisionId, label }); }}><input aria-label="New part label" placeholder="New part label, e.g. (b)" className="min-w-0 flex-1 rounded-md bg-muted px-3 py-2 text-sm" value={label} onChange={event => setLabel(event.target.value)} maxLength={80} /><Button type="submit" size="sm" variant="secondary" disabled={busy || !label.trim()}><Plus />Add part</Button></form>}
   </section>;
 }
 

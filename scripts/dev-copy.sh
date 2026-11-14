@@ -6,6 +6,7 @@
 #
 #   pnpm dev:copy                 copy real data, then `tauri dev` on the copy
 #   pnpm dev:copy --keep          reuse the previous copy instead of refreshing it
+#   pnpm dev:copy --empty         start with disposable test data, without reading real notes
 #   pnpm dev:copy --no-launch     only make the copy and print its path
 #
 # The copy has no sync login (credentials are keyed by data dir), so it never
@@ -29,7 +30,18 @@ for arg in "$@"; do
   esac
 done
 
-if [ "$copy" = "$real" ]; then echo "The copy must not be the production vault" >&2; exit 1; fi
+# Resolve aliases before any destructive refresh, including paths that would
+# contain the production vault or live inside it.
+python3 - "$real" "$copy" <<'PYSAFE'
+from pathlib import Path
+import sys
+real, copy = (Path(value).resolve() for value in sys.argv[1:])
+if copy == real or copy in real.parents or real in copy.parents:
+    raise SystemExit("The development copy must be separate from the production vault")
+PYSAFE
+if [ "${MEMNOTER_QUESTION_BANK_DEV:-}" = 1 ] && [ "$empty" != true ] && [ ! -f "$copy/.question-bank-development" ]; then
+  echo "Question banks require a fresh --empty development vault" >&2; exit 1
+fi
 if [ "$empty" = true ]; then
   if [ -e "$copy" ]; then echo "Choose a fresh directory for --empty" >&2; exit 1; fi
   mkdir -p "$copy"

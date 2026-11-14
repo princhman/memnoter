@@ -650,7 +650,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   }, [pageRequest, doc.id, pages.length]);
   const toggleSelection = useCallback(() => {
     if (cropBusy.current || pendingPdfQuote.state || !pdf) return;
-    setQuoteError(""); setAnnotationArea(false); setSelecting(value => !value);
+    setQuoteError(""); setQuestionCropping(false); setAnnotationArea(false); setSelecting(value => !value);
   }, [pdf]);
   const openBeside = useCallback(() => {
     const finalZoom = finishPinch.current?.() ?? zoomValue.current;
@@ -764,7 +764,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       {annotations.error || (annotations.saving ? "Saving annotations…" : "Loading annotations…")}
       {annotations.error && <button type="button" className="ml-2 underline" disabled={writeBlocked} onClick={() => { try { annotations.retry(); } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); } }}>Retry annotations</button>}
     </div>}
-    {bankEnabled && questionDraft && <QuestionCropDialog moduleId={doc.moduleId} draft={questionDraft} onClose={() => setQuestionDraft(null)} />}
+    {bankEnabled && questionDraft && <QuestionCropDialog moduleId={doc.moduleId} draft={questionDraft} onClose={() => setQuestionDraft(null)} onSaved={fullscreen ? openBeside : undefined} />}
     {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
       {find.button}
       <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {

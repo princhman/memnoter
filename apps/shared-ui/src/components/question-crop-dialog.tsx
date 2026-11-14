@@ -4,7 +4,7 @@ import { bankTarget, useBank, useBankEdit, type CropDraft, type BankEdit } from 
 import { targetOptions } from "./question-bank";
 import { Button } from "./ui/button";
 
-export function QuestionCropDialog({ moduleId, draft, onClose }: { moduleId: string; draft: CropDraft; onClose: () => void }) {
+export function QuestionCropDialog({ moduleId, draft, onClose, onSaved }: { moduleId: string; draft: CropDraft; onClose: () => void; onSaved?: () => void }) {
   const query = useBank(moduleId, true); const edit = useBankEdit(moduleId);
   const selected = useSelector(bankTarget, s => s?.moduleId === moduleId ? s : null);
   const [kind, setKind] = useState<"newQuestion" | "addCrop" | "newPart">(selected ? "addCrop" : "newQuestion");
@@ -21,7 +21,7 @@ export function QuestionCropDialog({ moduleId, draft, onClose }: { moduleId: str
         if (!choice || !query.data) throw new Error("Choose a question or part first");
         Object.assign(args, { questionId: choice.questionId, partId: choice.partId, expectedRevisionId: query.data.questions[choice.questionId].revisionId });
       }
-      await edit(args); onClose();
+      await edit(args); onClose(); onSaved?.();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); await query.refetch(); }
     finally { setBusy(false); }
   };
