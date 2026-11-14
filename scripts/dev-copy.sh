@@ -19,15 +19,21 @@ real="$HOME/Library/Application Support/com.vladyslavnalyvaiko.memnoter"
 copy="${MEMNOTER_COPY_DIR:-$HOME/Library/Application Support/memnoter-dev-copy}"
 keep=false
 launch=true
+empty=false
 for arg in "$@"; do
   case "$arg" in
     --keep) keep=true ;;
+    --empty) empty=true ;;
     --no-launch) launch=false ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
 
-if [ "$keep" = false ] || [ ! -f "$copy/main.db" ]; then
+if [ "$copy" = "$real" ]; then echo "The copy must not be the production vault" >&2; exit 1; fi
+if [ "$empty" = true ]; then
+  if [ -e "$copy" ]; then echo "Choose a fresh directory for --empty" >&2; exit 1; fi
+  mkdir -p "$copy"
+elif [ "$keep" = false ] || [ ! -f "$copy/main.db" ]; then
   if [ ! -f "$real/main.db" ]; then
     echo "No real data at $real; starting with an empty copy." >&2
     rm -rf "$copy" && mkdir -p "$copy"
@@ -41,6 +47,13 @@ if [ "$keep" = false ] || [ ! -f "$copy/main.db" ]; then
       [ -d "$real/$dir" ] && cp -Rc "$real/$dir" "$copy/$dir" 2>/dev/null || cp -R "$real/$dir" "$copy/$dir" 2>/dev/null || true
     done
   fi
+fi
+
+if [ "${MEMNOTER_QUESTION_BANK_DEV:-}" = 1 ]; then
+  if [ "$empty" != true ] && [ ! -f "$copy/.question-bank-development" ]; then
+    echo "Question banks require a fresh --empty development vault" >&2; exit 1
+  fi
+  (cd "$copy" && pwd -P) > "$copy/.question-bank-development"
 fi
 
 version=$(sqlite3 "$copy/main.db" "PRAGMA user_version" 2>/dev/null || echo "?")

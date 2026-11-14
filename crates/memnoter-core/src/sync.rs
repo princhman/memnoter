@@ -1468,6 +1468,7 @@ pub fn sync_status(db: &Db) -> CommandResult<SyncStatus> {
 // Turns sync on (seeding the outbox) or replaces the stored account, e.g. a
 // renewed token. `account` is the frontend's JSON.
 pub fn sync_enable(db: &Db, account: String) -> CommandResult<()> {
+    if crate::worksheets::bank::isolated(db) { return Err("This development vault cannot sync".into()); }
     enable(&mut *db.lock()?, &account)?;
     Ok(())
 }

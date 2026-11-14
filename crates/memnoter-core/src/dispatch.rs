@@ -24,6 +24,9 @@ macro_rules! commands {
     }
 }
 commands! { core;
+    question_bank_enabled() => crate::worksheets::bank::enabled(core);
+    question_bank_get(module_id: String) => crate::worksheets::bank::get(core,module_id);
+    question_bank_edit(module_id: String, edit: crate::worksheets::bank::Edit) => crate::worksheets::bank::edit(core,module_id,edit);
     load_annotations(document_id: String) => crate::pdf_annotations::load_annotations(&core.db, document_id);
     save_annotation_update(document_id: String, bytes: Vec<u8>, generation: String) => crate::pdf_annotations::save_annotation_update(&core.db, document_id, bytes, generation);
     set_module_numbering(module_id: String, enabled: bool) => crate::set_module_numbering(&core.db, module_id, enabled);

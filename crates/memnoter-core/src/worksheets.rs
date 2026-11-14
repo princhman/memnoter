@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use yrs::{types::ToJson, updates::decoder::Decode, Doc, Map, Out, ReadTxn, Transact, Update};
 
+pub mod bank;
+
 pub const ROOT: &str = "worksheets";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
