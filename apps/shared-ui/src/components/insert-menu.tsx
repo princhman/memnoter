@@ -17,11 +17,11 @@ export type InsertItem = {
   group: string;
   retainSelection?: boolean;
   label?: ReactNode;
-  // Optional, for lists that nest rows or show where a match lives (the @ menu).
+  // Optional, for lists that show where a match lives (the @ menu).
   id?: string;
-  depth?: number;
   detail?: string;
-  strong?: boolean;
+  // Shows a Tab hint while highlighted: the row can be entered.
+  expandable?: boolean;
   title: string;
   keywords: string[];
   hint: string;
@@ -219,13 +219,17 @@ export type InsertMenuProps = {
   items: InsertItem[];
   command: (item: InsertItem) => void;
   editor: Editor;
+  // A muted line above the list, such as where the user is.
+  header?: string;
+  // Sees each key first with the highlighted item; return true to claim it.
+  onKey?: (event: KeyboardEvent, item: InsertItem | undefined) => boolean;
 };
 export type InsertMenuHandle = {
   onKeyDown: (props: { event: KeyboardEvent }) => boolean;
 };
 
 export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
-  ({ items, command, editor, embedded = false, wide = false, focusTarget }, ref) => {
+  ({ items, command, editor, embedded = false, wide = false, focusTarget, header, onKey }, ref) => {
     const [selected, setSelected] = useState(0);
     const listRef = useRef<HTMLDivElement>(null);
     const listboxId = useId();
@@ -246,6 +250,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }) => {
+        if (onKey?.(event, items[selected])) return true;
         if (!items.length) return false;
         if (event.key === "ArrowUp") {
           setSelected((index) => (index + items.length - 1) % items.length);
@@ -272,6 +277,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
         // Keep the editor focused while clicking items.
         onMouseDown={(event) => event.preventDefault()}
       >
+        {header && <div data-menu-header="" className="truncate px-2 pb-1 pt-0.5 text-xs text-muted-foreground">{header}</div>}
         <div
           ref={listRef}
           id={listboxId}
@@ -305,14 +311,13 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
               className={cn(
                 "flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 text-left text-sm",
                 index === selected && "bg-accent text-accent-foreground",
-                item.strong && "font-medium",
               )}
-              style={item.depth ? { paddingLeft: `${0.5 + item.depth * 0.875}rem` } : undefined}
               onMouseEnter={() => setSelected(index)}
               onClick={() => command(item)}
             >
-              <span className={item.depth !== undefined || item.detail !== undefined ? "min-w-0 break-words" : "shrink-0"}>{item.label ?? item.title}</span>
+              <span className={item.detail !== undefined ? "min-w-0 break-words" : "shrink-0"}>{item.label ?? item.title}</span>
               {item.detail && <span className="min-w-0 truncate text-xs text-muted-foreground">{item.detail}</span>}
+              {item.expandable && index === selected && <kbd aria-hidden="true" className="shrink-0 font-sans text-xs text-muted-foreground">Tab</kbd>}
               {item.hint && (
                 <kbd className="min-w-0 truncate font-sans text-xs text-muted-foreground">
                   {item.hint}
