@@ -12,6 +12,7 @@ declare module "@tiptap/core" {
     sections: {
       // Adds a heading on the level of the section the cursor is in, or one
       // level below it.
+      insertHeadingAbove: () => ReturnType;
       insertSection: (kind: SectionKind) => ReturnType;
     };
   }
@@ -33,6 +34,20 @@ export const Sections = Extension.create({
 
   addCommands() {
     return {
+      insertHeadingAbove: () => ({ state, tr, commands }) => {
+        if (state.selection.$from.depth !== 1) return false;
+        const next = outline(state.doc).find(heading => heading.pos > state.selection.from);
+        const level = next?.level ?? 1;
+        if (next) {
+          for (const heading of outline(state.doc)) {
+            if (heading.pos < next.pos || heading.pos >= next.end) continue;
+            const node = tr.doc.nodeAt(heading.pos)!;
+            tr.setNodeMarkup(heading.pos, undefined, { ...node.attrs, level: Math.min(heading.level + 1, MAX_LEVEL) });
+          }
+        }
+        tr.setMeta("heading-outline-adjustment", true);
+        return commands.insertContent({ type: "heading", attrs: { level } });
+      },
       insertSection:
         (kind) =>
         ({ state, tr, dispatch, commands }) => {
