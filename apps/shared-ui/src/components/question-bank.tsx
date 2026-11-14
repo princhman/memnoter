@@ -48,14 +48,17 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
           if (ancestors.slice(0, part.depth).some(parent => folds[`${moduleId}:${qid}:${parent.id}`])) return null;
           const key = `${moduleId}:${qid}:${part.id}`; const folded = !!folds[key];
           const descendants = outline.slice(position + 1); const end = descendants.findIndex(child => child.depth <= part.depth);
-          const count = [part, ...descendants.slice(0, end < 0 ? undefined : end)].reduce((sum, child) => sum + revision.parts[child.id].cropIds.length, 0);
+          const subtree = descendants.slice(0, end < 0 ? undefined : end); const parts = subtree.filter(child => child.depth === part.depth + 1).length;
           const root = part.depth === 0; const current = target?.questionId === qid && target.partId === part.id;
-          const cropIds = revision.parts[part.id].cropIds;
-          return <div key={part.id} style={{ marginLeft: Math.max(0, part.depth - 1) * 24 }} className={cn("flex gap-3 border-l-2 py-1.5 pl-3", current ? "border-primary" : "border-transparent", !root && "mt-3")}>
-            <button type="button" aria-label={`${folded ? "Expand" : "Fold"} ${part.label}`} aria-expanded={!folded} className="self-start mt-1 text-muted-foreground" onClick={() => toggle(key)}><ChevronRight size={14} className={folded ? "" : "rotate-90"} /></button>
-            <button type="button" aria-label={`Add next crops to ${part.label}`} aria-pressed={current} className={cn("w-10 shrink-0 text-left font-semibold tabular-nums", root ? "text-xl" : "text-base text-muted-foreground", current && "text-foreground")} onClick={() => bankTarget.setState(() => ({ moduleId, questionId: qid, partId: part.id }))}>{root ? questionLabel(question.title, index + 1) : own(revision.parts[part.id].label)}</button>
-            <div className="min-w-0 flex-1 space-y-3">
-              {folded && <span className="text-sm text-muted-foreground">{count} crops</span>}
+          const cropIds = revision.parts[part.id].cropIds; const foldable = cropIds.length > 0 || subtree.length > 0;
+          return <div key={part.id} style={{ marginLeft: Math.max(0, part.depth - 1) * 24 }} className={cn("border-l-2 py-1.5 pl-3", current ? "border-primary" : "border-transparent", !root && "mt-3")}>
+            <div className="flex items-start gap-1">
+              <span className="flex h-7 w-4 shrink-0 items-center justify-center">{foldable && <button type="button" aria-label={`${folded ? "Expand" : "Fold"} ${part.label}`} aria-expanded={!folded} className="text-muted-foreground/70 hover:text-foreground" onClick={() => toggle(key)}><ChevronRight size={14} className={folded ? "" : "rotate-90"} /></button>}</span>
+              <button type="button" aria-label={`Add next crops to ${part.label}`} aria-pressed={current} className={cn("text-left font-semibold tabular-nums", root ? "text-xl leading-7" : "text-base leading-7 text-muted-foreground", current && "text-foreground")} onClick={() => bankTarget.setState(() => ({ moduleId, questionId: qid, partId: part.id }))}>{root ? questionLabel(question.title, index + 1) : own(revision.parts[part.id].label)}</button>
+              {folded && parts > 0 && <span className="self-center text-sm text-muted-foreground">{parts} {parts === 1 ? "part" : "parts"}</span>}
+              {root && <ToolButton size="icon-xs" className="ml-auto opacity-0 transition-opacity group-hover/question:opacity-100 focus-visible:opacity-100" label={`Delete question ${index + 1}`} disabled={busy} onClick={() => void run({ kind: "deleteQuestion", questionId: qid, expectedRevisionId: question.revisionId })}><Trash2 /></ToolButton>}
+            </div>
+            <div className="mt-2 min-w-0 space-y-3 pl-5 empty:hidden">
               {!folded && cropIds.map((cid, cropIndex) => {
                 const crop = revision.crops[cid];
                 const pin = { questionId: qid, partId: part.id, expectedRevisionId: question.revisionId, cropId: cid };
@@ -73,7 +76,6 @@ export function QuestionBank({ moduleId }: { moduleId: string }) {
               })}
               {!folded && !cropIds.length && !root && <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground">No crops yet<ToolButton size="icon-xs" label={`Remove part ${part.label}`} disabled={busy} onClick={() => void run({ kind: "removePart", questionId: qid, partId: part.id, expectedRevisionId: question.revisionId })}><Trash2 /></ToolButton></div>}
             </div>
-            {root && <ToolButton size="icon-xs" className="opacity-0 transition-opacity group-hover/question:opacity-100 focus-visible:opacity-100" label={`Delete question ${index + 1}`} disabled={busy} onClick={() => void run({ kind: "deleteQuestion", questionId: qid, expectedRevisionId: question.revisionId })}><Trash2 /></ToolButton>}
           </div>;
         })}
       </article>;
