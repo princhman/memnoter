@@ -31,8 +31,8 @@ test("palette drills into a closed module and opens a heading with its caret", a
     const options = page.getByRole("option");
     await page.keyboard.press("Meta+k");
     await options.filter({ hasText: "Algebra" }).hover();
-    await input.press("Meta+Enter");
-    await options.filter({ hasText: "Foundations" }).waitFor();
+    await input.press("Control+Enter");
+    await options.filter({ hasText: "Foundations" }).waitFor({ timeout: 5000 });
     assert.equal(await options.count(), 2);
     assert.equal(await options.getByText("Foundations", { exact: true }).count(), 1);
     assert.equal(await options.getByText("Geometry", { exact: true }).count(), 1);

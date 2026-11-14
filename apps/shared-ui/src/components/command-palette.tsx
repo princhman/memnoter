@@ -319,7 +319,7 @@ export function CommandPalette() {
       if (!count) return;
       const step = event.key === "ArrowDown" ? 1 : -1;
       setActiveIndex((index) => (Math.min(index, count - 1) + step + count) % count);
-    } else if (event.key === "ArrowRight" || (event.key === "Enter" && event.metaKey)) {
+    } else if (event.key === "ArrowRight" || matchesShortcut(event.nativeEvent, "Mod-Enter")) {
       event.preventDefault();
       if (active) drill(active);
     } else if (scope && !query && (event.key === "ArrowLeft" || event.key === "Backspace")) {
