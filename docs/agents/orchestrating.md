@@ -76,7 +76,10 @@ there. The editor scroll/caret exception in
 
 ## Delegating
 
-- Default workhorse: gpt-6.1-sol via `delegate_task`. Delegate mechanical work.
+- Default workhorse: gpt-6.1-sol via `delegate_task`. Delegate by default, small
+  fixes in a live pair session included: one delegate per batch of user feedback,
+  in the checkout the demo runs from. Keep briefs, merging, demo restarts and
+  reporting for yourself.
   If a delegate fails a task once, do it yourself; this matters most for hangs,
   freezes and native-only bugs.
 - At most **3 heavy delegates** (cargo, `pnpm build`, browser suites, xcodebuild)
