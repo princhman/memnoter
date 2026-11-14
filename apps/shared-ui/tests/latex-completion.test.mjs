@@ -196,3 +196,71 @@ test("PRI-365: legacy escapes become literal dollars except in code", async () =
   assert.equal(await page.locator(".tiptap p").first().innerText(), "$rt $ra");
   assert.equal(await page.locator(".tiptap pre").innerText(), "\\$code");
 });
+
+for (const type of ["paragraph", "inlineMath", "mathBlock"]) {
+  test(`PRI-384: environment completion survives braces in ${type}`, async () => {
+    await page.evaluate(type => {
+      editor.commands.setContent({ type: "doc", content: type === "inlineMath"
+        ? [{ type: "paragraph", content: [{ type }] }]
+        : [{ type }] });
+      editor.commands.setTextSelection(type === "inlineMath" ? 2 : 1);
+      editor.view.focus();
+    }, type);
+    await page.keyboard.type("\\begin");
+    const menu = page.getByRole("listbox", { name: "LaTeX commands" });
+    await menu.waitFor();
+    for (const character of "{matrix}") {
+      await page.keyboard.type(character);
+      await menu.waitFor({ timeout: 3000 });
+      assert.equal(await menu.getByRole("option", { name: "\\begin{matrix}", exact: true }).count(), 1);
+    }
+    await page.keyboard.press("Tab");
+    assert.deepEqual(await page.evaluate(() => ({
+      text: editor.state.selection.$from.parent.textContent,
+      offset: editor.state.selection.$from.parentOffset,
+      parent: editor.state.selection.$from.parent.type.name,
+    })), { text: "\\begin{matrix}  \\end{matrix}", offset: 15,
+      parent: type === "paragraph" ? "inlineMath" : type });
+    await menu.waitFor({ state: "hidden" });
+  });
+}
+
+test("PRI-384: editing an environment replaces its suffix and closing brace", async () => {
+  await page.evaluate(() => {
+    const text = "\\begin{pmatrix}+x";
+    editor.commands.setContent({ type: "doc", content: [{ type: "mathBlock", content: [{ type: "text", text }] }] });
+    editor.commands.setTextSelection(9);
+    editor.view.focus();
+  });
+  await page.getByRole("listbox", { name: "LaTeX commands" }).waitFor();
+  await page.keyboard.press("Tab");
+  assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.textContent), "\\begin{pmatrix}  \\end{pmatrix}+x");
+});
+
+test("PRI-384: dismissal preserves environment source and ordinary braces stay literal", async () => {
+  const menu = page.getByRole("listbox", { name: "LaTeX commands" });
+  for (const key of ["Escape", "Enter"]) {
+    await page.evaluate(() => {
+      editor.commands.setContent({ type: "doc", content: [{ type: "mathBlock" }] });
+      editor.commands.setTextSelection(1);
+      editor.view.focus();
+    });
+    await page.keyboard.type("\\begin{ma");
+    await menu.waitFor();
+    await page.keyboard.press(key);
+    await menu.waitFor({ state: "hidden" });
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent), "\\begin{ma");
+    await page.keyboard.type("trix}");
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent), "\\begin{matrix}");
+  }
+  for (const source of ["\\frac{", "\\\\begin{matrix}", "{matrix}"]) {
+    await page.evaluate(() => {
+      editor.commands.setContent({ type: "doc", content: [{ type: "mathBlock" }] });
+      editor.commands.setTextSelection(1);
+      editor.view.focus();
+    });
+    await page.keyboard.type(source);
+    await menu.waitFor({ state: "hidden" });
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent), source);
+  }
+});
