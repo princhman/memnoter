@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { questionLabel, bankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
 import { Button } from "./ui/button";
+import { Kbd } from "./ui/kbd";
 
 type Choice = { key: string; label: string; edit: Omit<BankEdit, "crop"> };
 
@@ -58,9 +59,9 @@ export function QuestionCropDialog({ moduleId, draft, onClose, onSaved }: { modu
   return <section role="dialog" aria-label="Add crop to question bank" className="absolute inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-center gap-3 rounded-xl floating-surface bg-popover p-2 text-popover-foreground shadow-lg">
     <img src={draft.url} alt="Selected crop" className="h-12 w-16 shrink-0 rounded bg-white object-contain" />
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-      {options.map(choice => <Button key={choice.key} size="xs" variant={choice.key === "a" ? "secondary" : "ghost"} disabled={busy || query.isLoading || !!query.error} onClick={() => void save(choice)}>{choice.label}<kbd className="ml-1 font-sans text-[10px] text-muted-foreground">{choice.key.toUpperCase()}</kbd></Button>)}
+      {options.map(choice => <Button key={choice.key} size="xs" variant={choice.key === "a" ? "secondary" : "ghost"} disabled={busy || query.isLoading || !!query.error} onClick={() => void save(choice)}>{choice.label}<Kbd>{choice.key.toUpperCase()}</Kbd></Button>)}
       {(error || query.error) && <p role="alert" className="w-full px-2 text-xs text-destructive">{error || query.error?.message}</p>}
     </div>
-    <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={onClose}>Discard<kbd className="ml-1 font-sans text-[10px]">Esc</kbd></Button>
+    <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={onClose}>Discard<Kbd>Esc</Kbd></Button>
   </section>;
 }
