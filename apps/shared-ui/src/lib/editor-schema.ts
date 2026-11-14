@@ -1,3 +1,4 @@
+import { Mention } from "./mention";
 import { BlockEnter } from "./block-enter";
 import { MarkdownPaste } from "./markdown-paste-plugin";
 import { getSchema, type Editor, type AnyExtension } from "@tiptap/core";
@@ -35,7 +36,7 @@ import { FoldableBlock } from "@/lib/foldable-block";
 
 type NoteExtensionOptions = {
   document: Y.Doc;
-  ui?: { pdfTextQuote?: typeof PdfTextQuote; mermaidView?: AnyExtension; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
+  ui?: { mention?: typeof Mention; pdfTextQuote?: typeof PdfTextQuote; mermaidView?: AnyExtension; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
   insertImages?: (editor: Editor, files: File[], position: number) => void;
   scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;
@@ -59,6 +60,7 @@ export function noteExtensions({
       link: { openOnClick: false },
     }),
     ...(ui.mermaidView ? [ui.mermaidView] : []),
+    ui.mention ?? Mention,
     NoteHighlight,
     ...NoteTables,
     MarkdownPaste,

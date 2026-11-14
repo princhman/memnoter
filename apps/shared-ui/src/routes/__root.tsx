@@ -1,3 +1,4 @@
+import { MentionProvider } from "@/components/mentions";
 import { UpdateNotice } from "@/components/update-notice";
 import { isShowingModule } from "@/lib/open-module";
 import { AddPdf } from "@/components/add-pdf";
@@ -95,7 +96,7 @@ const RootLayout = () => {
 
   return (
     <>
-      <ActiveEditorProvider>
+      <ActiveEditorProvider><MentionProvider>
         <SidebarProvider usesNativeMenuShortcuts={usesNativeMenuShortcuts}
           open={sidebarOpen}
           onOpenChange={setSidebarOpen}
@@ -143,7 +144,7 @@ const RootLayout = () => {
           </div>
           <CommandPalette />
         </SidebarProvider>
-      </ActiveEditorProvider>
+      </MentionProvider></ActiveEditorProvider>
 
       <SaveStatus />
 
