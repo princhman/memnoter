@@ -15,6 +15,7 @@ export type InsertCommandOptions = {
 
 export type InsertItem = {
   group: string;
+  retainSelection?: boolean;
   title: string;
   keywords: string[];
   hint: string;
@@ -43,7 +44,19 @@ function pickImages(onPick: (files: File[]) => void) {
 }
 
 // Listed in display order; a group label shows above its first item.
+export const groupCardActions: InsertItem[] = (["list", "block"] as const).flatMap(kind => ([
+  { group: "Flashcards", title: `Make ${kind} card`, keywords: [], hint: kind === "list" ? "Reveal one by one" : "Reveal together", retainSelection: true, when: editor => editor.can().makeGroupCard(kind), run: editor => { editor.chain().focus().makeGroupCard(kind).run(); } },
+  { group: "Flashcards", title: `Remove ${kind} card`, keywords: [], hint: "Keep question and answer", retainSelection: true, when: editor => editor.can().removeGroupCard(kind), run: editor => { editor.chain().focus().removeGroupCard(kind).run(); } },
+]));
+
 const ITEMS: InsertItem[] = [
+  ...(["list", "block"] as const).map((kind): InsertItem => ({
+    group: "Flashcards", title: kind === "list" ? "List card" : "Block card",
+    keywords: kind === "list" ? ["list card", "list flashcard", "sequential", "reveal one by one", "::list"] : ["block card", "block flashcard", "multiline", "multi line", "multi-line", "::block"],
+    hint: kind === "list" ? "Reveal one by one" : "Reveal together",
+    when: editor => editor.can().insertGroupCard(kind),
+    run: (editor, range) => { editor.chain().focus().deleteRange(range).insertGroupCard(kind).run(); },
+  })),
   {
     group: "Sections",
     title: "Insert heading above",

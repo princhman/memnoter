@@ -5,7 +5,7 @@ import { exitSuggestion } from "@tiptap/suggestion";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Copy, Scissors } from "lucide-react";
 import { surfaceClass } from "./ui/surface";
-import { InsertMenu, filterItems, type InsertMenuHandle, type InsertCommandOptions } from "./insert-menu";
+import { InsertMenu, filterItems, groupCardActions, type InsertMenuHandle, type InsertCommandOptions } from "./insert-menu";
 
 type ContextMenuProps = {
   editor: Editor;
@@ -20,7 +20,7 @@ function EditorContextMenu({ editor, options, x, y, close }: ContextMenuProps) {
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const menu = useRef<InsertMenuHandle>(null);
-  const items = filterItems(query, editor);
+  const items = [...groupCardActions.filter(item => item.when?.(editor) && item.title.toLowerCase().includes(query.toLowerCase())), ...filterItems(query, editor)];
   useLayoutEffect(() => {
     const frame = requestAnimationFrame(() => {
       const element = root.current;
@@ -72,7 +72,7 @@ function EditorContextMenu({ editor, options, x, y, close }: ContextMenuProps) {
         // deleting selected content; slash commands delete only their trigger.
         const position = editor.state.selection.head;
         close();
-        editor.commands.setTextSelection(position);
+        if (!item.retainSelection) editor.commands.setTextSelection(position);
         item.run(editor, { from: position, to: position }, options);
       }} />
       {!items.length && <p className="px-3 py-2 text-sm text-muted-foreground">No matching commands</p>}

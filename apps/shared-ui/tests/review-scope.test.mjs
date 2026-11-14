@@ -275,3 +275,40 @@ test("go to card selects its sentence in a long note; counts read learn / due / 
     } finally { await page.close(); }
   }
 });
+
+test('a list reveals each step before one grade, and undo restores one review', async () => {
+  const page = await browser.newPage();
+  await page.addInitScript(() => {
+    const card = { id:'list', moduleId:'a', moduleName:'Alpha', section:[], kind:'basic', front:[{type:'text',text:'Name the phases'}], back:['Prophase','Metaphase','Anaphase'].map(text => ({type:'block',revealStep:true,children:[{type:'text',text}]})), dueAt:Date.now()-1000, stability:0, stabilityFast:0, difficulty:0, scheduledDays:0, learningStep:0, state:0, scheduleStatus:'new', lastReviewAt:null, reps:0, lapses:0, fsrsModel:null };
+    window.writes = [];
+    window.installTestBridge({tauri:{invoke: async (command,args) => {
+      if (command.startsWith('plugin:')) return 1;
+      if (command === 'due_cards') return [card];
+      if (command === 'modules') return [{id:'a',name:'Alpha'}];
+      if (command === 'review_card' || command === 'undo_review') window.writes.push(command);
+      if (['list_documents','due_counts','unindexed_card_modules','unindexed_modules','search_notes','card_schedules'].includes(command)) return [];
+      return null;
+    }}});
+  });
+  try {
+    await page.goto(`${url}/review?module=a`);
+    await page.getByText('Name the phases').waitFor();
+    for (const [index, text] of ['Prophase','Metaphase','Anaphase'].entries()) {
+      assert.equal(await page.getByText(text,{exact:true}).count(),0);
+      await page.keyboard.press('1');
+      assert.deepEqual(await page.evaluate(() => window.writes),[]);
+      await page.keyboard.press('Space');
+      await page.getByText(text,{exact:true}).waitFor();
+      assert.deepEqual(await page.evaluate(() => window.writes),[]);
+      if (index < 2) assert.equal(await page.getByRole('button',{name:/^Good/}).count(),0);
+    }
+    await page.keyboard.press('3');
+    await page.waitForFunction(() => window.writes.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.writes),['review_card']);
+    await page.getByRole('button',{name:'Undo',exact:true}).click();
+    await page.waitForFunction(() => window.writes.length === 2);
+    assert.deepEqual(await page.evaluate(() => window.writes),['review_card','undo_review']);
+    await page.getByText('Name the phases').waitFor();
+    assert.equal(await page.getByText('Prophase',{exact:true}).count(),0);
+  } finally { await page.close(); }
+});

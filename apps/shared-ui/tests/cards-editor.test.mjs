@@ -498,3 +498,36 @@ test("Cloze in a formula makes the whole formula one card, and removing it keeps
     editor.destroy();
   }
 });
+
+test('list templates, selection conversion, removal and undo preserve content and identity', () => {
+  const editor = editorFor([paragraph('Sequence?'), {type:'bulletList', content: ['First','Second'].map(text => ({type:'listItem',content:[paragraph(text)]}))}, paragraph('After')]);
+  try {
+    const listEnd = editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize;
+    editor.commands.setTextSelection({from:1,to:listEnd - 3});
+    assert.equal(editor.commands.makeGroupCard('list'), true);
+    const [card] = extractCards(editor.state.doc);
+    assert.equal(card.kind, 'list');
+    assert.equal(card.back.length, 2);
+    editor.commands.setTextSelection(1);
+    assert.equal(editor.commands.removeGroupCard('list'), true);
+    assert.equal(editor.state.doc.textContent, 'Sequence?FirstSecondAfter');
+    editor.commands.undo();
+    assert.equal(extractCards(editor.state.doc)[0].id, card.id);
+    const copy = editor.state.doc.content;
+    editor.commands.insertContentAt(editor.state.doc.content.size, copy.toJSON());
+    const ids = extractCards(editor.state.doc).map(c => c.id);
+    assert.equal(ids.length, 2);
+    assert.notEqual(ids[0], ids[1]);
+  } finally { editor.destroy(); }
+  const empty = editorFor([{type:'paragraph'}]);
+  try {
+    assert.equal(empty.commands.insertGroupCard('list'), true);
+    assert.equal(empty.state.selection.from, 1);
+    assert.equal(empty.state.doc.textContent, ' ::list::end');
+    assert.deepEqual(extractCards(empty.state.doc), []);
+    empty.commands.command(({tr}) => { tr.insertText('Question'); return true; });
+    const listEnd = empty.state.doc.child(0).nodeSize + empty.state.doc.child(1).nodeSize;
+    empty.commands.command(({tr}) => { tr.insertText('Answer', listEnd - 3); return true; });
+    assert.equal(extractCards(empty.state.doc)[0].kind, 'list');
+  } finally { empty.destroy(); }
+});

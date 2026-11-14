@@ -160,6 +160,15 @@ export function markdownToJSON(source: string, resolveImage?: ImageResolver, opt
   // Retain YAML as literal data, rather than interpreting its delimiters as headings.
   const front = options.keepFrontMatter && /^\uFEFF?---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(source);
   if (front) source = source.slice(front[0].length);
+  // Card boundary lines must survive CommonMark soft-break joining and lazy
+  // list continuation. Fenced/indented code remains literal source.
+  const literalLines = new Set<number>();
+  for (const token of md.parse(source, {})) {
+    if (["fence", "code_block", "math_block"].includes(token.type) && token.map) {
+      for (let line = token.map[0]; line < token.map[1]; line++) literalLines.add(line);
+    }
+  }
+  source = source.split("\n").map((line, index) => !literalLines.has(index) && /^(?:\S.*\s::(?:list|block)|::end)\r?$/.test(line) ? `\n${line}\n` : line).join("\n");
   const tokens = md.parse(stripMetadata(source), { keepWikiLinks: options.removeNoteLinks === false });
   function clean(tokens: Token[]): Token[] {
     return tokens.filter(token => !(options.removeUnsupportedEmbeds && (
