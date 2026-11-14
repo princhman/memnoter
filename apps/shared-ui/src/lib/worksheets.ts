@@ -22,5 +22,6 @@ export type WorksheetAnswer = {
 // Worksheet documents are also read-only until the authoring release. Checking
 // doc.share avoids creating roots just by opening a legacy module.
 export function hasReadOnlyModuleRoots(doc: Y.Doc): boolean {
-  return [...doc.share.keys()].some(name => name !== "default");
+  const authoring = import.meta.env.VITE_QUESTION_BANK_DEV === true;
+  return [...doc.share.keys()].some(name => name !== "default" && !(authoring && name === WORKSHEET_ROOT));
 }

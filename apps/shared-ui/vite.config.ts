@@ -32,6 +32,9 @@ export default defineConfig(async () => ({
   define: {
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version),
     "import.meta.env.VITE_BUILD_STAMP": JSON.stringify(buildStamp()),
+    // Development question-bank vaults (pnpm dev:copy with MEMNOTER_QUESTION_BANK_DEV=1)
+    // may edit notes next to a bank; every other build keeps them read-only.
+    "import.meta.env.VITE_QUESTION_BANK_DEV": JSON.stringify(process.env.MEMNOTER_QUESTION_BANK_DEV === "1"),
   },
   plugins: [
     tanstackRouter({
