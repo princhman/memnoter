@@ -41,6 +41,7 @@ export const SHORTCUTS: readonly ShortcutAction[] = [
   { id: "list.bullet", title: "Bullet list", keys: "Mod-Shift-8" },
   { id: "list.ordered", title: "Numbered list", keys: "Mod-Shift-7" },
   { id: "block.code", title: "Code block", keys: "Mod-Alt-c" },
+  { id: "block.foldable", title: "Foldable block", keys: "Mod-Alt-Shift-f" },
   { id: "block.quote", title: "Quote", keys: "Mod-Shift-b" },
   { id: "find.replace", title: "Find and replace", keys: "Mod-Alt-f" },
   { id: "find.next", title: "Next match", keys: "Mod-g" },
@@ -79,7 +80,7 @@ export function bindsInJS(entry: ShortcutAction, nativeMenu: boolean): boolean {
   return !nativeMenu || !entry.menuId;
 }
 
-export const HOME_ACTION_IDS = ["block.insert", "module.new", "find.open", "palette.open", "link.edit", "section.sibling", "section.fold", "section.unfold", "math.inline", "sidebar.toggle"] as const;
+export const HOME_ACTION_IDS = ["block.insert", "block.foldable", "module.new", "find.open", "palette.open", "link.edit", "section.sibling", "section.fold", "section.unfold", "math.inline", "sidebar.toggle"] as const;
 
 // PDF commands may run from the adjacent note cursor, but never from find,
 // page-number fields, unrelated editors, or portalled menus and dialogs.

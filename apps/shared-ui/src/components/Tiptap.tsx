@@ -1,3 +1,4 @@
+import { MentionView, MentionSuggest, MentionNavigation, MentionedIn } from "./mentions";
 import { MermaidView } from "@/lib/editor-schema/mermaid-view";
 import { useEditorHost } from "@/lib/editor-host-context";
 import { CardNavigationGuard } from "./card-navigation-guard";
@@ -68,13 +69,14 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
         document: yDoc,
         scrollContainer: () => element.current ? host.scrollContainer(element.current) : null,
         ui: {
+          ...(!host.isNative ? { mention: MentionView } : {}),
           pdfTextQuote: PdfTextQuote,
           savedImage: ImageWithView,
           inlineImage: InlineImageWithView,
           inlineMath: InlineMathView,
           mathBlock: MathBlockView,
           mermaidView: MermaidView,
-          menus: [SlashCommand.configure({ insertImages, insertDrawing: current => { void launchDrawing(current); } }), LatexSuggest],
+          menus: [...(!host.isNative ? [MentionSuggest] : []), SlashCommand.configure({ insertImages, insertDrawing: current => { void launchDrawing(current); } }), LatexSuggest],
         },
         insertImages: (currentEditor, files, position) => {
           void insertImages(currentEditor, files, position);
@@ -193,13 +195,14 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       <Dialog open={drawingError !== null} onOpenChange={open => { if (!open) setDrawingError(null); }}>
         <DialogContent><DialogTitle>Drawing</DialogTitle><p>{drawingError}</p></DialogContent>
       </Dialog>
-      {!host.isNative && <CardNavigationGuard editor={editor} ready={isSuccess} />}
+      {!host.isNative && <><CardNavigationGuard editor={editor} ready={isSuccess} /><MentionNavigation editor={editor} moduleId={moduleId} ready={isSuccess} /></>}
       {newerVersion && <div role="status" className="sticky top-0 z-10 bg-background p-3 text-sm">{NEWER_VERSION_MESSAGE}</div>}
       <div hidden={newerVersion}>
       {host.isNative ? <>
         <EditorContent editor={editor} />
       </> : <>
-      <HeadingActionOverlay editor={editor}>
+      <MentionedIn target={{ kind: "module", id: moduleId, nodeId: null, locator: null }} />
+      <HeadingActionOverlay editor={editor} moduleId={moduleId}>
         <EditorContent editor={editor} />
       </HeadingActionOverlay>
       <TextBubbleMenu editor={editor} />
