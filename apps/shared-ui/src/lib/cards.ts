@@ -459,8 +459,9 @@ export function groupOpener(node: Node) {
   const text = units.map(u => u.type === "char" ? u.char : "\n").join("");
   const match = /\s(::list|::block)$/.exec(text);
   if (!match) return null;
-  const from = text.length - match[1].length;
-  if (units.some(u => u.at >= from && (u.type !== "char" || !u.syntax))) return null;
+  const marker = units.slice(-match[1].length);
+  if (marker.some(u => u.type !== "char" || !u.syntax)) return null;
+  const from = marker[0].at;
   return { kind: match[1] === "::list" ? "list" as const : "block" as const, from, to: node.content.size };
 }
 

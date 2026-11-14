@@ -5,6 +5,7 @@ import {
   blockIdOf,
   cardIdsOf,
   extractCards,
+  cardGroupsOf,
   parseBlock,
 } from "../src/lib/cards.ts";
 
@@ -310,6 +311,12 @@ test('group cards extract one schedule, preserve literal answer syntax, nesting 
   const block = extractCards(doc.create(null, [p('Why? ::block', 'block'), p('One'), p(''), p('Two'), p('::end')]));
   assert.equal(block[0].kind, 'basic');
   assert.equal(block[0].back.length, 3);
+  for (const kind of ['list', 'block']) {
+    const source = doc.create(null, [p(`🧮 Solve $x^{2}+y^{2}$ now ::${kind}`, 'math-question'), ...(kind === 'list' ? [list] : [p('Answer')]), p('::end')]);
+    const [group] = cardGroupsOf(source);
+    assert.equal(source.textBetween(group.marker.from, group.marker.to), `::${kind}`);
+    assert.deepEqual(extractCards(source)[0].front, [text('🧮 Solve '), { type: 'math', tex: 'x^{2}+y^{2}' }, text(' now')]);
+  }
   for (const blocks of [[p('Q ::list', 'x'), list], [p('Q ::list', 'x'), p('Not a list'), p('::end')], [p('Q `::block`', 'x'), p('Answer'), p('::end')]]) assert.deepEqual(extractCards(doc.create(null, blocks)), []);
 });
 
