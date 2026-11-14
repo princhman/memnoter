@@ -1,4 +1,5 @@
 import { BlockEnter } from "./block-enter";
+import { LiteralDollar } from "./literal-dollar";
 import { MarkdownPaste } from "./markdown-paste-plugin";
 import { getSchema, type Editor, type AnyExtension } from "@tiptap/core";
 import { CodeSpacing } from "@/lib/code-spacing";
@@ -62,6 +63,7 @@ export function noteExtensions({
     NoteHighlight,
     ...NoteTables,
     MarkdownPaste,
+    LiteralDollar,
     TabSpacing,
     CodeSpacing,
     BlockEnter,
