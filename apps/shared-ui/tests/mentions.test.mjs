@@ -55,12 +55,7 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('@');
     const parentOption = page.getByRole('option', { name: /^Biology › Cells/ });
     await parentOption.waitFor();
-    assert.equal(await page.getByRole('option', { name: 'Biology › Cells / Organelles', exact: true }).count(), 0);
-    await parentOption.hover();
-    await page.keyboard.press('ArrowRight');
-    await page.getByRole('option', { name: 'Biology › Cells / Organelles', exact: true }).waitFor();
-    await page.keyboard.press('ArrowLeft');
-    await parentOption.waitFor();
+    await page.getByRole('option', { name: 'Organelles', exact: true }).waitFor();
     await page.keyboard.type('Organelles');
     await page.getByRole('option', { name: 'Biology › Cells / Organelles', exact: true }).waitFor();
     await page.keyboard.press('Escape');

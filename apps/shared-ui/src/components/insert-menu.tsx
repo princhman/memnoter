@@ -17,7 +17,6 @@ export type InsertItem = {
   group: string;
   retainSelection?: boolean;
   label?: ReactNode;
-  drillDown?: () => void;
   title: string;
   keywords: string[];
   hint: string;
@@ -242,7 +241,6 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }) => {
         if (!items.length) return false;
-        if (event.key === "ArrowRight" && items[selected]?.drillDown) { items[selected].drillDown?.(); return true; }
         if (event.key === "ArrowUp") {
           setSelected((index) => (index + items.length - 1) % items.length);
           return true;
@@ -306,7 +304,6 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
               onClick={() => command(item)}
             >
               <span className="shrink-0">{item.label ?? item.title}</span>
-              {item.drillDown && <span role="button" aria-label={`Show subsections of ${item.title}`} onClick={event => { event.stopPropagation(); item.drillDown?.(); }} className="ml-auto px-2">›</span>}
               {item.hint && (
                 <kbd className="min-w-0 truncate font-sans text-xs text-muted-foreground">
                   {item.hint}

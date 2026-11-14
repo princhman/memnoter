@@ -74,30 +74,20 @@ export const MentionView = Mention.extend({ addNodeView: () => ReactNodeViewRend
 
 const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, InsertItem>>((props, ref) => {
   const catalog = useCatalog();
-  const [parents, setParents] = useState<{ moduleId: string; id: string; label: string }[]>([]);
   const menu = useRef<InsertMenuHandle>(null);
-  useEffect(() => setParents([]), [props.query]);
-  const back = () => setParents(previous => previous.slice(0, -1));
-  useImperativeHandle(ref, () => ({ onKeyDown: args => {
-    if (parents.length && (args.event.key === "ArrowLeft" || (args.event.key === "Backspace" && !props.query))) { back(); return true; }
-    return menu.current?.onKeyDown(args) ?? false;
-  }}));
+  useImperativeHandle(ref, () => ({ onKeyDown: args => menu.current?.onKeyDown(args) ?? false }));
   const items = useMemo(() => {
-    const candidates: { title: string; group: string; target: MentionTarget; label?: ReactNode; drillDown?: () => void }[] = [];
+    const candidates: { title: string; group: string; target: MentionTarget; label?: ReactNode }[] = [];
     for (const note of catalog.notes) {
       candidates.push({ title: note.name, group: "Modules", target: { kind: "module", id: note.id, nodeId: null, locator: null } });
     }
     const query = props.query.trim().toLocaleLowerCase();
-    const browsing = !query || catalog.notes.some(note => note.name.toLocaleLowerCase() === query);
-    const parent = browsing ? parents[parents.length - 1] : undefined;
     for (const note of catalog.notes) for (const heading of note.note.headings) {
-      if (browsing && (parent ? note.id !== parent.moduleId || heading.parentId !== parent.id : !!heading.parentId)) continue;
       const path = [...(heading.path ?? []), heading.title].join(" / ");
       const title = `${note.name} › ${path}`;
-      candidates.push({ title, label: <><span className="font-bold">{note.name}</span> › {path}</>, group: "Sections",
+      candidates.push({ title, label: !query && heading.path.length ? <span style={{ paddingLeft: heading.path.length * 20 }}>{heading.title}</span> : <><span className="font-bold">{note.name}</span> › {path}</>, group: "Sections",
         target: { kind: "heading", id: note.id, nodeId: heading.id, locator: null },
-        drillDown: browsing && note.note.headings.some(child => child.parentId === heading.id)
-          ? () => setParents(previous => [...previous, { moduleId: note.id, id: heading.id, label: title }]) : undefined });
+      });
     }
     for (const file of catalog.files) candidates.push({ title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
     const terms = props.query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -105,9 +95,9 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
       ...item, hint: "", keywords: [],
       run: (editor, range) => { editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target: item.target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
     }));
-  }, [catalog.notes, catalog.files, props.query, parents]);
+  }, [catalog.notes, catalog.files, props.query]);
   if (!items.length) return <div role="status" className="rounded-lg bg-popover p-3 text-sm text-muted-foreground shadow-md">{catalog.error ? "Could not load references" : catalog.loading ? "Loading…" : "No matches"}</div>;
-  return <div>{parents.length > 0 && <button type="button" onMouseDown={event => event.preventDefault()} onClick={back} className="w-full rounded-t-lg bg-popover px-3 py-2 text-left text-xs text-muted-foreground">‹ {parents[parents.length - 1]?.label}</button>}<InsertMenu ref={menu} editor={props.editor} items={items} command={item => props.command(item)} /></div>;
+  return <InsertMenu ref={menu} editor={props.editor} items={items} command={item => props.command(item)} />;
 });
 export const MentionSuggest = Extension.create({
   name: "mention-suggest", priority: 201,
