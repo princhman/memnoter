@@ -752,7 +752,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     </div>}
     {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
       {find.button}
-      <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
+      <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pages.length || doc.pageCount || 0).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
