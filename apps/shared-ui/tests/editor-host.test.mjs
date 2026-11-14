@@ -893,3 +893,87 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await browser?.close(); await server.close();
   }
 });
+
+test('native group card commands publish menu eligibility, preserve content and restore the text responder', { timeout: 60000 }, async () => {
+  const root = new URL('../', import.meta.url).pathname;
+  const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen(); browser = await webkit.launch();
+    const context = await browser.newContext({ hasTouch: true, reducedMotion: 'reduce' });
+    await context.addInitScript(() => {
+      window.messages = [];
+      window.installTestBridge({ native: message => {
+        window.messages.push(message);
+        if (message.kind !== 'call') return;
+        const result = message.command === 'modules' ? [{ id: 'cards', name: 'Cards' }]
+          : message.command === 'get_content' ? { state: [], updates: [], files: [] }
+          : message.command === 'add_update' ? { id: window.messages.length, bytes: message.args.bytes }
+          : ['sync_cards', 'card_schedules', 'unindexed_card_modules', 'unindexed_modules', 'list_documents'].includes(message.command) ? [] : null;
+        queueMicrotask(() => window.__memnoterBridge.resolve(message.id, result));
+      } });
+    });
+    for (const viewport of [{ width: 1024, height: 768 }, { width: 390, height: 844 }]) {
+      const page = await context.newPage(); await page.setViewportSize(viewport);
+      try {
+        await page.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+        await page.waitForFunction(() => window.messages.some(m => m.event === 'ready'));
+        await page.evaluate(() => window.memnoterEditor.open('cards'));
+        const snapshot = () => page.evaluate(async () => {
+          const e = document.querySelector('.tiptap').editor;
+          const { extractCards } = await import('/src/lib/cards.ts');
+          return { state: window.messages.filter(m => m.event === 'state').at(-1).payload,
+            text: e.state.doc.textContent, cards: extractCards(e.state.doc), focused: e.view.hasFocus(), head: e.state.selection.head };
+        });
+        // The native menu's session.exec(..., focusAfter:true) uses this public sequence.
+        const exec = command => page.evaluate(command => {
+          const result = window.memnoterEditor.exec(command); window.memnoterEditor.focus(); return result;
+        }, command);
+        for (const kind of ['List', 'Block']) {
+          await page.evaluate(() => {
+            const e = document.querySelector('.tiptap').editor;
+            e.commands.setContent({ type: 'doc', content: [{ type: 'paragraph' }] });
+            e.commands.setTextSelection(1); e.view.dom.blur();
+          });
+          assert.equal((await snapshot()).state[`canInsert${kind}Card`], true);
+          assert.equal(await exec(`insert${kind}Card`), true);
+          await page.waitForFunction(() => document.activeElement === document.querySelector('.tiptap'));
+          let current = await snapshot();
+          assert.equal(current.head, 1, 'empty templates put the caret before the opener');
+          assert.equal(current.text, ` ::${kind.toLowerCase()}::end`);
+          assert.deepEqual(current.cards, []);
+          await page.evaluate(kind => {
+            const e = document.querySelector('.tiptap').editor;
+            const p = text => ({ type: 'paragraph', content: [{ type: 'text', text }] });
+            const answer = kind === 'List' ? { type: 'bulletList', content: ['First','Second'].map(text => ({ type: 'listItem', content: [p(text)] })) } : p('Answer');
+            e.commands.setContent({ type: 'doc', content: [p('Question'), answer, p('After')] });
+            const end = e.state.doc.child(0).nodeSize + e.state.doc.child(1).nodeSize;
+            e.commands.setTextSelection({ from: 1, to: end - (kind === 'List' ? 3 : 1) }); e.view.dom.blur();
+          }, kind);
+          assert.equal((await snapshot()).state[`canMake${kind}Card`], true);
+          assert.equal(await exec(`make${kind}Card`), true);
+          await page.waitForFunction(() => document.activeElement === document.querySelector('.tiptap'));
+          current = await snapshot(); const identity = current.cards[0].id;
+          assert.equal(current.cards.length, 1);
+          assert.equal(current.cards[0].kind, kind === 'List' ? 'list' : 'basic');
+          assert.equal(current.state[`in${kind}Card`], true);
+          assert.equal(current.state.canInsertListCard, false);
+          assert.ok(current.text.endsWith('::endAfter'));
+          assert.equal(await exec(`remove${kind}Card`), true);
+          current = await snapshot();
+          assert.equal(current.text, kind === 'List' ? 'QuestionFirstSecondAfter' : 'QuestionAnswerAfter');
+          assert.deepEqual(current.cards, []);
+          assert.equal(await exec('undo'), true);
+          assert.equal((await snapshot()).cards[0].id, identity);
+        }
+        await page.evaluate(() => {
+          const e = document.querySelector('.tiptap').editor;
+          e.setEditable(false); e.view.dispatch(e.state.tr);
+        });
+        const locked = (await snapshot()).state;
+        for (const field of ['canInsertListCard','canInsertBlockCard','canMakeListCard','canMakeBlockCard','inListCard','inBlockCard']) assert.equal(locked[field], false);
+        assert.equal(await page.evaluate(() => window.memnoterEditor.exec('insertListCard')), false);
+      } finally { await page.close(); }
+    }
+  } finally { await browser?.close(); await server.close(); }
+});

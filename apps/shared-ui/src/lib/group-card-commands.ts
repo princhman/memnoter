@@ -1,12 +1,25 @@
-import type { Command } from '@tiptap/core';
+import type { Command, CommandProps } from '@tiptap/core';
+import { closeHistory } from '@tiptap/pm/history';
+import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import { TextSelection } from '@tiptap/pm/state';
 import { cardGroupsOf, groupOpener, parseBlock } from './cards';
 
 export type GroupKind = 'list' | 'block';
-export const insertGroupCard = (kind: GroupKind): Command => ({ tr, dispatch }) => {
+
+// A menu action is one undo step, even when two actions happen within Yjs's
+// typing capture window. Keep subsequent typing out of that action as well.
+function separateGroupHistory(state: CommandProps['state'], tr: CommandProps['tr']) {
+  closeHistory(tr);
+  const manager = yUndoPluginKey.getState(state)?.undoManager;
+  manager?.stopCapturing();
+  if (manager) queueMicrotask(() => manager.stopCapturing());
+}
+
+export const insertGroupCard = (kind: GroupKind): Command => ({ state, tr, dispatch }) => {
   const { $head } = tr.selection;
   if ($head.depth !== 1 || !['paragraph', 'heading'].includes($head.parent.type.name) || parseBlock($head.parent).cards.length || groupOpener($head.parent) || cardGroupsOf(tr.doc).some(g => $head.pos >= g.from && $head.pos < g.to)) return false;
   if (dispatch) {
+    separateGroupHistory(state, tr);
     const pos = $head.before(), node = $head.parent;
     const end = pos + node.nodeSize;
     const marker = ` ::${kind}`;
@@ -20,7 +33,7 @@ export const insertGroupCard = (kind: GroupKind): Command => ({ tr, dispatch }) 
   return true;
 };
 
-export const makeGroupCard = (kind: GroupKind): Command => ({ tr, dispatch }) => {
+export const makeGroupCard = (kind: GroupKind): Command => ({ state, tr, dispatch }) => {
   const { $from, $to, empty, from, to } = tr.selection;
   if (empty || $from.depth !== 1 || $from.parentOffset !== 0 || !['paragraph', 'heading'].includes($from.parent.type.name) || !$from.parent.textContent.trim()) return false;
   // The final endpoint may sit at the end of a paragraph within a list.
@@ -40,6 +53,7 @@ export const makeGroupCard = (kind: GroupKind): Command => ({ tr, dispatch }) =>
   if (kind === 'list' && Array.from({length: blocks[1].childCount}, (_, i) => blocks[1].child(i)).some(n => !n.textContent.trim())) invalid = true;
   if (invalid || !blocks.slice(1).some(n => n.textContent.trim())) return false;
   if (dispatch) {
+    separateGroupHistory(state, tr);
     tr.insert(lastPos, tr.doc.type.schema.nodes.paragraph.create(null, tr.doc.type.schema.text('::end')));
     const marker = ` ::${kind}`;
     tr.insertText(marker, firstPos + $from.parent.nodeSize - 1);
@@ -49,10 +63,11 @@ export const makeGroupCard = (kind: GroupKind): Command => ({ tr, dispatch }) =>
   return true;
 };
 
-export const removeGroupCard = (kind: GroupKind): Command => ({ tr, dispatch }) => {
+export const removeGroupCard = (kind: GroupKind): Command => ({ state, tr, dispatch }) => {
   const group = cardGroupsOf(tr.doc).find(g => g.valid && g.kind === kind && tr.selection.from >= g.from && tr.selection.to <= g.to);
   if (!group || group.closer === null) return false;
   if (dispatch) {
+    separateGroupHistory(state, tr);
     tr.delete(group.closer, group.to);
     tr.delete(group.marker.from - 1, group.marker.to);
     tr.setNodeAttribute(group.from, 'cardGroup', null);
