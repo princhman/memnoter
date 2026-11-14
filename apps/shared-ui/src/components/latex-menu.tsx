@@ -53,16 +53,17 @@ function recordUse(entry: LatexEntry) {
   }
 }
 
-// A command is an odd run of backslashes plus the letters around the caret, so
+// A command is an odd run of backslashes plus the command or environment around the caret, so
 // `\\` (a line break) never opens the menu, and editing inside `\al|pha`
 // replaces the whole word.
 function findLatexMatch({ $position }: Trigger): SuggestionMatch {
   const before = $position.nodeBefore;
   if (!before?.isText) return null;
-  const match = /(\\+)([A-Za-z]*)$/.exec(before.text!);
+  const match = /(\\+)(begin\{[A-Za-z]*\}?|[A-Za-z]*)$/.exec(before.text!);
   if (!match || match[1].length % 2 === 0) return null;
-  const after = $position.nodeAfter?.isText
-    ? /^[A-Za-z]*/.exec($position.nodeAfter.text!)![0]
+  const suffix = match[2].startsWith("begin{") ? /^[A-Za-z]*\}?/ : /^[A-Za-z]*/;
+  const after = $position.nodeAfter?.isText && !match[2].endsWith("}")
+    ? suffix.exec($position.nodeAfter.text!)![0]
     : "";
   const from = $position.pos - match[2].length - 1;
   return {

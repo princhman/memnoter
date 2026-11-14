@@ -1,3 +1,5 @@
+import { InputRule } from "@tiptap/core";
+import { action } from "./shortcuts.ts";
 import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-details";
 import { Plugin, PluginKey, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
@@ -100,6 +102,35 @@ const FoldableDetails = Details.extend({
               return false;
             })
             .run(),
+    };
+  },
+  addInputRules() {
+    return [new InputRule({
+      find: /^>>>\s$/,
+      handler: ({ chain, range }) => {
+        chain().deleteRange(range).insertFoldableBlock().run();
+      },
+    })];
+  },
+  addKeyboardShortcuts() {
+    const parent = this.parent?.() ?? {};
+    return {
+      ...parent,
+      [action("block.foldable").keys]: () =>
+        this.editor.chain().setDetails().updateAttributes(this.name, { open: true }).run(),
+      // Upstream inserts a new first line, which would leave the block's empty
+      // line last and stop Enter there from leaving the block. Use that line.
+      Enter: (props) => {
+        const { $head, empty } = this.editor.state.selection;
+        if (empty && $head.parent.type.name === "detailsSummary") {
+          const block = $head.node(-1);
+          const first = block.lastChild?.firstChild;
+          if (block.attrs.open && first?.type.name === "paragraph" && first.content.size === 0) {
+            return this.editor.commands.setTextSelection($head.after() + 2);
+          }
+        }
+        return parent.Enter?.(props) ?? false;
+      },
     };
   },
   // Replaces upstream's plugin, which moves the caret out of folded content.
