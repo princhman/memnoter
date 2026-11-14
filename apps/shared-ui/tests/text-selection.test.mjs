@@ -239,7 +239,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
           const afterWidths = await page.evaluate(() => [...editor.view.dom.querySelectorAll("p,h2")].map(el => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().width; }));
           widths.forEach((w, i) => assert.ok(Math.abs(w - afterWidths[i]) < .1, "selection does not reshape text"));
         }
-        assert.equal(await page.locator(".note-image-toolbar").isVisible(), false, "range does not open image actions");
+        assert.equal(await page.getByRole("button", { name: "Image actions", exact: true }).isVisible(), false, "range does not open image actions");
         const containsImage = await page.evaluate(() => {
           let found = false; const { from, to } = editor.state.selection;
           editor.state.doc.nodesBetween(from, to, node => { if (["image", "inlineImage"].includes(node.type.name)) found = true; }); return found;
@@ -247,7 +247,7 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
         assert.equal(await page.getByRole("button", { name: "Bold", exact: true }).isVisible(), !containsImage, "text menu only for ordinary text ranges");
       }
       await page.locator(".note-image").first().click();
-      await page.locator(".note-image-toolbar").waitFor();
+      await page.getByRole("button", { name: "Image actions", exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: "Bold", exact: true }).isVisible(), false);
       const outlines = await page.locator(".note-image-block").first().evaluate(el => [el.parentElement, el, ...el.querySelectorAll("*")].filter(el => getComputedStyle(el).outlineStyle !== "none" && parseFloat(getComputedStyle(el).outlineWidth) > 0).length);
       assert.equal(outlines, 1, "one image outline");

@@ -3,6 +3,9 @@
 - **Native feel.** System navigation patterns and glass materials, not web-style
   bars. Toolbars scroll horizontally rather than hiding or reshuffling buttons.
   Accent colour is `Color("BrandAccent")`.
+- **Update notices.** Use native on-screen update dialogs, not persistent banners.
+  Offer Open TestFlight and Later so local notes remain accessible; required
+  updates take priority and must not reopen on retries or navigation.
 - **Devices.** "My iPad" = iPad Air, "my phone" = iPhone 11. Install with
   `scripts/ios-install.sh` (`--iphone`, `--all`; `--core` after `crates/`
   changes). It prints the build stamp that Settings → About shows. If the user

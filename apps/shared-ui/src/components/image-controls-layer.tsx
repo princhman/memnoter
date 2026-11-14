@@ -39,9 +39,8 @@ export function ImageControlsLayer({ anchor, children }: {
         }
       }
       popup.style.visibility = rect.right <= clipLeft || rect.left >= clipRight || rect.bottom <= clipTop || rect.top >= clipBottom ? "hidden" : "visible";
-      popup.style.left = `${Math.max(left, Math.min(rect.left, right - size.width))}px`;
-      const below = rect.bottom + 8;
-      popup.style.top = `${Math.max(top, Math.min(below + size.height <= bottom ? below : rect.top - size.height - 8, bottom - size.height))}px`;
+      popup.style.left = `${Math.max(left, Math.min(rect.right - size.width - 8, right - size.width))}px`;
+      popup.style.top = `${Math.max(top, Math.min(rect.top + 8, bottom - size.height))}px`;
     };
     // The image element can be replaced after downloading or changing source.
     // Observe its stable host and resolve the current image when positioning.

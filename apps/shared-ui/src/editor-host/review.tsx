@@ -64,7 +64,7 @@ function ReviewHost() {
   return <main key={card ? `${card.id}:${card.reps}` : 'waiting'} className="review-scroll-container p-8">
     {state.error && <p role="alert">{state.error}</p>}
     {state.unindexed.length > 0 && <p>Review is incomplete: {state.unindexed.length} notes could not be checked for cards. Open these notes to include their cards: {state.unindexed.map(note => note.name || 'Untitled note').join(', ')}.</p>}
-    {card ? <><p className="mb-8 text-xs text-muted-foreground">{[...(scope ? [] : [card.moduleName]), ...card.section].join(' / ')}</p><CardFace kind={card.kind} front={card.front} back={card.back} revealed={revealed} /></>
+    {card ? <><p className="mb-8 text-xs text-muted-foreground">{[...(scope ? [] : [card.moduleName]), ...card.section].join(' / ')}</p><CardFace kind={card.kind} front={card.front} back={card.back} revealed={revealed} revealedSteps={state.revealedSteps} /></>
       : state.loading ? <p>Loading cards…</p> : state.nextDueAt !== null ? <p>Next card in {formatInterval(state.nextDueAt - now)}. It shows here once it is due.</p>
       : <><h1>All caught up</h1><p>{state.reviewed ? `You reviewed ${state.reviewed} cards.` : 'No cards are due right now.'}</p></>}
   </main>;

@@ -44,7 +44,8 @@ test("block and inline images open full screen and close without changing the no
       await page.waitForFunction(() => document.querySelector(".note-image-host img")?.naturalWidth > 0);
       const before = await page.evaluate(() => editor.getJSON());
       await image.click();
-      await page.getByRole("button", { name: "Open image full screen", exact: true }).click();
+      await page.getByRole("button", { name: "Image actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Open image full screen", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Image preview" });
       await dialog.waitFor();
       assert.equal(await dialog.getByRole("img", { name: "Study diagram" }).getAttribute("src"), src);
@@ -133,11 +134,12 @@ test("block and inline images open full screen and close without changing the no
       assert.equal(await touch.evaluate(() => editor.view.hasFocus()), false,
         "closing an image viewer must not focus the native contenteditable and expose its node range");
       assert.equal(await touch.locator('.note-image-block[data-selected="true"]').count(), 1);
-      assert.equal(await touch.getByRole("button", { name: "Open image full screen", exact: true }).isVisible(), true);
+      assert.equal(await touch.getByRole("button", { name: "Image actions", exact: true }).isVisible(), true);
       assert.equal(await touch.evaluate(() => window.getSelection()?.isCollapsed ?? true), true);
     };
     await assertNativeReturn();
-    await touch.getByRole("button", { name: "Open image full screen", exact: true }).tap();
+    await touch.getByRole("button", { name: "Image actions", exact: true }).tap();
+    await touch.getByRole("menuitem", { name: "Open image full screen", exact: true }).tap();
     await touchDialog.waitFor();
     await touchDialog.getByRole("button", { name: "Close", exact: true }).tap();
     await touchDialog.waitFor({ state: "hidden" });

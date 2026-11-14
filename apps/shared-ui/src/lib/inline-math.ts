@@ -26,7 +26,8 @@ export function findInlineMathOpening($pos: ResolvedPos) {
   $pos.parent.forEach((child, offset) => {
     if (offset >= $pos.parentOffset) return;
     before += child.isText
-      ? child.text!.slice(0, $pos.parentOffset - offset)
+      ? child.text!.slice(0, $pos.parentOffset - offset).replace(/\$/g, dollar =>
+          child.marks.some(mark => mark.type.name === "literalDollar") ? "\ufffc" : dollar)
       : "\ufffc".repeat(child.nodeSize);
   });
   const match = /(^|[^$\\])\$([^$\n]*)$/.exec(before);
@@ -396,8 +397,14 @@ export const InlineMath = Node.create<InlineMathOptions>({
             const { state } = view;
             const $pos = state.doc.resolve(from);
             const parent = $pos.parent;
-            if (!parent.inlineContent || parent.type.spec.code) return false;
+            if (!parent.inlineContent || parent.type.spec.code || $pos.marks().some(mark => mark.type.spec.code)) return false;
 
+            if ($pos.nodeBefore?.isText && $pos.nodeBefore.text?.endsWith("\\")) {
+              const marks = $pos.marks().filter(mark => mark.type.name !== "literalDollar");
+              view.dispatch(state.tr.replaceWith(from - 1, to,
+                state.schema.text("$", [...marks, state.schema.marks.literalDollar.create()])));
+              return true;
+            }
             const opening = findInlineMathOpening($pos);
             if (!opening || !opening.tex.trim()) return false;
             const { from: start, tex } = opening;

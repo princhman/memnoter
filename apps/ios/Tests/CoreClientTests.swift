@@ -148,3 +148,41 @@ final class NativeSyncEndToEndTests: XCTestCase {
         XCTFail("Native clients did not converge within 20 seconds")
     }
 }
+
+private final class UpdateGateServer: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let valid = request.value(forHTTPHeaderField: "Authorization") == "Bearer token"
+            && request.value(forHTTPHeaderField: "X-Memnoter-Protocol-Version") == "1"
+        let response = HTTPURLResponse(url: request.url!, statusCode: valid ? 426 : 400, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("{\"error\":\"Please update Memnoter to keep syncing\"}".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+final class UpdateNoticeTests: XCTestCase {
+    @MainActor func testFileAndBlobRefusalsRequireUpdate() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let core = try await CoreClient.open(directory)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [UpdateGateServer.self]
+        let session = URLSession(configuration: config); defer { session.invalidateAndCancel() }
+        for (path, method) in [("/v1/files/id", "DELETE"), ("/v1/files/id", "GET"), ("/v1/blobs/id", "PUT")] {
+            let sync = SyncClient(core: core, session: session)
+            do {
+                _ = try await sync.request(server: "https://mock.local", path: path, token: "token", method: method)
+                XCTFail("426 must reject the transfer")
+            } catch let failure as SyncHTTPFailure { XCTAssertEqual(failure.status, 426) }
+            XCTAssertTrue(sync.updateRequired)
+        }
+    }
+    @MainActor func testReleaseComparison() {
+        XCTAssertTrue(ReleaseNotice.isNewer(current: "0.1.9", latest: "v0.1.10"))
+        XCTAssertFalse(ReleaseNotice.isNewer(current: "1.0.0", latest: "v0.99.99"))
+        XCTAssertFalse(ReleaseNotice.isNewer(current: "0.1.5", latest: "v0.1.5"))
+        XCTAssertFalse(ReleaseNotice.isNewer(current: "0.1.5", latest: "v0.1.6-beta.1"))
+    }
+}

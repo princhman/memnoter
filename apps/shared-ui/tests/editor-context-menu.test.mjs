@@ -1,4 +1,4 @@
-import { browserHarness } from "./support/browser.mjs";
+import { browserHarness, waitForEditorSelection } from "./support/browser.mjs";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -140,4 +140,55 @@ test("opening near the viewport edge keeps the page still and Copy available", a
   assert.ok(copy.y >= 0 && copy.y + copy.height <= 240);
   assert.deepEqual(await page.evaluate(() => [scrollX, scrollY]), scroll);
   await page.keyboard.press("Escape");
+});
+
+for (const kind of ['blockquote', 'bulletList', 'details']) {
+  test(`Enter accepts the highlighted slash item inside ${kind}`, async () => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await fresh();
+    await page.evaluate(kind => {
+      const line = { type: 'paragraph' };
+      const block = kind === 'details'
+        ? { type: kind, attrs: { open: true }, content: [{ type: 'detailsSummary', content: [{ type: 'text', text: 'Title' }] }, { type: 'detailsContent', content: [line] }] }
+        : kind === 'bulletList' ? { type: kind, content: [{ type: 'listItem', content: [line] }] }
+        : { type: kind, content: [line] };
+      editor.commands.setContent({ type: 'doc', content: [block] });
+      let pos;
+      editor.state.doc.descendants((node, offset) => { if (node.type.name === 'paragraph' && pos === undefined) pos = offset + 1; });
+      editor.commands.setTextSelection(pos);
+      editor.view.focus();
+    }, kind);
+    if (kind === 'details') await page.locator('[data-type="detailsContent"] p').click();
+    await waitForEditorSelection(page);
+    await page.keyboard.type('/code');
+    await page.getByRole('option', { name: /^Code block/ }).waitFor();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.getByRole('option', { name: /^Code block/ }).count(), 0);
+    assert.equal(await page.evaluate(() => editor.state.selection.$head.parent.type.name), 'codeBlock');
+    assert.equal(await page.evaluate(() => editor.state.doc.textContent.includes('/code')), false);
+    // Code insertion may legitimately lift a list; acceptance is the contract.
+    assert.equal(await page.locator('.tiptap pre').count(), 1);
+  });
+}
+
+test('Enter gives a custom-key mention suggestion priority over list splitting', async () => {
+  await fresh();
+  await page.evaluate(async () => {
+    const { default: Suggestion } = await import('/node_modules/@tiptap/suggestion/dist/index.js');
+    const { PluginKey } = await import('/node_modules/@tiptap/pm/state/index.js');
+    editor.commands.setContent('<ul><li><p></p></li></ul>');
+    editor.commands.setTextSelection(3);
+    editor.registerPlugin(Suggestion({
+      editor, pluginKey: new PluginKey('review-mention'), char: '@',
+      render: () => ({ onKeyDown: ({ event, range }) => {
+        if (event.key !== 'Enter') return false;
+        return editor.commands.insertContentAt(range, 'Mention accepted');
+      } }),
+    }));
+    editor.view.focus();
+  });
+  await page.keyboard.type('@person');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => editor.state.doc.firstChild.textContent), 'Mention accepted');
+  assert.equal(await page.evaluate(() => editor.state.doc.firstChild.childCount), 1);
 });

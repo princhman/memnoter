@@ -741,6 +741,9 @@ function isSubsequence(needle: string, haystack: string) {
 
 // Lower is better. `strict` keeps only matches on the command name itself.
 function matchTier(entry: LatexEntry, query: string, lower: string, strict: boolean) {
+  if (query.startsWith("begin{")) {
+    return entry.label.slice(1).startsWith(query) ? 0 : -1;
+  }
   const name = entry.name;
   const nameLower = name.toLowerCase();
   if (name === query) return 0;

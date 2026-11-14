@@ -1,3 +1,4 @@
+import { groupCardActions } from "./insert-menu";
 import { ToolButton } from "./ui/tool-button";
 import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
@@ -90,6 +91,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         return !inlineMath;
       });
       return {
+        groupActions: groupCardActions.filter(item => item.when?.(editor)).map(item => item.title),
         cells: editor.state.selection instanceof CellSelection,
         inTable: editor.isActive("table"),
         inlineMath,
@@ -297,6 +299,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         <Sigma />
       </MarkButton>
       {clozeButton}
+      {groupCardActions.filter(item => active.groupActions.includes(item.title)).map(item => <button key={item.title} type="button" className="rounded-md px-2 py-1 text-xs hover:bg-accent" title={item.hint} onClick={() => item.run(editor, editor.state.selection, { insertImages: () => {} })}>{item.title}</button>)}
       {active.canJoinClozes && (
         <MarkButton
           label="Join clozes"

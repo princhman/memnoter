@@ -103,11 +103,13 @@ export function CardFace({
   front,
   back,
   revealed,
+  revealedSteps = 0,
 }: {
   kind: CardKind;
   front: CardPayload;
   back: CardPayload;
   revealed: boolean;
+  revealedSteps?: number;
 }) {
   if (kind === "occlusion") {
     const pair = validatedOcclusionPair(front, back);
@@ -117,6 +119,8 @@ export function CardFace({
   if (!Array.isArray(front) || !Array.isArray(back)) return <p role="alert">This card has an unsupported payload. Open its note to repair it.</p>;
   const text = "card-face min-w-0 whitespace-pre-wrap break-words text-xl leading-relaxed sm:text-2xl";
   switch (kind) {
+    case "list":
+      return <div className="grid gap-7"><div className={text}><Segments segments={front} /></div><div className={text}>{back.map((step, index) => <div key={index}>{revealed || index < revealedSteps ? <Segments segments={[step]} /> : <div className="my-2 rounded-md bg-muted px-3 text-muted-foreground">{index + 1}. […]</div>}</div>)}</div><p className="text-sm text-muted-foreground">{Math.min(revealedSteps, back.length)}/{back.length} revealed · Grade once after the last item</p></div>; // lint-allow: middle-dot (approved PRI-334 labels)
     case "basic":
       return (
         <div className="grid gap-7">

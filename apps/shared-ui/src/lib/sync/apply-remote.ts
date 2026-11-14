@@ -53,6 +53,8 @@ export function onRemote(result: ApplyResult) {
     // The same path as a local save: an open editor applies the update from
     // the cache, and compaction then includes it.
     appendSavedUpdate(moduleId, update);
+    // Closed notes may have no content cache entry to notify the mention index.
+    void queryClient.invalidateQueries({ queryKey: ["mention-note", moduleId] });
     scheduleReindex(moduleId);
   }
   for (const moduleId of result.deleted) {

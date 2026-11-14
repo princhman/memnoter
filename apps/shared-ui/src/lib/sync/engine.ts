@@ -9,6 +9,7 @@
 // - Remote entries are applied and the cursor advanced in one local
 //   transaction (SyncStore.applyRemote), in seq order, one batch at a time.
 
+import { reportSyncRefusal } from "../update-required.ts";
 import { decryptBlob, encryptBlob } from "./crypto";
 import {
   CLOSE_SIGNED_OUT, CLOSE_POLICY, PUSH_BATCH_BYTES, SYNC_CONTRACT, MAX_LARGE_BLOB_BYTES,
@@ -174,6 +175,7 @@ export function createSyncEngine({
         return;
       }
       if (code === CLOSE_POLICY) {
+        reportSyncRefusal(reason);
         setStatus({ state: "error", error: reason || "The sync server refused this device" });
         return;
       }
@@ -191,6 +193,7 @@ export function createSyncEngine({
       generation += 1;
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof FatalSyncError) {
+        reportSyncRefusal(message);
         stopEngine();
         setStatus({ state: "error", error: message });
         return;

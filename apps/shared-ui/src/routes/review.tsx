@@ -156,7 +156,7 @@ function Review() {
               kind={card.kind}
               front={card.front}
               back={card.back}
-              revealed={revealed}
+              revealed={revealed} revealedSteps={session.getSnapshot().revealedSteps}
             />
           </section>
         )}

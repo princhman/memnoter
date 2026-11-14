@@ -766,8 +766,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     </div>}
     {bankEnabled && questionDraft && <QuestionCropDialog moduleId={doc.moduleId} draft={questionDraft} onClose={() => setQuestionDraft(null)} onSaved={fullscreen ? openBeside : undefined} />}
     {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
-      {find.button}
-      <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="w-9 rounded bg-transparent px-1 text-right focus:bg-accent focus:outline-none" value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
+      <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pages.length || doc.pageCount || 0).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
       }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
@@ -779,6 +778,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Select region" pressed={selecting && !annotationArea} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>
       {bankEnabled && <Button size="xs" variant={questionCropping ? "secondary" : "ghost"} disabled={!!pending || cropping || !pdf || !!questionDraft} onClick={() => { setQuestionCropping(true); setAnnotationArea(false); setSelecting(true); }}>Crop question</Button>}
       <ToolButton label="Annotate area" pressed={annotationArea} disabled={!!pending || cropping || !pdf || !annotations.ready || writeBlocked} onClick={toggleAnnotate}><Highlighter /></ToolButton>
+      {find.button}
       {fullscreen && <ToolButton label="Open beside note" hint={formatKeys(action("pdf.open-beside").keys)} onClick={openBeside}>
         {/* The small arrow says this moves the PDF into the note's side panel. */}
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>

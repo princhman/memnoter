@@ -1,4 +1,4 @@
-import { action, matchesShortcut } from "@/lib/shortcuts";
+import { action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
 import {
   useEffect,
@@ -11,7 +11,7 @@ import {
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
-import { FileText, Search, SquareChevronRight } from "lucide-react";
+import { ChevronLeft, FileText, Search, SquareChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useActiveEditor } from "@/lib/active-editor-context";
@@ -27,6 +27,14 @@ import { requestFind } from "@/lib/find-request";
 import { getRecentModuleIds } from "@/lib/recent-modules";
 import { isWriteAdmitted, isRestoring } from "@/lib/write-lifecycle";
 import { findTermsFor, splitMarked } from "@/lib/search-marks";
+
+import { outline, type OutlineHeading } from "@/lib/outline";
+import { loadStoredNote } from "@/lib/note-index";
+import { getSchema } from "@tiptap/core";
+import { noteExtensions } from "@/lib/editor-schema";
+import { yDocToProsemirrorJSON } from "@tiptap/y-tiptap";
+import { useEditorState } from "@tiptap/react";
+import { execEditor } from "@/editor-host/commands";
 
 const SEARCH_DEBOUNCE_MS = 120;
 const SEARCH_LIMIT = 20;
@@ -50,6 +58,7 @@ type Item =
       nameMarked?: string;
       snippet?: string;
     }
+  | { kind: "heading"; key: string; heading: OutlineHeading; hasChildren: boolean }
   | { kind: "command"; key: string; command: Command };
 
 type Group = { id: string; label: string; items: Item[] };
@@ -103,6 +112,8 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [scope, setScope] = useState<{ moduleId: string; name: string; parent: number | null; moduleQuery: string } | null>(null);
+  const [headingRequest, setHeadingRequest] = useState<{ moduleId: string; id: string | null; pos: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Whether closing returns focus to where it was; opening a note moves it.
   const restoreFocus = useRef(true);
@@ -141,13 +152,49 @@ export function CommandPalette() {
         query: debouncedQuery,
         limit: SEARCH_LIMIT,
       }),
-    enabled: open && debouncedQuery !== "",
+    enabled: open && !scope && debouncedQuery !== "",
     placeholderData: keepPreviousData,
     // Notes are re-indexed as they change; never show an old search.
     gcTime: 0,
   });
 
+  const liveDoc = useEditorState({ editor: activeEditor?.editor ?? null,
+    selector: ({ editor }) => editor?.state.doc, equalityFn: Object.is });
+  const storedOutline = useQuery({
+    queryKey: ["palette-outline", scope?.moduleId],
+    enabled: open && !!scope && activeEditor?.moduleId !== scope.moduleId,
+    gcTime: 0,
+    queryFn: async () => {
+      if (!scope) return [];
+      const doc = await loadStoredNote(scope.moduleId);
+      try {
+        const schema = getSchema(noteExtensions({ document: doc }));
+        return outline(schema.nodeFromJSON(yDocToProsemirrorJSON(doc, "default")));
+      } finally { doc.destroy(); }
+    },
+  });
+  const headings = scope && activeEditor?.moduleId === scope.moduleId && liveDoc
+    ? outline(liveDoc) : storedOutline.data ?? [];
+  const parent = headings.find(heading => heading.pos === scope?.parent);
+
+  useEffect(() => {
+    if (open || !headingRequest || !activeEditor?.isReady || activeEditor.moduleId !== headingRequest.moduleId) return;
+    const heading = outline(activeEditor.editor.state.doc).find(item => headingRequest.id ? item.id === headingRequest.id : item.pos === headingRequest.pos);
+    if (heading) execEditor(activeEditor.editor, "scrollToHeading", { id: heading.id ?? `native-section:${heading.pos}`, revealHidden: true });
+    activeEditor.editor.commands.focus(undefined, { scrollIntoView: false });
+    setHeadingRequest(null);
+  }, [open, headingRequest, activeEditor]);
+
   const groups = useMemo<Group[]>(() => {
+    if (scope) {
+      const rows = headings.filter(heading => trimmed
+        ? heading.title.toLocaleLowerCase().includes(trimmed.toLocaleLowerCase())
+        : (heading.ancestors[heading.ancestors.length - 1]?.pos ?? null) === scope.parent);
+      return [{ id: "headings", label: parent?.title ?? scope.name, items: rows.map(heading => ({
+        kind: "heading", key: `heading:${heading.pos}`, heading,
+        hasChildren: headings.some(child => child.ancestors[child.ancestors.length - 1]?.pos === heading.pos),
+      })) }];
+    }
     let notes: Item[];
     if (trimmed) {
       notes = debouncedQuery
@@ -187,7 +234,7 @@ export function CommandPalette() {
       { id: "notes", label: "Modules", items: notes },
       { id: "commands", label: "Commands", items: commandItems },
     ].filter((group) => group.items.length > 0);
-  }, [trimmed, debouncedQuery, search.data, modules.data, commands, open]);
+  }, [trimmed, debouncedQuery, search.data, modules.data, commands, open, scope, headings, parent]);
 
   const items = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const itemsKey = items.map((item) => item.key).join("\n");
@@ -213,7 +260,32 @@ export function CommandPalette() {
     action?.();
   };
 
+  const drill = (item: Item) => {
+    if (item.kind === "note") {
+      if (trimmed && (trimmed !== debouncedQuery || search.isPlaceholderData)) return;
+      setScope({ moduleId: item.moduleId, name: item.name, parent: null, moduleQuery: query });
+    } else if (item.kind === "heading" && item.hasChildren) {
+      setScope(current => current && { ...current, parent: item.heading.pos });
+    } else return;
+    setQuery("");
+    setActiveIndex(0);
+  };
+  const back = () => {
+    if (!scope) return;
+    if (parent) setScope({ ...scope, parent: parent.ancestors[parent.ancestors.length - 1]?.pos ?? null });
+    else { setQuery(scope.moduleQuery); setScope(null); }
+    setActiveIndex(0);
+  };
+
   const activate = (item: Item) => {
+    if (item.kind === "heading" && scope) {
+      restoreFocus.current = false;
+      afterClose.current = () => setHeadingRequest({ moduleId: scope.moduleId, id: item.heading.id, pos: item.heading.pos });
+      setOpen(false);
+      if (activeEditor?.moduleId !== scope.moduleId) void navigate({ to: "/$moduleId", params: { moduleId: scope.moduleId } });
+      return;
+    }
+    if (item.kind === "heading") return;
     if (item.kind === "command") {
       afterClose.current = () => {
         Promise.resolve(item.command.run()).catch((error) =>
@@ -247,6 +319,12 @@ export function CommandPalette() {
       if (!count) return;
       const step = event.key === "ArrowDown" ? 1 : -1;
       setActiveIndex((index) => (Math.min(index, count - 1) + step + count) % count);
+    } else if (event.key === "ArrowRight" || matchesShortcut(event.nativeEvent, "Mod-Enter")) {
+      event.preventDefault();
+      if (active) drill(active);
+    } else if (scope && !query && (event.key === "ArrowLeft" || event.key === "Backspace")) {
+      event.preventDefault();
+      back();
     } else if (event.key === "Enter") {
       event.preventDefault();
       if (active) activate(active);
@@ -254,7 +332,7 @@ export function CommandPalette() {
   };
 
   const optionId = (item: Item) => `${listId}-${item.key}`;
-  const isSearching = trimmed !== "" && (trimmed !== debouncedQuery || search.isFetching);
+  const isSearching = !scope && trimmed !== "" && (trimmed !== debouncedQuery || search.isFetching);
 
   return (
     <Dialog
@@ -263,6 +341,7 @@ export function CommandPalette() {
       onOpenChangeComplete={(isOpen) => {
         if (isOpen) return;
         setQuery("");
+        setScope(null);
         runAfterClose();
       }}
     >
@@ -273,6 +352,10 @@ export function CommandPalette() {
         className="top-[18vh] translate-y-0 gap-0 overflow-hidden p-0 shadow-2xl ring-0 sm:max-w-xl data-open:zoom-in-100"
       >
         <DialogTitle className="sr-only">Search modules and commands</DialogTitle>
+        {scope && <div className="flex items-center gap-2 px-3 pt-2 text-xs text-muted-foreground">
+          <button type="button" aria-label="Back to parent" onClick={back} className="rounded p-1 hover:bg-accent"><ChevronLeft className="size-4" /></button>
+          <span className="truncate">{[scope.name, ...(parent ? [...parent.ancestors, parent].map(heading => heading.title) : [])].join(" › ")}</span>
+        </div>}
         <div className="flex items-center gap-2 border-b border-border px-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
           <input
@@ -284,7 +367,7 @@ export function CommandPalette() {
             aria-activedescendant={active ? optionId(active) : undefined}
             aria-label="Search modules and commands"
             className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            placeholder="Search modules and commands"
+            placeholder={scope ? "Find a section" : "Search modules and commands"}
             value={query}
             spellCheck={false}
             autoCapitalize="off"
@@ -341,6 +424,14 @@ export function CommandPalette() {
                           </div>
                         )}
                       </div>
+                      {item === active && <kbd className="shrink-0 font-sans text-xs text-muted-foreground">{formatKeys("Mod-Enter")}</kbd>}
+                    </>
+                  ) : item.kind === "heading" ? (
+                    <>
+                      <span className="min-w-0 flex-1 truncate">{item.heading.title}
+                        {trimmed && item.heading.ancestors.length > 0 && <span className="block truncate text-xs text-muted-foreground">{item.heading.ancestors.map(heading => heading.title).join(" › ")}</span>}
+                      </span>
+                      {item.hasChildren && <kbd className="shrink-0 font-sans text-xs text-muted-foreground">{formatKeys("Mod-Enter")}</kbd>}
                     </>
                   ) : (
                     <>
@@ -361,9 +452,14 @@ export function CommandPalette() {
           ))}
           {items.length === 0 && (
             <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-              {isSearching ? "Searching…" : trimmed ? "No matches" : "No modules yet"}
+              {scope && storedOutline.isError ? "Could not load headings" : scope && storedOutline.isFetching ? "Loading headings…" : isSearching ? "Searching…" : trimmed ? "No matches" : scope ? "No headings" : "No modules yet"}
             </div>
           )}
+        </div>
+        <div className="flex justify-end gap-4 px-3 py-2 text-xs text-muted-foreground">
+          {scope && <span className="flex items-center gap-2">Back <kbd className="font-sans">{formatKeys("ArrowLeft")}</kbd></span>}
+          <span className="flex items-center gap-2">Open <kbd className="font-sans">{formatKeys("Enter")}</kbd></span>
+          <span className="flex items-center gap-2">Browse sections <kbd className="font-sans">{formatKeys("Mod-Enter")}</kbd></span>
         </div>
         <div aria-live="polite" className="sr-only">
           {open && !isSearching && trimmed

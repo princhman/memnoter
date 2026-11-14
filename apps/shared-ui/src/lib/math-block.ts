@@ -234,30 +234,6 @@ export const MathBlock = Node.create({
 
       Backspace: () => deleteToward(-1),
       Delete: () => deleteToward(1),
-
-      // Enter before a formula opens a line above it, which may have no
-      // other way in, e.g. right under a heading.
-      Enter: ({ editor }) => {
-        const { selection, schema } = editor.state;
-        const { $from } = selection;
-        if (
-          !selection.empty ||
-          $from.parent.type !== type ||
-          $from.parentOffset !== 0 ||
-          !$from.parent.content.size
-        ) {
-          return false;
-        }
-        const start = $from.before();
-        const index = $from.index(-1);
-        if (!$from.node(-1).canReplaceWith(index, index, schema.nodes.paragraph)) {
-          return false;
-        }
-        const tr = editor.state.tr.insert(start, schema.nodes.paragraph.create());
-        tr.setSelection(TextSelection.create(tr.doc, start + 1));
-        editor.view.dispatch(tr.scrollIntoView());
-        return true;
-      },
     };
   },
 

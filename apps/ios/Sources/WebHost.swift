@@ -461,7 +461,13 @@ private struct PdfViewStateRecord: Codable {
                 do {
                     let bytes = try JSONSerialization.data(withJSONObject: body["args"] ?? [:])
                     let result: String
-                    if command == BridgeProtocol.pdfChunkCommand {
+                    if command == "open_external_link" {
+                        let args = body["args"] as? [String: Any]
+                        guard let href = args?["href"] as? String, let url = URL(string: href),
+                              ["https", "http", "mailto", "itms-beta"].contains(url.scheme ?? "") else { throw CocoaError(.validationMissingMandatoryProperty) }
+                        await UIApplication.shared.open(url)
+                        result = "null"
+                    } else if command == BridgeProtocol.pdfChunkCommand {
                         let args = try JSONDecoder().decode(PdfChunkArgs.self, from: bytes)
                         let reply = try await client.readPdfChunk(args)
                         result = String(decoding: try JSONEncoder().encode(reply), as: UTF8.self)

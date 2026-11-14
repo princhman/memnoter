@@ -57,6 +57,12 @@ enum ExecCommand: String, Codable {
     case removeCard = "removeCard"
     case joinClozes = "joinClozes"
     case makeClozeNote = "makeClozeNote"
+    case insertListCard = "insertListCard"
+    case insertBlockCard = "insertBlockCard"
+    case makeListCard = "makeListCard"
+    case makeBlockCard = "makeBlockCard"
+    case removeListCard = "removeListCard"
+    case removeBlockCard = "removeBlockCard"
     case codeBlock = "codeBlock"
     case insertSection = "insertSection"
     case indent = "indent"
@@ -166,6 +172,12 @@ struct EditorState: Codable {
     var inCloze: Bool = false
     var canJoinClozes: Bool = false
     var canMakeClozeNote: Bool = false
+    var canInsertListCard: Bool = false
+    var canInsertBlockCard: Bool = false
+    var canMakeListCard: Bool = false
+    var canMakeBlockCard: Bool = false
+    var inListCard: Bool = false
+    var inBlockCard: Bool = false
     var folded: Bool = false
     var canFold: Bool = false
     var canUndo: Bool = false
@@ -236,6 +248,7 @@ enum BridgeProtocol {
     static let highlightColors = ["yellow", "green", "blue", "pink", "purple"]
     static let homeShortcuts: [(keys: String, action: String)] = [
         ("/", "Insert a block"),
+        ("⌘⌥⇧F", "Foldable block"),
         ("⌘N", "New module"),
         ("⌘F", "Find in note"),
         ("⌘K", "Search modules and commands"),
