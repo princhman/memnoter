@@ -79,7 +79,7 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
     for (const note of catalog.notes) {
       candidates.push({ title: note.name, group: "Modules", target: { kind: "module", id: note.id, nodeId: null, locator: null } });
     }
-    for (const note of catalog.notes) for (const heading of note.note.headings) candidates.push({ title: `${note.name} › ${heading.title}`, group: "Headings", target: { kind: "heading", id: note.id, nodeId: heading.id, locator: null } });
+    for (const note of catalog.notes) for (const heading of note.note.headings) candidates.push({ title: [note.name, ...(heading.path ?? []), heading.title].join(" › "), group: "Sections", target: { kind: "heading", id: note.id, nodeId: heading.id, locator: null } });
     for (const file of catalog.files) candidates.push({ title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
     const terms = props.query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
     return candidates.filter(item => terms.every(term => item.title.toLocaleLowerCase().includes(term))).slice(0, 100).map((item): InsertItem => ({

@@ -61,7 +61,7 @@ const ITEMS: InsertItem[] = [
     group: "Sections",
     title: "Insert heading above",
     keywords: ["insert title", "insert heading above", "parent", "adopt"],
-    hint: "Nest the next section",
+    hint: "",
     when: editor => editor.state.selection.$from.depth === 1,
     run: (editor, range) => editor.chain().focus().deleteRange(range).insertHeadingAbove().run(),
   },
@@ -302,9 +302,9 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
               onMouseEnter={() => setSelected(index)}
               onClick={() => command(item)}
             >
-              <span className="truncate">{item.title}</span>
+              <span className="shrink-0">{item.title}</span>
               {item.hint && (
-                <kbd className="shrink-0 font-sans text-xs text-muted-foreground">
+                <kbd className="min-w-0 truncate font-sans text-xs text-muted-foreground">
                   {item.hint}
                 </kbd>
               )}
