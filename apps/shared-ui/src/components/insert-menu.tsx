@@ -1,3 +1,4 @@
+import { Kbd } from "@/components/ui/kbd";
 import { IMAGE_TYPES } from "@/lib/editor-schema/images";
 import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
@@ -317,11 +318,11 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
             >
               <span className={item.detail !== undefined ? "min-w-0 break-words" : "shrink-0"}>{item.label ?? item.title}</span>
               {item.detail && <span className="min-w-0 truncate text-xs text-muted-foreground">{item.detail}</span>}
-              {item.expandable && index === selected && <kbd aria-hidden="true" className="shrink-0 font-sans text-xs text-muted-foreground">Tab</kbd>}
+              {item.expandable && index === selected && <Kbd aria-hidden="true">Tab</Kbd>}
               {item.hint && (
-                <kbd className="min-w-0 truncate font-sans text-xs text-muted-foreground">
+                <Kbd className="min-w-0 shrink truncate">
                   {item.hint}
-                </kbd>
+                </Kbd>
               )}
             </button>
           </Fragment>

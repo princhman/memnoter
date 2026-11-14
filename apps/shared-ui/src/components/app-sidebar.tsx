@@ -88,7 +88,6 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
       >
         {children}
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <IconTooltip label={`Actions for ${name}`} hint="Shift+F10" side="right">
           <DropdownMenuTrigger
             render={
               <SidebarMenuAction ref={trigger} showOnHover aria-label={`Actions for ${name}`} />
@@ -96,7 +95,6 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
           >
             <Ellipsis />
           </DropdownMenuTrigger>
-          </IconTooltip>
 
           <DropdownMenuContent>
             <DropdownMenuGroup>{items(DropdownMenuItem)}</DropdownMenuGroup>

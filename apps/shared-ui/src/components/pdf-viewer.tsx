@@ -1,5 +1,6 @@
 import { useBankGate, type CropDraft } from "@/lib/question-bank";
 import { QuestionCropDialog } from "./question-crop-dialog";
+import { IconTooltip } from "@/components/ui/icon-tooltip";
 import { usePdfFind, PdfFindHighlights } from "./pdf-find";
 import { IS_IOS } from "@/lib/platform";
 import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
@@ -727,7 +728,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     {!nativeSelectionMenu && textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
       <div className="flex items-center gap-0.5 overflow-x-auto">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
-        <Button size="xs" variant="ghost" className="px-1.5" title={`Highlight (${formatKeys(action("text.highlight").keys)})`} aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button>
+        <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}><Button size="xs" variant="ghost" className="px-1.5" aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button></IconTooltip>
         <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => setShowHighlightColors(value => !value)}>
           <span className="size-2 rounded-full" style={{ backgroundColor: pdfHighlightColors[highlightColor].value }} /><ChevronDown className="size-3" />
         </ToolButton>
@@ -790,7 +791,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       <div className="pdf-hint pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
         {selecting && !pending && <><span className="min-w-0 flex-1">{questionCropping ? "Drag around the question or part" : annotationArea ? "Drag to highlight or comment on an area" : "Drag to select a quote"}</span><ToolButton size="icon-xs" className="pdf-menu-close" label="Exit selection" onClick={cancelSelection}><X /></ToolButton></>}
         {cropping && "Preparing quote"}{quoteError && <span role="alert">{quoteError}</span>}
-        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" title={`Insert at cursor (${formatKeys(action("pdf.quote.insert").keys)})`} aria-keyshortcuts="Meta+Enter Control+Enter" disabled={pending.status !== "draft"} onClick={showCursorAction}>Insert at cursor</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current?.id === pending.id && current.status === "draft" ? null : current)}>Discard</Button>}</>}
+        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<IconTooltip label="Insert at cursor" hint={formatKeys(action("pdf.quote.insert").keys)}><Button size="xs" aria-keyshortcuts="Meta+Enter Control+Enter" disabled={pending.status !== "draft"} onClick={showCursorAction}>Insert at cursor</Button></IconTooltip>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current?.id === pending.id && current.status === "draft" ? null : current)}>Discard</Button>}</>}
       </div>
     </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="pdf-viewport min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>

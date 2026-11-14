@@ -1,3 +1,5 @@
+import { IconTooltip } from "@/components/ui/icon-tooltip";
+import { Kbd } from "@/components/ui/kbd";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { action, formatKeys, HOME_ACTION_IDS } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
@@ -60,10 +62,10 @@ function Index() {
               : "Create your first module to start taking notes."}
           </p>
         </div>
-        <Button onClick={() => requestApp(NEW_MODULE_EVENT)}>
+        <IconTooltip label="New module" hint={formatKeys(action("module.new").keys)}><Button onClick={() => requestApp(NEW_MODULE_EVENT)}>
           <Plus />
           New module
-        </Button>
+        </Button></IconTooltip>
       </div>
 
       {recent.length > 0 && (
@@ -102,9 +104,9 @@ function Index() {
           {HOME_ACTIONS.map(({ keys, title }) => (
             <div key={title} className="contents">
               <dt>
-                <kbd className="font-sans text-xs text-muted-foreground">
+                <Kbd>
                   {formatKeys(keys)}
-                </kbd>
+                </Kbd>
               </dt>
               <dd>{title}</dd>
             </div>
