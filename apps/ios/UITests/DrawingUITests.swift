@@ -36,7 +36,7 @@ final class DrawingUITests: XCTestCase {
         let drawing = app.webViews.images["Drawing"].firstMatch
         XCTAssertTrue(drawing.waitForExistence(timeout: 10), "The saved drawing must be embedded")
         drawing.tap()
-        let imageActions = app.webViews.buttons["Image actions"].firstMatch
+        let imageActions = app.webViews.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Image actions")).firstMatch
         let edit = app.webViews.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Edit drawing")).firstMatch
         XCTAssertTrue(imageActions.waitForExistence(timeout: 5), "The first tap must select the drawing and expose its actions")
         XCTAssertFalse(canvas.exists, "Selecting a drawing must leave the note open")
