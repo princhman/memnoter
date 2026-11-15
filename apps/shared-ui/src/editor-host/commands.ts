@@ -40,7 +40,7 @@ export function editorOutline(editor: Editor) {
   return editorOutlines(editor).headings;
 }
 
-export function editorState(editor: Editor): EditorState {
+export function editorState(editor: Editor, reduced = false): EditorState {
   const marks = ["bold", "italic", "underline", "strike", "code", "link", "highlight"].filter(mark => editor.isActive(mark));
   const focusedPos = sectionFocusKey.getState(editor.state);
   const focusedHeading = focusedPos == null ? null : editor.state.doc.nodeAt(focusedPos);
@@ -75,17 +75,17 @@ export function editorState(editor: Editor): EditorState {
     canToggleHeaderRow: editor.isEditable && editor.can().toggleHeaderRow(),
     canIndent: editor.can().sinkListItem("listItem"),
     canOutdent: editor.can().liftListItem("listItem"),
-    canMakeCard: editor.can().makeCloze(), inCloze: editor.can().removeCloze(),
-    canJoinClozes: editor.can().joinClozes(),
-    canMakeClozeNote: editor.can().makeClozeNote(),
-    canInsertListCard: editor.isEditable && editor.can().insertGroupCard("list"),
-    canInsertBlockCard: editor.isEditable && editor.can().insertGroupCard("block"),
-    canMakeListCard: editor.isEditable && editor.can().makeGroupCard("list"),
-    canMakeBlockCard: editor.isEditable && editor.can().makeGroupCard("block"),
-    inListCard: editor.isEditable && editor.can().removeGroupCard("list"),
-    inBlockCard: editor.isEditable && editor.can().removeGroupCard("block"),
-    folded: editor.can().unfoldCurrentSection(),
-    canFold: editor.can().foldCurrentSection(),
+    canMakeCard: !reduced && editor.can().makeCloze(), inCloze: !reduced && editor.can().removeCloze(),
+    canJoinClozes: !reduced && editor.can().joinClozes(),
+    canMakeClozeNote: !reduced && editor.can().makeClozeNote(),
+    canInsertListCard: editor.isEditable && !reduced && editor.can().insertGroupCard("list"),
+    canInsertBlockCard: editor.isEditable && !reduced && editor.can().insertGroupCard("block"),
+    canMakeListCard: editor.isEditable && !reduced && editor.can().makeGroupCard("list"),
+    canMakeBlockCard: editor.isEditable && !reduced && editor.can().makeGroupCard("block"),
+    inListCard: editor.isEditable && !reduced && editor.can().removeGroupCard("list"),
+    inBlockCard: editor.isEditable && !reduced && editor.can().removeGroupCard("block"),
+    folded: !reduced && editor.can().unfoldCurrentSection(),
+    canFold: !reduced && editor.can().foldCurrentSection(),
     canUndo: editor.can().undo(), canRedo: editor.can().redo(),
     hasSelection: !editor.state.selection.empty, editable: editor.isEditable,
     suppressKeyboard: suppressesTextInput(editor.state.selection),

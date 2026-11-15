@@ -1,3 +1,4 @@
+import { worksheetEditor } from "./worksheet-editor";
 import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
 import { beginHostNavigation, editorHost } from "@/lib/editor-host";
 import { settled } from "@/lib/async-work";
@@ -13,6 +14,10 @@ import { observeScroll, traceScroll, hasSectionAnchor, revealCaret, sectionToTop
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { NativePdfWorkspace, type NativePdfActions } from "./pdf-workspace";
 import Tiptap from "@/components/Tiptap";
+import { QuestionBank } from "@/components/question-bank";
+import { useBankGate } from "@/lib/question-bank";
+import { useModules } from "@/lib/modules";
+import { updatePdfPane } from "@/lib/pdf-pane";
 import SaveStatus from "@/components/save-status";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
@@ -24,6 +29,29 @@ import { headingMathLabel } from "@/lib/heading-label";
 import { headingNumbers, headingNumberingKey } from "@/lib/heading-numbering";
 import { editorOutline, editorOutlines, editorState, execEditor } from "./commands";
 
+async function flushHostWrites() {
+  flushPersistedViews();
+  await flushAll({ navigation: true });
+}
+
+// Use the desktop /questions data source and components without its app shell.
+// QuestionBank owns the worksheet picker and renders WorksheetAttempt itself.
+function NativeQuestions({ scope, onOpenSource, visible }: { scope: string | null; onOpenSource(documentId: string): void; visible: boolean }) {
+  const enabled = useBankGate();
+  const { data: modules = [], isPending, error } = useModules();
+  if (!enabled) return <p className="text-center text-sm text-muted-foreground">Questions are not available.</p>;
+  const scopedModules = modules.filter(module => !scope || module.id === scope);
+  return <div className="mx-auto w-full max-w-3xl space-y-8 py-4">
+    {error && <p role="alert" className="text-sm text-destructive">{error.message}</p>}
+    {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+    {!isPending && !error && !scopedModules.length && <p className="text-sm text-muted-foreground">{scope ? "Module not found." : "Create a module to start collecting questions."}</p>}
+    {scopedModules.map(module => <section key={module.id} aria-label={module.name || "Untitled module"}>
+      {!scope && <h2 className="bank-module-heading mb-4 text-sm font-medium text-muted-foreground">{module.name || "Untitled module"}</h2>}
+      <QuestionBank moduleId={module.id} onOpenSource={onOpenSource} nativeToolbar={visible && !!scope && document.documentElement.classList.contains("native-tablet")} />
+    </section>)}
+  </div>;
+}
+
 export function Host() {
   const router = useRouter();
   const requestedModule = useRouterState({ select: state => {
@@ -32,6 +60,16 @@ export function Host() {
   } });
   const pdfActions = useRef<NativePdfActions>(null);
   const [moduleId, setModuleId] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<{ open: boolean; moduleId: string | null; mounted: boolean }>({ open: false, moduleId: null, mounted: false });
+  const [questionSourceOpen, setQuestionSourceOpen] = useState<string | null>(null);
+  const questionSurface = useRef(questions);
+  const showQuestions = (open: boolean, scope: string | null = questionSurface.current.moduleId) => {
+    if (!open || scope !== questionSurface.current.moduleId) setQuestionSourceOpen(null);
+    const next = { open, moduleId: scope, mounted: questionSurface.current.mounted || open };
+    questionSurface.current = next;
+    setQuestions(next);
+    postNativeEvent("questionBankState", { open, moduleId: scope });
+  };
   const { activeEditor } = useActiveEditor();
   const active = useRef(activeEditor);
   const container = useRef<HTMLElement>(null);
@@ -53,13 +91,18 @@ export function Host() {
       return new Error(message);
     };
     const getEditor = (readOnly = false) => {
+      if (questionSurface.current.open) {
+        const answer = worksheetEditor();
+        if (!answer || (!readOnly && !answer.isEditable)) throw new Error("Select an answer to edit it.");
+        return answer;
+      }
       const current = active.current;
-      if (opening.current || !current?.isReady || current.editor.isDestroyed || (!readOnly && !current.editor.isEditable)) throw new Error("Editor is not ready");
+      if (questionSurface.current.open || opening.current || !current?.isReady || current.editor.isDestroyed || (!readOnly && !current.editor.isEditable)) throw new Error("Editor is not ready");
       return current.editor;
     };
     let queue = Promise.resolve();
     window.memnoterEditor = {
-      toggleFiles() { getEditor(true); pdfActions.current?.toggleFiles(); },
+      toggleFiles() { if (!questionSurface.current.open) getEditor(true); pdfActions.current?.toggleFiles(); },
       async refreshDocuments(id) { await pdfActions.current?.refreshDocuments(id); },
       pdfSelectionAction(action, color) { pdfSelectionControls.run(action, color); },
       pdfCommand(command, value) { pdfActions.current?.pdfCommand(command, value); },
@@ -93,11 +136,11 @@ export function Host() {
       open(id) {
         const operation = queue.then(async () => {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
+          await flushHostWrites();
+          showQuestions(false);
           if (active.current?.moduleId === id && active.current.isReady) {
             await router.navigate({ to: "/$moduleId", params: { moduleId: id } }); return;
           }
-          flushPersistedViews();
-          await flushAll();
           await new Promise<void>((resolve, reject) => {
             opening.current = { moduleId: id, resolve, reject };
             setModuleId(id);
@@ -107,8 +150,32 @@ export function Host() {
         queue = settled(operation);
         return operation;
       },
+      openQuestions(scope) {
+        const operation = queue.then(async () => {
+          if (scope !== null && (typeof scope !== "string" || !scope)) throw new Error("openQuestions requires a moduleId or null");
+          await flushHostWrites();
+          active.current?.editor.view.dom.blur();
+          const id = active.current?.moduleId;
+          if (id) updatePdfPane(id, { open: false });
+          await router.navigate({ to: "/" });
+          showQuestions(true, scope);
+        }).catch(error => { throw fail(error); });
+        queue = settled(operation);
+        return operation;
+      },
+      closeQuestions() {
+        const operation = queue.then(async () => {
+          await flushHostWrites();
+          showQuestions(false);
+          const id = active.current?.moduleId;
+          if (id) await router.navigate({ to: "/$moduleId", params: { moduleId: id } });
+          else await router.navigate({ to: "/" });
+        }).catch(error => { throw fail(error); });
+        queue = settled(operation);
+        return operation;
+      },
       async flush() {
-        try { flushPersistedViews(); await flushAll(); }
+        try { await flushHostWrites(); }
         catch (error) { throw fail(error); }
       },
       exec(command, args) {
@@ -152,6 +219,7 @@ export function Host() {
     const stopImages = imageStatusStore.subscribe(saveStatus);
     const stopAnnotations = pdfAnnotationSaveStatusStore.subscribe(saveStatus);
     saveStatus();
+    postNativeEvent("questionBankState", { open: false, moduleId: null });
     postNativeEvent("ready", { protocolVersion: BRIDGE_VERSION });
     return () => { stopCardInfo(); stopScroll(); stopErrors(); stopMutations(); stopSaves.unsubscribe(); stopImages.unsubscribe(); stopAnnotations.unsubscribe(); };
   }, []);
@@ -183,7 +251,7 @@ export function Host() {
     container.current?.addEventListener("scroll", onScroll, { passive: true });
     const publish = () => {
       if (editor.isDestroyed) return;
-      postNativeEvent("state", { moduleId: id, ...editorState(editor) });
+      if (!questionSurface.current.open) postNativeEvent("state", { moduleId: id, ...editorState(editor) });
       const numbers = headingNumberingKey.getState(editor.state) ? headingNumbers(editor.state.doc) : new Map<number, string>();
       const formatHeading = (item: ReturnType<typeof editorOutline>[number]) => {
         let text = "";
@@ -287,5 +355,12 @@ export function Host() {
     };
   }, [activeEditor]);
 
-  return <EditorHostProvider value={editorHost}><NativePdfWorkspace moduleId={moduleId} actions={pdfActions}><SaveStatus /><main ref={container} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} />}</main></NativePdfWorkspace></EditorHostProvider>;
+  const openQuestionSource = (documentId: string) => {
+    if (questions.moduleId) updatePdfPane(questions.moduleId, { open: true, active: documentId });
+    else setQuestionSourceOpen(documentId);
+  };
+  return <EditorHostProvider value={editorHost}><NativePdfWorkspace questions={questions.open} moduleId={questions.open ? questions.moduleId : moduleId} actions={pdfActions} sourceDocumentId={questionSourceOpen} onCloseSource={() => setQuestionSourceOpen(null)}><SaveStatus />
+    <main ref={container} style={questions.open ? { display: "none" } : undefined} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} />}</main>
+    {questions.mounted && <main aria-label="Questions" style={!questions.open ? { display: "none" } : undefined} className="app-scroll-container native-questions h-full overflow-y-auto p-4"><NativeQuestions visible={questions.open} scope={questions.moduleId} onOpenSource={openQuestionSource} /></main>}
+  </NativePdfWorkspace></EditorHostProvider>;
 }

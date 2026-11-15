@@ -1,5 +1,5 @@
-import { useSelector } from "@tanstack/react-store";
-import { bankView, useBankGate } from "@/lib/question-bank";
+import { useBankGate } from "@/lib/question-bank";
+import { setOpenedModule, useModulePage } from "@/lib/store";
 import { QuestionBank } from "./question-bank";
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -7,7 +7,7 @@ import { ChevronLeft, Maximize2 } from "lucide-react";
 import { useDocuments } from "@/lib/use-documents";
 import { documentName } from "@/lib/pdf-state";
 import { updatePdfPane, usePdfPane } from "@/lib/pdf-pane";
-import { acceptsPdfShortcut, action, matchesShortcut } from "@/lib/shortcuts";
+import { acceptsPdfShortcut, action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { registerCommand } from "@/lib/commands";
 import { PdfFileList } from "./pdf-file-list";
 import { PdfViewer } from "./pdf-viewer";
@@ -20,7 +20,8 @@ const paneWidth = (width: number) => `min(${width}px, max(320px, 65vw))`;
 
 export function NoteWithPdfs({ moduleId, children }: { moduleId: string; children: ReactNode }) {
   const bankEnabled = useBankGate();
-  const showingBank = useSelector(bankView, s => s === moduleId);
+  const showingBank = useModulePage(moduleId) === "questions";
+  useEffect(() => { setOpenedModule(moduleId); }, [moduleId]);
   const { data: docs = [] } = useDocuments(moduleId);
   const pane = usePdfPane(moduleId);
   const navigate = useNavigate();
@@ -55,7 +56,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
     return () => window.removeEventListener("keydown", toggle, true);
   }, [moduleId, pane.open]);
   return <div ref={root} data-pdf-note={moduleId} className="relative flex h-full min-h-0 flex-col"><PdfQuoteNavigation moduleId={moduleId} /><PdfQuoteControls moduleId={moduleId} /><div className="note-with-pdfs flex min-h-0 min-w-0 flex-1">
-    <div className="app-scroll-container min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">{bankEnabled && showingBank ? <QuestionBank moduleId={moduleId} /> : children}</div>
+    <div className="app-scroll-container min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">{bankEnabled && showingBank ? <QuestionBank moduleId={moduleId} onOpenSource={documentId => updatePdfPane(moduleId, { open: true, active: documentId })} /> : children}</div>
     {open && <>
       <div role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuenow={pane.width} aria-valuemin={320} aria-valuemax={1000} tabIndex={0} className="relative w-1 shrink-0 touch-none cursor-col-resize bg-border hover:bg-primary focus-visible:bg-primary focus-visible:outline-none" onKeyDown={event => {
         if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); finishResize(false); updatePdfPane(moduleId, { width: clampWidth(pane.width + (event.key === "ArrowLeft" ? 20 : -20)) }); }
@@ -110,7 +111,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
             <span className="min-w-0 truncate text-sm">{documentName(active.name)}</span>
           </>}
           trailing={<>
-            <ToolButton label="Open full screen" onClick={() => void navigate({ to: "/files/$documentId", params: { documentId: active.id } })}><Maximize2 /></ToolButton>
+            <ToolButton label="Open full screen" hint={formatKeys(action("pdf.open-fullscreen").keys)} onClick={() => void navigate({ to: "/files/$documentId", params: { documentId: active.id } })}><Maximize2 /></ToolButton>
           </>} /></div> : <PdfFileList moduleId={moduleId} docs={docs} />}
       </aside>
     </>}

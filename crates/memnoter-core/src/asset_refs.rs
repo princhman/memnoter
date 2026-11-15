@@ -142,9 +142,8 @@ pub fn retain_module(
         drop(txn);
         // Unknown roots/versions may refer to any managed file. Quarantine
         // cleanup conservatively, including assets owned by this same module.
-        let worksheet_assets = match crate::worksheets::read(&doc) {
-            Ok(Some(bank)) => bank.assets(),
-            Ok(None) => std::collections::HashSet::new(),
+        let worksheet_assets = match crate::worksheets::document_assets(&doc) {
+            Ok(assets) => assets,
             Err(_) => conn
                 .prepare("select id from files")
                 .map_err(db_err)?
@@ -173,9 +172,8 @@ pub fn retain_module(
         ));
     }
     let mut current_assets = crate::files::assets::note_images(&root, &doc.transact());
-    match crate::worksheets::read(&doc) {
-        Ok(Some(bank)) => current_assets.extend(bank.assets()),
-        Ok(None) => {}
+    match crate::worksheets::document_assets(&doc) {
+        Ok(assets) => current_assets.extend(assets),
         Err(_) => current_assets.extend(
             conn.prepare("select id from files")
                 .map_err(db_err)?

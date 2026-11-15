@@ -122,6 +122,48 @@ fn assets(core: &Core, module: &str, bank: &Bank) {
 }
 
 #[test]
+fn stale_note_compaction_preserves_unseen_answers_and_bank_edits() {
+    let (_dir, core, module) = core();
+    let value = fixture();
+    let bank: Bank = serde_json::from_value(value.clone()).unwrap();
+    assets(&core, &module, &bank);
+    let doc = document(&value);
+    content::add_update(&core.db, module.clone(), bytes(&doc)).unwrap();
+    let stale = bytes(&doc);
+    // Core-side writes happen while a note editor still holds the old snapshot.
+    let root = doc.get_or_insert_map(ROOT);
+    let mut txn = doc.transact_mut();
+    let Out::YMap(questions) = root.get(&txn, "questions").unwrap() else { panic!() };
+    let question_id = bank.questions.keys().next().unwrap();
+    let Out::YMap(question) = questions.get(&txn, question_id).unwrap() else { panic!() };
+    question.insert(&mut txn, "title", "Renamed while answering");
+    question.insert(&mut txn, "order", 42);
+    let Out::YMap(answers) = root.get(&txn, "answers").unwrap() else { panic!() };
+    let answer_id = bank.answers.keys().next().unwrap();
+    let Out::YMap(answer) = answers.get(&txn, answer_id).unwrap() else { panic!() };
+    let text = answer.insert(&mut txn, "text", XmlFragmentPrelim::default());
+    use yrs::XmlFragment;
+    text.push_back(&mut txn, yrs::XmlTextPrelim::new("Saved while the note was open"));
+    drop(txn);
+    let watermark = content::add_update(&core.db, module.clone(), bytes(&doc)).unwrap().id;
+    let expected = read(&doc).unwrap();
+    // A further write must remain above the watermark and survive validation.
+    question.insert(&mut doc.transact_mut(), "title", "Later rename");
+    let later = content::add_update(&core.db, module.clone(), bytes(&doc)).unwrap();
+    content::save_compaction(&core.db, module.clone(), stale.clone(), watermark).unwrap();
+    let saved = content::get_content(&core.db, module.clone()).unwrap();
+    let snapshot = Doc::new();
+    snapshot.transact_mut().apply_update(Update::decode_v1(&saved.state).unwrap()).unwrap();
+    assert_eq!(read(&snapshot).unwrap(), expected);
+    assert_eq!(saved.updates.len(), 1);
+    assert_eq!(saved.updates[0].id, later.id);
+    assert_eq!(read(&load(&core.db.lock().unwrap(), &module).unwrap()).unwrap(), read(&doc).unwrap());
+    // A second stale compaction must succeed too, rather than poison all retries.
+    content::save_compaction(&core.db, module.clone(), stale, later.id).unwrap();
+    assert_eq!(read(&load(&core.db.lock().unwrap(), &module).unwrap()).unwrap(), read(&doc).unwrap());
+}
+
+#[test]
 fn roundtrip_pinned_tree_multicrop_answers_and_conflict_copies() {
     let bank: Bank = serde_json::from_value(fixture()).unwrap();
     let doc = document(&fixture());
@@ -467,7 +509,8 @@ fn local_updates_cannot_rewrite_pinned_revisions_or_drop_unknown_roots() {
     assert!(content::add_update(&core.db, module.clone(), bytes(&doc))
         .unwrap_err()
         .contains("immutable"));
-    assert!(content::save_compaction(&core.db, module, Vec::new(), i64::MAX).is_err());
+    // Empty stale clients cannot erase saved history during compaction.
+    content::save_compaction(&core.db, module, Vec::new(), i64::MAX).unwrap();
 }
 
 #[test]
@@ -601,4 +644,45 @@ fn future_survivor_retains_assets_when_the_uploader_module_is_deleted() {
             .unwrap();
         assert_eq!(owner, survivor);
     }
+}
+
+#[test]
+fn finish_retains_answers_and_pins_and_rejects_further_writes() {
+    let _lock = super::DEV_TEST_LOCK.lock().unwrap();
+    let (dir, core, module) = core();
+    struct Environment(Vec<(&'static str, Option<std::ffi::OsString>)>);
+    impl Drop for Environment {
+        fn drop(&mut self) {
+            for (key, value) in &self.0 {
+                match value { Some(value) => std::env::set_var(key, value), None => std::env::remove_var(key) }
+            }
+        }
+    }
+    let _environment = Environment(["MEMNOTER_DATA_DIR", "MEMNOTER_QUESTION_BANK_DEV"].into_iter().map(|key| (key, std::env::var_os(key))).collect());
+    std::env::set_var("MEMNOTER_DATA_DIR", &dir.0);
+    std::env::set_var("MEMNOTER_QUESTION_BANK_DEV", "1");
+    std::fs::write(dir.0.join(bank::DEV_MARKER), dir.0.canonicalize().unwrap().to_string_lossy().as_bytes()).unwrap();
+    let value = fixture();
+    let before: Bank = serde_json::from_value(value.clone()).unwrap();
+    assets(&core, &module, &before);
+    content::add_update(&core.db, module.clone(), bytes(&document(&value))).unwrap();
+    let attempt = before.attempts.keys().next().unwrap().clone();
+    let pin = &before.attempts[&attempt].questions[0];
+    let leaf = before.revisions[&pin.revision_id].parts.iter().find(|(id, _)| !before.revisions[&pin.revision_id].parts.values().any(|p| p.parent_id.as_ref() == Some(id))).unwrap().0.clone();
+    attempts::save_answer(&core, module.clone(), attempt.clone(), pin.revision_id.clone(), leaf.clone(), "Final answer".into()).unwrap();
+    let saved = bank::get(&core, module.clone()).unwrap().unwrap();
+    attempts::finish(&core, module.clone(), attempt.clone()).unwrap();
+    let finished = bank::get(&core, module.clone()).unwrap().unwrap();
+    assert!(finished.attempts[&attempt].finished);
+    assert_eq!(finished.attempts[&attempt].questions, saved.attempts[&attempt].questions);
+    assert_eq!(finished.answers, saved.answers);
+    attempts::finish(&core, module.clone(), attempt.clone()).unwrap(); // retry is harmless
+    let loaded = attempts::load_answer_document(&core, module.clone(), attempt.clone(), pin.revision_id.clone(), leaf.clone()).unwrap();
+    assert!(attempts::save_answer(&core, module.clone(), attempt.clone(), pin.revision_id.clone(), leaf.clone(), "Changed".into()).err().unwrap().to_string().contains("read-only"));
+    let doc = Doc::new();
+    doc.get_or_insert_xml_fragment("default");
+    let expected = serde_json::to_value(loaded).unwrap()["expected"].as_str().unwrap().to_owned();
+    assert!(attempts::save_answer_document(&core, module.clone(), attempt.clone(), pin.revision_id.clone(), leaf.clone(), bytes(&doc), expected).is_err());
+    assert!(attempts::save_canvas(&core, module.clone(), attempt, pin.revision_id.clone(), leaf, uuid::Uuid::new_v4().to_string(), uuid::Uuid::new_v4().to_string(), uuid::Uuid::new_v4().to_string(), None, 100.0, 100.0, false).is_err());
+    assert_eq!(bank::get(&core, module).unwrap().unwrap(), finished);
 }

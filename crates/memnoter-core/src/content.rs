@@ -318,7 +318,11 @@ pub fn save_compaction(
     // Keep leases and snapshot replacement atomic. Capture intermediate saved
     // revisions before discarding them, then validate/capture the new snapshot.
     let before = crate::worksheets::load(&tx, &module_id)?;
-    let after = yrs::Doc::new();
+    let old_bank = crate::worksheets::read(&before)?;
+    use yrs::{ReadTxn, StateVector, Transact};
+    // A client may never have seen worksheet writes below its watermark.
+    // Merge its state into the authoritative prefix before retiring any rows.
+    let after = crate::worksheets::load_through(&tx, &module_id, update_id)?;
     if !new_state.is_empty() {
         use yrs::{updates::decoder::Decode, Transact, Update};
         after
@@ -326,7 +330,14 @@ pub fn save_compaction(
             .apply_update(Update::decode_v1(&new_state).map_err(db_err)?)
             .map_err(db_err)?;
     }
-    crate::worksheets::admit(&tx, &module_id, crate::worksheets::read(&before)?, &after)?;
+    let new_state = after.transact().encode_state_as_update_v1(&StateVector::default());
+    // Validate against the full current document, including rows above the watermark.
+    {
+        use yrs::{updates::decoder::Decode, Update};
+        before.transact_mut().apply_update(Update::decode_v1(&new_state).map_err(db_err)?)
+            .map_err(db_err)?;
+    }
+    crate::worksheets::admit(&tx, &module_id, old_bank, &before)?;
     asset_refs::retain_module(&tx, &module_id)?;
     tx.execute(
         "update contents set state = ?1 where module_id = ?2",

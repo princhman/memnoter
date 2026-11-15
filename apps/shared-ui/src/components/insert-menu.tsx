@@ -12,6 +12,10 @@ export type InsertCommandOptions = {
   // Saves picked images and inserts them at a position, as pasting does.
   insertImages: (editor: Editor, files: File[], position: number) => void;
   insertDrawing?: (editor: Editor) => void;
+  // Only answer editors opt into the embedded iOS worksheet bridge.
+  nativeDrawing?: boolean;
+  allowedActions?: readonly string[];
+  flashcards?: boolean;
 };
 
 export type InsertItem = {
@@ -26,7 +30,7 @@ export type InsertItem = {
   title: string;
   keywords: string[];
   hint: string;
-  when?: (editor: Editor) => boolean;
+  when?: (editor: Editor, options?: InsertCommandOptions) => boolean;
   run: (editor: Editor, range: Range, options: InsertCommandOptions) => void;
 };
 
@@ -153,7 +157,7 @@ const ITEMS: InsertItem[] = [
   },
   {
     group: "Blocks", title: "Drawing", keywords: ["drawing", "draw", "ink", "pen", "sketch"], hint: "",
-    when: () => capabilities.macDrawing,
+    when: (_editor, options) => !!options?.insertDrawing && (capabilities.macDrawing || !!options.nativeDrawing),
     run: (editor, range, options) => { editor.chain().deleteRange(range).run(); options.insertDrawing?.(editor); },
   },
   {
@@ -204,9 +208,13 @@ const ITEMS: InsertItem[] = [
   })),
 ];
 
-export function filterItems(query: string, editor: Editor) {
+export function filterItems(query: string, editor: Editor, options?: InsertCommandOptions) {
   const q = query.toLowerCase().trim();
-  return ITEMS.filter(item => !item.when || item.when(editor)).filter(
+  const items: InsertItem[] = options?.allowedActions?.includes("Text") ? [{
+    group: "Blocks", title: "Text", keywords: ["text", "paragraph"], hint: "",
+    run: (editor, range) => { editor.chain().focus().deleteRange(range).setParagraph().run(); },
+  }, ...ITEMS] : ITEMS;
+  return items.filter(item => (!options?.allowedActions || options.allowedActions.includes(item.title)) && (!item.when || item.when(editor, options))).filter(
     (item) =>
       !q || item.title.toLowerCase().includes(q) ||
       item.keywords.some((keyword) => keyword.startsWith(q)),

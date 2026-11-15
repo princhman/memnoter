@@ -7,8 +7,10 @@
 #   scripts/ios-install.sh --all         both devices, one build
 #   scripts/ios-install.sh --live        use the running pnpm dev:device server
 #   scripts/ios-install.sh --core        also rebuild the Rust core (after crates/ changes)
+#   scripts/ios-install.sh --question-bank-dev  Debug core + isolated offline bank vault
 #
 # IOS_DEVICE_ID   overrides the device list (see `xcrun devicectl list devices`)
+# IOS_QUESTION_BANK_SEED_DIR  optional offline snapshot directory for --question-bank-dev
 # IOS_TEAM_ID     default: the user's development team
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,10 +22,13 @@ team=${IOS_TEAM_ID:-BVQCX5TLX3}
 bundle_id=com.vladyslavnalyvaiko.memnoter.ipad
 core=false
 live=false
+question_bank_dev=false
+launch_args=()
 for arg in "$@"; do
   case "$arg" in
     --live) live=true ;;
     --core) core=true ;;
+    --question-bank-dev) question_bank_dev=true; launch_args+=(--question-bank-dev) ;;
     --ipad) devices+=("$ipad") ;;
     --iphone) devices+=("$iphone") ;;
     --all) devices+=("$ipad" "$iphone") ;;
@@ -50,7 +55,13 @@ for device in "${devices[@]}"; do
 done
 
 core_framework=$(ls -d apps/ios/MemnoterCore/*.xcframework 2>/dev/null | head -1 || true)
-if [ "$core" = true ] || [ -z "$core_framework" ]; then
+if [ "$question_bank_dev" = true ]; then
+  # Always rebuild: an existing XCFramework may contain a release core, which
+  # correctly refuses the bank gate even when the Swift configuration is Debug.
+  ./scripts/build-ios-core.sh --debug
+  # The bundled editor must understand the same worksheet root as the Debug core.
+  export MEMNOTER_QUESTION_BANK_DEV=1
+elif [ "$core" = true ] || [ -z "$core_framework" ]; then
   ./scripts/build-ios-core.sh
 fi
 ./scripts/build-ios-web.sh
@@ -68,8 +79,21 @@ fi
 for device in "${devices[@]}"; do
   xcrun devicectl device install app --device "$device" \
     apps/ios/build-device/Build/Products/Debug-iphoneos/Memnoter.app >/dev/null
-  xcrun devicectl device process launch --terminate-existing --device "$device" "$bundle_id" >/dev/null
+  if [ "$question_bank_dev" = true ] && [ -n "${IOS_QUESTION_BANK_SEED_DIR:-}" ]; then
+    if [ "$(cat "$IOS_QUESTION_BANK_SEED_DIR/.seed-manifest" 2>/dev/null)" != memnoter-offline-question-bank-seed-v1 ]; then
+      echo "Refusing an unmarked question bank seed" >&2; exit 1
+    fi
+    xcrun devicectl device copy to --device "$device" \
+      --domain-type appDataContainer --domain-identifier "$bundle_id" \
+      --source "$IOS_QUESTION_BANK_SEED_DIR" --destination Documents/QuestionBankDevelopmentSeed >/dev/null
+  fi
+  xcrun devicectl device process launch --terminate-existing --device "$device" "$bundle_id" ${launch_args[@]+"${launch_args[@]}"} >/dev/null
   echo "Installed and relaunched on $device"
 done
+
+if [ "$question_bank_dev" = true ]; then
+  echo "Question bank development: separate seeded/reused offline vault (Application Support/MemnoterQuestionBankDevelopment/v2)."
+  echo "Relaunch with --question-bank-dev each time; a Home Screen launch opens the normal vault."
+fi
 
 echo "Settings → About should show: build $(cat apps/ios/Resources/Web/build-stamp.txt)"

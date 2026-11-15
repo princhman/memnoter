@@ -1,7 +1,7 @@
 import { useModules } from "@/lib/modules";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useSearch } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
-import { openReview } from "@/components/card-navigation-guard";
+import { useModuleSectionNavigation, type ModuleSection } from "./module-section-menu";
 import { Button } from "./ui/button";
 import { MiddleTruncate } from "./middle-truncate";
 import {
@@ -12,19 +12,18 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 
-// Picks which module's cards the review shows, or all of them. Files uses the
-// same menu; the reader passes the open PDF's module as the current one.
-export function ReviewScopeMenu({ page = "review", current }: { page?: "review" | "files"; current?: string }) {
+// Notes need one module; the shared sections also allow All modules.
+export function ReviewScopeMenu({ page = "review", current }: { page?: ModuleSection; current?: string }) {
   const { data: modules = [] } = useModules();
   const search = useSearch({ strict: false });
-  const navigate = useNavigate();
+  const navigateSection = useModuleSectionNavigation();
   const selected = current ?? search.module;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="xs" className="-mx-2 inline-flex! min-w-0 max-w-56! text-sm font-bold text-foreground" aria-label={page === "files" ? "Select files module" : "Select review module"}>
+          <Button variant="ghost" size="xs" className="-ml-1.5 inline-flex! min-w-0 max-w-56! gap-2 px-1.5 text-sm font-bold text-foreground" aria-label={`Select ${page} module`}>
             <MiddleTruncate text={selected ? (modules.find((module) => module.id === selected)?.name || "Module") : "All modules"} />
             <ChevronDown className="size-3 shrink-0" />
           </Button>
@@ -34,17 +33,13 @@ export function ReviewScopeMenu({ page = "review", current }: { page?: "review" 
         <DropdownMenuRadioGroup
           value={selected ?? ""}
           onValueChange={(value) => {
-            if (page === "files") {
-              void navigate({ to: "/files", search: value ? { module: value } : {} });
-              return;
-            }
-            if (value === (selected ?? "")) return;
-            void openReview(() => navigate({ to: "/review", search: value ? { module: value } : {} }));
+            if (page !== "files" && value === (selected ?? "")) return;
+            void navigateSection(page, value || undefined);
           }}
         >
-          <DropdownMenuRadioItem value="" closeOnClick>All modules</DropdownMenuRadioItem>
+          {(page !== "notes") && <DropdownMenuRadioItem value="" showIndicator={false} closeOnClick>All modules</DropdownMenuRadioItem>}
           {modules.map((module) => (
-            <DropdownMenuRadioItem key={module.id} value={module.id} closeOnClick>
+            <DropdownMenuRadioItem key={module.id} value={module.id} showIndicator={false} closeOnClick>
               <MiddleTruncate text={module.name || "Untitled module"} />
             </DropdownMenuRadioItem>
           ))}

@@ -1,0 +1,44 @@
+/* Drag feedback stays immediate, including with reduced motion enabled. */
+.bank-drag-row {
+  touch-action: pan-y;
+}
+.bank-drop-line::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--primary);
+  border-radius: 50%;
+  background: var(--background);
+}
+.bank-reorder-outline .bank-drag-row {
+  user-select: none;
+  touch-action: none;
+}
+.bank-drag-preview {
+  pointer-events: none;
+}
+/* Match saved-image menu sizing without changing shared menu primitives. */
+.bank-crop-menu [data-slot="dropdown-menu-item"] {
+  white-space: nowrap;
+}
+
+/* Feedback is out of flow so choosing an intent never moves the hit target. */
+.bank-drop-cue {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  max-width: 65%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: var(--popover);
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 22px;
+}

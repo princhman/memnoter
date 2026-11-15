@@ -21,9 +21,9 @@ import {
 } from "@/components/ui/sidebar";
 import { useIsFullscreen } from "@/hooks/use-fullscreen";
 import { IS_MAC } from "@/lib/platform";
+import { useSectionNavigationShortcuts } from "@/hooks/use-section-navigation-shortcuts";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ModuleReviewButton } from "@/components/module-review-button";
-import { ModuleBankButton } from "@/components/module-bank-button";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
 import { FindBar } from "@/components/find-bar";
@@ -37,6 +37,7 @@ import { useCommand } from "@/lib/commands";
 import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/app-events";
 
 const RootLayout = () => {
+  useSectionNavigationShortcuts();
   const isFullscreen = useIsFullscreen();
   const path = useRouterState({ select: state => state.location.pathname });
   const isPdfReader = /^\/files\/[^/]+/.test(path);
@@ -122,7 +123,6 @@ const RootLayout = () => {
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-2 pr-3">
                 <PdfHeaderActions />
-                <ModuleBankButton />
                 {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} current={reviewCurrent} /> : <ModuleReviewButton />}
                 <FilesPanelButton />
               </div>

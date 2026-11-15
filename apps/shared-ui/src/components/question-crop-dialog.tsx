@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { ChevronsUpDown } from "lucide-react";
-import { questionLabel, setBankTarget, useBankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
+import { questionLabel, nextQuestionLabel, setBankTarget, useBankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
 import { Button } from "./ui/button";
+import { isNativeHost } from "@/lib/backend";
 import { Kbd } from "./ui/kbd";
 
-type Choice = { key: string; label: string; edit: Omit<BankEdit, "crop"> };
+type Choice = { key: string; label: string; edit: Omit<Exclude<BankEdit, { kind: "nestQuestion" }>, "crop"> };
 
 // What the crop can become, worded from where the user is in the worksheet:
 // the next question, the next part at the current level, a sub-part of the
 // current part, or more of the current question/part.
 function choices(bank: Bank | null | undefined, target: { questionId: string; partId: string } | null): Choice[] {
-  const live = Object.entries(bank?.questions ?? {}).filter(([, q]) => !q.deleted).sort((a, b) => a[1].order - b[1].order);
-  const result: Choice[] = [{ key: "q", label: `Question ${live.length + 1}`, edit: { kind: "newQuestion", title: "" } }];
+  const live = Object.entries(bank?.questions ?? {}).filter(([, q]) => !q.deleted).sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]));
+  const result: Choice[] = [{ key: "q", label: `Question ${nextQuestionLabel(bank)}`, edit: { kind: "newQuestion" } }];
   const index = target ? live.findIndex(([id]) => id === target.questionId) : -1;
   if (!bank || index < 0) return result;
   const question = live[index][1]; const revision = bank.revisions[question.revisionId];
@@ -65,16 +66,16 @@ export function QuestionCropDialog({ moduleId, draft, onClose, onSaved }: { modu
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   });
-  return <section role="dialog" aria-label="Add crop to question bank" className="absolute inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-center gap-3 rounded-xl floating-surface bg-popover p-2 text-popover-foreground shadow-lg">
+  return <section role="dialog" aria-label="Add crop to question bank" className="question-crop-bar absolute inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-center gap-3 rounded-xl floating-surface bg-popover p-2 text-popover-foreground shadow-lg">
     {picking && <ul aria-label="Choose where crops go" className="absolute inset-x-0 bottom-full mb-1 max-h-56 overflow-y-auto rounded-xl floating-surface bg-popover p-1 shadow-lg">
       {list.map(item => <li key={`${item.questionId}:${item.partId}`}><button type="button" style={{ paddingLeft: 8 + item.depth * 12 }} aria-current={item.questionId === target?.questionId && item.partId === target.partId} className="w-full rounded-md py-1 pr-2 text-left text-sm hover:bg-accent aria-[current=true]:font-semibold" onClick={() => { setBankTarget({ moduleId, questionId: item.questionId, partId: item.partId }); setPicking(false); }}>{item.label}</button></li>)}
     </ul>}
     <img src={draft.url} alt="Selected crop" className="h-12 w-16 shrink-0 rounded bg-white object-contain" />
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
       {targetName && <Button size="xs" variant="outline" aria-expanded={picking} aria-label={`Target ${targetName}, change`} onClick={() => setPicking(open => !open)}>{targetName}<ChevronsUpDown className="size-3 opacity-60" /></Button>}
-      {options.map(choice => <Button key={choice.key} size="xs" variant={choice.key === "a" ? "secondary" : "ghost"} disabled={busy || query.isLoading || !!query.error} onClick={() => void save(choice)}>{choice.label}<Kbd>{choice.key.toUpperCase()}</Kbd></Button>)}
+      {options.map(choice => <Button key={choice.key} size="xs" variant={choice.key === "a" ? "secondary" : "ghost"} disabled={busy || query.isLoading || !!query.error} onClick={() => void save(choice)}>{choice.label}{!isNativeHost() && <Kbd>{choice.key.toUpperCase()}</Kbd>}</Button>)}
       {(error || query.error) && <p role="alert" className="w-full px-2 text-xs text-destructive">{error || query.error?.message}</p>}
     </div>
-    <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={onClose}>Discard<Kbd>Esc</Kbd></Button>
+    <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={onClose}>Discard{!isNativeHost() && <Kbd>Esc</Kbd>}</Button>
   </section>;
 }

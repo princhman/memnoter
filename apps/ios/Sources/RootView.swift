@@ -14,6 +14,8 @@ struct RootView: View {
     private var phoneSplitLayout: Bool { isPhone && horizontalSizeClass == .regular }
     private var canToggleSidebar: Bool { !isPhone || horizontalSizeClass == .regular }
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// Whether the sidebar column is really on screen; overlay and swipe presentation don't always update `columnVisibility`.
+    @State private var sidebarOnScreen = true
     @AppStorage("selectedDestination") private var savedDestination = "home"
     private var selected: String? {
         get { savedDestination }
@@ -21,6 +23,11 @@ struct RootView: View {
     }
     @AppStorage("skipCardsCreatedToday") private var skipCardsCreatedToday = false
     @AppStorage("sidebarVisible") private var sidebarVisible = true
+    @AppStorage("questionsModuleScope") private var savedQuestionsScope = ""
+    private var questionsModule: String? {
+        get { savedQuestionsScope.isEmpty ? nil : savedQuestionsScope }
+        nonmutating set { savedQuestionsScope = newValue ?? "" }
+    }
     @State private var reviewModule: String?
     @State private var search = ""
     @State private var hits: [SearchHit] = []
@@ -49,8 +56,45 @@ struct RootView: View {
     @State private var deletingFolder: SidebarItem?
     @State private var sidebarEditMode: EditMode = .inactive
     @State private var detailWidth: CGFloat = 0
+    @State private var primaryLibraryDocumentId: String?
     var module: NoteModule? { store.modules.first { $0.id == selected } }
-    private var navigationWithPresentations: some View {
+    private var sectionScope: String? {
+        switch selected {
+        case "questions": questionsModule
+        case "files": filesModuleFilter
+        case "review": reviewModule
+        default: module?.id
+        }
+    }
+    // A PDF beside the note does not become the primary navigation destination.
+    private var primaryFileContent: Bool {
+        if isPhone { return session?.pdfReader != nil }
+        guard let reader = session?.pdfReader else { return false }
+        return reader.fullscreen || (reader.activeId != nil && reader.activeId == primaryLibraryDocumentId)
+    }
+    private var tabletBreadcrumbWidth: CGFloat {
+        max(100, min(session?.pdfReader != nil ? 240 : 360, detailWidth - 420))
+    }
+    private var currentSection: String {
+        if selected == "questions" { return primaryFileContent ? "files" : "questions" }
+        if module != nil { return primaryFileContent ? "files" : "notes" }
+        return selected ?? "home"
+    }
+    private var breadcrumbItem: String? {
+        guard module != nil || selected == "questions" else { return nil }
+        if primaryFileContent { return session?.pdfReader?.activeId != nil ? session?.pdfReader?.title : nil }
+        if selected == "questions" { return session?.worksheetChrome?.title }
+        return session?.state.focusedSectionPath.last?.title ?? module?.name
+    }
+    private var sectionTitle: String {
+        if selected == "questions" { return "Questions" }
+        return module?.name ?? (selected == "review" ? "Review" : selected == "files" ? "Files" : "Home")
+    }
+    private var sidebarDestination: String? {
+        if ["questions", "files", "review"].contains(selected ?? ""), let sectionScope { return sectionScope }
+        return selected
+    }
+    private var navigationWithPresentations: AnyView {
         navigation
         .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { notification in
             guard let result = notification.object as? SyncApplyResult else { return }
@@ -60,16 +104,19 @@ struct RootView: View {
                         _ = try await session.callEditor(.applyRemote, ["result": try JSONSerialization.jsonObject(with: Data(result.json.utf8))], parameters: ["result"])
                     }
                     await store.refresh()
-                    if let selected, selected != "home", selected != "review", selected != "files", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
+                    if let selected, selected != "home", selected != "review", selected != "files", selected != "questions", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
                 } catch { store.error = error.localizedDescription }
             }
         }
-        .task(id: store.sync != nil) {
+        .task(id: store.client != nil) {
             if let client = store.client, session == nil {
                 await store.refresh()
                 columnVisibility = sidebarVisible ? .all : .detailOnly
                 if isPhone, selected != "home" { phoneColumn = .detail }
                 let restored = WebSession(client: client, directory: store.directory, preferences: store.preferences)
+                await restored.refreshQuestionBankGate()
+                if selected == "questions", !restored.questionBankEnabled { selected = "home" }
+                if let questionsModule, !store.modules.contains(where: { $0.id == questionsModule }) { self.questionsModule = nil }
                 session = restored
                 store.sync?.onFile = { module, json in
                     if let session, session.ready {
@@ -78,10 +125,17 @@ struct RootView: View {
                     await store.refresh()
                     NotificationCenter.default.post(name: .coreDidWrite, object: nil)
                 }
-                restored.onReady = { [weak restored] in
-                    guard let restored, let selected, store.modules.contains(where: { $0.id == selected }) else { return }
-                    Task { do { try await restored.open(selected) } catch { store.error = String(describing: error) } }
+                let restoreNavigation: () -> Void = { [weak restored] in
+                    guard let restored else { return }
+                    Task {
+                        do {
+                            if selected == "questions", restored.questionBankEnabled { try await restored.openQuestions(questionsModule) }
+                            else if let selected, store.modules.contains(where: { $0.id == selected }) { try await restored.open(selected) }
+                        } catch { store.error = String(describing: error) }
+                    }
                 }
+                if restored.ready { restoreNavigation() }
+                else { restored.onReady = restoreNavigation }
             }
         }
         .alert(rename == nil ? "New module" : "Rename module", isPresented: $editingName) {
@@ -121,6 +175,7 @@ struct RootView: View {
                 ContentsSheet(session: session, moduleName: module?.name ?? "Note") { showingContents = false }
             }
         }
+        .rootViewBoundary()
         .fullScreenCover(item: $drawingRequest) { target in
             if let client = store.client {
                 DrawingEditor(request: target, directory: store.directory, client: client, preferences: store.preferences) { imageId, sourceId, previewId, expected, asCopy in
@@ -150,6 +205,7 @@ struct RootView: View {
             session?.drawingToEdit = nil
             Task {
                 do {
+                    try await session?.worksheetDrawing.cancel()
                     try await session?.flush()
                     guard selected == target.id, let session else { return }
                     session.web.endEditing(true)
@@ -161,12 +217,23 @@ struct RootView: View {
         }
         .sheet(isPresented: $showSettings) { if let client = store.client { SettingsView(sync: store.sync, client: client, modules: store.modules, setChapterNumbering: setChapterNumbering, beforeRestore: { try await session?.flush(); store.sync?.pause() }, restored: { session?.dispose(); session = WebSession(client: client, directory: store.directory, preferences: store.preferences); selected = "home"; await store.refresh(); await store.sync?.start() }) } }
         .fileImporter(isPresented: $showingPdfImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true, onCompletion: importPdfs)
+        .rootViewBoundary()
     }
 
-    var body: some View {
+    private var navigationWithAlerts: AnyView {
         navigationWithPresentations
             .background { UpdateNoticeView(required: store.sync?.updateRequired == true) }
         .alert("Memnoter", isPresented: Binding(get: { store.error != nil || session?.error != nil }, set: { if !$0 { store.error = nil; session?.error = nil } })) { Button("OK") { store.error = nil; session?.error = nil } } message: { Text(store.error ?? session?.error ?? "") }
+        .rootViewBoundary()
+    }
+
+    private var navigationWithRequests: AnyView {
+        navigationWithAlerts
+        .onChange(of: session?.ready) { _, ready in
+            if ready == true { Task { await session?.refreshQuestionBankGate() } }
+        }
+        .onChange(of: session?.questionsOpen) { _, _ in synchronizeQuestions() }
+        .onChange(of: session?.questionsModuleId) { _, _ in synchronizeQuestions() }
         .onChange(of: session?.requestedModule) { _, _ in handleModuleRequest() }
         .onChange(of: session?.requestedPdfImport) { _, _ in handlePdfImportRequest() }
         .onChange(of: showingPdfImporter) { _, shown in
@@ -175,6 +242,11 @@ struct RootView: View {
         .onChange(of: busy) { _, value in
             if !value { handleModuleRequest(); handlePdfImportRequest() }
         }
+        .rootViewBoundary()
+    }
+
+    var body: AnyView {
+        navigationWithRequests
         .onChange(of: session?.imagePreviewOpen) { _, open in
             if open == true {
                 previewColumnVisibility = columnVisibility
@@ -191,13 +263,16 @@ struct RootView: View {
         }
         .onChange(of: showingFind) { _, shown in findFocused = shown }
         .onChange(of: image) { _, item in
-            guard let item, let id = module?.id, let client = store.client else { return }
+            guard let item, let id = session?.questionsOpen == true ? session?.worksheetAnswerModule : module?.id, let client = store.client else { return }
+            let answerTarget = session?.worksheetAnswerID
             busy = true
             Task {
                 defer { busy = false; image = nil }
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else { throw URLError(.cannotDecodeContentData) }
                     let file: SavedFile = try await client.call("save_file", FileArgs(moduleId: id, bytes: Array(data), mimeType: item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"))
+                    guard answerTarget == session?.worksheetAnswerID,
+                          (answerTarget != nil ? session?.worksheetAnswerModule == id && session?.questionsOpen == true : module?.id == id) else { throw DrawingFailure.changed }
                     let inserted = try await session?.execute(.insertImage, ["fileId": file.id, "alt": "Photo"]) as? Bool
                     if inserted != true { throw URLError(.cannotCreateFile) }
                     try await session?.flush()
@@ -227,6 +302,7 @@ struct RootView: View {
                         UIApplication.shared.endBackgroundTask(task)
                     }
                     do {
+                        try await session?.worksheetDrawing.cancel()
                         try await session?.flush()
                         _ = try await store.sync?.pushAndWait()
                     } catch is CancellationError { }
@@ -234,6 +310,7 @@ struct RootView: View {
                 }
             } else { backgroundWork?.cancel(); store.sync?.resume(); Task { await store.refresh() } }
         }
+        .rootViewBoundary()
     }
     @ViewBuilder private var navigation: some View {
         if isPhone {
@@ -259,59 +336,10 @@ struct RootView: View {
         }
     }
 
-    private var sidebar: some View {
-        List(selection: Binding(get: { selected }, set: { if let destination = $0, isDestination(destination) { if destination == "review" { reviewModule = nil }; if destination == "files" { filesModuleFilter = nil }; navigate(destination) } })) {
-            destinationLink("home") { Label("Home", systemImage: "house") }
-            destinationLink("review") {
-                HStack {
-                    Label("Review", systemImage: "rectangle.stack")
-                    Spacer()
-                    Text("\(store.counts.reduce(0) { $0 + $1.learning }) / \(store.counts.reduce(0) { $0 + $1.review }) / \(store.counts.reduce(0) { $0 + $1.new })")
-                        .monospacedDigit().foregroundStyle(.secondary)
-                        .accessibilityLabel("\(store.counts.reduce(0) { $0 + $1.learning }) learn, \(store.counts.reduce(0) { $0 + $1.review }) due, \(store.counts.reduce(0) { $0 + $1.new }) new")
-                }
-            }
-            destinationLink("files") { Label("Files", systemImage: "doc.text") }
-            Section {
-                let rows = SidebarLayout.rows(items: store.sidebarItems, modules: store.modules)
-                ForEach(rows) { row in
-                    switch row {
-                    case .folder(let item): folderRow(item)
-                    case .module(let item, let module): moduleRow(module, inFolder: item.folder_id != nil)
-                    }
-                }
-                .onMove { source, destination in
-                    let items = store.sidebarItems
-                    Task { await store.saveSidebar(SidebarLayout.move(items: items, rows: rows, from: source, to: destination)) }
-                }
-            } header: {
-                HStack {
-                    Text("Modules")
-                    Spacer()
-                    Button {
-                        withAnimation { sidebarEditMode = sidebarEditMode.isEditing ? .inactive : .active }
-                    } label: {
-                        Image(systemName: sidebarEditMode.isEditing ? "checkmark" : "pencil")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            // Trailing-aligned so the glyph lines up with the row badges and chevrons.
-                            .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(sidebarEditMode.isEditing ? "Done editing" : "Edit modules")
-                    .disabled(store.modules.isEmpty)
-                }
-            }
-            if !search.isEmpty {
-                Section("Search results") {
-                    ForEach(hits, id: \.module_id) { hit in
-                        destinationLink(hit.module_id) { VStack(alignment: .leading) { Text(hit.name); Text(hit.snippet.filter { !$0.isASCII || !$0.isNewline && !$0.unicodeScalars.contains(where: { $0.value < 32 }) }).font(.caption).lineLimit(2) } }
-                    }
-                }
-            }
-        }
+    private var sidebar: AnyView {
+        RootSidebarList(selection: Binding(get: { sidebarDestination }, set: { if let destination = $0, isDestination(destination) { if destination == "review" { reviewModule = nil }; if destination == "files" { filesModuleFilter = nil }; navigate(destination) } }), destinations: sidebarDestinations, modules: sidebarModules, results: sidebarResults)
         .listStyle(.sidebar)
+        .background { SidebarPresenceProbe(onScreen: $sidebarOnScreen) }
         .refreshable { await manualSync() }
         .environment(\.editMode, $sidebarEditMode)
         .searchable(text: $search, isPresented: $showSearch, prompt: "Search notes")
@@ -325,6 +353,7 @@ struct RootView: View {
             do { let results: [SearchHit] = try await client.call("search_notes", SearchArgs(query: search)); if !Task.isCancelled { hits = results } }
             catch { store.error = String(describing: error) }
         }
+        .rootViewBoundary()
         .navigationTitle("Memnoter")
         .navigationBarTitleDisplayMode(isPhone ? .inline : .automatic)
         .toolbar(removing: .sidebarToggle)
@@ -373,6 +402,72 @@ struct RootView: View {
             }
         }
         .disabled(busy)
+        .rootViewBoundary()
+    }
+
+    private var sidebarDestinations: AnyView {
+        AnyView(Group {
+            destinationLink("home") { Label("Home", systemImage: "house") }
+            destinationLink("review") {
+                HStack {
+                    Label("Review", systemImage: "rectangle.stack")
+                    Spacer()
+                    Text("\(store.counts.reduce(0) { $0 + $1.learning }) / \(store.counts.reduce(0) { $0 + $1.review }) / \(store.counts.reduce(0) { $0 + $1.new })")
+                        .monospacedDigit().foregroundStyle(.secondary)
+                        .accessibilityLabel("\(store.counts.reduce(0) { $0 + $1.learning }) learn, \(store.counts.reduce(0) { $0 + $1.review }) due, \(store.counts.reduce(0) { $0 + $1.new }) new")
+                }
+            }
+            destinationLink("files") { Label("Files", systemImage: "doc.text") }
+            if session?.questionBankEnabled == true {
+                destinationLink("questions") { Label("Questions", systemImage: "questionmark.circle") }
+            }
+        })
+    }
+    private var sidebarModules: AnyView {
+        AnyView(Group {
+            Section {
+                let rows = SidebarLayout.rows(items: store.sidebarItems, modules: store.modules)
+                ForEach(rows) { row in
+                    switch row {
+                    case .folder(let item): folderRow(item)
+                    case .module(let item, let module): moduleRow(module, inFolder: item.folder_id != nil)
+                    }
+                }
+                .onMove { source, destination in
+                    let items = store.sidebarItems
+                    Task { await store.saveSidebar(SidebarLayout.move(items: items, rows: rows, from: source, to: destination)) }
+                }
+            } header: {
+                HStack {
+                    Text("Modules")
+                    Spacer()
+                    Button {
+                        withAnimation { sidebarEditMode = sidebarEditMode.isEditing ? .inactive : .active }
+                    } label: {
+                        Image(systemName: sidebarEditMode.isEditing ? "checkmark" : "pencil")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            // Trailing-aligned so the glyph lines up with the row badges and chevrons.
+                            .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(sidebarEditMode.isEditing ? "Done editing" : "Edit modules")
+                    .disabled(store.modules.isEmpty)
+                }
+            }
+        })
+    }
+    private var sidebarResults: AnyView {
+        AnyView(Group {
+            if !search.isEmpty {
+                Section("Search results") {
+                    ForEach(hits, id: \.module_id) { hit in
+                        destinationLink(hit.module_id) { VStack(alignment: .leading) { Text(hit.name); Text(hit.snippet.filter { !$0.isASCII || !$0.isNewline && !$0.unicodeScalars.contains(where: { $0.value < 32 }) }).font(.caption).lineLimit(2) } }
+                    }
+                }
+            }
+        })
     }
 
     @ViewBuilder private var sidebarBottomControls: some View {
@@ -390,15 +485,20 @@ struct RootView: View {
         }.disabled(busy)
     }
 
-    private var detail: some View {
+    @AppStorage("worksheet.drawing.height") private var worksheetDrawingHeight = 0.55
+
+    private var detail: AnyView {
         VStack(spacing: 0) {
+            if isPhone && selected != "questions" && (module != nil || ["files", "review"].contains(selected ?? "")) {
+                sectionNavigation
+            }
             if selected == "review", let client = store.client {
                 ReviewView(client: client, directory: store.directory, moduleId: reviewModule, preferences: store.preferences, editCard: editReviewCard)
                     .id(reviewModule ?? "all")
             } else if selected == "files", let client = store.client {
                 FilesView(client: client, modules: store.modules, moduleFilter: $filesModuleFilter, busy: busy, open: openLibraryDocument, addPdf: beginPdfImport)
-            } else if module != nil, let session {
-                if showingFind {
+            } else if (module != nil || selected == "questions"), let session {
+                if showingFind && selected != "questions" {
                     if isPhone {
                         HStack {
                             TextField("Find in note", text: $find).focused($findFocused).textFieldStyle(.roundedBorder)
@@ -410,47 +510,133 @@ struct RootView: View {
                             .onChange(of: find) { _, value in session.exec(.find, ["text": value]) }
                     }
                 }
-                WebSurface(session: session)
-                    .background(Color(uiColor: .systemBackground))
-                    .overlay {
-                        GeometryReader { geometry in
-                        // WebKit can hide the keyboard while selecting text. Keep
-                        // formatting available for the retained selection, also
-                        // when an iPad hardware keyboard has no onscreen frame.
-                        let showBar = (keyboardDocked || session.state.hasSelection) && session.state.suppressKeyboard != true && !session.pdfCoveringNote && !session.pdfFocused
-                        let editorFrame = geometry.frame(in: .global)
-                        // Also keep the caret above an undocked/floating keyboard
-                        // when it overlaps this editor column.
-                        let keyboardInset = editorFrame.intersects(keyboardFrame) ? max(0, editorFrame.maxY - keyboardFrame.minY) : 0
-                        Color.clear
-                            .onChange(of: keyboardInset + (showBar ? 76 : 0), initial: true) { _, overlap in
-                                session.bottomInset = overlap
+                GeometryReader { available in
+                    ZStack(alignment: .bottom) {
+                        WebSurface(session: session)
+                            .background(Color(uiColor: .systemBackground))
+                            .overlay {
+                                GeometryReader { geometry in
+                                // WebKit can hide the keyboard while selecting text. Keep
+                                // formatting available for the retained selection, also
+                                // when an iPad hardware keyboard has no onscreen frame.
+                                let showBar = ((selected != "questions" && !session.questionsOpen) || session.worksheetAnswerFocused) && session.worksheetDrawing.request == nil && (keyboardDocked || session.state.hasSelection) && session.state.suppressKeyboard != true && !session.pdfCoveringNote && !session.pdfFocused
+                                let editorFrame = geometry.frame(in: .global)
+                                // Also keep the caret above an undocked/floating keyboard
+                                // when it overlaps this editor column.
+                                let keyboardInset = editorFrame.intersects(keyboardFrame) ? max(0, editorFrame.maxY - keyboardFrame.minY) : 0
+                                Color.clear
+                                    .onChange(of: keyboardInset + (showBar ? 76 : 0) + (session.worksheetDrawing.request != nil ? available.size.height * min(worksheetDrawerMaximum(available.size.height) / max(1, available.size.height), max(max(0.18, 420 / max(1, available.size.height)), worksheetDrawingHeight)) : 0), initial: true) { _, overlap in
+                                        if !session.drawerGestureActive { session.bottomInset = overlap }
+                                    }
+                                if showBar {
+                                    FormattingBar(session: session, maximumWidth: max(0, geometry.size.width - 32), image: $image, busy: busy)
+                                        .padding(16)
+                                        .padding(.bottom, keyboardInset)
+                                        .disabled(!session.state.editable)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                                }
+                                }
                             }
-                        if showBar {
-                            FormattingBar(session: session, maximumWidth: max(0, geometry.size.width - 32), image: $image, busy: busy)
-                                .padding(16)
-                                .padding(.bottom, keyboardInset)
-                                .disabled(!session.state.editable)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        if session.worksheetDrawing.request != nil {
+                            let maximum = worksheetDrawerMaximum(available.size.height)
+                            let minimum = min(worksheetDrawerMaximum(available.size.height) / max(1, available.size.height), max(0.18, 420 / max(1, available.size.height)))
+                            let settled = available.size.height * min(worksheetDrawerMaximum(available.size.height) / max(1, available.size.height), max(minimum, worksheetDrawingHeight))
+                            WorksheetDrawerHost(fraction: $worksheetDrawingHeight, session: session,
+                                content: AnyView(WorksheetDrawingPane(bridge: session.worksheetDrawing, paletteOffset: maximum - settled)))
+
                         }
-                        }
-                    }
+                    }.clipped()
+                }
+                .ignoresSafeArea(.container, edges: questionsUnderBar ? .top : [])
 
             } else {
-                HomeView(modules: store.modules, recentModules: store.recentModules, newModule: newModule, openModule: navigate)
+                HomeView(modules: store.modules, recentModules: store.recentModules, newModule: newModule, openModule: { navigate($0) })
                     .disabled(busy)
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
+        .onChange(of: session?.filesOpen) { _, open in
+            if open != true { primaryLibraryDocumentId = nil }
+        }
         .ignoresSafeArea(.keyboard)
-        .ignoresSafeArea(.container, edges: session?.imagePreviewOpen == true ? .all : [])
+        .ignoresSafeArea(.container, edges: session?.imagePreviewOpen == true ? .all : (questionsUnderBar ? .top : []))
         .toolbar(session?.imagePreviewOpen == true ? .hidden : .automatic, for: .navigationBar)
         .statusBarHidden(session?.imagePreviewOpen == true)
+        .toolbar(removing: .sidebarToggle)
         // PDF controls own the iPad bar; a competing title can collapse to just an ellipsis.
-        .navigationTitle(phoneSplitLayout || (!isPhone && module != nil && session?.pdfReader != nil) || (selected == "review" && detailWidth < 500) ? "" : (module?.name ?? (selected == "review" ? "Review" : selected == "files" ? "Files" : "Home")))
+        .modifier(QuestionScrollEdge(hidden: questionsUnderBar))
+        .toolbarBackground(questionsUnderBar ? .hidden : .automatic, for: .navigationBar)
+        .navigationTitle(!isPhone || selected == "questions" || phoneSplitLayout || (selected == "review" && detailWidth < 500) ? "" : sectionTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .rootViewBoundary()
         .toolbar {
-            if (isPhone || module == nil || session?.pdfReader == nil) && (selected != "review" || detailWidth >= 500) {
+            if !isPhone {
+                // An empty item still draws a blank glass circle, so add it only with content.
+                if tabletShowsSidebarButton || tabletBackAction != nil {
+                ToolbarItem(placement: .topBarLeading) {
+                    TabletBackControls(showSidebar: tabletShowsSidebarButton, back: tabletBackAction) {
+                        if columnVisibility == .detailOnly {
+                            withAnimation { columnVisibility = .all }
+                        } else {
+                            // The binding still says "shown" after an overlay was dismissed; re-assert it.
+                            columnVisibility = .detailOnly
+                            DispatchQueue.main.async { withAnimation { columnVisibility = .all } }
+                        }
+                    }
+                }
+                }
+                if #available(iOS 26.0, *) { ToolbarSpacer(.fixed, placement: .topBarLeading) }
+                ToolbarItem(placement: .topBarLeading) { tabletBreadcrumb }
+            }
+            if selected == "questions" {
+                if !isPhone, session?.pdfReader == nil, let chrome = session?.worksheetChrome {
+                    if session?.worksheetAnswerFocused == true, session?.worksheetDrawing.request == nil {
+                        ToolbarItemGroup(placement: .topBarLeading) {
+                            Button { session?.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(session?.state.canUndo != true).accessibilityLabel("Undo")
+                            Button { session?.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(session?.state.canRedo != true).accessibilityLabel("Redo")
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        HStack(spacing: 8) {
+                            Button { session?.worksheetQuestion(chrome.index - 1) } label: { Image(systemName: "chevron.left") }
+                                .disabled(chrome.index <= 0).accessibilityLabel("Previous question")
+                            if chrome.count <= 3 && detailWidth >= 650 {
+                                ForEach(0..<chrome.count, id: \.self) { index in
+                                    Button { session?.worksheetQuestion(index) } label: {
+                                        Text("\(index + 1)").font(.subheadline.weight(.medium)).frame(width: 30, height: 30)
+                                            .foregroundStyle(index == chrome.index ? Color.white : Color.primary)
+                                            .background(index == chrome.index ? DrawingStyle.accent : .clear, in: RoundedRectangle(cornerRadius: 8))
+                                    }.buttonStyle(.plain).accessibilityLabel("Question \(index + 1)")
+                                }
+                            } else {
+                                Menu {
+                                    ForEach(0..<chrome.count, id: \.self) { index in
+                                        Button("Question \(index + 1)") { session?.worksheetQuestion(index) }
+                                    }
+                                } label: { Text("\(chrome.index + 1) of \(chrome.count)") }
+                            }
+                            Button { session?.worksheetQuestion(chrome.index + 1) } label: { Image(systemName: "chevron.right") }
+                                .disabled(chrome.index + 1 >= chrome.count).accessibilityLabel("Next question")
+                            if chrome.status == "Save failed" {
+                                Button { session?.worksheetAction("worksheet-retry") } label: { Image(systemName: "exclamationmark.triangle") }.accessibilityLabel("Save failed. Retry")
+                            }
+                        }.padding(.horizontal, 6).fixedSize()
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if chrome.finished == true {
+                            Button { session?.worksheetAction() } label: { Image(systemName: "xmark") }
+                                .accessibilityLabel("Close worksheet")
+                        } else {
+                            Button("Finish") { session?.worksheetAction("worksheet-finish") }
+                                .buttonStyle(.plain).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                                .padding(.horizontal, 14).frame(height: 34)
+                                .background(DrawingStyle.accent, in: Capsule())
+                        }
+                    }
+
+                }
+            }
+            if selected != "questions" && isPhone && (isPhone || module == nil || session?.pdfReader == nil) && (selected != "review" || detailWidth >= 500) {
                 ToolbarItem(placement: phoneSplitLayout ? .topBarLeading : .principal) {
                     if isPhone, module != nil, let reader = session?.pdfReader {
                         Text(reader.title).lineLimit(1).truncationMode(.middle)
@@ -460,21 +646,22 @@ struct RootView: View {
                     } else {
                         Text(module != nil && session?.state.focusedSectionId != nil
                              ? session?.state.focusedSectionPath.last?.title ?? module?.name ?? "Section"
-                             : module?.name ?? (selected == "review" ? "Review" : selected == "files" ? "Files" : "Home"))
+                             : sectionTitle)
                             .lineLimit(1).truncationMode(.tail)
                             .accessibilityIdentifier("module.title")
                     }
                 }
             }
         }
+        .rootViewBoundary()
         .toolbar {
-            if canToggleSidebar && columnVisibility == .detailOnly && (selected != "review" || horizontalSizeClass != .compact) {
+            if isPhone && canToggleSidebar && columnVisibility == .detailOnly && (selected != "review" || horizontalSizeClass != .compact) {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { withAnimation { columnVisibility = .all } } label: { Image(systemName: "sidebar.left") }
                         .accessibilityLabel("Show Sidebar")
                 }
             }
-            if let session, module != nil {
+            if let session, module != nil || selected == "questions", !session.questionsOpen || session.questionsModuleId != nil || session.pdfReader != nil, session.worksheetDrawing.request == nil {
                 // The open PDF's tools sit in their own glass group, above the pane.
                 if isPhone, let reader = session.pdfReader {
                     ToolbarItem(placement: .topBarLeading) {
@@ -497,62 +684,35 @@ struct RootView: View {
                         } label: { Label("PDF actions", systemImage: "ellipsis.circle") }
                         .accessibilityLabel("PDF actions")
                     }
-                } else if let reader = session.pdfReader {
+                } else if primaryFileContent, let reader = session.pdfReader {
                     ToolbarItem(placement: .primaryAction) {
-                        PdfFileMenu(session: session, reader: reader, iconOnly: detailWidth < 900) { if let id = module?.id { beginPdfImport(id) } }
-                    }
-                    if reader.activeId != nil {
-                        if detailWidth >= 700 {
-                            ToolbarItem(placement: .primaryAction) { PdfPageButton(session: session, reader: reader) }
-                            ToolbarItem(placement: .primaryAction) {
-                                Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
-                                    Label("Select region", systemImage: "rectangle.dashed")
-                                }
-                                .disabled(!reader.canSelect && !reader.selecting)
-                            }
-                            ToolbarItem(placement: .primaryAction) {
-                                Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
-                                    Label("Annotate area", systemImage: "highlighter")
-                                }
-                                .disabled(!reader.canAnnotate && !reader.annotating)
-                            }
-                        }
-                        ToolbarItem(placement: .primaryAction) { PdfViewMenu(session: session, reader: reader, compactTools: detailWidth < 700) }
-                        if reader.fullscreen {
-                            ToolbarItem(placement: .primaryAction) {
-                                Button { session.pdfCommand(.openBeside) } label: { Label("Exit full screen", systemImage: "arrow.down.right.and.arrow.up.left") }
-                            }
+                        TabletPdfTools(session: session, reader: reader, expanded: detailWidth >= 760) {
+                            if let id = module?.id { beginPdfImport(id) }
                         }
                     }
-                    if #available(iOS 26.0, *) {
-                        ToolbarSpacer(.fixed, placement: .primaryAction)
-                    }
+
                 }
 
-                if !isPhone || session.pdfReader == nil {
-                    ToolbarItemGroup(placement: isPhone ? .topBarTrailing : .topBarLeading) {
+                if !isPhone && !primaryFileContent && session.worksheetChrome == nil {
+                    // One stable item prevents native glass groups from morphing when a PDF opens.
+                    if #available(iOS 26.0, *) {
+                        ToolbarItem(placement: .topBarTrailing) { tabletTrailingControls(session) }
+                            .sharedBackgroundVisibility(.hidden)
+                    } else {
+                        ToolbarItem(placement: .topBarTrailing) { tabletTrailingControls(session) }
+                    }
+                } else if isPhone && session.pdfReader == nil {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
                         Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
                             .accessibilityLabel("Undo")
                         Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
                             .accessibilityLabel("Redo")
                     }
-                    if !isPhone {
-                        ToolbarItem(placement: .primaryAction) {
-                            Button { showingContents.toggle() } label: { Label("Contents", systemImage: "list.bullet.indent") }
-                                .accessibilityLabel("Contents")
-                                .popover(isPresented: $showingContents) {
-                                    ContentsPopover(session: session, moduleName: module?.name ?? "Note") { showingContents = false }
-                                }
-                        }
-                    }
                     ToolbarItem(placement: .primaryAction) {
-                        Menu {
-                            noteActions(session)
-                        } label: { Image(systemName: "ellipsis") }
-                        .accessibilityLabel("Note actions")
-                        .accessibilityValue(session.saveStatus)
+                        Menu { noteActions(session) } label: { Image(systemName: "ellipsis") }
+                            .accessibilityLabel("Note actions")
+                            .accessibilityValue(session.saveStatus)
                     }
-                    // Far right, mirroring the sidebar toggle at the far left.
                     ToolbarItem(placement: .primaryAction) {
                         Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
                             .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
@@ -562,6 +722,132 @@ struct RootView: View {
                     }
                 }
             }
+        }
+        .rootViewBoundary()
+    }
+
+    private func tabletTrailingControls(_ session: WebSession) -> some View {
+        TabletTrailingControls(session: session, busy: busy,
+            noteTools: AnyView(Group {
+                if session.questionsOpen { TabletQuestionTools(session: session) }
+                else { tabletNoteTools(session) }
+            }),
+            pdfTools: AnyView(Group {
+                if let reader = session.pdfReader {
+                    TabletPdfTools(session: session, reader: reader, expanded: detailWidth >= 760) {
+                        if let id = module?.id { beginPdfImport(id) }
+                    }
+                    .padding(.horizontal, 12)
+                }
+            }))
+    }
+
+    private func tabletNoteTools(_ session: WebSession) -> some View {
+        TabletNoteTools(session: session,
+                        showingContents: $showingContents,
+                        actions: AnyView(noteActions(session)),
+                        contents: AnyView(ContentsPopover(session: session, moduleName: module?.name ?? "Note") { showingContents = false }),
+                        hasPdf: session.pdfReader != nil)
+    }
+
+    /// UIKit moves the sidebar column without SwiftUI geometry always noticing, so trust either signal that says hidden.
+    /// Questions scroll under the glass bar, except beside a PDF: the pane starts below the bar,
+    /// so the list does too and no column edge shows behind the buttons.
+    private var questionsUnderBar: Bool {
+        !isPhone && selected == "questions" && !(session?.filesOpen == true && session?.worksheetChrome == nil)
+    }
+    private var tabletShowsSidebarButton: Bool {
+        canToggleSidebar && (columnVisibility == .detailOnly || !sidebarOnScreen)
+    }
+    private var tabletBackAction: (() -> Void)? {
+        guard selected == "questions" else { return nil }
+        if primaryFileContent { return { session?.pdfCommand(.backToNote) } }
+        if session?.worksheetChrome != nil { return { session?.worksheetAction() } }
+        return nil
+    }
+    @ViewBuilder private var tabletBreadcrumb: some View {
+        if selected == "questions", !primaryFileContent, let worksheet = session?.worksheetChrome {
+            TabletWorksheetTitle(title: worksheet.title ?? "Worksheet", maximumWidth: max(140, min(500, detailWidth - 500)))
+        } else {
+            TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
+                             item: breadcrumbItem,
+                             questionsEnabled: session?.questionBankEnabled == true,
+                             maximumWidth: tabletBreadcrumbWidth,
+                             changeScope: changeSectionScope, changeSection: selectSection)
+                .disabled(busy)
+        }
+    }
+    private var sectionNavigation: some View {
+        HStack {
+            Menu {
+                Picker("Module section", selection: Binding(get: { currentSection }, set: { selectSection($0) })) {
+                    Text("Notes").tag("notes")
+                    Text("Files").tag("files")
+                    if session?.questionBankEnabled == true { Text("Questions").tag("questions") }
+                    Text("Review").tag("review")
+                }
+            } label: {
+                Label(currentSection.capitalized, systemImage: "chevron.down")
+            }
+            .accessibilityLabel("Select module section")
+            Spacer()
+            if module == nil {
+                Menu {
+                    Picker("Module", selection: Binding(get: { sectionScope ?? "" }, set: { changeSectionScope($0.isEmpty ? nil : $0) })) {
+                        Text("All modules").tag("")
+                        ForEach(store.modules) { Text($0.name).tag($0.id) }
+                    }
+                } label: {
+                    Label(store.modules.first { $0.id == sectionScope }?.name ?? "All modules", systemImage: "line.3.horizontal.decrease")
+                        .lineLimit(1)
+                }
+                .accessibilityLabel("Module scope")
+            }
+        }
+        .font(.subheadline)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .disabled(busy)
+    }
+    private func selectSection(_ section: String) {
+        guard !busy else { return }
+        let scope = sectionScope
+        switch section {
+        case "notes":
+            if let id = scope ?? store.recentModules.first?.id ?? store.modules.first?.id { navigate(id) }
+            else { navigate("home") }
+        case "questions": navigate("questions", questionScope: scope)
+        case "files": filesModuleFilter = scope; navigate("files")
+        case "review": reviewModule = scope; navigate("review")
+        default: break
+        }
+    }
+    private func changeSectionScope(_ scope: String?) {
+        guard !busy else { return }
+        if (module != nil || selected == "questions"), primaryFileContent {
+            filesModuleFilter = scope
+            navigate("files")
+            return
+        }
+        switch selected {
+        case "questions": navigate("questions", questionScope: scope)
+        case "files": filesModuleFilter = scope
+        case "review": reviewModule = scope
+        default:
+            if let scope { navigate(scope) } else { navigate("home") }
+        }
+    }
+    private func synchronizeQuestions() {
+        guard !busy, let session, session.ready, module != nil || selected == "questions" else { return }
+        if session.questionsOpen, session.questionBankEnabled {
+            questionsModule = session.questionsModuleId
+            selected = "questions"
+            showingFind = false
+            showingContents = false
+        } else if selected == "questions" {
+            let scope = questionsModule
+            selected = scope.flatMap { id in store.modules.contains { $0.id == id } ? id : nil } ?? "home"
         }
     }
 
@@ -577,11 +863,12 @@ struct RootView: View {
         }
         if reader.activeId != nil {
             Section("Tools") {
-                Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
-                    Label("Select region", systemImage: "rectangle.dashed")
+                Button { session.pdfCommand(.toggleSelect) } label: {
+                    Label("Quote region", image: "Pdf-square-dashed-mouse-pointer")
                 }.disabled(!reader.canSelect && !reader.selecting)
-                Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
-                    Label("Annotate area", systemImage: "highlighter")
+                if session.questionBankEnabled { PdfQuestionCropToggle(session: session, reader: reader) }
+                Button { session.pdfCommand(.toggleAnnotate) } label: {
+                    Label("Annotate area", image: "Pdf-highlighter")
                 }.disabled(!reader.canAnnotate && !reader.annotating)
             }
             PdfViewMenu(session: session, reader: reader).actions
@@ -651,7 +938,7 @@ struct RootView: View {
         session?.requestedModule = nil
         // A request from a web surface that is no longer displayed must not
         // navigate away from Home or Review after an asynchronous source lookup.
-        guard module != nil else { return }
+        guard module != nil || selected == "questions" else { return }
         guard store.modules.contains(where: { $0.id == destination }) else {
             store.error = "This note is no longer available."
             return
@@ -736,7 +1023,7 @@ struct RootView: View {
     }
     /// Folder rows are tagged by the List's ForEach too; only pages and modules navigate.
     private func isDestination(_ id: String) -> Bool {
-        ["home", "review", "files"].contains(id) || store.modules.contains { $0.id == id }
+        (["home", "review", "files"].contains(id) || (id == "questions" && session?.questionBankEnabled == true)) || store.modules.contains { $0.id == id }
     }
     @ViewBuilder private func folderRow(_ item: SidebarItem) -> some View {
         Button {
@@ -798,6 +1085,9 @@ struct RootView: View {
         Button("Rename") { rename = module; name = module.name; editingName = true }
         Button("Review") { reviewModule = module.id; navigate("review") }
         Button("Files", systemImage: "doc.text") { filesModuleFilter = module.id; navigate("files") }
+        if session?.questionBankEnabled == true {
+            Button("Questions", systemImage: "questionmark.circle") { navigate("questions", questionScope: module.id) }
+        }
         Button("Add PDF…", systemImage: "doc.badge.plus") { beginPdfImport(module.id) }
         let items = store.sidebarItems
         let folders = items.filter(\.isFolder)
@@ -868,6 +1158,7 @@ struct RootView: View {
                 }
                 store.recordOpenedModule(document.moduleId)
                 selected = document.moduleId
+                primaryLibraryDocumentId = document.id
                 if isPhone { phoneColumn = .detail }
             } catch { store.error = error.localizedDescription }
         }
@@ -877,13 +1168,31 @@ struct RootView: View {
         _ = try await session.callEditor(.refreshDocuments, ["moduleId": document.moduleId], parameters: ["moduleId"])
         _ = try await session.callEditor(.pdfCommand, ["command": PdfCommand.openFile.rawValue, "value": document.id], parameters: ["command", "value"])
     }
-    func navigate(_ destination: String) {
-        guard !busy else { return }
+    func navigate(_ destination: String, questionScope: String? = nil) {
+        guard !busy, destination != "questions" || session?.questionBankEnabled == true else { return }
         busy = true
         Task {
             defer { busy = false }
             do {
+                try await session?.worksheetDrawing.cancel()
                 try await session?.flush()
+                showingFind = false
+                showingContents = false
+                primaryLibraryDocumentId = nil
+                if destination == "questions", let session {
+                    if session.ready { try await session.openQuestions(questionScope) }
+                    else {
+                        session.onReady = { [weak session] in
+                            guard let session else { return }
+                            Task { do { try await session.openQuestions(questionScope) } catch { store.error = String(describing: error) } }
+                        }
+                    }
+                    questionsModule = questionScope
+                } else {
+                    try await session?.closeQuestions()
+                    // A deferred Questions open must not replace a newer destination.
+                    session?.onReady = nil
+                }
                 if store.modules.contains(where: { $0.id == destination }), let session {
                     if session.ready { try await session.open(destination) }
                     else { session.onReady = { [weak session] in
@@ -913,11 +1222,11 @@ private struct PdfFileMenu: View {
             actions
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "doc.text")
+                Image("Pdf-file-text")
                 if !iconOnly {
                     Text(reader.title).lineLimit(1).truncationMode(.middle).frame(maxWidth: 180)
                 }
-                Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Image("Pdf-chevron-down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 4)
             .frame(maxWidth: iconOnly ? nil : 220)
@@ -958,7 +1267,7 @@ private struct PdfPageButton: View {
             asking = true
         } label: {
             if compact {
-                Label("Page \(reader.page) of \(reader.pageCount) · Go to page", systemImage: "doc.text")
+                Label("Page \(reader.page) of \(reader.pageCount) · Go to page", image: "Pdf-file-text")
             } else {
                 HStack(spacing: 3) {
                     Text("\(reader.page)").fontWeight(.semibold)
@@ -986,41 +1295,153 @@ private struct PdfPageButton: View {
     }
 }
 
+private struct PdfQuestionCropToggle: View {
+    let session: WebSession
+    let reader: PdfReaderState
+
+    var body: some View {
+        Button { session.pdfCommand(.toggleQuestionCrop) } label: {
+            Label("Crop question", image: "Pdf-question-crop")
+        }
+        .foregroundStyle(reader.questionCropping ? Color("BrandAccent") : Color.primary)
+        .padding(6)
+        .background(reader.questionCropping ? Color("BrandAccent").opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityValue(reader.questionCropping ? "On" : "Off")
+        .disabled(!reader.canCropQuestion && !reader.questionCropping)
+        .help("Crop question")
+    }
+}
+
 /// Zoom and where the PDF is shown; pinching still zooms too.
 private struct PdfViewMenu: View {
     let session: WebSession
     let reader: PdfReaderState
     var compactTools = false
+    var addPdf: () -> Void = {}
 
     var body: some View {
         Menu {
             actions
         } label: {
-            Label("More PDF actions", systemImage: "ellipsis")
+            Label("More PDF actions", image: "Pdf-ellipsis")
         }
     }
     @ViewBuilder var actions: some View {
             if compactTools {
-                PdfPageButton(session: session, reader: reader, compact: true)
+                // Only the tools a narrow bar drops; everything else stays visible.
                 Section("Tools") {
-                    Toggle(isOn: Binding(get: { reader.selecting }, set: { _ in session.pdfCommand(.toggleSelect) })) {
-                        Label("Select region", systemImage: "rectangle.dashed")
-                    }.disabled(!reader.canSelect && !reader.selecting)
-                    Toggle(isOn: Binding(get: { reader.annotating }, set: { _ in session.pdfCommand(.toggleAnnotate) })) {
-                        Label("Annotate area", systemImage: "highlighter")
+                    Button { session.pdfCommand(.toggleAnnotate) } label: {
+                        Label("Annotate area", image: "Pdf-highlighter")
                     }.disabled(!reader.canAnnotate && !reader.annotating)
+                    Button { session.pdfCommand(.toggleFind) } label: {
+                        Label("Find in PDF", image: "Pdf-search")
+                    }
                 }
             }
             Section("Zoom \(reader.zoom)%") {
-                Button { session.pdfCommand(.zoomIn) } label: { Label("Zoom in", systemImage: "plus.magnifyingglass") }
+                Button { session.pdfCommand(.zoomIn) } label: { Label("Zoom in", image: "Pdf-zoom-in") }
                     .disabled(!reader.canZoomIn)
                     .menuActionDismissBehavior(.disabled)
-                Button { session.pdfCommand(.zoomOut) } label: { Label("Zoom out", systemImage: "minus.magnifyingglass") }
+                Button { session.pdfCommand(.zoomOut) } label: { Label("Zoom out", image: "Pdf-zoom-out") }
                     .disabled(!reader.canZoomOut)
                     .menuActionDismissBehavior(.disabled)
             }
             if UIDevice.current.userInterfaceIdiom != .phone, !reader.fullscreen {
-                Button { session.pdfCommand(.openFullscreen) } label: { Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right") }
+                Button { session.pdfCommand(.openFullscreen) } label: { Label("Open full screen", image: "Pdf-maximize-2") }
             }
+    }
+}
+
+private struct QuestionScrollEdge: ViewModifier {
+    let hidden: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) { content.scrollEdgeEffectHidden(hidden, for: .top) }
+        else { content }
+    }
+}
+
+// Stable type boundaries keep Debug metadata instantiation within the device's
+// main-thread stack. Parent navigation never embeds the complete list type.
+private struct RootSidebarList: View {
+    let selection: Binding<String?>
+    let destinations: AnyView
+    let modules: AnyView
+    let results: AnyView
+    var body: some View {
+        List(selection: selection) {
+            destinations
+            modules
+            results
+        }
+    }
+}
+private extension View {
+    func rootViewBoundary() -> AnyView { AnyView(self) }
+}
+
+/// Reports whether the sidebar column is inside the window, however it was shown or hidden.
+private struct SidebarPresenceProbe: View {
+    @Binding var onScreen: Bool
+    var body: some View {
+        GeometryReader { proxy in
+            let visible = Self.visible(proxy.frame(in: .global))
+            Color.clear
+                .onAppear { onScreen = visible }
+                .onChange(of: visible) { _, value in onScreen = value }
+                .onDisappear { onScreen = false }
+        }
+    }
+    private static func visible(_ frame: CGRect) -> Bool { frame.width > 0 && frame.maxX > frame.width / 2 }
+}
+
+
+/// The reader tools people reach for most stay in the bar; zoom and full screen live in the menu.
+/// A narrow bar moves only annotate and find into the menu.
+private struct TabletPdfTools: View {
+    let session: WebSession
+    let reader: PdfReaderState
+    let expanded: Bool
+    let addPdf: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            PdfFileMenu(session: session, reader: reader, iconOnly: true, addPdf: addPdf)
+            if reader.activeId != nil {
+                PdfPageButton(session: session, reader: reader)
+                PdfModeButton(title: "Quote region", image: "Pdf-square-dashed-mouse-pointer", active: reader.selecting,
+                              enabled: reader.canSelect || reader.selecting) { session.pdfCommand(.toggleSelect) }
+                if session.questionBankEnabled { PdfQuestionCropToggle(session: session, reader: reader) }
+                if expanded {
+                    PdfModeButton(title: "Annotate area", image: "Pdf-highlighter", active: reader.annotating,
+                                  enabled: reader.canAnnotate || reader.annotating) { session.pdfCommand(.toggleAnnotate) }
+                    PdfModeButton(title: "Find in PDF", image: "Pdf-search", active: false, enabled: true) { session.pdfCommand(.toggleFind) }
+                }
+                PdfViewMenu(session: session, reader: reader, compactTools: !expanded, addPdf: addPdf)
+                if reader.fullscreen {
+                    PdfModeButton(title: "Exit full screen", image: "Pdf-open-beside", active: false, enabled: true) { session.pdfCommand(.openBeside) }
+                }
+            }
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.plain)
+        .fixedSize()
+    }
+}
+
+/// Tap to turn a reader mode on or off; the on state is a tinted highlight, as on desktop.
+private struct PdfModeButton: View {
+    let title: String
+    let image: String
+    let active: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { Label(title, image: image) }
+            .foregroundStyle(active ? Color("BrandAccent") : Color.primary)
+            .padding(6)
+            .background(active ? Color("BrandAccent").opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityValue(active ? "On" : "Off")
+            .disabled(!enabled)
     }
 }

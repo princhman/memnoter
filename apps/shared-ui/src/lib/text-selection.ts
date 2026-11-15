@@ -24,6 +24,11 @@ export const TextSelectionHighlight = Extension.create({
           const { from, to } = selection;
           const decorations: Decoration[] = [];
           doc.nodesBetween(from, to, (node, pos) => {
+            // References are atomic node views, so they never enter the text
+            // runs below. Paint their wrapper with the same selection style.
+            if (node.type.name === "mention" && from <= pos && to >= pos + node.nodeSize) {
+              decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: "text-range-selected" }));
+            }
             if (node.type.name === "mathBlock" && from <= pos && to >= pos + node.nodeSize) {
               decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: "is-range-selected" }));
             }

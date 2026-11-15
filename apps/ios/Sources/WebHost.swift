@@ -171,6 +171,22 @@ private struct PdfViewStateRecord: Codable {
             catch { self.error = String(describing: error) }
         }
     }
+    let worksheetDrawing: WorksheetDrawingBridge
+    var questionBankEnabled = false
+    var bankControls: BankToolbarState?
+    var questionsOpen = false
+    var worksheetChrome: WorksheetChrome?
+    var worksheetAnswerFocused = false
+    var worksheetAnswerModule: String?
+    var worksheetAnswerID: String?
+    @ObservationIgnored var drawerGestureActive = false
+    var questionsModuleId: String?
+    // Retain the intended surface across WebKit/live-editor reloads.
+    private var questionsRequested = false
+    private var questionsScope: String?
+    func refreshQuestionBankGate() async {
+        questionBankEnabled = (try? await client.call("question_bank_enabled", Empty(), as: Bool.self)) == true
+    }
     var reviewState = ReviewState()
     var imagePreviewOpen = false
     var drawingToEdit: DrawingOpenEvent?
@@ -214,6 +230,7 @@ private struct PdfViewStateRecord: Codable {
     init(client: CoreClient, directory: URL, entry: String = BridgeProtocol.editorEntry, preferences: UserDefaults = .standard) {
         self.client = client
         self.preferences = preferences
+        self.worksheetDrawing = WorksheetDrawingBridge(client: client, directory: directory, preferences: preferences)
         super.init()
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "memnoter")
@@ -252,6 +269,7 @@ private struct PdfViewStateRecord: Codable {
         web.scrollView.delegate = self
         web.scrollView.isScrollEnabled = false
         web.scrollView.bounces = false
+        if #available(iOS 26.0, *) { web.scrollView.topEdgeEffect.isHidden = true }
         web.scrollView.contentInsetAdjustmentBehavior = .never
         #if DEBUG
         config.userContentController.addUserScript(WKUserScript(source: "window.__memnoterScrollDebug = true", injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -380,16 +398,51 @@ private struct PdfViewStateRecord: Codable {
     func execute(_ command: ExecCommand, _ args: [String: Any] = [:]) async throws -> Any? {
         try await callEditor(.exec, ["command": command.rawValue, "args": args], parameters: ["command", "args"])
     }
-    func toggleFiles() {
-        guard ready, let target = moduleId else { return }
+    func worksheetAction(_ action: String = "worksheet-back") {
         Task {
-            guard ready, target == moduleId else { return }
+            do {
+                if action == "worksheet-back" {
+                    try await worksheetDrawing.cancel()
+                    try await flush()
+                }
+                _ = try await run("window.dispatchEvent(new Event(action)); return null", ["action": action])
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+    func worksheetQuestion(_ index: Int) {
+        Task {
+            do {
+                try await worksheetDrawing.cancel(); try await flush()
+                _ = try await run("window.dispatchEvent(new CustomEvent(\"worksheet-question\", {detail:index})); return null", ["index": index])
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+    /// Starts a drawing in the focused worksheet answer, the same flow as its /drawing command.
+    func insertWorksheetDrawing() {
+        Task {
+            web.endEditing(true)
+            _ = try? await run("return window.memnoterInsertWorksheetDrawing?.() ?? false", [:])
+        }
+    }
+    func anchorWorksheetDrawing() {
+        Task {
+            // Re-anchor once, after the editor has the sheet's new occlusion: anchoring first
+            // and then receiving the inset moved the answer twice (a visible jiggle).
+            try? await Task.sleep(for: .milliseconds(60))
+            await insetReport?.value
+            _ = try? await run("window.dispatchEvent(new Event(\"worksheet-drawer-resized\")); return null", [:])
+        }
+    }
+    func toggleFiles() {
+        guard ready, moduleId != nil || questionsOpen && questionsModuleId != nil else { return }
+        Task {
+            guard ready else { return }
             do { _ = try await callEditor(.toggleFiles) }
             catch { self.error = String(describing: error) }
         }
     }
     func pdfCommand(_ command: PdfCommand, _ value: Any? = nil) {
-        guard ready, moduleId != nil else { return }
+        guard ready, moduleId != nil || questionsOpen else { return }
         Task {
             do { _ = try await callEditor(.pdfCommand, ["command": command.rawValue, "value": value ?? NSNull()], parameters: ["command", "value"]) }
             catch { self.error = String(describing: error) }
@@ -407,7 +460,30 @@ private struct PdfViewStateRecord: Codable {
         try await next.value
     }
     func flush() async throws { guard ready else { return }; try await serialized(.flush) }
+    func openQuestions(_ scope: String?) async throws {
+        guard ready else { throw URLError(.resourceUnavailable) }
+        await refreshQuestionBankGate()
+        guard questionBankEnabled else { throw CocoaError(.fileReadNoPermission) }
+        try await worksheetDrawing.cancel()
+        try await flush()
+        try await serialized(.openQuestions, ["scope": scope as Any? ?? NSNull()], parameters: ["scope"])
+        questionsRequested = true
+        questionsScope = scope
+        questionsModuleId = scope
+        questionsOpen = true
+        filesOpen = false; pdfCoveringNote = false; pdfFocused = false; pdfReader = nil
+    }
+    func closeQuestions() async throws {
+        try await worksheetDrawing.cancel()
+        if ready, questionsRequested || questionsOpen { try await serialized(.closeQuestions) }
+        questionsRequested = false
+        questionsOpen = false
+        worksheetAnswerFocused = false; worksheetAnswerModule = nil; worksheetAnswerID = nil
+        state = EditorState()
+    }
     func open(_ id: String) async throws {
+        try await worksheetDrawing.cancel()
+        try await closeQuestions()
         if moduleId != id {
             moduleId = id
             state = EditorState(); headings = []; allHeadings = []; currentHeadingId = nil
@@ -420,6 +496,7 @@ private struct PdfViewStateRecord: Codable {
         hideEditorInputAssistant()
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        Task { try? await worksheetDrawing.cancel() }
         (webView as? EditorWebView)?.pdfSelection = PdfSelectionState()
         #if DEBUG
         restoringLiveSession = ready || restoringLiveSession
@@ -433,6 +510,7 @@ private struct PdfViewStateRecord: Codable {
         }
         #endif
         generation = UUID(); ready = false; reportedViewport = []
+        questionsOpen = false; worksheetChrome = nil; worksheetAnswerFocused = false; worksheetAnswerModule = nil; worksheetAnswerID = nil
         filesOpen = false; pdfCoveringNote = false; pdfFocused = false; pdfReader = nil
         requestedPdfImport = nil; requestedModule = nil
     }
@@ -461,7 +539,16 @@ private struct PdfViewStateRecord: Codable {
                 do {
                     let bytes = try JSONSerialization.data(withJSONObject: body["args"] ?? [:])
                     let result: String
-                    if command == "open_external_link" {
+                    if command == "worksheet_drawing_open" {
+                        guard token == generation, ready, questionsOpen else { throw CocoaError(.userCancelled) }
+                        result = try await worksheetDrawing.open(body["args"] as? [String: Any] ?? [:])
+                    } else if command == "worksheet_drawing_has_draft" {
+                        guard token == generation, ready, questionsOpen else { throw CocoaError(.userCancelled) }
+                        result = try await worksheetDrawing.hasUnsavedDraft(body["args"] as? [String: Any] ?? [:])
+                    } else if command == "worksheet_drawing_committed" {
+                        guard token == generation, ready, questionsOpen else { throw CocoaError(.userCancelled) }
+                        result = try await worksheetDrawing.committed(body["args"] as? [String: Any] ?? [:])
+                    } else if command == "open_external_link" {
                         let args = body["args"] as? [String: Any]
                         guard let href = args?["href"] as? String, let url = URL(string: href),
                               ["https", "http", "mailto", "itms-beta"].contains(url.scheme ?? "") else { throw CocoaError(.validationMissingMandatoryProperty) }
@@ -511,12 +598,14 @@ private struct PdfViewStateRecord: Codable {
                         Task {
                             do {
                                 if reviewLoaded { _ = try await callReview(.load, ["scope": reviewScope], parameters: ["scope"]) }
+                                else if questionsRequested { try await openQuestions(questionsScope) }
                                 else if let moduleId { try await open(moduleId) }
                             } catch { self.error = String(describing: error) }
                         }
                     }
                     #endif
                     ready = true
+                    if UIDevice.current.userInterfaceIdiom == .pad { Task { _ = try? await run("document.documentElement.classList.add(\"native-tablet\"); return null") } }
                     trackOutline(outlineTracking)
                     reportBottomInset()
                     let token = generation
@@ -527,6 +616,33 @@ private struct PdfViewStateRecord: Codable {
                         onReady = nil
                         callback?()
                     }
+                case .worksheetEditorState:
+                    guard questionsOpen else { return }
+                    worksheetAnswerFocused = payload["active"] as? Bool == true
+                    worksheetAnswerModule = worksheetAnswerFocused ? payload["moduleId"] as? String : nil
+                    worksheetAnswerID = worksheetAnswerFocused ? payload["answerId"] as? String : nil
+                    if worksheetAnswerFocused {
+                        state = try JSONDecoder().decode(EditorState.self, from: JSONSerialization.data(withJSONObject: payload))
+                    } else if questionsOpen { state = EditorState() }
+                case .worksheetState:
+                    let data = try JSONSerialization.data(withJSONObject: payload)
+                    let chrome = try JSONDecoder().decode(WorksheetChrome.self, from: data)
+                    if chrome.title == nil { Task { try? await worksheetDrawing.cancel() } }
+                    let nextChrome = chrome.title == nil ? nil : chrome
+                    if worksheetChrome != nextChrome { worksheetChrome = nextChrome }
+                case .questionBankState:
+                    guard questionBankEnabled else { return }
+                    let open = payload["open"] as? Bool == true
+                    let scope = payload["moduleId"] as? String
+                    if !open || scope != questionsModuleId { Task { try? await worksheetDrawing.cancel() } }
+                    if let controls = payload["controls"] as? [String: Any] {
+                        bankControls = try JSONDecoder().decode(BankToolbarState.self, from: JSONSerialization.data(withJSONObject: controls))
+                    } else { bankControls = nil }
+                    questionsOpen = open
+                    if !open { worksheetAnswerFocused = false; worksheetAnswerModule = nil; worksheetAnswerID = nil }
+                    if ready { questionsRequested = open }
+                    questionsModuleId = scope
+                    if ready { questionsScope = scope }
                 case .reviewState:
                     let data = try JSONSerialization.data(withJSONObject: payload)
                     reviewState = try JSONDecoder().decode(ReviewState.self, from: data)
@@ -541,10 +657,10 @@ private struct PdfViewStateRecord: Codable {
                     guard ready, let destination = payload["moduleId"] as? String, destination == moduleId else { return }
                     requestedPdfImport = destination
                 case .openModule:
-                    guard ready, moduleId != nil, let destination = payload["moduleId"] as? String, !destination.isEmpty else { return }
+                    guard ready, moduleId != nil || questionsOpen, let destination = payload["moduleId"] as? String, !destination.isEmpty else { return }
                     requestedModule = destination
                 case .pdfState:
-                    guard ready, let currentModule = moduleId, payload["moduleId"] as? String == currentModule else { return }
+                    guard ready, let currentModule = questionsOpen ? questionsModuleId : moduleId, payload["moduleId"] as? String == currentModule else { return }
                     filesOpen = payload["open"] as? Bool == true
                     pdfCoveringNote = filesOpen && (payload["coveringNote"] as? Bool == true)
                     pdfFocused = filesOpen && (payload["focused"] as? Bool == true)
@@ -555,7 +671,7 @@ private struct PdfViewStateRecord: Codable {
                     guard ready else { return }
                     if payload.isEmpty { pdfReader = nil; return }
                     let reader = try JSONDecoder().decode(PdfReaderState.self, from: JSONSerialization.data(withJSONObject: payload))
-                    guard reader.moduleId == moduleId else { return }
+                    guard reader.moduleId == moduleId || questionsOpen && (questionsModuleId == nil || reader.moduleId == questionsModuleId) else { return }
                     if reader != pdfReader { pdfReader = reader }
                 case .outlineCurrent:
                     guard payload["moduleId"] as? String == moduleId else { return }
@@ -612,6 +728,8 @@ private struct PdfViewStateRecord: Codable {
         catch { self.error = String(describing: error) }
     }
     func dispose() {
+        Task { try? await worksheetDrawing.cancel() }
+        ready = false
         #if DEBUG
         liveWatchdog?.cancel()
         web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoterLive")
@@ -632,3 +750,11 @@ struct WebSurface: UIViewRepresentable {
 }
 
 extension Notification.Name { static let cardsDidChange = Notification.Name("memnoter.cardsDidChange") }
+
+struct WorksheetChrome: Decodable, Equatable {
+    let title: String?
+    let answered, total: Int
+    let status: String
+    let index, count: Int
+    var finished: Bool?
+}

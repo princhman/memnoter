@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashSet};
 use yrs::{types::ToJson, updates::decoder::Decode, Doc, Map, Out, ReadTxn, Transact, Update};
 
 pub mod bank;
+pub mod attempts;
 
 pub const ROOT: &str = "worksheets";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -63,6 +64,8 @@ pub struct Pin {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Attempt {
+    #[serde(default)]
+    pub finished: bool,
     pub title: String,
     pub questions: Vec<Pin>,
     pub deleted: bool,
@@ -380,7 +383,65 @@ impl Bank {
     }
 }
 
+// Answer XML shares the note image schema, but its references belong to this
+// module's worksheet document. Never recover these IDs from display XML.
+fn answer_fragments(doc: &Doc) -> CommandResult<Vec<yrs::XmlFragmentRef>> {
+    let txn = doc.transact();
+    let Some(root) = txn.get_map(ROOT) else { return Ok(Vec::new()); };
+    let Some(Out::YMap(answers)) = root.get(&txn, "answers") else { return Err(invalid()); };
+    let fragments = answers.iter(&txn).map(|(_, answer)| {
+        let Out::YMap(answer) = answer else { return Err(invalid()); };
+        match answer.get(&txn, "text") { Some(Out::YXmlFragment(f)) => Ok(f), _ => Err(invalid()) }
+    }).collect();
+    fragments
+}
+
+pub(crate) fn document_assets(doc: &Doc) -> CommandResult<HashSet<String>> {
+    let mut assets = read(doc)?.map(|bank| bank.assets()).unwrap_or_default();
+    let fragments = answer_fragments(doc)?;
+    let txn = doc.transact();
+    for fragment in fragments { assets.extend(crate::files::assets::note_images(&fragment, &txn)); }
+    Ok(assets)
+}
+
+fn answer_asset_requirements(doc: &Doc) -> CommandResult<Vec<(String, &'static str)>> {
+    use yrs::{Any, Xml, XmlFragment, XmlOut};
+    let fragments = answer_fragments(doc)?;
+    let txn = doc.transact();
+    let mut requirements = Vec::new();
+    for fragment in fragments {
+        for node in fragment.successors(&txn) {
+            let XmlOut::Element(element) = node else { continue; };
+            if let Some(value) = element.get_attribute(&txn, "fileId") {
+                match value {
+                    Out::Any(Any::Null) => {},
+                    Out::Any(Any::String(file)) => { id(&file)?; requirements.push((file.to_string(), "image/")); },
+                    _ => return Err(invalid()),
+                }
+            }
+            if let Some(value) = element.get_attribute(&txn, "drawing") {
+                let drawing = match value { Out::Any(Any::Null) => continue, Out::Any(Any::Map(drawing)) => drawing, _ => return Err(invalid()) };
+                if !matches!(element.tag().as_ref(), "image" | "inlineImage") || !matches!(drawing.get("version"), Some(Any::Number(version)) if *version == 1.0) { return Err(invalid()); }
+                match (drawing.get("sourceId"), drawing.get("previewId")) {
+                    (Some(Any::Null), Some(Any::Null)) => {},
+                    (Some(Any::String(source)), Some(Any::String(preview))) => {
+                        id(source)?; id(preview)?;
+                        requirements.push((source.to_string(), "application/vnd.memnoter.drawing+json"));
+                        requirements.push((preview.to_string(), "image/png"));
+                    },
+                    _ => return Err(invalid()),
+                }
+            }
+        }
+    }
+    Ok(requirements)
+}
+
 pub(crate) fn load(conn: &Connection, module: &str) -> CommandResult<Doc> {
+    load_through(conn, module, i64::MAX)
+}
+
+pub(crate) fn load_through(conn: &Connection, module: &str, update_id: i64) -> CommandResult<Doc> {
     let doc = Doc::new();
     let state: Vec<u8> = conn
         .query_row(
@@ -390,10 +451,10 @@ pub(crate) fn load(conn: &Connection, module: &str) -> CommandResult<Doc> {
         )
         .map_err(db_err)?;
     let mut stmt = conn
-        .prepare("select bytes from contents_updates where module_id=?1 order by id")
+        .prepare("select bytes from contents_updates where module_id=?1 and id<=?2 order by id")
         .map_err(db_err)?;
     let updates = stmt
-        .query_map([module], |r| r.get::<_, Vec<u8>>(0))
+        .query_map(rusqlite::params![module, update_id], |r| r.get::<_, Vec<u8>>(0))
         .map_err(db_err)?;
     for bytes in std::iter::once(Ok(state)).chain(updates) {
         let bytes = bytes.map_err(db_err)?;
@@ -419,7 +480,7 @@ pub(crate) fn preserve_history(old: &Bank, new: &Bank) -> CommandResult<()> {
         if new
             .attempts
             .get(id)
-            .is_none_or(|a| a.questions != value.questions)
+            .is_none_or(|a| a.questions != value.questions || (value.finished && !a.finished))
         {
             return Err("Worksheet attempts must keep their pinned revisions".into());
         }
@@ -440,18 +501,18 @@ pub(crate) fn admit(
         preserve_history(&old, new.as_ref().ok_or_else(invalid)?)?;
     }
     if let Some(bank) = new {
-        let mut requirements = Vec::new();
+        let mut requirements = answer_asset_requirements(after)?;
         for revision in bank.revisions.values() {
             for crop in revision.crops.values() {
-                requirements.push((&crop.asset_id, "image/"));
-                requirements.push((&crop.source_pdf_file_id, "application/pdf"));
+                requirements.push((crop.asset_id.clone(), "image/"));
+                requirements.push((crop.source_pdf_file_id.clone(), "application/pdf"));
             }
         }
         for answer in bank.answers.values() {
             for canvas in answer.canvases.values() {
                 for ink in canvas.revision.iter().chain(&canvas.copies) {
-                    requirements.push((&ink.source_id, "application/vnd.memnoter.drawing+json"));
-                    requirements.push((&ink.preview_id, "image/png"));
+                    requirements.push((ink.source_id.clone(), "application/vnd.memnoter.drawing+json"));
+                    requirements.push((ink.preview_id.clone(), "image/png"));
                 }
             }
         }
@@ -485,3 +546,6 @@ pub(crate) fn admit(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+static DEV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

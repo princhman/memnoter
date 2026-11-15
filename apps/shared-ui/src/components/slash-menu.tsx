@@ -27,7 +27,7 @@ export const SlashCommand = Extension.create<InsertCommandOptions>({
         pluginKey: suggestionKey,
         char: "/",
         allowSpaces: true,
-        items: ({ query, editor }) => filterItems(query, editor),
+        items: ({ query, editor }) => filterItems(query, editor, options),
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from);
           for (let depth = $from.depth; depth > 0; depth--) {

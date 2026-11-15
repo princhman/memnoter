@@ -1,7 +1,8 @@
+import { useBankGate } from "@/lib/question-bank";
+import { SectionTooltip, useModuleSectionNavigation, useModuleSectionScope, type ModuleSection } from "./module-section-menu";
 import { MiddleTruncate } from "./middle-truncate";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
-import { openReview } from "@/components/card-navigation-guard";
 import {
   Sidebar,
   SidebarContent,
@@ -11,15 +12,14 @@ import {
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuAction,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
-import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
+import { Link, useMatchRoute } from "@tanstack/react-router";
 import { SidebarModules } from "./sidebar-modules";
-import { Ellipsis, FilePlus, FileText, House, Layers, Pencil, Settings, Trash2 } from "lucide-react";
+import { Ellipsis, FilePlus, FileText, House, Files, CircleHelp, Layers, Pencil, Settings, Trash2 } from "lucide-react";
 import { pickPdfs } from "./add-pdf";
 import { isTauri } from "@/lib/backend";
 import {
@@ -47,7 +47,6 @@ import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
 
 const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: string; children: ReactNode }) => {
-  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const showMenu = () => { trigger.current?.focus(); setMenuOpen(true); };
@@ -57,10 +56,6 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
   // Shared by the pointer-positioned context menu and the "…" dropdown.
   const items = (Item: typeof DropdownMenuItem | typeof ContextMenuItem) => (
     <>
-      <Item onClick={() => void openReview(() => navigate({ to: "/review", search: { module: moduleId } }))}>
-        <Layers className="size-3" />Review
-      </Item>
-      <Item onClick={() => void navigate({ to: "/files", search: { module: moduleId } })}><FileText className="size-3" />Files</Item>
       {isTauri() && <Item onClick={() => pickPdfs(moduleId)}><FilePlus className="size-3" />Add PDF…</Item>}
       <Item onClick={() => setRenameOpen(true)}>
         <Pencil className="size-3" />
@@ -125,6 +120,14 @@ const AppSidebar = () => {
   const { isPending, error, data } = useModules();
   const matchRoute = useMatchRoute();
   const { total } = useDueCounts();
+  const bankEnabled = useBankGate();
+  const moduleId = useModuleSectionScope();
+  const navigateSection = useModuleSectionNavigation();
+  const sections: { id: ModuleSection; label: string; icon: typeof FileText; active: boolean }[] = [
+    { id: "files", label: "Files", icon: Files, active: !moduleId && !!matchRoute({ to: "/files" }) },
+    ...(bankEnabled ? [{ id: "questions" as const, label: "Questions", icon: CircleHelp, active: !moduleId && !!matchRoute({ to: "/questions" }) }] : []),
+    { id: "review", label: "Review", icon: Layers, active: !moduleId && !!matchRoute({ to: "/review" }) },
+  ];
 
   // Narrow windows show the sidebar as a sheet with its own open state.
   const { toggleSidebar } = useSidebar();
@@ -148,23 +151,12 @@ const AppSidebar = () => {
                 <span>Home</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={!!matchRoute({ to: "/review" })}
-                render={<Link to="/review" search={{}} />}
-              >
-                <Layers />
-                <span>Review</span>
-              </SidebarMenuButton>
-              <SidebarMenuBadge>
-                <CardCounts counts={total} />
-              </SidebarMenuBadge>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton isActive={!!matchRoute({ to: "/files", fuzzy: true })} render={<Link to="/files" search={{}} />}>
-                <FileText /><span>Files</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {sections.map(section => <SidebarMenuItem key={section.id}>
+              <SectionTooltip section={section.id} allModules><SidebarMenuButton isActive={section.active} onClick={() => void navigateSection(section.id, undefined, { sharedQuestions: true })}>
+                <section.icon /><span>{section.label}</span>
+                {section.id === "review" && <CardCounts className="ml-auto" counts={total} />}
+              </SidebarMenuButton></SectionTooltip>
+            </SidebarMenuItem>)}
           </SidebarMenu>
         </SidebarGroup>
         <SidebarGroup>
@@ -176,11 +168,7 @@ const AppSidebar = () => {
           {data && (
             <SidebarGroupContent>
               <SidebarModules modules={data} renderModule={(module) => {
-                  const isActive = !!matchRoute({
-                    to: "/$moduleId",
-                    params: { moduleId: module.id },
-                    fuzzy: true,
-                  });
+                  const isActive = moduleId === module.id;
                   return (
                     <ModuleMenu key={module.id} moduleId={module.id} name={module.name}>
                       <SidebarMenuButton

@@ -6,6 +6,8 @@ export interface PdfReaderViewState {
   zoom: number;
   selecting: boolean;
   annotating: boolean;
+  questionCropping: boolean;
+  canCropQuestion: boolean;
   canSelect: boolean;
   canAnnotate: boolean;
   canZoomIn: boolean;
@@ -16,6 +18,8 @@ export interface PdfReaderActions {
   zoomOut(): void;
   toggleSelect(): void;
   toggleAnnotate(): void;
+  toggleQuestionCrop(): void;
+  toggleFind?(): void;
   goToPage(page: number): void;
   openBeside(): void;
 }

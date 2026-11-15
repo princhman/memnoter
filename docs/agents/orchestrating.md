@@ -45,7 +45,8 @@ being asked each time:
 **Testing sessions.** When the user is testing on devices and says "just fix",
 delegates fix only: no tests, no sol loop, no CI waits, no builds while
 `pnpm dev:copy` is running. Install on the device only when the user is testing
-there. The editor scroll/caret exception in
+there, and install straight to it: no simulator checks, the user is the
+tester. The editor scroll/caret exception in
 `apps/shared-ui/AGENTS.md` still applies.
 
 ## Linear
@@ -55,10 +56,10 @@ there. The editor scroll/caret exception in
 - Waiting on the user (a question, or an issue in **In Review**): call
   `issue_watch` with your thread and machine. Their reply arrives as a new
   message in that thread. Don't schedule polling checks.
-- When the user reports a bug or request mid-session, file it in Linear before
-  or while delegating: team **I build (PRI)**, project **memnoter.com**, label
-  **Bug** plus the relevant platform label (for example `windows` or `marketing`).
-  Put the issue ID in the delegate brief so it survives chat summaries.
+- Create Linear issues only when the user explicitly asks. During live pair
+  sessions, track feedback by the user's item numbers in briefs and replies;
+  do not create issues or upload their screenshots to Linear automatically.
+  When requested, use team **I build (PRI)** and project **memnoter.com**.
 - Branch names follow "Branch names" in `AGENTS.md`: `pri-<n>-<slug>`, never
   Linear's `novvladkyiv/` prefix. Give delegates the exact branch name, and
   pass it as `workspaceStrategy.branch` when launching worktree threads.
@@ -122,6 +123,8 @@ Don't restate the stack, commands or rules; the delegate already has them.
 
 ## Flows
 
+- In numbered pair-session feedback, preserve the user's item numbers in replies
+  and follow-up work as new items are added, so each change stays easy to identify.
 - **User present** ("just fix", screenshots, testing on a device): the
   `pair-fix` skill.
 - **Handoff** (issues to fix alone, with proof at the end): the `handoff` skill.

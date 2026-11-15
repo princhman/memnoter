@@ -53,6 +53,10 @@ html, body, #root, .app-scroll-container, .tiptap-shell, .tiptap {
   overflow-wrap: anywhere;
   padding-bottom: 0;
 }
+.native-questions .tiptap.worksheet-answer-input { padding: 0.75rem; min-height: 4rem; }
+.native-questions .tiptap.worksheet-answer-input > :first-child { margin-top: 0; }
+.native-questions .tiptap.worksheet-answer-input > :last-child { margin-bottom: 0; }
+.native-questions { padding-top: max(16px, var(--top-inset, 0px), env(safe-area-inset-top)); scroll-padding-top: max(16px, var(--top-inset, 0px), env(safe-area-inset-top)); }
 .tiptap :is(.tableWrapper, .math-block, .mermaid-block, .note-image-host) {
   min-width: 0;
   max-width: 100%;
@@ -148,6 +152,10 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-editor-workspace { position: relative; display: flex; height: 100%; min-height: 0; min-width: 0; }
 .native-editor-workspace > .app-scroll-container { flex: 1; min-width: 0; }
 .native-editor-workspace[data-covering-note="true"] > .app-scroll-container { visibility: hidden; pointer-events: none; }
+/* Keep the shared bank actions reachable without hover on iPad. */
+@media (hover: none) {
+  .native-questions figure > .absolute { opacity: 1; }
+}
 .native-pdf-pane { display: flex; min-height: 0; min-width: 0; flex-direction: column; background: var(--background); padding-top: var(--top-inset, 0px); padding-bottom: var(--bottom-inset, 0px); }
 .native-pdf-beside { flex: 0 0 clamp(320px, 42%, 560px); border-left: 1px solid var(--border); }
 .native-pdf-cover { position: absolute; inset: 0; z-index: 10; }
@@ -185,3 +193,139 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 [data-sonner-toast][data-styled="true"] [data-content] { flex: 1 1 100%; min-width: 0; }
 [data-sonner-toast][data-styled="true"] [data-button] { max-width: 100%; height: auto; white-space: normal; }
 [data-sonner-toaster] { bottom: calc(var(--native-bottom-inset, 0px) + 16px); }
+
+/* Legacy answers can contain a leading empty paragraph. Keep the stored text
+   intact; suppress the redundant leading line without moving text on focus. */
+.native-questions .worksheet-answer-input > p:first-child:not(:last-child):has(> br:only-child) { display: none; }
+.native-questions .worksheet-answer-input > p:first-child:not(:last-child):has(> br:only-child) + p { margin-top: 0; }
+
+.native-questions .worksheet-answer-input .note-image-block { margin-block: 0; }
+.native-questions .worksheet-answer-input > .note-image-block + p:last-child:has(> br:only-child) { margin: 0; height: 0; line-height: 0; }
+
+.native-tablet .native-questions :is(.worksheet-page-back, .worksheet-page-title, .worksheet-page-progress) { display: none; }
+
+.native-tablet .native-questions section:has(.worksheet-page-title) > h2 { display: none; }
+
+.native-tablet .native-questions :is(.worksheet-page-switcher, .worksheet-page-footer) { display: none; }
+
+.native-questions { padding-bottom: calc(var(--native-bottom-inset, 0px) + 24px); }
+
+/* iPad bank actions: desktop keeps its context-menu and whole-row drag model. */
+.native-questions .bank-reorder-outline .bank-drag-row { touch-action: pan-y; cursor: default; }
+.native-questions .bank-touch-handle { touch-action: none; width: 44px; height: 44px; display: grid; place-items: center; flex-shrink: 0; }
+.native-questions .bank-row-menu { width: 44px; height: 44px; margin-left: auto; flex-shrink: 0; }
+.native-questions [data-bank-drag-label] { min-height: 44px; border-radius: 8px; }
+.native-questions [data-bank-drag-label][aria-pressed="true"] { color: var(--foreground); }
+.native-questions input[type="checkbox"] { width: 28px; height: 28px; margin: 8px; }
+.native-questions button { min-height: 44px; }
+.native-questions .bank-module-heading { width: min(100%, 48rem); margin-inline: auto; padding-inline: 0; }
+.image-crop-handle { min-width: 44px; min-height: 44px; }
+.question-crop-bar { background: color-mix(in srgb, var(--popover) 94%, transparent); backdrop-filter: blur(24px); border-radius: 24px; }
+.question-crop-bar button { min-height: 44px; }
+
+/* Same reading layout as desktop: the label sits in its own column beside the crops.
+   The row menu wraps under the label instead of pushing the crops down. */
+.native-questions .group\/part.grid { grid-template-columns: 4rem minmax(0, 1fr); }
+.native-questions .group\/part.grid > .bank-drag-row { grid-column: 1; display: grid; grid-template-columns: 16px max-content; align-content: start; }
+.native-questions .group\/part.grid > .bank-drag-row > .bank-disclosure { grid-column: 1; grid-row: 1; }
+.native-questions .group\/part.grid > .bank-drag-row > [data-bank-drag-label] { grid-column: 2; grid-row: 1; }
+/* The row "…" sits centred under the question's name. */
+.native-questions .group\/part.grid > .bank-drag-row > .bank-row-menu { grid-column: 2; grid-row: 2; justify-self: center; margin: 0; }
+.native-questions .group\/part.grid > .bank-drag-row > input[type="checkbox"] { grid-column: 1 / -1; grid-row: 3; }
+.native-questions .group\/part.grid > .bank-drag-row + div { grid-column: 2; }
+.image-crop-handle { background: transparent; border: none; }
+.image-crop-handle::after { content: ""; position: absolute; inset: 16px; border: 2px solid white; background: var(--primary); border-radius: 3px; }
+.image-crop-handle-n, .image-crop-handle-s { left: calc(50% - 22px); }
+.image-crop-handle-e, .image-crop-handle-w { top: calc(50% - 22px); }
+.image-crop-handle-n, .image-crop-handle-nw, .image-crop-handle-ne { top: -22px; }
+.image-crop-handle-s, .image-crop-handle-sw, .image-crop-handle-se { bottom: -22px; }
+.image-crop-handle-e, .image-crop-handle-ne, .image-crop-handle-se { right: -22px; }
+.image-crop-handle-w, .image-crop-handle-nw, .image-crop-handle-sw { left: -22px; }
+
+/* Every row control shares the label's first 44px line, even when text wraps. */
+.native-questions :is(.bank-drag-row, .worksheet-question-heading) { align-items: flex-start; min-height: 44px; }
+.native-questions .bank-fold-slot { height: 44px; }
+.native-questions .bank-fold-slot > button { display: flex; align-items: center; justify-content: center; width: 100%; }
+.native-questions :is(.bank-part-count, .bank-row-menu, .bank-touch-handle) { align-self: flex-start; }
+.native-questions [data-bank-drag-label] { padding: 8px 6px; flex: 0 1 auto; line-height: 28px; }
+.native-questions .worksheet-question-label { padding-block: 8px; line-height: 28px; }
+.native-tablet [data-slot="dropdown-menu-content"] { width: max-content; min-width: 200px; max-width: calc(100vw - 24px); }
+.native-tablet [data-slot="dropdown-menu-content"] [role="menuitem"],
+.native-tablet [data-slot="dropdown-menu-content"] [role="menuitemradio"] { min-height: 44px; white-space: nowrap; padding-inline: 12px; }
+.native-tablet .question-crop-bar { max-width: min(960px, calc(100% - 24px)); gap: 8px; }
+.native-tablet .question-crop-bar > div { flex-wrap: nowrap; gap: 2px; }
+.native-tablet .question-crop-bar button { flex-shrink: 0; white-space: nowrap; padding-inline: 8px; }
+.native-tablet .question-crop-bar > button:last-child { margin-left: auto; }
+.native-tablet .question-crop-bar:has([role="alert"]) > div { flex-wrap: wrap; }
+
+.native-tablet .native-pdf-find-launcher { display: none; }
+
+
+/* iPad: all outline controls share the label's first 44px line. The
+   disclosure span stays present for leaves, including in Reorder mode. */
+.native-tablet .native-questions :is(.bank-drag-row, .worksheet-question-heading) {
+  align-items: flex-start;
+  min-height: 44px;
+}
+.native-tablet .native-questions .bank-disclosure {
+  height: 44px;
+  flex: 0 0 16px;
+}
+.native-tablet .native-questions .bank-disclosure > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 44px;
+  padding: 0;
+}
+.native-tablet .native-questions .worksheet-question-heading > button:first-of-type {
+  padding-block: 8px;
+  line-height: 28px;
+}
+.native-tablet .native-questions :is(.bank-drag-row, .worksheet-question-heading) > .bank-part-count {
+  height: 44px;
+  align-self: flex-start;
+}
+.native-tablet .question-crop-bar > ul { min-width: 200px; max-width: calc(100vw - 24px); }
+.native-tablet .question-crop-bar > ul button { min-height: 44px; white-space: nowrap; }
+
+/* Keep WebKit's native button text readable in either appearance. */
+.native-tablet .native-questions [data-bank-drag-label][aria-pressed="true"] {
+  color: var(--foreground);
+  -webkit-text-fill-color: currentColor;
+  background: none;
+  box-shadow: none;
+}
+.native-tablet .native-questions [data-bank-drag-label] {
+  padding: 8px 6px;
+  flex: 0 1 auto;
+  overflow: visible;
+}
+/* Crop actions remain a single line; an unusually narrow split pane can
+   scroll the actions while keeping its thumbnail and Discard reachable. */
+.native-tablet .question-crop-bar { width: calc(100% - 24px); align-items: center; }
+.native-tablet .question-crop-bar > div {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  align-items: center;
+  scrollbar-width: none;
+}
+.native-tablet .question-crop-bar > div::-webkit-scrollbar { display: none; }
+.native-tablet .question-crop-bar > button:last-child { align-self: center; }
+.native-tablet .question-crop-bar > ul {
+  min-width: 200px;
+  max-width: calc(100vw - 24px);
+  overflow-x: auto;
+}
+.native-tablet .question-crop-bar > ul button { min-height: 44px; white-space: nowrap; }
+
+/* Crop "…": a round button on the crop's corner rather than a 44px-tall oval over the question text. */
+.native-questions .group\/crop > div:has(> .note-image-menu-button) { top: -10px; right: -10px; }
+.native-questions .group\/crop .note-image-menu-button { width: 36px; height: 36px; min-height: 36px; padding: 0; }
+/* Only the tapped crop shows its "…"; an open menu keeps it visible. */
+.native-questions .group\/crop:not([data-selected]) > div:has(> .note-image-menu-button):not(:has([data-popup-open], [data-open])) { opacity: 0; pointer-events: none; }
+.native-questions .group\/crop[data-selected] > div:has(> .note-image-menu-button) { opacity: 1; }
+.native-questions .group\/crop[data-selected] > img { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* Answers reuse the note editor: its fold chevrons stay one line tall, as in notes. */
+.native-questions .tiptap :is(.foldable-block-toggle, .heading-fold-toggle) { min-height: 0; }

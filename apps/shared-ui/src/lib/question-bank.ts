@@ -1,14 +1,17 @@
 import { createStore, useSelector } from "@tanstack/react-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { call } from "./backend";
+import { call, isNativeHost } from "./backend";
 import { IS_MAC } from "./platform";
-import type { WorksheetRevision, WorksheetCrop } from "./worksheets";
+import type { WorksheetRevision, WorksheetCrop, WorksheetPin, WorksheetAnswer } from "./worksheets";
 import { writeOperation, assertWritable } from "./write-lifecycle";
+import { setModulePage } from "./store";
 
 export type Bank = {
   schemaVersion: 1;
   questions: Record<string, { title: string; order: number; revisionId: string; deleted: boolean }>;
   revisions: Record<string, WorksheetRevision>;
+  attempts: Record<string, { title: string; questions: WorksheetPin[]; deleted: boolean; finished?: boolean }>;
+  answers: Record<string, Omit<WorksheetAnswer, "text"> & { text: string }>;
 };
 export type Target = { moduleId: string; questionId: string; partId: string };
 export const bankTarget = createStore<Target | null>(null);
@@ -45,16 +48,25 @@ export function useBankTarget(moduleId: string, bank: Bank | null | undefined) {
   const current = useSelector(bankTarget, s => s?.moduleId === moduleId ? s : null);
   return resolveTarget(bank, moduleId, current);
 }
-export const bankView = createStore<string | null>(null);
 export type CropDraft = Omit<WorksheetCrop, "partId" | "assetId"> & { blob: Blob; url: string };
-export type BankEdit = {
-  kind: "newQuestion" | "newPart" | "addCrop" | "moveCrop" | "reorderCrop" | "removeCrop" | "removePart" | "deleteQuestion" | "renameQuestion" | "moveQuestion" | "renamePart" | "movePart";
+export type NestQuestionEdit = {
+  kind: "nestQuestion"; questionId: string; expectedRevisionId: string;
+  targetQuestionId: string; targetParentId: string; expectedTargetRevisionId: string;
+  label: string; index: number;
+  partId?: never; crop?: never;
+};
+export type BankEdit = BankEditFields & (NestQuestionEdit | {
+  kind: "newQuestion" | "newPart" | "addCrop" | "replaceCrop" | "moveCrop" | "reorderCrop" | "removeCrop" | "removePart" | "deletePart" | "deleteQuestion" | "renameQuestion" | "moveQuestion" | "renamePart" | "movePart" | "reparentPart" | "transferPart" | "promotePart";
+});
+type BankEditFields = {
   questionId?: string; partId?: string; expectedRevisionId?: string; label?: string; title?: string;
+  targetQuestionId?: string; targetParentId?: string; expectedTargetRevisionId?: string;
   cropId?: string; index?: number; crop?: Omit<CropDraft, "blob" | "url"> & { bytes: number[] };
 };
 export const bankKey = (moduleId: string) => ["question-bank", moduleId] as const;
 export function useBankGate() {
-  return useQuery({ queryKey: ["question-bank-enabled"], queryFn: () => call<boolean>("question_bank_enabled"), enabled: IS_MAC, staleTime: Infinity, retry: false }).data === true && IS_MAC;
+  const supported = IS_MAC || isNativeHost();
+  return useQuery({ queryKey: ["question-bank-enabled"], queryFn: () => call<boolean>("question_bank_enabled"), enabled: supported, staleTime: Infinity, retry: false }).data === true && supported;
 }
 export function useBank(moduleId: string, enabled: boolean) {
   return useQuery({ queryKey: bankKey(moduleId), queryFn: () => call<Bank | null>("question_bank_get", { moduleId }), enabled, retry: false });
@@ -66,7 +78,7 @@ export function useBankEdit(moduleId: string) {
     const receipt = await call<{ bank: Bank; questionId: string; partId: string }>("question_bank_edit", { moduleId, edit });
     client.setQueryData(bankKey(moduleId), receipt.bank);
     setBankTarget({ moduleId, questionId: receipt.questionId, partId: receipt.partId });
-    bankView.setState(() => moduleId);
+    setModulePage(moduleId, "questions");
     return receipt;
   });
 }
@@ -98,3 +110,17 @@ export function partOutline(revision: WorksheetRevision, number: number | string
 }
 
 export function questionLabel(title: string | undefined, number: number): string { return title?.trim() || String(number); }
+
+/** Allocate after every saved numeric name, including deleted questions and legacy display labels. */
+export function nextQuestionLabel(bank: Bank | null | undefined): string {
+  const live = Object.entries(bank?.questions ?? {}).filter(([, q]) => !q.deleted)
+    .sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]));
+  const labels = Object.values(bank?.questions ?? {}).map(q => q.title.trim());
+  live.forEach(([, question], index) => { if (!question.title.trim()) labels.push(String(index + 1)); });
+  let maximum = BigInt(0);
+  for (const label of labels) if (/^[0-9]+$/.test(label)) {
+    const number = BigInt(label);
+    if (number > maximum) maximum = number;
+  }
+  return String(maximum + BigInt(1));
+}

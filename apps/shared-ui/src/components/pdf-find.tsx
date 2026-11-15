@@ -3,7 +3,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { ToolButton } from "./ui/tool-button";
 import { FIND_EVENT } from "@/lib/app-events";
-import { action, matchesShortcut } from "@/lib/shortcuts";
+import { acceptsPdfShortcut, action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 
 type Match = { page: number; start: number; end: number };
 
@@ -48,6 +48,9 @@ export function usePdfFind(pdf: PDFDocumentProxy | null, root: RefObject<HTMLDiv
       if (!(target instanceof Element) || !(root.current?.contains(target) || fullscreen && document.getElementById("pdf-toolbar")?.contains(target))) return;
       if (target.closest('[role="dialog"], [role="menu"]')) return;
       if (matchesShortcut(event, action("find.open").keys)) { event.preventDefault(); event.stopPropagation(); show(); }
+      else if (open && !event.defaultPrevented && !event.repeat && !event.isComposing && (target === input.current || acceptsPdfShortcut(event, [root.current, fullscreen ? document.getElementById("pdf-toolbar") : null])) && (matchesShortcut(event, action("find.next").keys) || matchesShortcut(event, action("find.previous").keys))) {
+        event.preventDefault(); event.stopPropagation(); step(matchesShortcut(event, action("find.previous").keys) ? -1 : 1);
+      }
       else if (open && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
     };
     const nativeFind = (event: Event) => {
@@ -60,16 +63,16 @@ export function usePdfFind(pdf: PDFDocumentProxy | null, root: RefObject<HTMLDiv
     window.addEventListener(FIND_EVENT, nativeFind, true);
     return () => { window.removeEventListener("keydown", handle, true); window.removeEventListener(FIND_EVENT, nativeFind, true); };
   });
-  const button = <ToolButton label="Find in PDF" pressed={open} onClick={() => open ? close() : show()}><Search /></ToolButton>;
+  const button = <ToolButton label="Find in PDF" hint={formatKeys(action("find.open").keys)} pressed={open} onClick={() => open ? close() : show()}><Search /></ToolButton>;
   const bar = open && <div role="search" aria-label="Find in PDF" className="flex shrink-0 items-center gap-1 bg-background p-1">
     <input ref={input} aria-label="Find in PDF" placeholder="Find" className="h-7 min-w-0 flex-1 rounded-md bg-muted px-2 text-sm outline-none placeholder:text-muted-foreground" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={query} onChange={event => { setQuery(event.target.value); setCurrent(0); }} onKeyDown={event => {
       if (["Enter", "ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); step(event.key === "ArrowUp" || event.shiftKey ? -1 : 1); }
     }} />
     <span role="status" className="shrink-0 text-xs text-muted-foreground tabular-nums">{failure ? "Search failed" : query && cache.current?.pdf !== pdf ? "Searching…" : `${selected ? current + 1 : 0} / ${matches.length}`}</span>
-    <ToolButton label="Previous PDF match" size="icon-xs" disabled={!matches.length} onClick={() => step(-1)}><ChevronUp /></ToolButton>
-    <ToolButton label="Next PDF match" size="icon-xs" disabled={!matches.length} onClick={() => step(1)}><ChevronDown /></ToolButton>
+    <ToolButton label="Previous PDF match" hint={formatKeys(action("find.previous").keys)} size="icon-xs" disabled={!matches.length} onClick={() => step(-1)}><ChevronUp /></ToolButton>
+    <ToolButton label="Next PDF match" hint={formatKeys(action("find.next").keys)} size="icon-xs" disabled={!matches.length} onClick={() => step(1)}><ChevronDown /></ToolButton>
   </div>;
-  return { button, bar, matches, selected };
+  return { button, bar, matches, selected, toggle: () => open ? close() : show() };
 }
 
 // Ranges leave PDF.js's text nodes intact for selection, copying and annotations.

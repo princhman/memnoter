@@ -1,7 +1,8 @@
 import { MiddleTruncate } from "./middle-truncate";
 import { useDocuments } from "@/lib/use-documents";
 import { documentName } from "@/lib/pdf-state";
-import { useModules } from "@/lib/modules";
+import { useModulePage } from "@/lib/store";
+import { useBankGate } from "@/lib/question-bank";
 import { IconTooltip } from "@/components/icon-tooltip";
 import {
   Breadcrumb,
@@ -14,12 +15,13 @@ import {
 } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "./ui/sidebar";
-import { Link, useMatchRoute } from "@tanstack/react-router";
+import { useMatchRoute, useSearch } from "@tanstack/react-router";
 import { useEditorState } from "@tiptap/react";
 import { getFocusedSectionPath } from "@/lib/section-focus";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { Fragment } from "react";
 import { ReviewScopeMenu } from "./review-scope-menu";
+import { ModuleSectionMenu, type ModuleSection } from "./module-section-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,26 +37,25 @@ const TOOLBAR_OFFSET = "w-[calc(var(--toolbar-width,10.75rem)+0.75rem)]";
 export function FileBreadcrumb() {
   const { state } = useSidebar();
 
-  const {
-    isPending,
-    error,
-    data: modules = [],
-  } = useModules();
-
   const matchRoute = useMatchRoute();
+  const search = useSearch({ strict: false });
   // These pages also match the module id pattern.
   const isSettings = !!matchRoute({ to: "/settings" });
+  const isQuestions = !!matchRoute({ to: "/questions" });
   const isReview = !!matchRoute({ to: "/review" });
   const isFiles = !!matchRoute({ to: "/files", fuzzy: true });
   const reader = matchRoute({ to: "/files/$documentId" });
   const { data: documents = [] } = useDocuments();
   const pdf = reader ? documents.find(doc => doc.id === reader.documentId) : undefined;
   const match = matchRoute({ to: "/$moduleId" });
-  const moduleId = match && !isSettings && !isReview && !isFiles ? match.moduleId : null;
-  const moduleName = modules.find((module) => module.id === moduleId)?.name;
+  const moduleId = match && !isSettings && !isReview && !isFiles && !isQuestions ? match.moduleId : null;
+  const modulePage = useModulePage(moduleId);
+  const bankEnabled = useBankGate();
+  const page: ModuleSection = isQuestions ? "questions" : isFiles ? "files" : isReview ? "review" : bankEnabled && modulePage === "questions" ? "questions" : "notes";
+  const scopedModuleId = moduleId ?? pdf?.moduleId ?? ((isFiles || isReview || isQuestions) ? search.module : undefined);
   const { activeEditor } = useActiveEditor();
   const editor =
-    activeEditor?.moduleId === moduleId ? activeEditor.editor : null;
+    page === "notes" && activeEditor?.moduleId === moduleId ? activeEditor.editor : null;
 
   const sectionPath =
     useEditorState({
@@ -74,10 +75,6 @@ export function FileBreadcrumb() {
       },
     }) ?? [];
 
-  const moduleTitle =
-    moduleName ??
-    (isPending ? "Loading..." : error ? "Module unavailable" : moduleId);
-
   return (
     <>
       <div
@@ -95,49 +92,23 @@ export function FileBreadcrumb() {
       <div className="min-w-0 overflow-hidden">
         <Breadcrumb>
           <BreadcrumbList className="flex-nowrap whitespace-nowrap [&>[data-slot=breadcrumb-item]]:min-w-0 [&>[data-slot=breadcrumb-item]]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:block [&>[data-slot=breadcrumb-item]>*]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:min-w-0 [&>[data-slot=breadcrumb-item]>*]:max-w-full [&>[data-slot=breadcrumb-separator]]:shrink-0">
-            {isFiles ? (<>
-              {/* Like Review: the module scope first, then the page. */}
-              <BreadcrumbItem className="shrink-0 overflow-visible!"><ReviewScopeMenu page="files" current={pdf?.moduleId} /></BreadcrumbItem>
-              <BreadcrumbSeparator>/</BreadcrumbSeparator>
-              {pdf ? <>
-                <BreadcrumbItem className="shrink-0"><BreadcrumbLink render={<Link to="/files" search={{ module: pdf.moduleId }} />}>Files</BreadcrumbLink></BreadcrumbItem>
-                <BreadcrumbSeparator>›</BreadcrumbSeparator>
-                <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate whitespace-nowrap"><MiddleTruncate text={documentName(pdf.name)} /></BreadcrumbPage></BreadcrumbItem>
-              </> : <BreadcrumbItem className="shrink-0"><BreadcrumbPage data-tauri-drag-region="deep">Files</BreadcrumbPage></BreadcrumbItem>}
-            </>) : isReview ? (
+            {moduleId || isFiles || isReview || isQuestions ? (
               <>
-                {/* The module under review comes first, as it will for a module's other pages. */}
                 <BreadcrumbItem className="shrink-0 overflow-visible!">
-                  <ReviewScopeMenu />
+                  <ReviewScopeMenu page={page} current={scopedModuleId} />
                 </BreadcrumbItem>
                 <BreadcrumbSeparator>/</BreadcrumbSeparator>
-                <BreadcrumbItem className="shrink-0">
-                  <BreadcrumbPage data-tauri-drag-region="deep">Review</BreadcrumbPage>
+                <BreadcrumbItem className="shrink-0 overflow-visible!">
+                  <ModuleSectionMenu page={page} moduleId={scopedModuleId} onNotes={() => editor?.commands.showDocument()} />
                 </BreadcrumbItem>
+                {pdf && <>
+                  <BreadcrumbSeparator>›</BreadcrumbSeparator>
+                  <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate whitespace-nowrap"><MiddleTruncate text={documentName(pdf.name)} /></BreadcrumbPage></BreadcrumbItem>
+                </>}
               </>
-            ) : !moduleId ? (
+            ) : (
               <BreadcrumbItem className="shrink-0">
                 <BreadcrumbPage data-tauri-drag-region="deep">{isSettings ? "Settings" : "Home"}</BreadcrumbPage>
-              </BreadcrumbItem>
-            ) : (
-              <BreadcrumbItem>
-                {sectionPath.length ? (
-                  <BreadcrumbLink
-                    className="font-bold"
-                    render={
-                      <button
-                        type="button"
-                        onClick={() => editor?.commands.showDocument()}
-                      >
-                        <MiddleTruncate text={moduleTitle ?? ""} />
-                      </button>
-                    }
-                  />
-                ) : (
-                  <BreadcrumbPage data-tauri-drag-region="deep" className="font-bold">
-                    <MiddleTruncate text={moduleTitle ?? ""} />
-                  </BreadcrumbPage>
-                )}
               </BreadcrumbItem>
             )}
             {sectionPath.length > 2 && (

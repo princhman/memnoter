@@ -83,6 +83,8 @@ export const PDF_COMMANDS = {
   zoomOut: true,
   toggleSelect: true,
   toggleAnnotate: true,
+  toggleQuestionCrop: true,
+  toggleFind: true,
   goToPage: true,
   openFullscreen: true,
   openBeside: true,
@@ -112,6 +114,8 @@ export interface PdfReaderState {
   zoom: number;
   selecting: boolean;
   annotating: boolean;
+  questionCropping: boolean;
+  canCropQuestion: boolean;
   canSelect: boolean;
   canAnnotate: boolean;
   canZoomIn: boolean;
@@ -168,6 +172,9 @@ export interface NativeEvents {
   openModule: { moduleId: string };
   pdfViewState: { documentId: string; page: number; zoom: number };
   pdfState: { moduleId: string | null; open: boolean; coveringNote: boolean; focused: boolean };
+  worksheetEditorState: { active: boolean; moduleId: string; answerId?: string } & Partial<EditorState>;
+  worksheetState: { title: string | null; answered: number; total: number; status: string; index: number; count: number; finished?: boolean };
+  questionBankState: { open: boolean; moduleId: string | null; controls?: { visible: boolean; reordering: boolean; reorderDisabled: boolean; newWorksheetVisible: boolean; worksheetDisabled: boolean } };
   pdfReader: PdfReaderState | null;
   pdfSelectionChanged: PdfSelectionState;
   error: { moduleId: string | null; message: string };
@@ -182,6 +189,8 @@ export interface EditorApi {
   setTopInset(px: number): void;
   revealCard(moduleId: string, cardId: string): void;
   open(moduleId: string): Promise<void>;
+  openQuestions(scope: string | null): Promise<void>;
+  closeQuestions(): Promise<void>;
   flush(): Promise<void>;
   refreshModules(): Promise<void>;
   toggleFiles(): void;

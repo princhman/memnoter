@@ -46,6 +46,9 @@ pub struct Edit {
     pub question_id: Option<String>,
     pub part_id: Option<String>,
     pub expected_revision_id: Option<String>,
+    pub target_question_id: Option<String>,
+    pub target_parent_id: Option<String>,
+    pub expected_target_revision_id: Option<String>,
     pub label: Option<String>,
     pub title: Option<String>,
     pub crop_id: Option<String>,
@@ -88,6 +91,42 @@ fn input(value: serde_json::Value) -> In {
         value => In::Any(Any::from_json(&value.to_string()).expect("serializable worksheet field")),
     }
 }
+/// Persist the labels the reader saw before this edit changes the live outline.
+/// Reads stay pure; these records join the edit's existing Yjs transaction.
+fn freeze_question_labels(bank: &mut Bank) -> Vec<String> {
+    let mut live: Vec<_> = bank.questions.iter().filter(|(_, q)| !q.deleted)
+        .map(|(id, q)| (q.order, id.clone())).collect();
+    live.sort();
+    let mut touched = Vec::new();
+    for (index, (_, id)) in live.iter().enumerate() {
+        let question = bank.questions.get_mut(id).unwrap();
+        if question.title.trim().is_empty() {
+            question.title = (index + 1).to_string();
+            touched.push(id.clone());
+        }
+    }
+    touched
+}
+/// Decimal strings avoid overflow for manually entered numeric names.
+/// Include tombstones so deleting the last question does not reuse its number.
+fn next_question_label(bank: &Bank) -> String {
+    let maximum = bank.questions.values().filter_map(|question| {
+        let title = question.title.trim();
+        if title.is_empty() || !title.bytes().all(|b| b.is_ascii_digit()) { return None; }
+        let number = title.trim_start_matches('0');
+        Some(if number.is_empty() { "0" } else { number })
+    }).max_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b))).unwrap_or("0");
+    let mut digits = maximum.as_bytes().to_vec();
+    for digit in digits.iter_mut().rev() {
+        if *digit < b'9' {
+            *digit += 1;
+            return String::from_utf8(digits).expect("decimal label");
+        }
+        *digit = b'0';
+    }
+    digits.insert(0, b'1');
+    String::from_utf8(digits).expect("decimal label")
+}
 pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreError> {
     if !enabled(core)? {
         return Err(
@@ -109,6 +148,7 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
         attempts: BTreeMap::new(),
         answers: BTreeMap::new(),
     });
+    let mut touched = freeze_question_labels(&mut bank);
     let qid = if edit.kind == "newQuestion" {
         uuid::Uuid::new_v4().to_string()
     } else {
@@ -137,7 +177,7 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             .filter(|q| !q.deleted)
             .ok_or_else(invalid)?;
         if Some(question.revision_id.as_str()) != edit.expected_revision_id.as_deref() {
-            return Err("This question changed. Refresh the bank before adding this crop.".into());
+            return Err("This question changed. Refresh the bank and try the edit again.".into());
         }
         bank.revisions
             .get(&question.revision_id)
@@ -151,8 +191,29 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
     if !revision.parts.contains_key(&pid) {
         return Err(invalid().into());
     }
+    let mut destination: Option<(String, Revision)> = None;
+    let mut receipt_target: Option<(String, String)> = None;
     match edit.kind.as_str() {
         "newQuestion" | "addCrop" => {}
+        "replaceCrop" => {
+            let old = revision
+                .crops
+                .get(required(&edit.crop_id)?)
+                .ok_or_else(invalid)?;
+            let crop = edit.crop.as_ref().ok_or_else(invalid)?;
+            // A trim keeps the source and ownership; historical crops stay immutable.
+            if old.part_id != pid
+                || old.source_pdf_file_id != crop.source_pdf_file_id
+                || old.page_index != crop.page_index
+                || old.rotation != crop.rotation
+                || crop.rect[0] < old.rect[0]
+                || crop.rect[1] < old.rect[1]
+                || crop.rect[0] + crop.rect[2] > old.rect[0] + old.rect[2] + f64::EPSILON
+                || crop.rect[1] + crop.rect[3] > old.rect[1] + old.rect[3] + f64::EPSILON
+            {
+                return Err(invalid().into());
+            }
+        }
         "newPart" => {
             let label = required(&edit.label)?.trim();
             if label.is_empty() || label.len() > 80 {
@@ -213,17 +274,14 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             if edit.crop.is_some() {
                 return Err(invalid().into());
             }
-            if edit.kind == "renameQuestion"
-                && edit
-                    .title
-                    .as_deref()
-                    .unwrap_or_default()
-                    .trim()
-                    .chars()
-                    .count()
-                    > 120
-            {
-                return Err("Enter a shorter question title".into());
+            if edit.kind == "renameQuestion" {
+                let title = edit.title.as_deref().unwrap_or_default().trim();
+                if title.is_empty() {
+                    return Err("Enter a question name".into());
+                }
+                if title.chars().count() > 120 {
+                    return Err("Enter a shorter question title".into());
+                }
             }
             if edit.kind == "moveQuestion" && edit.index.is_none() {
                 return Err(invalid().into());
@@ -260,6 +318,137 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
                 }
             }
         }
+        "reparentPart" | "transferPart" | "promotePart" | "nestQuestion" => {
+            let nest_question = edit.kind == "nestQuestion";
+            if nest_question && (edit.crop.is_some() || pid != revision.root_part_id) {
+                return Err("Only a whole question can be made a part with this operation".into());
+            }
+            if !nest_question && (edit.crop.is_some() || pid == revision.root_part_id) {
+                return Err("Only a part can be moved into another row or made a question".into());
+            }
+            let mut subtree = std::collections::HashSet::new();
+            let mut pending = vec![pid.clone()];
+            while let Some(id) = pending.pop() {
+                if subtree.insert(id.clone()) {
+                    pending.extend(revision.parts.iter().filter_map(|(child, part)| {
+                        (part.parent_id.as_ref() == Some(&id)).then(|| child.clone())
+                    }));
+                }
+            }
+            if edit.kind == "reparentPart" {
+                let parent = required(&edit.target_parent_id)?;
+                if !revision.parts.contains_key(parent) || subtree.contains(parent) {
+                    return Err("A part cannot be moved inside itself or its descendants".into());
+                }
+                let mut siblings: Vec<_> = revision.parts.iter()
+                    .filter(|(id, part)| id.as_str() != pid && part.parent_id.as_deref() == Some(parent))
+                    .map(|(id, part)| (part.order, id.clone())).collect();
+                siblings.sort();
+                let position = edit.index.ok_or_else(invalid)?.min(siblings.len());
+                revision.parts.get_mut(&pid).unwrap().parent_id = Some(parent.to_owned());
+                siblings.insert(position, (0, pid.clone()));
+                for (order, (_, id)) in siblings.iter().enumerate() {
+                    revision.parts.get_mut(id).unwrap().order = order as _;
+                }
+            } else {
+                let promote = edit.kind == "promotePart";
+                let target_qid = if promote { uuid::Uuid::new_v4().to_string() }
+                    else { required(&edit.target_question_id)?.to_owned() };
+                if target_qid == qid { return Err(invalid().into()); }
+                let mut target = if promote {
+                    Revision { question_id: target_qid.clone(), root_part_id: String::new(), parts: BTreeMap::new(), crops: BTreeMap::new() }
+                } else {
+                    let question = bank.questions.get(&target_qid).filter(|q| !q.deleted).ok_or_else(invalid)?;
+                    if Some(question.revision_id.as_str()) != edit.expected_target_revision_id.as_deref() {
+                        return Err("The destination question changed. Refresh the bank and try the move again.".into());
+                    }
+                    bank.revisions.get(&question.revision_id).ok_or_else(invalid)?.clone()
+                };
+                let parent = if promote { None } else {
+                    let parent = required(&edit.target_parent_id)?.to_owned();
+                    if !target.parts.contains_key(&parent) { return Err(invalid().into()); }
+                    Some(parent)
+                };
+                // The source's saved name stays attached when it becomes a part.
+                // Legacy empty names have already been frozen from the old order.
+                let nested_label = if nest_question {
+                    let title = bank.questions.get(&qid).ok_or_else(invalid)?.title.trim();
+                    let label = if title.is_empty() { required(&edit.label)?.trim() } else { title };
+                    if label.is_empty() || label.chars().count() > 120 {
+                        return Err("Enter a short part label".into());
+                    }
+                    Some(label.to_owned())
+                } else { None };
+                // IDs have a permanent question owner across all historical revisions.
+                // Copy the full subtree with fresh identities, retaining immutable assets.
+                let ids: BTreeMap<_, _> = subtree.iter().map(|id| (id.clone(), uuid::Uuid::new_v4().to_string())).collect();
+                let new_pid = ids[&pid].clone();
+                for id in &subtree {
+                    let mut part = revision.parts[id].clone();
+                    if id == &pid {
+                        if let Some(label) = &nested_label { part.label = label.clone(); }
+                    }
+                    part.parent_id = if id == &pid { parent.clone() } else {
+                        Some(ids[part.parent_id.as_ref().ok_or_else(invalid)?].clone())
+                    };
+                    let mut crops = Vec::new();
+                    for cid in &part.crop_ids {
+                        let new_cid = uuid::Uuid::new_v4().to_string();
+                        let mut crop = revision.crops.get(cid).ok_or_else(invalid)?.clone();
+                        crop.part_id = ids[id].clone();
+                        target.crops.insert(new_cid.clone(), crop);
+                        crops.push(new_cid);
+                    }
+                    part.crop_ids = crops;
+                    target.parts.insert(ids[id].clone(), part);
+                }
+                if promote {
+                    target.root_part_id = new_pid.clone();
+                    target.parts.get_mut(&new_pid).unwrap().order = 0;
+                } else {
+                    let mut siblings: Vec<_> = target.parts.iter()
+                        .filter(|(id, part)| *id != &new_pid && part.parent_id == parent)
+                        .map(|(id, part)| (part.order, id.clone())).collect();
+                    siblings.sort();
+                    let position = edit.index.ok_or_else(invalid)?.min(siblings.len());
+                    siblings.insert(position, (0, new_pid.clone()));
+                    for (order, (_, id)) in siblings.iter().enumerate() {
+                        target.parts.get_mut(id).unwrap().order = order as _;
+                    }
+                }
+                if !nest_question {
+                    revision.parts.retain(|id, _| !subtree.contains(id));
+                    revision.crops.retain(|_, crop| !subtree.contains(&crop.part_id));
+                }
+                receipt_target = Some((target_qid.clone(), new_pid));
+                destination = Some((target_qid, target));
+            }
+        }
+        "deletePart" => {
+            if edit.crop.is_some() {
+                return Err(invalid().into());
+            }
+            let parent = revision
+                .parts
+                .get(&pid)
+                .and_then(|part| part.parent_id.clone())
+                .ok_or_else(invalid)?;
+            let mut removed = std::collections::HashSet::new();
+            let mut pending = vec![pid.clone()];
+            while let Some(id) = pending.pop() {
+                if !removed.insert(id.clone()) {
+                    continue;
+                }
+                pending.extend(revision.parts.iter().filter_map(|(child_id, part)| {
+                    (part.parent_id.as_ref() == Some(&id)).then(|| child_id.clone())
+                }));
+            }
+            // Only the new revision loses this subtree; existing attempts
+            // continue to reference their original parts and crop assets.
+            revision.parts.retain(|id, _| !removed.contains(id));
+            revision.crops.retain(|_, crop| !removed.contains(&crop.part_id));
+            pid = parent;
+        }
         "removePart" => {
             if edit.crop.is_some() {
                 return Err(invalid().into());
@@ -271,16 +460,19 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
         _ => return Err(invalid().into()),
     }
     let mut written = None;
-    // Rename and move change the question record only; every other kind
-    // (but delete) writes a new immutable revision.
+    // Rename/reorder/delete change question records only. Nesting writes just
+    // the destination revision and soft-deletes the source at its old revision.
     let content = !matches!(
         edit.kind.as_str(),
         "deleteQuestion" | "renameQuestion" | "moveQuestion"
     );
-    let mut touched = vec![qid.clone()];
+    if !touched.contains(&qid) { touched.push(qid.clone()); }
     let result = (|| -> CommandResult<Receipt> {
         if let Some(crop) = &edit.crop {
-            if !matches!(edit.kind.as_str(), "newQuestion" | "newPart" | "addCrop") {
+            if !matches!(
+                edit.kind.as_str(),
+                "newQuestion" | "newPart" | "addCrop" | "replaceCrop"
+            ) {
                 return Err(invalid());
             }
             // The bitmap is frozen at selection time; it is not reconstructed
@@ -320,7 +512,18 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
                     pixel_size: crop.pixel_size,
                 },
             );
-            revision.parts.get_mut(&pid).unwrap().crop_ids.push(cid);
+            if edit.kind == "replaceCrop" {
+                let previous = required(&edit.crop_id)?;
+                let list = &mut revision.parts.get_mut(&pid).unwrap().crop_ids;
+                let position = list
+                    .iter()
+                    .position(|id| id == previous)
+                    .ok_or_else(invalid)?;
+                list[position] = cid;
+                revision.crops.remove(previous);
+            } else {
+                revision.parts.get_mut(&pid).unwrap().crop_ids.push(cid);
+            }
             let path = crate::files::assets::write(core.data_dir(), &asset, bytes)?;
             written = Some(path.clone());
             tx.execute(
@@ -332,7 +535,9 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
         } else if edit.kind == "addCrop" {
             return Err("Select a PDF crop first".into());
         }
-        if edit.kind == "deleteQuestion" {
+        if edit.kind == "deleteQuestion" || edit.kind == "nestQuestion" {
+            // Nesting keeps the source record pointed at its original immutable
+            // revision, including the identities referenced by past attempts.
             bank.questions.get_mut(&qid).ok_or_else(invalid)?.deleted = true;
         } else if edit.kind == "renameQuestion" {
             bank.questions.get_mut(&qid).ok_or_else(invalid)?.title =
@@ -348,14 +553,12 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             live.retain(|(_, id)| id != &qid);
             let position = edit.index.ok_or_else(invalid)?.min(live.len());
             live.insert(position, (0, qid.clone()));
-            touched = live.iter().map(|(_, id)| id.clone()).collect();
-            for (order, id) in touched.iter().enumerate() {
+            for (order, (_, id)) in live.iter().enumerate() {
                 bank.questions.get_mut(id).unwrap().order = order as _;
+                if !touched.contains(id)
+                    && old.as_ref().and_then(|o| o.questions.get(id)) != bank.questions.get(id)
+                { touched.push(id.clone()); }
             }
-            touched.retain(|id| {
-                id == &qid
-                    || old.as_ref().and_then(|o| o.questions.get(id)) != bank.questions.get(id)
-            });
         } else {
             let rid = uuid::Uuid::new_v4().to_string();
             let order = bank
@@ -364,17 +567,40 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
                 .map(|q| q.order)
                 .max()
                 .map_or(0, |n| n + 1);
+            let title = edit.title.as_deref().filter(|title| !title.trim().is_empty())
+                .map(str::to_owned).unwrap_or_else(|| next_question_label(&bank));
             let question = bank
                 .questions
                 .entry(qid.clone())
                 .or_insert_with(|| Question {
-                    title: edit.title.clone().unwrap_or_default(),
+                    title,
                     order,
                     revision_id: rid.clone(),
                     deleted: false,
                 });
             question.revision_id = rid.clone();
             bank.revisions.insert(rid, revision);
+        }
+        if let Some((target_qid, target_revision)) = destination {
+            let rid = uuid::Uuid::new_v4().to_string();
+            if edit.kind == "promotePart" {
+                let mut live: Vec<_> = bank.questions.iter().filter(|(_, q)| !q.deleted)
+                    .map(|(id, q)| (q.order, id.clone())).collect();
+                live.sort();
+                let position = edit.index.ok_or_else(invalid)?.min(live.len());
+                live.insert(position, (0, target_qid.clone()));
+                let title = target_revision.parts[&target_revision.root_part_id].label.trim();
+                let title = if title.is_empty() { next_question_label(&bank) } else { title.to_owned() };
+                bank.questions.insert(target_qid.clone(), Question { title, order: 0, revision_id: rid.clone(), deleted: false });
+                for (order, (_, id)) in live.iter().enumerate() {
+                    bank.questions.get_mut(id).unwrap().order = order as _;
+                    if !touched.contains(id) { touched.push(id.clone()); }
+                }
+            } else {
+                bank.questions.get_mut(&target_qid).ok_or_else(invalid)?.revision_id = rid.clone();
+                if !touched.contains(&target_qid) { touched.push(target_qid); }
+            }
+            bank.revisions.insert(rid, target_revision);
         }
         bank.validate()?;
         let root = doc.get_or_insert_map(ROOT);
@@ -396,15 +622,14 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             );
         }
         if content {
-            let rid = &bank.questions[&qid].revision_id;
             let Out::YMap(revisions) = root.get(&txn, "revisions").ok_or_else(invalid)? else {
                 return Err(invalid());
             };
-            revisions.insert(
-                &mut txn,
-                rid.as_str(),
-                input(serde_json::to_value(&bank.revisions[rid]).map_err(db_err)?),
-            );
+            for id in &touched {
+                let rid = &bank.questions[id].revision_id;
+                if old.as_ref().is_some_and(|previous| previous.revisions.contains_key(rid)) { continue; }
+                revisions.insert(&mut txn, rid.as_str(), input(serde_json::to_value(&bank.revisions[rid]).map_err(db_err)?));
+            }
         }
         let update = txn.encode_update_v1();
         drop(txn);
@@ -416,11 +641,8 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
         .map_err(db_err)?;
         crate::sync::record_update(&tx, &module, &update)?;
         tx.commit().map_err(db_err)?;
-        Ok(Receipt {
-            bank,
-            question_id: qid,
-            part_id: pid,
-        })
+        let (question_id, part_id) = receipt_target.unwrap_or((qid, pid));
+        Ok(Receipt { bank, question_id, part_id })
     })();
     if result.is_err() {
         if let Some(path) = written {
@@ -473,6 +695,7 @@ mod tests {
     }
     #[test]
     fn development_gate_revisioned_edits_and_offline_crop_retention() {
+        let _lock = super::super::DEV_TEST_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!("bank-authoring-{}", uuid::Uuid::new_v4()));
         let core = Core::open(&dir).unwrap();
         let _vault = TestVault(
@@ -751,25 +974,24 @@ mod tests {
             "renaming a question writes no revision"
         );
         assert_eq!(renamed.bank.revisions, base.revisions);
-        let cleared = apply(
+        assert!(apply(
             &core,
             &module,
             Some(&renamed),
             json!({"kind":"renameQuestion","title":"   "}),
         )
-        .unwrap();
-        assert_eq!(cleared.bank.questions[&third.question_id].title, "");
+        .is_err());
         assert!(apply(
             &core,
             &module,
-            Some(&cleared),
+            Some(&renamed),
             json!({"kind":"renameQuestion","title":"x".repeat(121)})
         )
         .is_err());
         let moved_first = apply(
             &core,
             &module,
-            Some(&cleared),
+            Some(&renamed),
             json!({"kind":"moveQuestion","index":0}),
         )
         .unwrap();

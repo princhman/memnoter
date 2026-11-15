@@ -1,3 +1,4 @@
+import { queryClient } from "./query-client";
 import { IS_MAC, IS_IOS } from "./platform.ts";
 import { FILE_SCHEME, type NativeEvent, type NativeEvents } from "../editor-host/protocol.ts";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
@@ -47,7 +48,15 @@ function installBridge() {
 }
 if (typeof window !== "undefined") installBridge();
 
-export function call<T>(command: string, args?: object): Promise<T> {
+export async function call<T>(command: string, args?: object): Promise<T> {
+  const result = await dispatchCall<T>(command, args);
+  if (["question_bank_edit", "worksheet_attempt_create", "worksheet_attempt_finish", "worksheet_answer_document_save", "worksheet_answer_save", "worksheet_canvas_save"].includes(command) && args && "moduleId" in args) {
+    void queryClient.invalidateQueries({ queryKey: ["content", args.moduleId] });
+  }
+  return result;
+}
+
+function dispatchCall<T>(command: string, args?: object): Promise<T> {
   if (!isNativeHost()) {
     const shell = command.startsWith("plugin:") || ["confirm_exit", "confirm_restart", "set_editor_history", "pick_pdfs", "pick_import_folder", "pick_import_image_folder", "read_import_images", "pick_anki_package", "read_anki_media", "close_anki_package", "edit_drawing", "drawing_committed"].includes(command);
     return (shell ? invoke<T>(command, args as Record<string, unknown> | undefined)
@@ -98,6 +107,7 @@ export function fileUrl(path: string): string {
 
 export const capabilities = {
   get macDrawing() { return isTauri() && IS_MAC; },
+  get worksheetDrawing() { return (isTauri() && IS_MAC) || isNativeHost(); },
   get nativeViewState() { return isNativeHost(); },
   get nativeMenu() { return isTauri() && IS_MAC; },
   get nativeHistory() { return isTauri(); },
