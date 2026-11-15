@@ -135,7 +135,7 @@ function BankRow({ id, data, disabled, actions, children }: { id: string; data: 
   const rowRect = droppableRects.get(id);
   const showDrop = drop.isOver && active?.id !== id && !!plan;
   return <ContextMenu>
-    <ContextMenuTrigger render={<div />} ref={element => { drag.setNodeRef(element); drop.setNodeRef(element); }} {...(native ? {} : drag.attributes)} role="group" aria-label={data.label} data-bank-row={id}
+    <ContextMenuTrigger render={<div />} ref={element => { drag.setNodeRef(element); drop.setNodeRef(element); }} {...(native || disabled ? {} : drag.attributes)} role="group" aria-label={data.label} data-bank-row={id}
       onPointerDown={event => {
         if (native) return;
         const target = event.target;
@@ -166,7 +166,7 @@ function EditableLabel({ editing, value, placeholder, renameTitle, onStart, onSa
       <DialogContent>
         <DialogTitle>{renameTitle}</DialogTitle>
         <form className="space-y-4" onSubmit={event => { event.preventDefault(); finish(true, input.current?.value ?? value); }}>
-          <input ref={input} autoFocus defaultValue={value} placeholder={placeholder} aria-label="Name" maxLength={120} className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" onFocus={event => { settled.current = false; event.currentTarget.select(); }} />
+          <input ref={input} autoFocus defaultValue={value} placeholder={placeholder} aria-label="Name" maxLength={120} className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" onFocus={event => { settled.current = false; event.currentTarget.select(); }} /> {/* lint-allow: surface-outline, text input */}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => finish(false, "")}>Cancel</Button>
             <Button type="submit">Save</Button>
@@ -440,7 +440,7 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
       }
     }
     const plan = dropPlan(source, data, edge);
-    if (plan && between) plan.cue = `${plan.edit.kind === "promotePart" ? "New question · " : ""}${between}`;
+    if (plan && between) plan.cue = `${plan.edit.kind === "promotePart" ? "New question: " : ""}${between}`;
     dropBoundary.current = { id, edge, plan };
     if (plan?.inside && data.folded && data.childCount > 0 && pointer.y >= rect.top && pointer.y <= rect.bottom) {
       if (hoverOpen.current?.id !== id) {
@@ -478,8 +478,8 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
       <span className="sr-only" role="status">{busy ? "Saving…" : ""}</span>
     </div>}
     {picking && <div className="mb-5 space-y-3">
-      <p className="text-sm text-muted-foreground">Worksheet · this module</p>
-      <input aria-label="Worksheet title" placeholder="Worksheet title" maxLength={120} value={worksheetTitle} onChange={event => setWorksheetTitle(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      <p className="text-sm text-muted-foreground">Worksheet for this module</p>
+      <input aria-label="Worksheet title" placeholder="Worksheet title" maxLength={120} value={worksheetTitle} onChange={event => setWorksheetTitle(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /> {/* lint-allow: surface-outline, text input */}
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSelectedQuestions(new Set(questions.map(([id]) => id)))}>Select all</Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setPicking(false); setSelectedQuestions(new Set()); }}>Cancel</Button>
@@ -576,7 +576,7 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
       </article></Fragment>;
     })}</div>
   </section>
-  {createPortal(<DragOverlay dropAnimation={null}>{dragging && <div className="bank-drag-preview w-fit max-w-72 rounded-md border border-border bg-popover px-3 py-2 text-sm font-semibold text-popover-foreground shadow-md" aria-hidden="true">{dragging.preview.slice(0, 4).map((part, index) => <div key={index} className="truncate leading-6" style={{ paddingLeft: part.depth * 16 }}>{part.label}</div>)}{dragging.preview.length > 4 && <div className="leading-6 font-normal text-muted-foreground">+{dragging.preview.length - 4} more parts</div>}</div>}</DragOverlay>, document.body)}
+  {createPortal(<DragOverlay dropAnimation={null}>{dragging && <div className="bank-drag-preview w-fit max-w-72 rounded-md bg-popover px-3 py-2 text-sm font-semibold text-popover-foreground shadow-md" aria-hidden="true">{dragging.preview.slice(0, 4).map((part, index) => <div key={index} className="truncate leading-6" style={{ paddingLeft: part.depth * 16 }}>{part.label}</div>)}{dragging.preview.length > 4 && <div className="leading-6 font-normal text-muted-foreground">+{dragging.preview.length - 4} more parts</div>}</div>}</DragOverlay>, document.body)}
   </DndContext>;
 }
 

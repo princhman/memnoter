@@ -169,7 +169,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
           {!cropIds.length && !root && <p className="py-1 text-sm text-muted-foreground">No crops yet</p>}
           {part.leaf && <>
             <WorksheetAnswerEditor readOnly={finished || finishing} moduleId={moduleId} attemptId={attemptId} revisionId={pin.revisionId} leafPartId={part.id} answer={bank.answers[key]} flushDurable={() => answers.flushDurable(pin.revisionId, part.id)} key={`${moduleId}:${key}:text:${answers.resets[key] || 0}`} label={part.label} load={() => answers.loadDocument(pin.revisionId, part.id)} save={(document, expected, text, hasContent) => answers.setDocument(pin.revisionId, part.id, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />
-            {answers.errors[key] && <p role="alert" className="text-sm text-destructive">Couldn't save — {answers.errors[key]} <Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => void answers.retryAnswer(pin.revisionId, part.id)}>Retry</Button><Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => answers.discardAnswer(pin.revisionId, part.id)}>Discard</Button></p>}
+            {answers.errors[key] && <p role="alert" className="text-sm text-destructive">Couldn't save: {answers.errors[key]} <Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => void answers.retryAnswer(pin.revisionId, part.id)}>Retry</Button><Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => answers.discardAnswer(pin.revisionId, part.id)}>Discard</Button></p>}
           </>}
           </div>
         </section>;

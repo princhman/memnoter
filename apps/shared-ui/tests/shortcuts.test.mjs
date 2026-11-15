@@ -50,7 +50,7 @@ test("Rust menu dispatch IDs and accelerators match the shared action table", ()
 });
 
 
-test("PDF actions accept their public bindings without conflicting with other app actions", () => {
+test("PDF actions accept their public bindings with the shared pane/fullscreen toggle binding", () => {
   for (const [id, key, shiftKey] of [
     ["pdf.toggle-pane", "d", true],
     ["pdf.open-beside", "o", true],
@@ -59,7 +59,7 @@ test("PDF actions accept their public bindings without conflicting with other ap
   ]) {
     for (const modifiers of [{ metaKey: true, ctrlKey: false }, { metaKey: false, ctrlKey: true }]) {
       const event = { key, code: key === "Enter" ? "Enter" : `Key${key.toUpperCase()}`, altKey: false, shiftKey, ...modifiers };
-      assert.deepEqual(SHORTCUTS.filter(entry => entry.keys && matchesShortcut(event, entry.keys)).map(entry => entry.id), [id]);
+      assert.deepEqual(SHORTCUTS.filter(entry => entry.keys && matchesShortcut(event, entry.keys)).map(entry => entry.id), id === "pdf.open-beside" ? [id, "pdf.open-fullscreen"] : [id]);
     }
   }
 });

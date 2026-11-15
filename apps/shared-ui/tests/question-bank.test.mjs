@@ -32,9 +32,10 @@ test('PDF crops create nested revisioned questions through the gated real core a
     await page.route('**/bank-source.pdf',route=>route.fulfill({contentType:'application/pdf',body:Buffer.from(source)}));
     const url=`http://localhost:${server.httpServer.address().port}/tests/browser/question-bank.html?module=${module}&pdf=${pdf.id}`;
     await page.goto(url);
-    await page.getByRole('heading',{name:'Question bank',exact:true}).waitFor();
+    await page.getByRole('region',{name:'Question bank',exact:true}).waitFor();
     const crop=async()=>{
-      await page.getByRole('button',{name:'Crop question',exact:true}).click();
+      const tool = page.getByRole('button',{name:'Crop question',exact:true});
+      if (await tool.getAttribute('aria-pressed') !== 'true') await tool.click();
       const area=page.getByLabel('Drag a region on this PDF page').first();await area.waitFor();
       const box=await area.boundingBox();await page.mouse.move(box.x+box.width*.25,box.y+box.height*.25);await page.mouse.down();await page.mouse.move(box.x+box.width*.75,box.y+box.height*.75);await page.mouse.up();
       await page.getByRole('dialog',{name:'Add crop to question bank'}).waitFor();
@@ -52,8 +53,11 @@ test('PDF crops create nested revisioned questions through the gated real core a
     await crop();await page.getByRole('button',{name:/^Sub-part 1\(a\)\(i\)/}).click();
     await page.locator('[aria-label="Add next crops to 1(a)(i)"][aria-pressed=true]').waitFor();
     await page.waitForFunction(()=>document.querySelectorAll('article img').length===4);
-    await page.getByRole('button',{name:'Move down',exact:true}).first().click();
-    await page.getByRole('button',{name:'Remove crop',exact:true}).last().click();
+    await page.getByRole('button',{name:'Crop actions',exact:true}).first().click();
+    await page.getByRole('menuitem',{name:'Move down',exact:true}).click();
+    await page.getByRole('menu').waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Crop actions',exact:true}).last().click();
+    await page.getByRole('menuitem',{name:'Remove crop',exact:true}).click();
     await page.waitForFunction(()=>document.querySelectorAll('article img').length===3);
     bank=await call('question_bank_get',{moduleId:module});assert.deepEqual(bank.revisions[first],rev,'published revision stays immutable');
     assert.equal(Object.keys(bank.answers).length,0,'no answer/ink stage is authored');
@@ -66,9 +70,10 @@ test('PDF crops create nested revisioned questions through the gated real core a
     assert.equal(await page.locator('article [aria-pressed=true]').count(),1,'with nothing remembered the last part is the default target');
     await crop();
     await page.getByRole('button',{name:/^Part /}).waitFor();await page.getByRole('button',{name:/^Add to /}).waitFor();
-    await page.keyboard.press('Escape');
-    const label=page.locator('article[aria-label="Question 1"] button[title="Double-click to rename"]').first();
-    await label.dblclick();await page.getByRole('textbox',{name:'Name'}).fill('A1');await page.keyboard.press('Enter');
+    await page.getByRole('button', {name: /^Discard/}).click();
+    const label=page.locator('article[aria-label="Question 1"] button[title="Right-click to rename"]').first();
+    await label.click({button:'right'});
+    await page.getByRole('menuitem',{name:'Rename question',exact:true}).click();await page.getByRole('textbox',{name:'Name'}).fill('A1');await page.keyboard.press('Enter');
     await page.locator('article[aria-label="Question 1"]').getByRole('button',{name:/^Add next crops to A1/}).first().waitFor();
     bank=await call('question_bank_get',{moduleId:module});assert.equal(bank.questions[qid].title,'A1');
     await page.reload();await page.locator('article img').first().waitFor();

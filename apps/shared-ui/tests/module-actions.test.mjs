@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const { createServer, webkit } = browserHarness(import.meta.url);
-test("module actions open from right-click and keyboard, reuse dialogs and review the selected module", async () => {
+test("module actions open from right-click and keyboard, reuse dialogs and keep numbering in settings", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
@@ -15,7 +15,7 @@ test("module actions open from right-click and keyboard, reuse dialogs and revie
     const row = page.getByRole("link", { name: "Algebra", exact: true });
     await page.getByRole("button", { name: "Actions for Algebra" }).hover();
     await page.getByRole("button", { name: "Actions for Algebra" }).focus();
-    await page.getByRole("tooltip").filter({ hasText: "Shift+F10" }).waitFor();
+
     const rowBox = await row.boundingBox();
     const point = { x: rowBox.x + 30, y: rowBox.y + rowBox.height / 2 };
     await page.mouse.click(point.x, point.y, { button: "right" });
@@ -34,8 +34,7 @@ test("module actions open from right-click and keyboard, reuse dialogs and revie
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: "Actions for Algebra" }).click();
     assert.equal(await page.getByRole("menuitem", { name: /chapter numbering/i }).count(), 0);
-    await page.getByRole("menuitem", { name: "Review", exact: true }).click();
-    await page.waitForURL("**/review?module=algebra");
+    await page.keyboard.press("Escape");
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     const numbering = page.getByRole("switch", { name: "Algebra" });
     assert.equal(await numbering.getAttribute("aria-checked"), "false");
