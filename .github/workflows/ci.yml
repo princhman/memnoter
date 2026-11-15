@@ -51,7 +51,6 @@ jobs:
           node-version: lts/*
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/tests/ios-live-plist.test.mjs
       - run: pnpm build
       - run: pnpm lint
 
@@ -94,6 +93,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/tests/ios-live-plist.test.mjs
+        if: matrix.shard == 1
       - run: pnpm --filter memnoter-shared-ui exec playwright install webkit chromium
       - run: pnpm --filter memnoter-shared-ui test:ci --test-shard=${{ matrix.shard }}/2
 
