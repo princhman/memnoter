@@ -703,17 +703,22 @@ struct RootView: View {
                         Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
                             .accessibilityLabel("Redo")
                     }
+                    // Note actions belong to notes; a worksheet has no PDF pane either.
+                    if selected != "questions" {
                     ToolbarItem(placement: .primaryAction) {
                         Menu { noteActions(session) } label: { Image(systemName: "ellipsis") }
                             .accessibilityLabel("Note actions")
                             .accessibilityValue(session.saveStatus)
                     }
+                    }
+                    if session.worksheetChrome == nil {
                     ToolbarItem(placement: .primaryAction) {
                         Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
                             .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
                             .accessibilityValue(session.filesOpen ? "Open" : "Closed")
                             .keyboardShortcut("d", modifiers: [.command, .shift])
                             .disabled(busy || !session.ready)
+                    }
                     }
                 }
             }

@@ -294,7 +294,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
           aria-label="Insert"
           // A stable gutter keeps the rows the same width whether or not
           // filtering leaves enough items to scroll.
-          className="min-h-0 max-h-72 overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
+          className="min-h-0 max-h-[min(18rem,var(--suggestion-max-height,18rem))] overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
         >
         {items.map((item, index) => (
           <Fragment key={item.id ?? item.title}>
