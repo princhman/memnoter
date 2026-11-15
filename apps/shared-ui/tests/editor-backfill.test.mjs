@@ -43,7 +43,7 @@ test('editor-only host backfills closed two-way notes and publishes synced card 
       } else if (command === 'sync_cards') writes.push(args);
       else if (command === 'add_update') result = { id: writes.length + 1, bytes: args.bytes };
       else if (!['modules', 'card_schedules', 'index_note'].includes(command)) throw Error(`Unexpected command: ${command}`);
-      void page.evaluate(({ id, result }) => window.__memnoterBridge.resolve(id, result), { id, result });
+      return page.evaluate(({ id, result }) => window.__memnoterBridge.resolve(id, result), { id, result });
     });
     await page.addInitScript(() => {
       window.installTestBridge({ native: message => { void window.nativeMessage(message); } });
