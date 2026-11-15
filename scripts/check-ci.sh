@@ -20,6 +20,7 @@ for arg in "$@"; do
 done
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
 failed=()
 run() {
   local name=$1; shift
@@ -27,7 +28,7 @@ run() {
   if ! "$@"; then failed+=("$name"); fi
 }
 
-# Job: check (macos-latest)
+# Jobs: frontend, web, rust
 run "iOS live configuration" node --test scripts/tests/ios-live-plist.test.mjs
 run "build" pnpm build
 run "lint" pnpm lint
