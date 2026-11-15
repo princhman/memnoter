@@ -38,8 +38,6 @@ import UniformTypeIdentifiers
         guard completion == nil, request == nil else {
             throw NSError(domain: "WorksheetDrawing", code: 1, userInfo: [NSLocalizedDescriptionKey: "Save or close the current answer drawing first."])
         }
-        let enabled: Bool = try await client.call("question_bank_enabled", Empty())
-        guard enabled else { throw CocoaError(.fileWriteNoPermission) }
         // Validate the pinned answer against the live core before showing ink.
         let owner = next.answer!
         let _: JSONValue = try await client.call("worksheet_answer_document_load", WorksheetDrawingOwnerArgs(

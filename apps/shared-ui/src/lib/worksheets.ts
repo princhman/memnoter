@@ -1,6 +1,5 @@
 import * as Y from "yjs";
 
-// Read/preserve release only. No constructor or mutation command is exported.
 export const WORKSHEET_ROOT = "worksheets";
 export const WORKSHEET_SCHEMA_VERSION = 1;
 export type WorksheetInkRevision = { sourceId: string; previewId: string };
@@ -19,9 +18,7 @@ export type WorksheetAnswer = {
 };
 
 // A root unknown to this build must not enter an editor or asset collector.
-// Worksheet documents are also read-only until the authoring release. Checking
-// doc.share avoids creating roots just by opening a legacy module.
+// Checking doc.share avoids creating roots just by opening a legacy module.
 export function hasReadOnlyModuleRoots(doc: Y.Doc): boolean {
-  const authoring = import.meta.env.VITE_QUESTION_BANK_DEV === true;
-  return [...doc.share.keys()].some(name => name !== "default" && !(authoring && name === WORKSHEET_ROOT));
+  return [...doc.share.keys()].some(name => name !== "default" && name !== WORKSHEET_ROOT);
 }

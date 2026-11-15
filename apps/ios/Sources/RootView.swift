@@ -114,8 +114,6 @@ struct RootView: View {
                 columnVisibility = sidebarVisible ? .all : .detailOnly
                 if isPhone, selected != "home" { phoneColumn = .detail }
                 let restored = WebSession(client: client, directory: store.directory, preferences: store.preferences)
-                await restored.refreshQuestionBankGate()
-                if selected == "questions", !restored.questionBankEnabled { selected = "home" }
                 if let questionsModule, !store.modules.contains(where: { $0.id == questionsModule }) { self.questionsModule = nil }
                 session = restored
                 store.sync?.onFile = { module, json in
@@ -129,7 +127,7 @@ struct RootView: View {
                     guard let restored else { return }
                     Task {
                         do {
-                            if selected == "questions", restored.questionBankEnabled { try await restored.openQuestions(questionsModule) }
+                            if selected == "questions" { try await restored.openQuestions(questionsModule) }
                             else if let selected, store.modules.contains(where: { $0.id == selected }) { try await restored.open(selected) }
                         } catch { store.error = String(describing: error) }
                     }
@@ -229,9 +227,6 @@ struct RootView: View {
 
     private var navigationWithRequests: AnyView {
         navigationWithAlerts
-        .onChange(of: session?.ready) { _, ready in
-            if ready == true { Task { await session?.refreshQuestionBankGate() } }
-        }
         .onChange(of: session?.questionsOpen) { _, _ in synchronizeQuestions() }
         .onChange(of: session?.questionsModuleId) { _, _ in synchronizeQuestions() }
         .onChange(of: session?.requestedModule) { _, _ in handleModuleRequest() }
@@ -418,7 +413,7 @@ struct RootView: View {
                 }
             }
             destinationLink("files") { Label("Files", systemImage: "doc.text") }
-            if session?.questionBankEnabled == true {
+            if session != nil {
                 destinationLink("questions") { Label("Questions", systemImage: "questionmark.circle") }
             }
         })
@@ -771,7 +766,7 @@ struct RootView: View {
         } else {
             TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
                              item: breadcrumbItem,
-                             questionsEnabled: session?.questionBankEnabled == true,
+                             questionsEnabled: session != nil,
                              maximumWidth: tabletBreadcrumbWidth,
                              changeScope: changeSectionScope, changeSection: selectSection)
                 .disabled(busy)
@@ -783,7 +778,7 @@ struct RootView: View {
                 Picker("Module section", selection: Binding(get: { currentSection }, set: { selectSection($0) })) {
                     Text("Notes").tag("notes")
                     Text("Files").tag("files")
-                    if session?.questionBankEnabled == true { Text("Questions").tag("questions") }
+                    if session != nil { Text("Questions").tag("questions") }
                     Text("Review").tag("review")
                 }
             } label: {
@@ -840,7 +835,7 @@ struct RootView: View {
     }
     private func synchronizeQuestions() {
         guard !busy, let session, session.ready, module != nil || selected == "questions" else { return }
-        if session.questionsOpen, session.questionBankEnabled {
+        if session.questionsOpen {
             questionsModule = session.questionsModuleId
             selected = "questions"
             showingFind = false
@@ -866,7 +861,7 @@ struct RootView: View {
                 Button { session.pdfCommand(.toggleSelect) } label: {
                     Label("Quote region", image: "Pdf-square-dashed-mouse-pointer")
                 }.disabled(!reader.canSelect && !reader.selecting)
-                if session.questionBankEnabled { PdfQuestionCropToggle(session: session, reader: reader) }
+                PdfQuestionCropToggle(session: session, reader: reader)
                 Button { session.pdfCommand(.toggleAnnotate) } label: {
                     Label("Annotate area", image: "Pdf-highlighter")
                 }.disabled(!reader.canAnnotate && !reader.annotating)
@@ -1023,7 +1018,7 @@ struct RootView: View {
     }
     /// Folder rows are tagged by the List's ForEach too; only pages and modules navigate.
     private func isDestination(_ id: String) -> Bool {
-        (["home", "review", "files"].contains(id) || (id == "questions" && session?.questionBankEnabled == true)) || store.modules.contains { $0.id == id }
+        ["home", "review", "files", "questions"].contains(id) || store.modules.contains { $0.id == id }
     }
     @ViewBuilder private func folderRow(_ item: SidebarItem) -> some View {
         Button {
@@ -1085,7 +1080,7 @@ struct RootView: View {
         Button("Rename") { rename = module; name = module.name; editingName = true }
         Button("Review") { reviewModule = module.id; navigate("review") }
         Button("Files", systemImage: "doc.text") { filesModuleFilter = module.id; navigate("files") }
-        if session?.questionBankEnabled == true {
+        if session != nil {
             Button("Questions", systemImage: "questionmark.circle") { navigate("questions", questionScope: module.id) }
         }
         Button("Add PDF…", systemImage: "doc.badge.plus") { beginPdfImport(module.id) }
@@ -1169,7 +1164,7 @@ struct RootView: View {
         _ = try await session.callEditor(.pdfCommand, ["command": PdfCommand.openFile.rawValue, "value": document.id], parameters: ["command", "value"])
     }
     func navigate(_ destination: String, questionScope: String? = nil) {
-        guard !busy, destination != "questions" || session?.questionBankEnabled == true else { return }
+        guard !busy else { return }
         busy = true
         Task {
             defer { busy = false }
@@ -1410,7 +1405,7 @@ private struct TabletPdfTools: View {
                 PdfPageButton(session: session, reader: reader)
                 PdfModeButton(title: "Quote region", image: "Pdf-square-dashed-mouse-pointer", active: reader.selecting,
                               enabled: reader.canSelect || reader.selecting) { session.pdfCommand(.toggleSelect) }
-                if session.questionBankEnabled { PdfQuestionCropToggle(session: session, reader: reader) }
+                PdfQuestionCropToggle(session: session, reader: reader)
                 if expanded {
                     PdfModeButton(title: "Annotate area", image: "Pdf-highlighter", active: reader.annotating,
                                   enabled: reader.canAnnotate || reader.annotating) { session.pdfCommand(.toggleAnnotate) }

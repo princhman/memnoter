@@ -599,11 +599,8 @@ final class DrawingCanvas: PKCanvasView {
 
     // Entry for a future anchored worksheet surface using this same model and
     // PKCanvasView. No note commands or note flush participate in publication.
-    // Keep the existing offline-development admission checks in Rust intact.
     func saveAnswer(asCopy: Bool) async throws {
         guard let answer = request.answer else { throw CocoaError(.validationMissingMandatoryProperty) }
-        let enabled: Bool = try await client.call("question_bank_enabled", Empty())
-        guard enabled else { throw CocoaError(.fileWriteNoPermission) }
         let key = try answer.key
         let bank: DrawingAnswerBank? = try await client.call("question_bank_get", ModuleArgs(moduleId: request.module.id))
         // A removed published canvas is not a new canvas, including Save a copy.

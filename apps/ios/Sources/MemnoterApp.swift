@@ -58,7 +58,7 @@ import Darwin
             preferences = UserDefaults(suiteName: "com.memnoter.uitests.\(testID)")!
         } else { preferences = .standard }
         if bankRequested && !bankDevelopment {
-            startupFailure = "Question bank development requires a Debug app and Debug Rust core."
+            startupFailure = "The isolated development vault requires a Debug app."
         }
         recentModuleIds = preferences.stringArray(forKey: "recentModuleIds") ?? []
     }
@@ -82,12 +82,6 @@ import Darwin
             if questionBankDevelopment { try prepareQuestionBankVault() }
             #endif
             let opened = try await CoreClient.open(directory)
-            if questionBankDevelopment {
-                let enabled: Bool = try await opened.call("question_bank_enabled", Empty())
-                guard enabled else {
-                    throw NSError(domain: "QuestionBankDevelopment", code: 1, userInfo: [NSLocalizedDescriptionKey: "Question bank gate is closed. Install with scripts/ios-install.sh --question-bank-dev to rebuild the Debug Rust core. No production vault was opened."])
-                }
-            }
             client = opened
             await refresh()
             if !questionBankDevelopment, let client {
@@ -165,8 +159,7 @@ import Darwin
         let canonicalPath = String(cString: resolved)
         free(resolved)
         try (canonicalPath + "\n").write(to: marker, atomically: true, encoding: .utf8)
-        guard setenv("MEMNOTER_DATA_DIR", canonicalPath, 1) == 0,
-              setenv("MEMNOTER_QUESTION_BANK_DEV", "1", 1) == 0 else {
+        guard setenv("MEMNOTER_DATA_DIR", canonicalPath, 1) == 0 else {
             throw failure("Could not configure the question bank development environment.")
         }
         directory = vault

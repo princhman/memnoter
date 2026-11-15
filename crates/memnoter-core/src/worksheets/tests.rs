@@ -686,3 +686,165 @@ fn finish_retains_answers_and_pins_and_rejects_further_writes() {
     assert!(attempts::save_canvas(&core, module.clone(), attempt, pin.revision_id.clone(), leaf, uuid::Uuid::new_v4().to_string(), uuid::Uuid::new_v4().to_string(), uuid::Uuid::new_v4().to_string(), None, 100.0, 100.0, false).is_err());
     assert_eq!(bank::get(&core, module).unwrap().unwrap(), finished);
 }
+
+fn generation(core: &Core) -> String {
+    serde_json::to_value(sync::sync_status(&core.db).unwrap()).unwrap()["generation"].as_str().unwrap().to_owned()
+}
+
+// Exercise production vault + module transport and the file download boundary.
+fn replicate(source: &Core, peer: &Core, module: &str, seq: i64) {
+    let source_generation = generation(source);
+    let entries = ["vault", module].into_iter().enumerate().map(|(index, doc)| {
+        json!({"seq": seq + index as i64, "doc": doc,
+            "bytes": sync::sync_snapshot(&source.db, doc.into(), source_generation.clone()).unwrap().unwrap()})
+    }).collect::<Vec<_>>();
+    let peer_generation = generation(peer);
+    // Deliver file metadata and bytes before the note, as real independent
+    // upload/download queues can. Cleanup must be harmless in this interval.
+    sync::sync_apply(peer.data_dir(), &peer.db, serde_json::from_value(json!([entries[0]])).unwrap(), seq, peer_generation.clone()).unwrap();
+    let missing = serde_json::to_value(sync::sync_missing_files(&peer.db, peer_generation.clone()).unwrap()).unwrap();
+    for file in missing.as_array().unwrap() {
+        let id = file["fileId"].as_str().unwrap();
+        let data = std::fs::read(files::assets::path(source.data_dir(), id).unwrap()).unwrap();
+        sync::sync_store_file(peer.data_dir(), &peer.db, id.into(), file["moduleId"].as_str().unwrap().into(), file["fileType"].as_str().unwrap().into(), data.clone(), peer_generation.clone()).unwrap();
+        assert_eq!(std::fs::read(files::assets::path(peer.data_dir(), id).unwrap()).unwrap(), data);
+        assert!(cleanup(peer, file["moduleId"].as_str().unwrap(), id).is_empty(), "downloads must survive cleanup before publication");
+    }
+    sync::sync_apply(peer.data_dir(), &peer.db, serde_json::from_value(json!([entries[1]])).unwrap(), seq + 1, peer_generation.clone()).unwrap();
+    assert!(sync::sync_missing_files(&peer.db, peer_generation).unwrap().is_empty());
+}
+
+fn answer_doc(text: &str, image: Option<&str>, drawing_source: Option<&str>) -> Vec<u8> {
+    use yrs::{Xml, XmlFragment};
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("default");
+    let mut txn = doc.transact_mut();
+    let p = fragment.push_back(&mut txn, yrs::XmlElementPrelim::empty("paragraph"));
+    p.push_back(&mut txn, yrs::XmlTextPrelim::new(text));
+    if let Some(id) = image {
+        let node = fragment.push_back(&mut txn, yrs::XmlElementPrelim::empty("image"));
+        node.insert_attribute(&mut txn, "fileId", id);
+        if let Some(source) = drawing_source {
+            node.insert_attribute(&mut txn, "drawing", Any::from_json(&json!({
+                "version": 1, "sourceId": source, "previewId": id
+            }).to_string()).unwrap());
+        }
+    }
+    drop(txn);
+    bytes(&doc)
+}
+
+fn cleanup(core: &Core, module: &str, id: &str) -> Vec<String> {
+    let snapshot = content::get_content(&core.db, module.into()).unwrap();
+    let watermark = snapshot.updates.iter().map(|u| u.id).max().unwrap_or(0);
+    files::cleanup_files(core.data_dir(), &core.db, module.into(), vec![id.into()], snapshot.state, watermark).unwrap()
+}
+
+#[test]
+fn answer_upload_survives_cleanup_before_publication_and_releases_after_undo_session() {
+    let (dir, core, module) = core();
+    let value = fixture();
+    let bank: Bank = serde_json::from_value(value.clone()).unwrap();
+    assets(&core, &module, &bank);
+    content::add_update(&core.db, module.clone(), bytes(&document(&value))).unwrap();
+    let owner = bank.answers.values().next().unwrap();
+    let image = files::save_file(core.data_dir(), &core.db, module.clone(), b"pending answer image".to_vec(), "image/png".into()).unwrap().id;
+    assert!(cleanup(&core, &module, &image).is_empty(), "a note load must not collect an uncommitted answer image");
+    drop(core);
+    let core = Core::open(&dir.0).unwrap();
+    assert!(cleanup(&core, &module, &image).is_empty(), "pending draft assets survive restart");
+    let save = |document| {
+        let loaded = attempts::load_answer_document(&core, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone()).unwrap();
+        let expected = serde_json::to_value(loaded).unwrap()["expected"].as_str().unwrap().into();
+        attempts::save_answer_document(&core, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone(), document, expected).unwrap();
+    };
+    save(answer_doc("Published", Some(&image), None));
+    assert!(cleanup(&core, &module, &image).is_empty());
+    save(answer_doc("Image deliberately removed", None, None));
+    let state = load(&core.db.lock().unwrap(), &module).unwrap();
+    content::save_compaction(&core.db, module.clone(), bytes(&state), i64::MAX).unwrap();
+    assert!(cleanup(&core, &module, &image).is_empty(), "live undo retains published assets through compaction");
+    drop(core);
+    let core = Core::open(&dir.0).unwrap();
+    assert_eq!(cleanup(&core, &module, &image), vec![image.clone()], "published leases end after the undo session when no current reference remains");
+    assert!(!files::assets::path(core.data_dir(), &image).unwrap().exists());
+    for id in bank.assets() {
+        assert!(files::assets::path(core.data_dir(), &id).unwrap().is_file(), "pinned crop and drawing history must stay available");
+    }
+}
+
+#[test]
+fn offline_answer_replacements_converge_without_losing_either_devices_text_or_images() {
+    for first_answer in [true, false] {
+        let (_dir, core, module) = core();
+        let (_peer_dir, peer, _) = self::core();
+        let mut value = fixture();
+        let owner: Answer = serde_json::from_value(value["answers"].as_object().unwrap().values().next().unwrap().clone()).unwrap();
+        if first_answer { value["answers"] = json!({}); }
+        let bank: Bank = serde_json::from_value(value.clone()).unwrap();
+        assets(&core, &module, &bank);
+        content::add_update(&core.db, module.clone(), bytes(&document(&value))).unwrap();
+        sync::sync_enable(&core.db, "account".into()).unwrap();
+        sync::sync_enable(&peer.db, "account".into()).unwrap();
+        replicate(&core, &peer, &module, 1);
+        let mut image_ids = Vec::new();
+        for (device, text) in [(&core, "Device A answer"), (&peer, "Device B answer")] {
+            let loaded = attempts::load_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone()).unwrap();
+            let expected = serde_json::to_value(loaded).unwrap()["expected"].as_str().unwrap().into();
+            let image = files::save_file(device.data_dir(), &device.db, module.clone(), text.as_bytes().to_vec(), "image/png".into()).unwrap().id;
+            let source = files::save_file(device.data_dir(), &device.db, module.clone(), br#"{"strokes":[]}"#.to_vec(), "application/vnd.memnoter.drawing+json".into()).unwrap().id;
+            attempts::save_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone(), answer_doc(text, Some(&image), Some(&source)), expected).unwrap();
+            assert!(sync::sync_pending_uploads(&device.db, generation(device)).unwrap().contains(&source));
+            image_ids.push(source);
+            assert!(sync::sync_pending_uploads(&device.db, generation(device)).unwrap().contains(&image));
+            image_ids.push(image);
+        }
+        replicate(&core, &peer, &module, 3);
+        replicate(&peer, &core, &module, 5);
+        let merged = bank::get(&core, module.clone()).unwrap().unwrap();
+        let without_display = |mut bank: Bank| {
+            for answer in bank.answers.values_mut() { answer.text.clear(); }
+            bank
+        };
+        // XML display strings do not canonicalize Any-map attribute ordering.
+        // Compare the typed answer token and the remaining metadata separately.
+        let answer_token = |device: &Core| {
+            let loaded = attempts::load_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone()).unwrap();
+            serde_json::to_value(loaded).unwrap()["expected"].as_str().unwrap().to_owned()
+        };
+        let merged_token = answer_token(&core);
+        assert_eq!(answer_token(&peer), merged_token);
+        assert_eq!(without_display(merged.clone()), without_display(bank::get(&peer, module.clone()).unwrap().unwrap()));
+        let answer = &merged.answers[&serde_json::to_string(&[&owner.attempt_id, &owner.revision_id, &owner.leaf_part_id]).unwrap()];
+        assert!(answer.text.contains("Device A answer") && answer.text.contains("Device B answer"), "offline first={first_answer}: {}", answer.text);
+        let current = document_assets(&load(&core.db.lock().unwrap(), &module).unwrap()).unwrap();
+        for image in image_ids { assert!(current.contains(&image)); assert!(cleanup(&core, &module, &image).is_empty()); }
+        // A stale same-device editor must still get a conflict, keeping its draft.
+        assert!(attempts::save_answer_document(&core, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone(), answer_doc("stale", None, None), "[]".into()).err().unwrap().to_string().contains("changed elsewhere"));
+        attempts::finish(&core, module.clone(), owner.attempt_id.clone()).unwrap();
+        replicate(&core, &peer, &module, 7);
+        let finished = bank::get(&peer, module.clone()).unwrap().unwrap();
+        assert!(finished.attempts[&owner.attempt_id].finished);
+        assert_eq!(answer_token(&peer), merged_token);
+        assert_eq!(without_display(finished).answers, without_display(merged).answers);
+    }
+}
+
+#[test]
+fn first_bank_questions_created_offline_on_two_devices_both_survive_sync() {
+    let (_dir, core, module) = core();
+    let (_peer_dir, peer, _) = self::core();
+    sync::sync_enable(&core.db, "account".into()).unwrap();
+    sync::sync_enable(&peer.db, "account".into()).unwrap();
+    replicate(&core, &peer, &module, 1);
+    let mut question_ids = HashSet::new();
+    for (device, title) in [(&core, "From Mac"), (&peer, "From iPad")] {
+        let receipt = bank::edit(device, module.clone(), serde_json::from_value(json!({"kind":"newQuestion", "title":title})).unwrap()).unwrap();
+        question_ids.insert(receipt.question_id);
+    }
+    replicate(&core, &peer, &module, 3);
+    replicate(&peer, &core, &module, 5);
+    let merged = bank::get(&core, module.clone()).unwrap().unwrap();
+    assert_eq!(merged.questions.keys().cloned().collect::<HashSet<_>>(), question_ids);
+    assert_eq!(bank::get(&peer, module).unwrap(), Some(merged));
+}

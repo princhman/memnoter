@@ -1,4 +1,4 @@
-//! Read/preserve worksheet storage. No authoring command is exposed in this release.
+//! Shared, synced question banks and worksheet storage.
 //! One module-local Y.Map, outside `default`; revisions (including their part
 //! and crop maps) are immutable. Unknown roots/versions quarantine mutations.
 use crate::{db_err, CommandResult};
@@ -94,6 +94,16 @@ pub struct Canvas {
 pub struct InkRevision {
     pub source_id: String,
     pub preview_id: String,
+}
+
+// Reserved, reproducible Yjs identities for fixed container initialization only.
+// Never use these clients for user content. 48 bits fit losslessly in JS.
+fn initialization_client(domain: &str, owner: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("memnoter:{domain}:v1:{owner}"));
+    let mut client = [0u8; 8];
+    client[2..].copy_from_slice(&hash[..6]);
+    u64::from_be_bytes(client)
 }
 
 fn invalid() -> String {

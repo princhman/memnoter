@@ -1,29 +1,11 @@
-//! Development-only authoring. The marker is created only by dev-copy --empty;
-//! it is path-bound, debug-only and cannot be used with sync enabled.
+//! Revisioned question bank authoring.
 use super::*;
 use crate::{Core, CoreError};
 use yrs::{Any, ArrayPrelim, In, MapPrelim};
 
 pub const DEV_MARKER: &str = ".question-bank-development";
-pub(crate) fn isolated(db: &crate::Db) -> bool {
-    let Ok(path) = db.data_dir.canonicalize() else {
-        return false;
-    };
-    std::fs::read_to_string(path.join(DEV_MARKER))
-        .ok()
-        .is_some_and(|value| value.trim() == path.to_string_lossy())
-}
-pub fn enabled(core: &Core) -> CommandResult<bool> {
-    if !(cfg!(debug_assertions)
-        && std::env::var("MEMNOTER_QUESTION_BANK_DEV").as_deref() == Ok("1")
-        && std::env::var_os("MEMNOTER_DATA_DIR").and_then(|p| std::fs::canonicalize(p).ok())
-            == core.data_dir().canonicalize().ok()
-        && isolated(&core.db))
-    {
-        return Ok(false);
-    }
-    let conn = core.db.lock()?;
-    Ok(!crate::sync::is_enabled(&conn)?)
+pub fn enabled(_core: &Core) -> CommandResult<bool> {
+    Ok(true)
 }
 pub fn get(core: &Core, module: String) -> CommandResult<Option<Bank>> {
     let conn = core.db.lock()?;
@@ -128,16 +110,7 @@ fn next_question_label(bank: &Bank) -> String {
     String::from_utf8(digits).expect("decimal label")
 }
 pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreError> {
-    if !enabled(core)? {
-        return Err(
-            "Question bank authoring is disabled outside an opted-in, offline development vault"
-                .into(),
-        );
-    }
     let mut conn = core.db.lock()?;
-    if crate::sync::is_enabled(&conn)? {
-        return Err("Development question banks cannot sync".into());
-    }
     let tx = conn.transaction().map_err(db_err)?;
     let doc = load(&tx, &module)?;
     let old = read(&doc)?;
@@ -330,9 +303,8 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             let mut pending = vec![pid.clone()];
             while let Some(id) = pending.pop() {
                 if subtree.insert(id.clone()) {
-                    pending.extend(revision.parts.iter().filter_map(|(child, part)| {
-                        (part.parent_id.as_ref() == Some(&id)).then(|| child.clone())
-                    }));
+                    pending.extend(revision.parts.iter().filter(|(_, part)| part.parent_id.as_ref() == Some(&id))
+                        .map(|(child, _)| child.clone()));
                 }
             }
             if edit.kind == "reparentPart" {
@@ -439,9 +411,8 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
                 if !removed.insert(id.clone()) {
                     continue;
                 }
-                pending.extend(revision.parts.iter().filter_map(|(child_id, part)| {
-                    (part.parent_id.as_ref() == Some(&id)).then(|| child_id.clone())
-                }));
+                pending.extend(revision.parts.iter().filter(|(_, part)| part.parent_id.as_ref() == Some(&id))
+                    .map(|(child_id, _)| child_id.clone()));
             }
             // Only the new revision loses this subtree; existing attempts
             // continue to reference their original parts and crop assets.
@@ -603,14 +574,23 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             bank.revisions.insert(rid, target_revision);
         }
         bank.validate()?;
-        let root = doc.get_or_insert_map(ROOT);
-        let mut txn = doc.transact_mut();
+        let before = doc.transact().state_vector();
         if old.is_none() {
+            // Two devices can add their first questions offline. The bank's
+            // shared containers must have identical identities on both, too.
+            let seed = Doc::with_client_id(initialization_client("worksheet-bank-init", &module));
+            let root = seed.get_or_insert_map(ROOT);
+            let mut txn = seed.transact_mut();
             root.insert(&mut txn, "schemaVersion", 1);
             for key in ["questions", "revisions", "attempts", "answers"] {
                 root.insert(&mut txn, key, MapPrelim::default());
             }
+            let update = txn.encode_update_v1();
+            drop(txn);
+            doc.transact_mut().apply_update(Update::decode_v1(&update).map_err(db_err)?).map_err(db_err)?;
         }
+        let root = doc.get_or_insert_map(ROOT);
+        let mut txn = doc.transact_mut();
         let Out::YMap(questions) = root.get(&txn, "questions").ok_or_else(invalid)? else {
             return Err(invalid());
         };
@@ -631,7 +611,7 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
                 revisions.insert(&mut txn, rid.as_str(), input(serde_json::to_value(&bank.revisions[rid]).map_err(db_err)?));
             }
         }
-        let update = txn.encode_update_v1();
+        let update = txn.encode_diff_v1(&before);
         drop(txn);
         admit(&tx, &module, old, &doc)?;
         tx.execute(
@@ -694,7 +674,7 @@ mod tests {
         )
     }
     #[test]
-    fn development_gate_revisioned_edits_and_offline_crop_retention() {
+    fn release_authoring_revisioned_edits_and_synced_crop_retention() {
         let _lock = super::super::DEV_TEST_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!("bank-authoring-{}", uuid::Uuid::new_v4()));
         let core = Core::open(&dir).unwrap();
@@ -717,25 +697,8 @@ mod tests {
         crate::set_document_page_count(&core.db, pdf.id.clone(), 2).unwrap();
         let png=base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1cAAAAASUVORK5CYII=").unwrap();
         let crop = json!({"sourcePdfFileId":pdf.id,"pageIndex":0,"rect":[0.1,0.2,0.3,0.4],"rotation":90,"pixelSize":[1,1],"bytes":png});
-        assert!(apply(
-            &core,
-            &module,
-            None,
-            json!({"kind":"newQuestion","crop":crop})
-        )
-        .is_err());
-        std::env::set_var("MEMNOTER_DATA_DIR", dir.canonicalize().unwrap());
-        std::env::set_var("MEMNOTER_QUESTION_BANK_DEV", "1");
-        assert!(!enabled(&core).unwrap());
-        std::fs::write(dir.join(DEV_MARKER), "wrong directory").unwrap();
-        assert!(!enabled(&core).unwrap());
-        std::fs::write(
-            dir.join(DEV_MARKER),
-            dir.canonicalize().unwrap().to_string_lossy().as_bytes(),
-        )
-        .unwrap();
         assert!(enabled(&core).unwrap());
-        assert!(crate::sync::sync_enable(&core.db, "test-account".into()).is_err());
+        crate::sync::sync_enable(&core.db, "test-account".into()).unwrap();
         let first = apply(
             &core,
             &module,

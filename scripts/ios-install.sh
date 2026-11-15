@@ -7,7 +7,7 @@
 #   scripts/ios-install.sh --all         both devices, one build
 #   scripts/ios-install.sh --live        use the running pnpm dev:device server
 #   scripts/ios-install.sh --core        also rebuild the Rust core (after crates/ changes)
-#   scripts/ios-install.sh --question-bank-dev  Debug core + isolated offline bank vault
+#   scripts/ios-install.sh --question-bank-dev  isolated offline development vault
 #
 # IOS_DEVICE_ID   overrides the device list (see `xcrun devicectl list devices`)
 # IOS_QUESTION_BANK_SEED_DIR  optional offline snapshot directory for --question-bank-dev
@@ -55,13 +55,7 @@ for device in "${devices[@]}"; do
 done
 
 core_framework=$(ls -d apps/ios/MemnoterCore/*.xcframework 2>/dev/null | head -1 || true)
-if [ "$question_bank_dev" = true ]; then
-  # Always rebuild: an existing XCFramework may contain a release core, which
-  # correctly refuses the bank gate even when the Swift configuration is Debug.
-  ./scripts/build-ios-core.sh --debug
-  # The bundled editor must understand the same worksheet root as the Debug core.
-  export MEMNOTER_QUESTION_BANK_DEV=1
-elif [ "$core" = true ] || [ -z "$core_framework" ]; then
+if [ "$core" = true ] || [ -z "$core_framework" ]; then
   ./scripts/build-ios-core.sh
 fi
 ./scripts/build-ios-web.sh

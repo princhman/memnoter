@@ -1266,6 +1266,7 @@ fn apply_remote(
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
     for module_id in &touched {
+        crate::asset_refs::publish_current(&tx, module_id)?;
         crate::search::invalidate_indexes(&tx, module_id)?;
     }
     let previous = cursor(&tx)?;
@@ -1449,11 +1450,19 @@ fn store_file(
         .to_str()
         .ok_or("File path is not valid UTF-8")?
         .to_owned();
-    conn.execute(
+    let tx = conn.unchecked_transaction().map_err(db_err)?;
+    tx.execute(
         "insert or ignore into files (id, module_id, path, file_type) values (?1, ?2, ?3, ?4)",
         params![file_id, module_id, path_str, file_type],
     )
     .map_err(db_err)?;
+    // Downloads can outrun the note update that publishes their references.
+    // Keep this lease atomic with the file row, just like local answer uploads.
+    if file_type.starts_with("image/") || file_type == "application/vnd.memnoter.drawing+json" {
+        crate::asset_refs::retain_worksheet_asset(&tx, module_id, file_id, true)?;
+        crate::asset_refs::publish_current(&tx, module_id)?;
+    }
+    tx.commit().map_err(db_err)?;
     Ok(crate::FileType {
         id: file_id.to_string(),
         path: path_str,

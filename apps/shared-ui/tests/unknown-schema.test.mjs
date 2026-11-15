@@ -76,7 +76,7 @@ async function liveState(page) {
   return page.evaluate(async () => (await import('/tests/browser/unknown-schema.ts')).liveState());
 }
 
-for (const [kind, native] of [['node', false], ['mark', false], ['attribute', false], ['text attribute', false], ['mark attribute', false], ['root', false], ['worksheet', false], ['node', true]]) {
+for (const [kind, native] of [['node', false], ['mark', false], ['attribute', false], ['text attribute', false], ['mark attribute', false], ['root', false], ['node', true]]) {
   test(`opening an unknown ${kind}${native ? ' in the iOS host' : ''} preserves every byte through edits and idle`, async t => {
     const source = note(kind);
     const state = [...Y.encodeStateAsUpdate(source)];
@@ -153,5 +153,18 @@ for (const [native, kind] of [[false, "node"], [true, "node"], [false, "root"]])
     await page.waitForTimeout(2300);
     assert.deepEqual((await liveState(page)).bytes, [...Y.encodeStateAsUpdate(remote)]);
     source.destroy(); remote.destroy();
+  });
+}
+
+for (const native of [false, true]) {
+  test(`release notes with worksheets remain editable${native ? ' in iOS' : ''} without altering the bank`, async t => {
+    const source = note('worksheet');
+    const page = await open(t, [...Y.encodeStateAsUpdate(source)], native);
+    assert.equal((await liveState(page)).editable, true);
+    await page.evaluate(() => document.querySelector('.tiptap').editor.commands.insertContent('Updated '));
+    const result = new Y.Doc();
+    Y.applyUpdate(result, new Uint8Array((await liveState(page)).bytes));
+    assert.equal(result.getMap('worksheets').get('schemaVersion'), 1);
+    assert.match(result.getXmlFragment('default').toString(), /Updated/);
   });
 }

@@ -109,29 +109,6 @@ pub fn retain_module(
                 encoded_assets.insert(*id);
             }
         }
-        if txn
-            .root_refs()
-            .any(|(name, _)| name == crate::worksheets::ROOT)
-        {
-            // Retain same-module assets from retired revisions/conflict copies
-            // even when insertion and deletion share a single saved payload.
-            let ids = conn
-                .prepare("select id from files")
-                .map_err(db_err)?
-                .query_map([], |r| r.get::<_, String>(0))
-                .map_err(db_err)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(db_err)?;
-            for id in ids {
-                if !id.is_empty() && bytes.windows(id.len()).any(|part| part == id.as_bytes()) {
-                    conn.execute(
-                        "insert or ignore into shared_image_refs(module_id,file_id) values (?1,?2)",
-                        params![module_id, id],
-                    )
-                    .map_err(db_err)?;
-                }
-            }
-        }
         for id in encoded_assets {
             conn.execute(
                 "insert or ignore into shared_image_refs (module_id, file_id) values (?1, ?2)",
@@ -140,22 +117,6 @@ pub fn retain_module(
             .map_err(db_err)?;
         }
         drop(txn);
-        // Unknown roots/versions may refer to any managed file. Quarantine
-        // cleanup conservatively, including assets owned by this same module.
-        let worksheet_assets = match crate::worksheets::document_assets(&doc) {
-            Ok(assets) => assets,
-            Err(_) => conn
-                .prepare("select id from files")
-                .map_err(db_err)?
-                .query_map([], |r| r.get::<_, String>(0))
-                .map_err(db_err)?
-                .collect::<rusqlite::Result<std::collections::HashSet<_>>>()
-                .map_err(db_err)?,
-        };
-        for id in worksheet_assets {
-            conn.execute("insert or ignore into shared_image_refs (module_id,file_id) select ?1,id from files where id=?2",
-                params![module_id,id]).map_err(db_err)?;
-        }
         let txn = doc.transact();
         for id in crate::files::assets::note_images(&root, &txn) {
             conn.execute(
@@ -182,6 +143,15 @@ pub fn retain_module(
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(db_err)?,
         ),
+    }
+    for id in &current_assets {
+        conn.execute("update worksheet_asset_leases set pending=0 where module_id=?1 and file_id=?2",
+            params![module_id,id]).map_err(db_err)?;
+        // Own note images are protected by the current-tree check. Only
+        // worksheet/future roots need durable session leases for same-owner IDs.
+        if doc.transact().root_refs().any(|(name, _)| name != "default") {
+            retain_worksheet_asset(conn, module_id, id, false)?;
+        }
     }
     Ok(current_assets)
 }
@@ -221,4 +191,74 @@ pub(crate) fn is_leased(conn: &Connection, id: &str) -> CommandResult<bool> {
         }
     }
     Ok(false)
+}
+
+/// Worksheet leases have a session lifetime after publication, so answer undo
+/// remains usable even after compaction. Pending uploads survive process death
+/// until an answer containing them is durable (including local draft recovery).
+/// Unlike foreign-note undo leases, published worksheet leases are rebuilt at
+/// startup, when there is no live undo manager. Historical pinned crops and
+/// canvas copies are still current document references and remain protected.
+pub(crate) fn migrate_worksheet_leases(conn: &Connection) -> CommandResult<()> {
+    conn.execute_batch("create table if not exists worksheet_asset_leases (
+        module_id TEXT NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+        file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        pending INTEGER NOT NULL,
+        PRIMARY KEY(module_id,file_id)
+    );
+    insert or ignore into worksheet_asset_leases
+        select r.module_id,r.file_id,0 from shared_image_refs r join files f
+        on f.id=r.file_id and f.module_id=r.module_id;") .map_err(db_err)
+}
+
+pub(crate) fn retain_worksheet_asset(conn: &Connection, module: &str, file: &str, pending: bool) -> CommandResult<()> {
+    conn.execute("insert or ignore into shared_image_refs(module_id,file_id)
+        select ?1,id from files where id=?2", params![module,file]).map_err(db_err)?;
+    conn.execute("insert into worksheet_asset_leases(module_id,file_id,pending)
+        select ?1,id,?3 from files where id=?2 and module_id=?1
+        on conflict(module_id,file_id) do update set pending=min(pending,excluded.pending)",
+        params![module,file,pending]).map_err(db_err)?;
+    Ok(())
+}
+
+pub(crate) fn refresh_worksheet_leases(conn: &Connection) -> CommandResult<()> {
+    let tx = conn.unchecked_transaction().map_err(db_err)?;
+    tx.execute("delete from shared_image_refs where exists (
+        select 1 from worksheet_asset_leases w where w.module_id=shared_image_refs.module_id
+        and w.file_id=shared_image_refs.file_id and w.pending=0)", []).map_err(db_err)?;
+    tx.execute("delete from worksheet_asset_leases where pending=0", []).map_err(db_err)?;
+    let modules = tx.prepare("select module_id from contents").map_err(db_err)?
+        .query_map([], |r| r.get::<_, String>(0)).map_err(db_err)?
+        .collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)?;
+    for module in modules {
+        let assets = match crate::worksheets::load(&tx, &module)
+            .and_then(|doc| {
+                let mut assets = crate::worksheets::document_assets(&doc)?;
+                let txn = doc.transact();
+                if let Some(root) = txn.get_xml_fragment("default") {
+                    assets.extend(crate::files::assets::note_images(&root, &txn));
+                }
+                Ok(assets)
+            }) {
+            Ok(assets) => assets,
+            Err(_) => tx.prepare("select id from files").map_err(db_err)?
+                .query_map([], |r| r.get::<_, String>(0)).map_err(db_err)?
+                .collect::<rusqlite::Result<_>>().map_err(db_err)?,
+        };
+        for file in assets { retain_worksheet_asset(&tx, &module, &file, false)?; }
+    }
+    tx.commit().map_err(db_err)
+}
+
+// Publication may arrive before or after file bytes. Promote only references in
+// a complete, understood durable document; unknown/incomplete updates stay leased.
+pub(crate) fn publish_current(conn: &Connection, module: &str) -> CommandResult<()> {
+    let Ok(doc) = crate::worksheets::load(conn, module) else { return Ok(()); };
+    let Ok(mut assets) = crate::worksheets::document_assets(&doc) else { return Ok(()); };
+    let txn = doc.transact();
+    if let Some(root) = txn.get_xml_fragment("default") {
+        assets.extend(crate::files::assets::note_images(&root, &txn));
+    }
+    for file in assets { retain_worksheet_asset(conn, module, &file, false)?; }
+    Ok(())
 }

@@ -42,12 +42,10 @@ scripts/ios-install.sh --ipad --question-bank-dev
 # Add --live to use the running pnpm dev:device server.
 ```
 
-The helper always rebuilds the Rust core with `scripts/build-ios-core.sh --debug`
-for this option, builds the Swift app as Debug, then launches with the exact
-argument `--question-bank-dev`. A normal release Rust core cannot open the bank
-gate. No compile-time override of that gate is added. Before Release/TestFlight
-builds, run `scripts/build-ios-core.sh` without `--debug` and regenerate the
-Xcode project; the project refuses a Release build with a marked Debug core.
+Question banks and worksheets are enabled in normal Debug and Release builds,
+including with sync. This option only selects a separate offline development
+vault and preferences. Add `--core` when Rust sources changed. The usual
+Release/TestFlight core build remains `scripts/build-ios-core.sh`.
 
 For an already installed Debug app/core, an explicit physical iPad relaunch is:
 
@@ -64,11 +62,10 @@ and its returned `agent-device` command to install/open the app, supplying
 For Xcode, put that argument in Scheme → Run → Arguments Passed On Launch.
 
 Before opening the core, native startup provisions only the fixed sandbox path
-`Application Support/MemnoterQuestionBankDevelopment/v1`, outside `Memnoter`.
+`Application Support/MemnoterQuestionBankDevelopment/v2`, outside `Memnoter`.
 It creates a path-bound `.question-bank-development` marker only for a newly
-created vault, sets `MEMNOTER_DATA_DIR` to its canonical path and
-`MEMNOTER_QUESTION_BANK_DEV=1`, then requires `question_bank_enabled` to return
-true. Existing unmarked, moved or redirected directories cause startup to fail;
+created vault and sets `MEMNOTER_DATA_DIR` to its canonical path. Existing
+unmarked, moved or redirected directories cause startup to fail;
 there is no fallback to the real vault. The directory is excluded from device
 backups. Preferences use the separate `com.memnoter.question-bank-development.v1`
 suite. The sync coordinator is not created, so no Keychain login is loaded, and

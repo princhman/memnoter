@@ -172,7 +172,6 @@ private struct PdfViewStateRecord: Codable {
         }
     }
     let worksheetDrawing: WorksheetDrawingBridge
-    var questionBankEnabled = false
     var bankControls: BankToolbarState?
     var questionsOpen = false
     var worksheetChrome: WorksheetChrome?
@@ -184,9 +183,6 @@ private struct PdfViewStateRecord: Codable {
     // Retain the intended surface across WebKit/live-editor reloads.
     private var questionsRequested = false
     private var questionsScope: String?
-    func refreshQuestionBankGate() async {
-        questionBankEnabled = (try? await client.call("question_bank_enabled", Empty(), as: Bool.self)) == true
-    }
     var reviewState = ReviewState()
     var imagePreviewOpen = false
     var drawingToEdit: DrawingOpenEvent?
@@ -462,8 +458,6 @@ private struct PdfViewStateRecord: Codable {
     func flush() async throws { guard ready else { return }; try await serialized(.flush) }
     func openQuestions(_ scope: String?) async throws {
         guard ready else { throw URLError(.resourceUnavailable) }
-        await refreshQuestionBankGate()
-        guard questionBankEnabled else { throw CocoaError(.fileReadNoPermission) }
         try await worksheetDrawing.cancel()
         try await flush()
         try await serialized(.openQuestions, ["scope": scope as Any? ?? NSNull()], parameters: ["scope"])
@@ -631,7 +625,6 @@ private struct PdfViewStateRecord: Codable {
                     let nextChrome = chrome.title == nil ? nil : chrome
                     if worksheetChrome != nextChrome { worksheetChrome = nextChrome }
                 case .questionBankState:
-                    guard questionBankEnabled else { return }
                     let open = payload["open"] as? Bool == true
                     let scope = payload["moduleId"] as? String
                     if !open || scope != questionsModuleId { Task { try? await worksheetDrawing.cancel() } }

@@ -180,6 +180,14 @@ pub fn save_file(
             params![id, module_id, path_str, mime_type],
         )
         .map_err(db_err)?;
+        // A note's first-load cleanup can race a worksheet image paste. Lease
+        // uploads before returning their IDs, then promote only after the
+        // worksheet's reference has committed. Unknown roots fail closed too.
+        let has_content: bool = tx.query_row("select exists(select 1 from contents where module_id=?1)", [&module_id], |r| r.get(0)).map_err(db_err)?;
+        if has_content && !matches!(crate::worksheets::load(&tx, &module_id)
+            .and_then(|doc| crate::worksheets::read(&doc)), Ok(None)) {
+            crate::asset_refs::retain_worksheet_asset(&tx, &module_id, &id, true)?;
+        }
         sync::record_file(&tx, &id, &module_id, &mime_type)?;
         tx.commit().map_err(db_err)
     })();

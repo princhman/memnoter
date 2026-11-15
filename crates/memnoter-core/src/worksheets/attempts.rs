@@ -1,4 +1,4 @@
-//! Worksheet attempts, restricted to the question bank's offline dev vault.
+//! Durable worksheet attempts and answers.
 use super::*;
 use crate::{Core, CoreError};
 use yrs::{
@@ -24,25 +24,20 @@ pub struct SaveReceipt {
 fn write<T>(
     core: &Core,
     module: &str,
+    answer_owner: Option<[&str; 3]>,
     change: impl FnOnce(&mut TransactionMut<'_>, &MapRef, &Bank) -> CommandResult<T>,
 ) -> Result<(Bank, T), CoreError> {
-    if !bank::enabled(core)? {
-        return Err(
-            "Worksheet writing is disabled outside an opted-in, offline development vault".into(),
-        );
-    }
     let mut conn = core.db.lock()?;
-    if crate::sync::is_enabled(&conn)? {
-        return Err("Development question banks cannot sync".into());
-    }
     let tx = conn.transaction().map_err(db_err)?;
     let doc = load(&tx, module)?;
     let old = read(&doc)?.ok_or("Create questions before starting a worksheet")?;
+    let before = doc.transact().state_vector();
+    if let Some(owner) = answer_owner { initialize_answer(&doc, &owner)?; }
     let (update, result) = {
         let mut txn = doc.transact_mut();
         let root = txn.get_map(ROOT).ok_or_else(invalid)?;
         let result = change(&mut txn, &root, &old)?;
-        (txn.encode_update_v1(), result)
+        (txn.encode_diff_v1(&before), result)
     };
     admit(&tx, module, Some(old), &doc)?;
     let bank = read(&doc)?.ok_or_else(invalid)?;
@@ -51,9 +46,43 @@ fn write<T>(
         rusqlite::params![module, update, chrono::Utc::now().timestamp_millis()],
     )
     .map_err(db_err)?;
+    for file in document_assets(&doc)? {
+        crate::asset_refs::retain_worksheet_asset(&tx, module, &file, false)?;
+    }
     crate::sync::record_update(&tx, module, &update)?;
     tx.commit().map_err(db_err)?;
     Ok((bank, result))
+}
+
+/// Seed missing answer containers with reproducible Yjs identities. Two devices
+/// creating the first answer offline must target the SAME map/fragment rather
+/// than competing map values (which would discard one device's entire answer).
+/// Each owner gets a domain-separated 48-bit client, within JS's safe integer
+/// range. This client only emits this fixed initialization, never user edits.
+fn initialize_answer(doc: &Doc, owner: &[&str; 3]) -> CommandResult<()> {
+    let key = serde_json::to_string(owner).map_err(db_err)?;
+    let txn = doc.transact();
+    let root = txn.get_map(ROOT).ok_or_else(invalid)?;
+    if shared_map(&txn, &root, "answers")?.get(&txn, &key).is_some() { return Ok(()); }
+    let state = txn.encode_state_as_update_v1(&StateVector::default());
+    drop(txn);
+    let seed = Doc::with_client_id(initialization_client("worksheet-answer-init", &key));
+    seed.transact_mut().apply_update(Update::decode_v1(&state).map_err(db_err)?).map_err(db_err)?;
+    let update = {
+        let mut txn = seed.transact_mut();
+        let root = txn.get_map(ROOT).ok_or_else(invalid)?;
+        let answers = shared_map(&txn, &root, "answers")?;
+        let answer = answers.insert(&mut txn, key.as_str(), MapPrelim::default());
+        answer.insert(&mut txn, "attemptId", owner[0]);
+        answer.insert(&mut txn, "revisionId", owner[1]);
+        answer.insert(&mut txn, "leafPartId", owner[2]);
+        answer.insert(&mut txn, "text", XmlFragmentPrelim::default());
+        answer.insert(&mut txn, "canvasOrder", ArrayPrelim::default());
+        answer.insert(&mut txn, "canvases", MapPrelim::default());
+        txn.encode_update_v1()
+    };
+    doc.transact_mut().apply_update(Update::decode_v1(&update).map_err(db_err)?).map_err(db_err)?;
+    Ok(())
 }
 
 fn shared_map(txn: &impl ReadTxn, parent: &MapRef, key: &str) -> CommandResult<MapRef> {
@@ -69,7 +98,7 @@ pub fn create(
     title: String,
     question_ids: Vec<String>,
 ) -> Result<CreateReceipt, CoreError> {
-    let (bank, attempt_id) = write(core, &module, |txn, root, bank| {
+    let (bank, attempt_id) = write(core, &module, None, |txn, root, bank| {
         let title = title.trim();
         if title.is_empty() || title.chars().count() > 120 {
             return Err("Enter a worksheet title of 1 to 120 characters".into());
@@ -106,7 +135,7 @@ pub fn create(
 
 /// Finish only after the caller has durably drained its pending answers.
 pub fn finish(core: &Core, module: String, attempt_id: String) -> Result<SaveReceipt, CoreError> {
-    let (bank, ()) = write(core, &module, |txn, root, bank| {
+    let (bank, ()) = write(core, &module, None, |txn, root, bank| {
         bank.attempts.get(&attempt_id).filter(|a| !a.deleted)
             .ok_or("This worksheet is unavailable")?;
         let attempts = shared_map(txn, root, "attempts")?;
@@ -159,7 +188,7 @@ pub fn save_answer(
     leaf_part_id: String,
     text: String,
 ) -> Result<SaveReceipt, CoreError> {
-    let (bank, ()) = write(core, &module, |txn, root, bank| {
+    let (bank, ()) = write(core, &module, Some([&attempt_id, &revision_id, &leaf_part_id]), |txn, root, bank| {
         if text.len() > 1024 * 1024 {
             return Err("This answer is too long (maximum 1 MiB of text)".into());
         }
@@ -178,23 +207,7 @@ pub fn save_answer(
         }
         let key = serde_json::to_string(&[&attempt_id, &revision_id, &leaf_part_id])
             .map_err(db_err)?;
-        let answers = shared_map(txn, root, "answers")?;
-        let fragment = match answers.get(txn, key.as_str()) {
-            Some(Out::YMap(answer)) => match answer.get(txn, "text") {
-                Some(Out::YXmlFragment(fragment)) => fragment,
-                _ => return Err(invalid()),
-            },
-            None => {
-                let answer = answers.insert(txn, key.as_str(), MapPrelim::default());
-                answer.insert(txn, "attemptId", attempt_id.as_str());
-                answer.insert(txn, "revisionId", revision_id.as_str());
-                answer.insert(txn, "leafPartId", leaf_part_id.as_str());
-                answer.insert(txn, "canvasOrder", ArrayPrelim::default());
-                answer.insert(txn, "canvases", MapPrelim::default());
-                answer.insert(txn, "text", XmlFragmentPrelim::default())
-            }
-            _ => return Err(invalid()),
-        };
+        let fragment = answer_fragment(txn, root, &key)?.ok_or_else(invalid)?;
         if let Some(child) = plain_text_child(txn, &fragment)? {
             let len = child.len(txn);
             if len > 0 {
@@ -317,9 +330,7 @@ pub struct AnswerDocument {
     plain_text: Option<String>,
 }
 pub fn load_answer_document(core: &Core, module: String, attempt: String, revision: String, leaf: String) -> Result<AnswerDocument, CoreError> {
-    if !bank::enabled(core)? { return Err("Worksheet editing is disabled".into()); }
     let conn = core.db.lock()?;
-    if crate::sync::is_enabled(&conn)? { return Err("Development question banks cannot sync".into()); }
     let doc = load(&conn, &module)?;
     let bank = read(&doc)?.ok_or_else(invalid)?;
     let key = owner(&bank, &attempt, &revision, &leaf)?;
@@ -350,28 +361,19 @@ pub fn save_answer_document(core: &Core, module: String, attempt: String, revisi
     let source_txn = isolated.transact();
     if source_txn.has_missing_updates() || source_txn.root_refs().any(|(name, _)| name != "default") { return Err(invalid().into()); }
     let next = token(&source_txn, &source)?;
-    let (bank, ()) = write(core, &module, |txn, root, bank| {
+    let (bank, ()) = write(core, &module, Some([&attempt, &revision, &leaf]), |txn, root, bank| {
         editable(bank.attempts.get(&attempt).ok_or_else(invalid)?)?;
         let key = owner(bank, &attempt, &revision, &leaf)?;
         let current = answer_fragment(txn, root, &key)?;
         let actual = match current.as_ref() { Some(f) => token(txn, f)?, None => "[]".into() };
         if actual == next { return Ok(()); } // lost receipt retry
         if actual != expected { return Err("This answer changed elsewhere. Your local draft is retained; reopen before resolving the conflict.".into()); }
-        let answers = shared_map(txn, root, "answers")?;
-        let answer = match answers.get(txn, &key) {
-            Some(Out::YMap(a)) => a,
-            None => {
-                let a = answers.insert(txn, key.as_str(), MapPrelim::default());
-                a.insert(txn, "attemptId", attempt.as_str());
-                a.insert(txn, "revisionId", revision.as_str());
-                a.insert(txn, "leafPartId", leaf.as_str());
-                a.insert(txn, "canvasOrder", ArrayPrelim::default());
-                a.insert(txn, "canvases", MapPrelim::default());
-                a
-            }
-            _ => return Err(invalid()),
-        };
-        let target = answer.insert(txn, "text", XmlFragmentPrelim::default());
+        // Keep the shared fragment's identity. Concurrent offline replacements
+        // delete only their observed children; both new versions survive as
+        // sibling blocks on merge. The next open shows both for reconciliation.
+        let target = current.ok_or_else(invalid)?;
+        let len = target.len(txn);
+        if len > 0 { target.remove_range(txn, 0, len); }
         copy_xml(&source_txn, source.children(&source_txn).collect(), &target, txn, 0, &mut 100_000)?;
         Ok(())
     })?;
@@ -380,6 +382,7 @@ pub fn save_answer_document(core: &Core, module: String, attempt: String, revisi
 
 /// Attach native-persisted assets only after validating pinned answer ownership.
 /// Revision pairs are atomic Any maps; canvas containers remain shared Y types.
+#[allow(clippy::too_many_arguments)] // Flat native/shared-UI command contract.
 pub fn save_canvas(
     core: &Core,
     module: String,
@@ -394,7 +397,7 @@ pub fn save_canvas(
     height: f64,
     as_copy: bool,
 ) -> Result<SaveReceipt, CoreError> {
-    let (bank, ()) = write(core, &module, |txn, root, bank| {
+    let (bank, ()) = write(core, &module, Some([&attempt_id, &revision_id, &leaf_part_id]), |txn, root, bank| {
         for value in [&canvas_id, &source_id, &preview_id] { id(value)?; }
         if let Some(expected) = &expected_source_id { id(expected)?; }
         if source_id == preview_id || !width.is_finite() || !height.is_finite()
@@ -433,20 +436,7 @@ pub fn save_canvas(
             return Err("This drawing changed. Reopen it and save a copy to keep both versions. Your local draft is retained.".into());
         }
         let answers = shared_map(txn, root, "answers")?;
-        let answer = match answers.get(txn, key.as_str()) {
-            Some(Out::YMap(answer)) => answer,
-            None => {
-                let answer = answers.insert(txn, key.as_str(), MapPrelim::default());
-                answer.insert(txn, "attemptId", attempt_id.as_str());
-                answer.insert(txn, "revisionId", revision_id.as_str());
-                answer.insert(txn, "leafPartId", leaf_part_id.as_str());
-                answer.insert(txn, "text", XmlFragmentPrelim::default());
-                answer.insert(txn, "canvasOrder", ArrayPrelim::default());
-                answer.insert(txn, "canvases", MapPrelim::default());
-                answer
-            }
-            _ => return Err(invalid()),
-        };
+        let answer = shared_map(txn, &answers, &key)?;
         let canvases = shared_map(txn, &answer, "canvases")?;
         let pair = Any::from(std::collections::HashMap::from([
             ("sourceId".to_owned(), Any::from(source_id.clone())),
