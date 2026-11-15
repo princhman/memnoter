@@ -1,0 +1,43 @@
+name: Probe
+on:
+  push:
+    branches: [probe/ci-linux]
+jobs:
+  web-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        concurrency: [2, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: lts/*, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: lint
+        run: time pnpm lint
+      - name: tsc
+        run: time pnpm --filter memnoter-shared-ui exec tsc
+      - name: vite build
+        run: time pnpm --filter memnoter-shared-ui exec vite build
+      - run: pnpm --filter memnoter-shared-ui exec playwright install --with-deps webkit chromium
+      - name: time each test file
+        working-directory: apps/shared-ui
+        env: { CONCURRENCY: "${{ matrix.concurrency }}" }
+        run: node ../../scripts/ci/time-test-files.mjs "$RUNNER_TEMP/times.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "times-linux-c${{ matrix.concurrency }}", path: "${{ runner.temp }}/times.json" }
+  rust-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy }
+      - uses: swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: cargo test
+        run: time cargo test --workspace
+      - name: clippy
+        run: time cargo clippy --workspace --all-targets -- -D warnings
