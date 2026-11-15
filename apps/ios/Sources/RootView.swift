@@ -484,9 +484,6 @@ struct RootView: View {
 
     private var detail: AnyView {
         VStack(spacing: 0) {
-            if isPhone && selected != "questions" && (module != nil || ["files", "review"].contains(selected ?? "")) {
-                sectionNavigation
-            }
             if selected == "review", let client = store.client {
                 ReviewView(client: client, directory: store.directory, moduleId: reviewModule, preferences: store.preferences, editCard: editReviewCard)
                     .id(reviewModule ?? "all")
@@ -631,13 +628,14 @@ struct RootView: View {
 
                 }
             }
-            if selected != "questions" && isPhone && (isPhone || module == nil || session?.pdfReader == nil) && (selected != "review" || detailWidth >= 500) {
-                ToolbarItem(placement: phoneSplitLayout ? .topBarLeading : .principal) {
+            if isPhone && (selected != "questions" || session?.worksheetChrome == nil) {
+                ToolbarItem(placement: phoneSplitLayout || session?.pdfReader == nil ? .topBarLeading : .principal) {
                     if isPhone, module != nil, let reader = session?.pdfReader {
                         Text(reader.title).lineLimit(1).truncationMode(.middle)
                             .accessibilityIdentifier("module.title")
-                    } else if isPhone, let module, let session {
-                        PhoneNoteTitle(session: session, moduleName: module.name) { showingContents = true }
+                    } else if isPhone, module != nil || ["files", "review", "questions"].contains(selected ?? "") {
+                        // Same glass breadcrumb as iPad: module ⌄ / section ⌄.
+                        phoneBreadcrumb
                     } else {
                         Text(module != nil && session?.state.focusedSectionId != nil
                              ? session?.state.focusedSectionPath.last?.title ?? module?.name ?? "Section"
@@ -777,6 +775,14 @@ struct RootView: View {
                 .disabled(busy)
         }
     }
+    private var phoneBreadcrumb: some View {
+        TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
+                         item: breadcrumbItem,
+                         questionsEnabled: session != nil,
+                         maximumWidth: max(150, detailWidth - (module != nil && selected != "questions" ? 165 : 120)),
+                         changeScope: changeSectionScope, changeSection: selectSection)
+            .disabled(busy)
+    }
     private var sectionNavigation: some View {
         HStack {
             Menu {
@@ -887,6 +893,10 @@ struct RootView: View {
     }
 
     @ViewBuilder private func noteActions(_ session: WebSession, includePdf: Bool = true) -> some View {
+        if isPhone {
+            // The breadcrumb replaced the tappable title, so contents lives here on iPhone.
+            Button { showingContents = true } label: { Label("Contents", systemImage: "list.bullet.indent") }
+        }
         if session.state.inTable {
             Menu {
                 TableEditingActions(session: session)
