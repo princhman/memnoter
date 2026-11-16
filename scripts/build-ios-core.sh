@@ -15,12 +15,7 @@ export CARGO_BUILD_JOBS=4
 export IPHONEOS_DEPLOYMENT_TARGET=17.0
 package="$PWD/apps/ios/MemnoterCore"
 generated="$PWD/target/ios-bindings"
-case "$(uname -m)" in
-  arm64) simulator_target=aarch64-apple-ios-sim ;;
-  x86_64) simulator_target=x86_64-apple-ios ;;
-  *) echo "Unsupported simulator host architecture: $(uname -m)" >&2; exit 1 ;;
-esac
-for target in aarch64-apple-ios "$simulator_target"; do
+for target in aarch64-apple-ios aarch64-apple-ios-sim; do
   cargo build --locked -p memnoter-ffi --lib ${cargo_profile[@]+"${cargo_profile[@]}"} --target "$target"
 done
 cargo build --locked -p memnoter-ffi --lib
@@ -31,6 +26,6 @@ cp "$generated/memnoter_ffiFFI.modulemap" "$generated/module.modulemap"
 rm -rf "$package/MemnoterFFI.xcframework"
 xcodebuild -create-xcframework \
   -library "target/aarch64-apple-ios/$profile/libmemnoter_ffi.a" -headers "$generated" \
-  -library "target/$simulator_target/$profile/libmemnoter_ffi.a" -headers "$generated" \
+  -library "target/aarch64-apple-ios-sim/$profile/libmemnoter_ffi.a" -headers "$generated" \
   -output "$package/MemnoterFFI.xcframework"
 printf '%s\n' "$profile" > "$package/MemnoterFFI.xcframework/memnoter-build-profile"
