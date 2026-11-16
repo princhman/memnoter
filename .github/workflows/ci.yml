@@ -228,6 +228,12 @@ jobs:
           path: ${{ runner.temp }}/ios-tests.tar.gz
           if-no-files-found: error
           retention-days: 1
+      # Publish test products first so Release validation overlaps native tests.
+      - name: Build iOS release configuration
+        run: |
+          xcodebuild build -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/ios-release" CODE_SIGNING_ALLOWED=NO
 
   ios-tests:
     needs: changes

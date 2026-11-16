@@ -751,28 +751,7 @@ struct DrawingEditor: View {
                     Color.white.opacity(0.001).contentShape(Rectangle()).ignoresSafeArea()
                 }
                 VStack {
-                    HStack {
-                        Button { closeDrawing() } label: {
-                            Image(systemName: "xmark").font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(.primary.opacity(0.7)).frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.plain).modifier(DrawingGlass())
-                        .accessibilityLabel("Close drawing")
-                        .disabled(model.saving)
-                        .allowsHitTesting(!model.usingTool)
-                        Spacer()
-                        optionsMenu
-                        Button { save(asCopy: model.requiresCopy) } label: {
-                            Group {
-                                if model.saving { ProgressView().tint(.white) }
-                                else { Text("Done").font(.system(size: 15, weight: .semibold)) }
-                            }.foregroundStyle(.white).frame(width: 76, height: 44)
-                        }
-                        .buttonStyle(.plain).background(DrawingStyle.accent, in: Capsule())
-                        .accessibilityLabel("Done")
-                        .disabled(!model.loaded || model.saving)
-                        .allowsHitTesting(!model.usingTool)
-                    }.padding(.horizontal, 16).padding(.top, 12)
+                    drawingActions
                     Spacer()
                     DrawingToolBar(model: model)
                         .frame(maxWidth: min(780, max(0, geometry.size.width - 24)))
@@ -819,6 +798,30 @@ struct DrawingEditor: View {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
         .interactiveDismissDisabled()
+    }
+    private var drawingActions: some View {
+        HStack {
+            Button { closeDrawing() } label: {
+                Image(systemName: "xmark").font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.7)).frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain).modifier(DrawingGlass())
+            .accessibilityLabel("Close drawing")
+            .disabled(model.saving)
+            .allowsHitTesting(!model.usingTool)
+            Spacer()
+            optionsMenu
+            Button { save(asCopy: model.requiresCopy) } label: {
+                Group {
+                    if model.saving { ProgressView().tint(.white) }
+                    else { Text("Done").font(.system(size: 15, weight: .semibold)) }
+                }.foregroundStyle(.white).frame(width: 76, height: 44)
+            }
+            .buttonStyle(.plain).background(DrawingStyle.accent, in: Capsule())
+            .accessibilityLabel("Done")
+            .disabled(!model.loaded || model.saving)
+            .allowsHitTesting(!model.usingTool)
+        }.padding(.horizontal, 16).padding(.top, 12)
     }
     private var optionsMenu: some View {
         Menu {

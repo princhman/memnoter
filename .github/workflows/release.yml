@@ -8,9 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       testflight_only:
-        description: Upload to TestFlight without rebuilding desktop (select a v* tag)
+        description: Upload to TestFlight without rebuilding desktop
         type: boolean
         default: false
+      mobile_version:
+        description: Existing v* version to rebuild from the selected ref (mobile-only)
+        type: string
+        default: ''
 
 jobs:
   build:
@@ -104,7 +108,7 @@ jobs:
           links: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
 
   ios-testflight:
-    runs-on: macos-latest
+    runs-on: macos-26
     permissions:
       contents: read
     # Serialize uploads so minute-based build numbers increase, including reruns.
@@ -120,7 +124,8 @@ jobs:
 
       - name: Validate credentials and release tag
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.testflight_only && inputs.mobile_version || github.ref_name }}
+          MOBILE_REBUILD: ${{ inputs.testflight_only && inputs.mobile_version != '' }}
           RELEASE_REF_TYPE: ${{ github.ref_type }}
         run: |
           for name in ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY_P8_BASE64; do
@@ -129,8 +134,12 @@ jobs:
               exit 1
             fi
           done
-          if [[ "$RELEASE_REF_TYPE" != tag || ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ ( "$RELEASE_REF_TYPE" != tag && "$MOBILE_REBUILD" != true ) || ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Select a version tag (for example v0.1.2), not a branch."
+            exit 1
+          fi
+          if [[ "$MOBILE_REBUILD" == true ]] && [[ -z "$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")" ]]; then
+            echo "::error::Mobile rebuild requires an existing version tag."
             exit 1
           fi
           version="${RELEASE_TAG#v}"
@@ -142,10 +151,10 @@ jobs:
           build_number=$(date -u +%Y%m%d%H%M)
           echo "CURRENT_PROJECT_VERSION=$build_number" >> "$GITHUB_ENV"
 
-      # Swift 6 and iOS 17 deployment support; don't depend on runner defaults.
+      # Match the compiler used by the iOS CI build.
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '26.2'
+          xcode-version: '26.6'
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
