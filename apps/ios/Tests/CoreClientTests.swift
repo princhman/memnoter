@@ -121,9 +121,9 @@ final class NativeSyncEndToEndTests: XCTestCase {
             return modules.contains { $0.id == module }
         }
         sa.pause(); sb.pause()
-        // Independently generated Yjs clients 1 and 2 insert into the same text.
-        let ua: [UInt8] = [1,1,1,0,4,1,4,116,101,120,116,5,97,108,112,104,97,0]
-        let ub: [UInt8] = [1,1,2,0,4,1,4,116,101,120,116,4,98,101,116,97,0]
+        // Independently generated Yjs clients 1 and 2 insert paragraphs into the note fragment.
+        let ua: [UInt8] = [1,3,1,0,7,1,7,100,101,102,97,117,108,116,3,9,112,97,114,97,103,114,97,112,104,7,0,1,0,6,4,0,1,1,5,97,108,112,104,97,0]
+        let ub: [UInt8] = [1,3,2,0,7,1,7,100,101,102,97,117,108,116,3,9,112,97,114,97,103,114,97,112,104,7,0,2,0,6,4,0,2,1,4,98,101,116,97,0]
         _ = try await sa.command("add_update", ["moduleId": module, "bytes": ua])
         _ = try await sb.command("add_update", ["moduleId": module, "bytes": ub])
         sa.resume(); sb.resume()
@@ -132,7 +132,7 @@ final class NativeSyncEndToEndTests: XCTestCase {
             let gb = try await sb.command("sync_status") as? [String: Any] ?? [:]
             let xa = try await sa.command("sync_snapshot", ["doc": module, "generation": ga["generation"] ?? ""]) as? [UInt8]
             let xb = try await sb.command("sync_snapshot", ["doc": module, "generation": gb["generation"] ?? ""]) as? [UInt8]
-            let expected: [UInt8] = [2,1,2,0,4,1,4,116,101,120,116,4,98,101,116,97,1,1,0,4,1,4,116,101,120,116,5,97,108,112,104,97,0]
+            let expected: [UInt8] = [2,3,2,0,7,1,7,100,101,102,97,117,108,116,3,9,112,97,114,97,103,114,97,112,104,7,0,2,0,6,4,0,2,1,4,98,101,116,97,3,1,0,7,1,7,100,101,102,97,117,108,116,3,9,112,97,114,97,103,114,97,112,104,7,0,1,0,6,4,0,1,1,5,97,108,112,104,97,0]
             return xa == expected && xb == expected && sa.pending == 0 && sb.pending == 0
         }
         try await sa.signOut()
@@ -153,8 +153,11 @@ private final class UpdateGateServer: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("sync/test/fixtures/protocol.json")
+        let fixture = try! JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as! [String: Any]
+        let version = fixture["version"] as! Int
         let valid = request.value(forHTTPHeaderField: "Authorization") == "Bearer token"
-            && request.value(forHTTPHeaderField: "X-Memnoter-Protocol-Version") == "1"
+            && request.value(forHTTPHeaderField: "X-Memnoter-Protocol-Version") == String(version)
         let response = HTTPURLResponse(url: request.url!, statusCode: valid ? 426 : 400, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data("{\"error\":\"Please update Memnoter to keep syncing\"}".utf8))

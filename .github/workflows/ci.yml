@@ -195,6 +195,11 @@ jobs:
       - run: ./scripts/build-ios-web.sh
       - run: xcodegen generate
         working-directory: apps/ios
+      - name: Build iOS release configuration
+        run: |
+          xcodebuild build -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/ios-release" CODE_SIGNING_ALLOWED=NO
       - name: Wait for the iPad simulator
         run: xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
       - name: Build iOS tests
