@@ -734,8 +734,6 @@ struct RootView: View {
                             }
                         }
                     } else if selected == "questions" {
-                        // Same Reorder / New worksheet controls as iPad, at full touch size.
-                        ToolbarItem(placement: .topBarTrailing) { TabletQuestionTools(session: session) }
                         ToolbarItem(placement: .topBarTrailing) { phoneFilesToggle(session) }
                     } else {
                         // One menu beside the breadcrumb instead of a row the system folds into its own "…".
@@ -802,10 +800,9 @@ struct RootView: View {
                 .disabled(busy)
         }
     }
-    /// Room the trailing bar items need, so the breadcrumb truncates instead of evicting them.
+    /// Room the trailing bar item needs, so the breadcrumb truncates instead of evicting it.
     private var phoneBarTrailingWidth: CGFloat {
-        if selected == "questions" { return session?.bankControls?.visible == true ? 210 : 120 }
-        return module != nil ? 165 : 120
+        module != nil && selected != "questions" ? 165 : 120
     }
     private var phoneBreadcrumb: some View {
         TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,

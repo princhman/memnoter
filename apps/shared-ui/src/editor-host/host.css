@@ -329,3 +329,8 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-questions .group\/crop[data-selected] > img { outline: 2px solid var(--primary); outline-offset: 2px; }
 /* Answers reuse the note editor: its fold chevrons stay one line tall, as in notes. */
 .native-questions .tiptap :is(.foldable-block-toggle, .heading-fold-toggle) { min-height: 0; }
+
+/* iPhone: the bar has no room beside the breadcrumb, so these stay in the page at full touch size. */
+.native-phone .native-questions .bank-toolbar { height: 44px; gap: 4px; }
+.native-phone .native-questions .bank-toolbar button { min-width: 44px; height: 44px; }
+.native-phone .native-questions .bank-toolbar button svg { width: 20px; height: 20px; }

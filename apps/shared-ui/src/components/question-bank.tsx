@@ -470,7 +470,7 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
   <section ref={section} aria-label="Question bank" className={cn(questionReadingWidth, "pb-16", reordering && "bank-reorder-outline")}
     onClickCapture={event => { if (performance.now() < suppressClickUntil.current) { event.preventDefault(); event.stopPropagation(); } }}
     onDoubleClickCapture={event => { if (performance.now() < suppressClickUntil.current) { event.preventDefault(); event.stopPropagation(); } }}>
-    {questions.length > 0 && !nativeToolbar && <div className="mb-3 flex h-7 min-w-0 items-center justify-end">
+    {questions.length > 0 && !nativeToolbar && <div className="bank-toolbar mb-3 flex h-7 min-w-0 items-center justify-end">
       {reordering
         ? <Button size="sm" variant="ghost" aria-pressed disabled={picking || busy || !!dragging || renaming !== null} onClick={() => changeMode(false)}>Done</Button>
         : <ToolButton label="Reorder questions" disabled={picking || busy || !!dragging || renaming !== null} onClick={() => changeMode(true)}><ArrowUpDown /></ToolButton>}
