@@ -82,12 +82,12 @@ jobs:
   web:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
       CARGO_BUILD_JOBS: 4
     steps:
@@ -101,10 +101,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/tests/ios-live-plist.test.mjs
-        if: matrix.shard == 1
-      - run: pnpm --filter memnoter-shared-ui exec playwright install webkit chromium
-      - run: pnpm --filter memnoter-shared-ui test:ci --test-shard=${{ matrix.shard }}/4
+      - run: pnpm --filter memnoter-shared-ui exec playwright install --with-deps webkit chromium
+      - run: pnpm --filter memnoter-shared-ui test:ci --test-shard=${{ matrix.shard }}/8
 
   # Preserve the existing required check name across the job split.
   check:
@@ -168,6 +166,7 @@ jobs:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
       - uses: swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/tests/ios-live-plist.test.mjs
       - run: brew install xcodegen
       - name: Identify iOS core toolchain
         id: core-toolchain
@@ -189,11 +188,18 @@ jobs:
       - run: ./scripts/build-ios-web.sh --prebuilt
       - run: xcodegen generate
         working-directory: apps/ios
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+          key: ios-compilation-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-${{ github.sha }}
+          restore-keys: |
+            ios-compilation-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-
       - name: Build the iOS test bundle once
         run: |
           xcodebuild build-for-testing -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
             -destination 'generic/platform=iOS Simulator' ARCHS=arm64 \
-            -derivedDataPath "$RUNNER_TEMP/ios-build" -parallel-testing-enabled NO
+            -derivedDataPath "$RUNNER_TEMP/ios-build" -parallel-testing-enabled NO \
+            COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES
           plutil -p "$RUNNER_TEMP"/ios-build/Build/Products/*.xctestrun
           tar -C "$RUNNER_TEMP/ios-build/Build" -czf "$RUNNER_TEMP/ios-tests.tar.gz" Products
       - uses: actions/upload-artifact@v4
