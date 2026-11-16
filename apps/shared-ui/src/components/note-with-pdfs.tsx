@@ -1,7 +1,7 @@
 import { useBankGate } from "@/lib/question-bank";
 import { setOpenedModule, useModulePage } from "@/lib/store";
 import { QuestionBank } from "./question-bank";
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, Maximize2 } from "lucide-react";
 import { useDocuments } from "@/lib/use-documents";
@@ -45,14 +45,17 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
   // The pane's width depends on its container (paneWidth uses %), so publish
   // the measured width for page-level overlays positioned beside it.
   const aside = useRef<HTMLElement>(null);
-  useEffect(() => {
+  // Set before paint on every width change; the observer covers window resizes.
+  useLayoutEffect(() => {
     const root = document.documentElement.style;
     const element = aside.current;
     if (!open || !element) { root.setProperty("--pdf-pane-width", "0px"); return () => root.removeProperty("--pdf-pane-width"); }
-    const observer = new ResizeObserver(() => root.setProperty("--pdf-pane-width", `${element.getBoundingClientRect().width}px`));
+    const publish = () => root.setProperty("--pdf-pane-width", `${element.getBoundingClientRect().width}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
     observer.observe(element);
     return () => { observer.disconnect(); root.removeProperty("--pdf-pane-width"); };
-  }, [open]);
+  }, [open, pane.width]);
   useEffect(() => registerCommand({ id: "pdf.toggle-pane", title: "Toggle files panel", keywords: ["pdf"],
     run: () => updatePdfPane(moduleId, { open: !pane.open }) }), [moduleId, pane.open]);
   useEffect(() => {
@@ -90,7 +93,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
         document.addEventListener("selectstart", preventSelection, true);
         document.addEventListener("dragstart", preventSelection, true);
         resize.current = { pointer: event.pointerId, element, width: pane.width, right, left: bounds.left, dividerWidth: bounds.width,
-          maxWidth: Math.max(320, right - (element.parentElement?.getBoundingClientRect().left ?? 0) - bounds.width - MIN_MAIN), cleanup: () => {
+          maxWidth: Math.max(320, right - (element.parentElement?.getBoundingClientRect().left ?? 0) - MIN_MAIN), cleanup: () => {
           preview.hidden = true;
           preview.style.removeProperty("transform");
           sheet.remove();
