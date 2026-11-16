@@ -810,7 +810,7 @@ struct RootView: View {
                          item: breadcrumbItem,
                          questionsEnabled: session != nil,
                          maximumWidth: max(120, detailWidth - phoneBarTrailingWidth),
-                         changeScope: changeSectionScope, changeSection: selectSection)
+                         changeScope: changeSectionScope, changeSection: selectSection, compact: true)
             .disabled(busy)
     }
     private var sectionNavigation: some View {

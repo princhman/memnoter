@@ -35,6 +35,12 @@ struct ReviewView: View {
             if #available(iOS 26.0, *), horizontalSizeClass != .compact {
                 ToolbarSpacer(.fixed, placement: .topBarLeading)
             }
+            if horizontalSizeClass == .compact {
+                countsToolbar
+                if #available(iOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                }
+            }
             ToolbarItemGroup(placement: horizontalSizeClass == .compact ? .topBarTrailing : .topBarLeading) {
                 if horizontalSizeClass == .compact {
                     Menu {
@@ -52,16 +58,7 @@ struct ReviewView: View {
                     }
                 }
             }
-            if #available(iOS 26.0, *), horizontalSizeClass == .compact {
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
-            }
-            if #available(iOS 26.0, *) {
-                // Plain numbers, without the glass capsule toolbar items get by default.
-                ToolbarItem(placement: .topBarTrailing) { countsLabel }
-                    .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .topBarTrailing) { countsLabel }
-            }
+            if horizontalSizeClass != .compact { countsToolbar }
         }
         .task {
             let web = WebSession(client: client, directory: directory, entry: BridgeProtocol.reviewEntry, preferences: preferences)
@@ -71,6 +68,15 @@ struct ReviewView: View {
         .onChange(of: skipCardsCreatedToday) { _, _ in Task { await session?.updateCardPreference() } }
         .onChange(of: moduleId) { _, _ in command(.load, ["scope": moduleId as Any? ?? NSNull()], parameters: ["scope"]) }
         .onDisappear { session?.dispose() }
+    }
+    @ToolbarContentBuilder private var countsToolbar: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            // Plain numbers, without the glass capsule toolbar items get by default.
+            ToolbarItem(placement: .topBarTrailing) { countsLabel }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarTrailing) { countsLabel }
+        }
     }
     private var legacyToolbarSpacing: CGFloat {
         if #available(iOS 26.0, *) { return 0 }
