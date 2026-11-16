@@ -9,6 +9,29 @@ test('checked-in Swift bridge matches the web protocol', () => {
   execFileSync(process.execPath, [new URL('../../../scripts/generate-bridge-protocol.mjs', import.meta.url).pathname, '--check']);
 });
 
+test('native entry installs its API and ready signal before initialization returns', async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen(); browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.messages = [];
+      window.installTestBridge({ native: message => {
+        window.messages.push(message);
+        if (message.kind === 'call') queueMicrotask(() => window.__memnoterBridge.resolve(message.id, []));
+      } });
+    });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/editor-startup.html`);
+    const startup = await page.evaluate(async () => {
+      await import('/src/editor-host/main.tsx');
+      return { apiAvailable: typeof window.memnoterEditor?.open === 'function',
+        readyEvents: window.messages.filter(message => message.event === 'ready').length };
+    });
+    assert.deepEqual(startup, { apiAvailable: true, readyEvents: 1 });
+  } finally { await browser?.close(); await server.close(); }
+});
+
 test('WK host opens shared editors, publishes state and outline, and persists edits without desktop APIs', async t => {
   const root = new URL('../', import.meta.url).pathname;
   const server = await createServer({ root, server: { port: 0, strictPort: false }, logLevel: 'error' });
