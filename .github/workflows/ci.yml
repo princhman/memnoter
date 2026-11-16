@@ -35,7 +35,8 @@ jobs:
           code=$(echo "$files" | grep -vqE '(\.md$|^docs/|^scripts/agent-hooks/|^\.gitignore$)' && echo true || echo false)
           # The iOS app bundles all of shared-ui, but its own tests exercise the
           # native bridge; other shared-ui changes are covered by check and by main.
-          ios=$(echo "$files" | grep -qE '^(apps/ios/|apps/apple-shared/|crates/|apps/sync/|apps/shared-ui/src/editor-host/|apps/shared-ui/src/lib/(editor-host|native-)|apps/shared-ui/package\.json|scripts/(build-ios|ios-|ensure-sync|generate-bridge|sync-version)|Cargo\.(toml|lock)|pnpm-lock\.yaml|\.github/workflows/ci\.yml)' && echo true || echo false)
+          ios=$(echo "$files" | grep -qE '^(apps/ios/|apps/apple-shared/|crates/|apps/sync/|apps/shared-ui/src/editor-host/|apps/shared-ui/src/lib/(editor-host|native-)|apps/shared-ui/package\.json|scripts/(ci/|build-ios|ios-|ensure-sync|generate-bridge|sync-version)|Cargo\.(toml|lock)|pnpm-lock\.yaml|\.github/workflows/ci\.yml)' && echo true || echo false)
+          if [ "$code" = false ]; then ios=false; fi
           echo "code=$code" >> "$GITHUB_OUTPUT"; echo "ios=$ios" >> "$GITHUB_OUTPUT"
 
   frontend:
@@ -48,11 +49,18 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm lint
+      - uses: actions/upload-artifact@v4
+        if: needs.changes.outputs.ios == 'true'
+        with:
+          name: shared-ui-dist
+          path: apps/shared-ui/dist
+          if-no-files-found: error
+          retention-days: 1
 
   rust:
     needs: changes
@@ -79,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     env:
       CARGO_BUILD_JOBS: 4
     steps:
@@ -87,7 +95,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: pnpm
       # Anki dialog coverage uses the real Rust command harness.
       - uses: dtolnay/rust-toolchain@stable
@@ -96,7 +104,7 @@ jobs:
       - run: node --test scripts/tests/ios-live-plist.test.mjs
         if: matrix.shard == 1
       - run: pnpm --filter memnoter-shared-ui exec playwright install webkit chromium
-      - run: pnpm --filter memnoter-shared-ui test:ci --test-shard=${{ matrix.shard }}/2
+      - run: pnpm --filter memnoter-shared-ui test:ci --test-shard=${{ matrix.shard }}/4
 
   # Preserve the existing required check name across the job split.
   check:
@@ -131,7 +139,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -140,38 +148,20 @@ jobs:
       # through the app's sync engine.
       - run: pnpm test
 
-  ios:
-    needs: changes
+  ios-build:
+    needs: [changes, frontend]
     if: needs.changes.outputs.ios == 'true'
-    # The core script produces an arm64 simulator XCFramework slice.
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 25
     env:
       CARGO_BUILD_JOBS: 4
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
-      - name: Start booting the SDK's iPad simulator
-        run: |
-          xcodebuild -version
-          xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
-          simulator_id=$(python3 - "$RUNNER_TEMP/simulators.json" <<'PYTHON'
-          import json, subprocess, sys
-          sdk = subprocess.check_output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True).strip()
-          runtime = "com.apple.CoreSimulator.SimRuntime.iOS-" + sdk.replace(".", "-")
-          devices = json.load(open(sys.argv[1]))["devices"].get(runtime, [])
-          ipads = sorted((d for d in devices if d["name"].startswith("iPad")), key=lambda d: (d["name"], d["udid"]))
-          if not ipads:
-              raise SystemExit(f"No installed iPad for SDK {sdk}: {devices}")
-          print(ipads[0]["udid"])
-          PYTHON
-          )
-          echo "IOS_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
-          xcrun simctl boot "$simulator_id"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -192,45 +182,94 @@ jobs:
           key: ios-core-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-${{ hashFiles('crates/**', 'Cargo.lock', 'Cargo.toml', 'scripts/build-ios-core.sh') }}
       - run: ./scripts/build-ios-core.sh
         if: steps.ios-core.outputs.cache-hit != 'true'
-      - run: ./scripts/build-ios-web.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-ui-dist
+          path: apps/shared-ui/dist
+      - run: ./scripts/build-ios-web.sh --prebuilt
       - run: xcodegen generate
         working-directory: apps/ios
-      - name: Wait for the iPad simulator
-        run: xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
-      - name: Build iOS tests
+      - name: Build the iOS test bundle once
         run: |
           xcodebuild build-for-testing -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
-            -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID" \
+            -destination 'generic/platform=iOS Simulator' ARCHS=arm64 \
             -derivedDataPath "$RUNNER_TEMP/ios-build" -parallel-testing-enabled NO
-      - name: Run iOS tests against the local sync worker
+          plutil -p "$RUNNER_TEMP"/ios-build/Build/Products/*.xctestrun
+          tar -C "$RUNNER_TEMP/ios-build/Build" -czf "$RUNNER_TEMP/ios-tests.tar.gz" Products
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-bundle
+          path: ${{ runner.temp }}/ios-tests.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  ios-tests:
+    needs: ios-build
+    runs-on: macos-26
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [unit, drawing, navigation]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the iPad simulator
+        run: bash scripts/ci/boot-ios-simulator.sh
+      # Only the unit target's sync E2E needs the local Worker.
+      - uses: pnpm/action-setup@v4
+        if: matrix.suite == 'unit'
+      - uses: actions/setup-node@v4
+        if: matrix.suite == 'unit'
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: matrix.suite == 'unit'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-test-bundle
+          path: ${{ runner.temp }}
+      - name: Unpack the test bundle and wait for the simulator
         run: |
-          ./scripts/ensure-sync-vars.sh
-          node scripts/ios-test-with-worker.mjs xcodebuild test-without-building \
-            -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
-            -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID" \
-            -derivedDataPath "$RUNNER_TEMP/ios-build" \
-            -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/ios-tests.xcresult"
-          # E2E must execute, not silently pass through its worker/Keychain skip.
+          mkdir -p "$RUNNER_TEMP/ios-tests"
+          tar -C "$RUNNER_TEMP/ios-tests" -xzf "$RUNNER_TEMP/ios-tests.tar.gz"
+          xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
+      - name: Run native tests
+        env:
+          IOS_TEST_SUITE: ${{ matrix.suite }}
+        run: bash scripts/ci/run-ios-tests.sh
+      - name: Verify native tests actually ran
+        env:
+          IOS_TEST_SUITE: ${{ matrix.suite }}
+        run: |
           xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/ios-tests.xcresult" > "$RUNNER_TEMP/ios-tests.json"
-          python3 - "$RUNNER_TEMP/ios-tests.json" <<'PY'
-          import json, sys
-          def walk(value):
-              if isinstance(value, dict):
-                  yield value
-                  for child in value.values():
-                      yield from walk(child)
-              elif isinstance(value, list):
-                  for child in value:
-                      yield from walk(child)
-          tests = [node for node in walk(json.load(open(sys.argv[1]))) if node.get('nodeType') == 'Test Case' and 'testTwoNativeDatabasesMergeConcurrentYjsEdits' in node.get('name', '')]
-          assert tests and all(t.get('result') == 'Passed' for t in tests), tests
-          PY
+          python3 scripts/ci/check-ios-results.py "$IOS_TEST_SUITE" "$RUNNER_TEMP/ios-tests.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios-test-results
+          name: ios-test-results-${{ matrix.suite }}
           path: |
             ${{ runner.temp }}/ios-tests.xcresult
             ${{ runner.temp }}/ios-tests.json
             ${{ runner.temp }}/wrangler.log
             ${{ runner.temp }}/simulators.json
+
+  # Preserve the required iOS check across the build/test split.
+  ios:
+    needs: [changes, ios-build, ios-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          REQUIRED: ${{ needs.changes.outputs.ios }}
+          BUILD: ${{ needs.ios-build.result }}
+          TESTS: ${{ needs.ios-tests.result }}
+        run: |
+          test "$CHANGES" = success
+          if [ "$REQUIRED" = true ]; then
+            test "$BUILD" = success
+            test "$TESTS" = success
+          fi
