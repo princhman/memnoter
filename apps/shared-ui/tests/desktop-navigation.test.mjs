@@ -25,6 +25,7 @@ test("desktop toolbar spacing and Settings back navigation respect the platform 
             if (command === "modules") return [{ id: "m1", name: "Algebra", heading_numbering: false }];
             if (command === "get_content") return { state: [], updates: [], files: [] };
             if (command === "add_update") return { id: 1, bytes: args.bytes };
+            if (command === "spelling_languages") return { available: ["en-GB", "en-US"], selected: null };
             return [];
           } } });
         };
