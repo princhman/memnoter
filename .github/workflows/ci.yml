@@ -236,8 +236,9 @@ jobs:
     permissions:
       actions: read
       contents: read
-    # 40m handoff (frontend 15m + producer 25m), 15m native execution,
-    # 10m setup/download/verification. Queueing can still exhaust this bound.
+    # Overall cap: 40m handoff (frontend 15m + producer 25m), 15m native,
+    # 10m residual setup/result budget. This cap can truncate step allowances;
+    # account-wide queueing can also exhaust the handoff deadline.
     timeout-minutes: 65
     strategy:
       fail-fast: false
