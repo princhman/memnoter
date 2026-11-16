@@ -18,9 +18,13 @@ tests = list(cases(json.load(open(path))))
 if not tests or any(test.get("result") != "Passed" for test in tests):
     raise SystemExit(f"Every selected native test must pass in {suite}: {tests}")
 required = {
-    "unit": "testTwoNativeDatabasesMergeConcurrentYjsEdits",
-    "phone": "testReopeningSameNoteAndRelaunchPreserveEdits",
-}.get(suite)
-if required and not any(required in test.get("name", "") for test in tests):
-    raise SystemExit(f"Required native test did not run in {suite}: {required}")
+    "navigation": [
+        "testTwoNativeDatabasesMergeConcurrentYjsEdits",
+        "testContentsHierarchyFocusAndUnfocusRestoreWholeNote",
+    ],
+    "phone": ["testReopeningSameNoteAndRelaunchPreserveEdits"],
+}.get(suite, [])
+for name in required:
+    if not any(name in test.get("name", "") for test in tests):
+        raise SystemExit(f"Required native test did not run in {suite}: {name}")
 print(f"{suite}: {sum(test.get('result') == 'Passed' for test in tests)} passed")

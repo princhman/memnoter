@@ -228,50 +228,12 @@ jobs:
           path: ${{ runner.temp }}/ios-tests.tar.gz
           if-no-files-found: error
           retention-days: 1
-      # Published products let the UI consumers proceed independently.
+      # Published products let the native consumers proceed independently.
       - name: Build iOS release configuration
         run: |
           xcodebuild build -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
             -configuration Release -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/ios-release" CODE_SIGNING_ALLOWED=NO
-      # Keep first-boot migration from competing with Release compilation.
-      - name: Start the unit-test simulator
-        timeout-minutes: 5
-        run: bash scripts/ci/boot-ios-simulator.sh iPad
-      # Reuse this runner's products and dependencies instead of a fourth consumer.
-      # The overall 25m build cap still bounds the individual step allowances.
-      - name: Reuse the local test bundle
-        run: |
-          mkdir -p "$RUNNER_TEMP/ios-tests"
-          ln -s "$RUNNER_TEMP/ios-build/Build/Products" "$RUNNER_TEMP/ios-tests/Products"
-      - name: Wait for the unit-test simulator
-        timeout-minutes: 5
-        run: xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
-      - name: Run native unit and sync tests
-        timeout-minutes: 15
-        env:
-          IOS_TEST_SUITE: unit
-        run: |
-          sysctl hw.memsize vm.swapusage
-          vm_stat
-          top -l 0 -s 10 -n 15 -o cpu -stats pid,command,cpu,mem,threads,state,time > "$RUNNER_TEMP/ios-resources.log" &
-          resource_monitor=$!
-          trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
-          bash scripts/ci/run-ios-tests.sh
-      - name: Verify native unit tests actually ran
-        run: |
-          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/ios-tests.xcresult" > "$RUNNER_TEMP/ios-tests.json"
-          python3 scripts/ci/check-ios-results.py unit "$RUNNER_TEMP/ios-tests.json"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ios-test-results-unit
-          path: |
-            ${{ runner.temp }}/ios-tests.xcresult
-            ${{ runner.temp }}/ios-tests.json
-            ${{ runner.temp }}/wrangler.log
-            ${{ runner.temp }}/simulators.json
-            ${{ runner.temp }}/ios-resources.log
 
   # Reserve the producer's Mac slot before consumers can occupy the pool.
   ios-build-started:
@@ -308,6 +270,16 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        if: matrix.suite == 'navigation'
+      - uses: actions/setup-node@v4
+        if: matrix.suite == 'navigation'
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: matrix.suite == 'navigation'
+      # Finish Worker dependency setup before simulator first boot.
       # Boot on this VM while ios-build runs on its separate VM.
       - name: Start the iOS simulator
         timeout-minutes: 5
@@ -357,6 +329,7 @@ jobs:
           trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
           bash scripts/ci/run-ios-tests.sh
       - name: Verify native tests actually ran
+        if: always()
         env:
           IOS_TEST_SUITE: ${{ matrix.suite }}
         run: |
@@ -369,6 +342,7 @@ jobs:
           path: |
             ${{ runner.temp }}/ios-tests.xcresult
             ${{ runner.temp }}/ios-tests.json
+            ${{ runner.temp }}/wrangler.log
             ${{ runner.temp }}/simulators.json
             ${{ runner.temp }}/ios-resources.log
 
