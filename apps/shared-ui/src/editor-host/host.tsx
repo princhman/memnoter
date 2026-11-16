@@ -47,7 +47,7 @@ function NativeQuestions({ scope, onOpenSource, visible }: { scope: string | nul
     {!isPending && !error && !scopedModules.length && <p className="text-sm text-muted-foreground">{scope ? "Module not found." : "Create a module to start collecting questions."}</p>}
     {scopedModules.map(module => <section key={module.id} aria-label={module.name || "Untitled module"}>
       {!scope && <h2 className="bank-module-heading mb-4 text-sm font-medium text-muted-foreground">{module.name || "Untitled module"}</h2>}
-      <QuestionBank moduleId={module.id} onOpenSource={onOpenSource} nativeToolbar={visible && !!scope && document.documentElement.classList.contains("native-tablet")} />
+      <QuestionBank moduleId={module.id} onOpenSource={onOpenSource} nativeToolbar={visible && !!scope && (document.documentElement.classList.contains("native-tablet") || document.documentElement.classList.contains("native-phone"))} />
     </section>)}
   </div>;
 }

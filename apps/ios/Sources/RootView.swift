@@ -734,6 +734,8 @@ struct RootView: View {
                             }
                         }
                     } else if selected == "questions" {
+                        // Same Reorder / New worksheet controls as iPad, at full touch size.
+                        ToolbarItem(placement: .topBarTrailing) { TabletQuestionTools(session: session) }
                         ToolbarItem(placement: .topBarTrailing) { phoneFilesToggle(session) }
                     } else {
                         // One menu beside the breadcrumb instead of a row the system folds into its own "…".
