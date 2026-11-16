@@ -614,7 +614,7 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     // The exec boundary must reveal only the requested section, move a stale
     // caret into it, and preserve its screen position when restoring the note.
     await page.locator('.tiptap').click();
-    await page.keyboard.press('Meta+a');
+    await page.keyboard.press('ControlOrMeta+a');
     await page.evaluate(() => window.memnoterEditor.exec('heading', { level: 1 }));
     await page.keyboard.type('First');
     await page.evaluate(() => window.memnoterEditor.exec('heading', { level: 1 }));
