@@ -36,7 +36,10 @@ final class PhoneNavigationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: canRedo, object: redo)], timeout: 5), .completed)
         XCTAssertTrue(redo.isHittable, "Editor redo must be reachable in Note actions")
         redo.tap()
-        actions.tap()
+        // The open menu covers its trigger; dismiss through the uncovered left margin.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.4)).tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: undo)], timeout: 5), .completed)
+        XCTAssertTrue(app.webViews.staticTexts["Saved from iPhone"].existsOrWait(timeout: 10), "Redo must restore the text before navigating away")
         let dismissKeyboard = app.buttons["Hide keyboard"]
         XCTAssertTrue(dismissKeyboard.existsOrWait(timeout: 5))
         dismissKeyboard.tap()
