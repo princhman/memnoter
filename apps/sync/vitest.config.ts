@@ -6,7 +6,7 @@ export default defineConfig({
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
-        bindings: { AUTH_SECRET: "test-secret", DEV_RETURN_CODE: "1" },
+        bindings: { AUTH_SECRET: "test-secret", DEV_RETURN_CODE: "1", ADMIN_SECRET: "test-admin", FREE_STORAGE_LIMIT_BYTES: "1000" },
       },
     }),
   ],

@@ -16,7 +16,7 @@ import {
   type WireEntry,
 } from "../../shared-ui/src/lib/sync/protocol";
 import type { Env } from "./env";
-import { blobKey, userPrefix } from "./storage";
+import { blobKey, userPrefix, goneKey } from "./storage";
 
 const FRAME_TARGET_BYTES = 512 * 1024;
 const HINT_CHECK_EVERY = 64;
@@ -31,6 +31,110 @@ export type KeyInfo = { salt: string; check: string };
 export class Vault extends DurableObject<Env> {
   private sql: SqlStorage;
   private storedSinceHintCheck = 0;
+  private objects: Promise<unknown> = Promise.resolve();
+
+  // Serialize R2 mutations, not WebSocket/log sync. Persist a dirty marker
+  // before touching R2 so a restart repairs a partially completed mutation.
+  private objectTask<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.objects.then(task, task);
+    this.objects = next.catch(() => {});
+    return next;
+  }
+
+  private meta(key: string) {
+    return this.sql.exec<{ value: string }>("select value from meta where key = ?", key).toArray()[0]?.value;
+  }
+
+  private setMeta(key: string, value: string) {
+    this.sql.exec("insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value", key, value);
+  }
+
+  private async recount() {
+    const user = this.userId();
+    if (!user) throw new Error("User not bound");
+    let used = 0;
+    for (const kind of ["files", "blobs"]) {
+      let cursor: string | undefined;
+      do {
+        const page = await this.env.FILES.list({ prefix: `${user}/${kind}/`, cursor });
+        used += page.objects.reduce((sum, object) => sum + object.size, 0);
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+    }
+    this.setMeta("used_bytes", String(used));
+    this.sql.exec("delete from meta where key = 'usage_dirty'");
+    return used;
+  }
+
+  private async usage() {
+    const usedBytes = !this.meta("used_bytes") || this.meta("usage_dirty")
+      ? await this.recount() : Number(this.meta("used_bytes"));
+    const plan = this.meta("plan") ?? "free";
+    const configured = Number(this.env.FREE_STORAGE_LIMIT_BYTES ?? 500_000_000);
+    const limitBytes = plan === "free" ? (Number.isSafeInteger(configured) && configured >= 0 ? configured : 500_000_000) : null;
+    return { plan, usedBytes, limitBytes };
+  }
+
+  getUsage() {
+    return this.objectTask(() => this.usage());
+  }
+
+  recomputeUsage(user: string) {
+    return this.objectTask(async () => { this.bind(user); await this.recount(); return this.usage(); });
+  }
+
+  setPlan(user: string, plan: "free" | "founder" | "pro") {
+    return this.objectTask(async () => { this.bind(user); this.setMeta("plan", plan); return this.usage(); });
+  }
+
+  private async removeObject(key: string) {
+    const usage = await this.usage();
+    const existing = await this.env.FILES.head(key);
+    this.setMeta("usage_dirty", "1");
+    await this.env.FILES.delete(key);
+    this.setMeta("used_bytes", String(Math.max(0, usage.usedBytes - (existing?.size ?? 0))));
+    this.sql.exec("delete from meta where key = 'usage_dirty'");
+  }
+
+  private async drainUpload(request: Request) {
+    // Finish the streamed Worker -> DO request before returning a response.
+    // An unread body can reset the HTTP connection and hide the quota error
+    // from fetch clients. Discard chunks without buffering or writing to R2.
+    await request.body?.pipeTo(new WritableStream({ write() {} }));
+  }
+
+  private objectRequest(request: Request) {
+    return this.objectTask(async () => {
+      const user = request.headers.get("X-User-Id")!;
+      if (!this.tokenAllowed(Number(request.headers.get("X-Token-Iat")))) return Response.json({ error: "Sign in again" }, { status: 401 });
+      this.bind(user);
+      const [, kind, id] = new URL(request.url).pathname.match(/^\/v1\/(files|blobs)\/([^/]+)$/)!;
+      const key = `${user}/${kind}/${id}`;
+      if (kind === "files" && request.method === "DELETE") {
+        await this.env.FILES.put(goneKey(user, id), new Uint8Array());
+        await this.removeObject(key);
+        return Response.json({ ok: true });
+      }
+      if (kind === "files" && await this.env.FILES.head(goneKey(user, id))) return Response.json({ error: "File permanently deleted" }, { status: 410 });
+      // Retried immutable uploads cost no additional space and cannot replace data.
+      if (await this.env.FILES.head(key)) {
+        await this.drainUpload(request);
+        return Response.json({ ok: true });
+      }
+      const usage = await this.usage();
+      const length = Number(request.headers.get("Content-Length"));
+      // blobs are large note updates, not attachments: note sync stays free.
+      if (kind === "files" && usage.limitBytes !== null && usage.usedBytes + length > usage.limitBytes) {
+        await this.drainUpload(request);
+        return Response.json({ error: "quota_exceeded", used: usage.usedBytes, limit: usage.limitBytes }, { status: 413 });
+      }
+      this.setMeta("usage_dirty", "1");
+      const stored = await this.env.FILES.put(key, request.body!);
+      this.setMeta("used_bytes", String(usage.usedBytes + stored!.size));
+      this.sql.exec("delete from meta where key = 'usage_dirty'");
+      return Response.json({ ok: true });
+    });
+  }
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -73,6 +177,7 @@ export class Vault extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname.match(/^\/v1\/(files|blobs)\//)) return this.objectRequest(request);
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket", { status: 426 });
     }
@@ -268,7 +373,7 @@ export class Vault extends DurableObject<Env> {
       return id ? [blobKey(userId, id)] : [];
     });
     if (keys.length === 0) return;
-    this.ctx.waitUntil(this.env.FILES.delete(keys).catch((error) => console.error("Blob cleanup failed", error)));
+    this.ctx.waitUntil(this.objectTask(async () => { for (const key of new Set(keys)) await this.removeObject(key); }).catch((error) => console.error("Blob cleanup failed", error)));
   }
 
   private hintCompaction(ws: WebSocket) {
@@ -337,17 +442,24 @@ export class Vault extends DurableObject<Env> {
 
   // Deletes everything stored for the user, in the log and in R2, and signs
   // out every device: tokens issued until now stop working.
-  async wipe(): Promise<void> {
+  wipe(): Promise<void> {
+    return this.objectTask(() => this.wipeObjects());
+  }
+
+  private async wipeObjects(): Promise<void> {
     const userId = this.userId();
-    this.sql.exec("delete from log; delete from snapshots; delete from meta where key <> 'user';");
+    this.sql.exec("delete from log; delete from snapshots; delete from meta where key not in ('user', 'plan');");
     this.sql.exec("insert into meta (key, value) values ('revoked_before', ?)", String(Date.now() + 1));
     for (const ws of this.ctx.getWebSockets()) ws.close(CLOSE_SIGNED_OUT, "Cloud data was deleted");
     if (!userId) return;
+    this.setMeta("usage_dirty", "1");
     let cursor: string | undefined;
     do {
       const listing = await this.env.FILES.list({ prefix: userPrefix(userId), cursor });
       if (listing.objects.length > 0) await this.env.FILES.delete(listing.objects.map((object) => object.key));
       cursor = listing.truncated ? listing.cursor : undefined;
     } while (cursor);
+    this.setMeta("used_bytes", "0");
+    this.sql.exec("delete from meta where key = 'usage_dirty'");
   }
 }

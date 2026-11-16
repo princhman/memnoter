@@ -11,6 +11,8 @@ export interface Env {
   EMAIL?: SendEmail;
   // HMAC key for session tokens. Set with `wrangler secret put AUTH_SECRET`.
   AUTH_SECRET: string;
+  ADMIN_SECRET?: string;
+  FREE_STORAGE_LIMIT_BYTES?: string;
   EMAIL_FROM: string;
   // Local development only: return sign-in codes in the response instead of
   // emailing them. Never set this in production.

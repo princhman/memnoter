@@ -39,3 +39,38 @@ for (const upload of [false, true]) {
     });
   }
 }
+
+test('quota keeps the local file pending, reports a notice and uploads after an upgrade', async () => {
+  let pending = true;
+  let full = true;
+  let blocked = false;
+  let attempts = 0;
+  const localBytes = [42];
+  globalThis.syncFixture = { call: async name => {
+    switch (name) {
+      case 'sync_pending_uploads': return pending ? ['image'] : [];
+      case 'sync_pending_deletes': case 'sync_missing_files': return [];
+      case 'read_file': return { bytes: localBytes };
+      case 'sync_upload_done': pending = false; return;
+      default: assert.fail(`Quota must never delete local data: ${name}`);
+    }
+  } };
+  globalThis.fetch = async () => {
+    attempts++;
+    return Response.json(full ? { error: 'quota_exceeded', used: 1000, limit: 1000 } : { ok: true }, { status: full ? 413 : 200 });
+  };
+  const sync = createFileSync({ generation: 'epoch', server: 'https://mock.local', token: 'token', key: await importKey(btoa('a'.repeat(32))), onStored() {}, onUnauthorized() { assert.fail('Unauthorized'); }, onQuota(value) { blocked = value; } });
+  try {
+    sync.request('image');
+    for (let i = 0; i < 100 && !blocked; i++) await tick();
+    assert.equal(blocked, true);
+    assert.equal(pending, true);
+    assert.deepEqual(localBytes, [42]);
+    full = false;
+    sync.request('retry');
+    for (let i = 0; i < 100 && pending; i++) await tick();
+    assert.equal(attempts, 2);
+    assert.equal(pending, false);
+    assert.equal(blocked, false);
+  } finally { await sync.stop(); }
+});
