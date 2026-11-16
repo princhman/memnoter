@@ -1,7 +1,8 @@
+import { Kbd } from "@/components/ui/kbd";
 import { IMAGE_TYPES } from "@/lib/editor-schema/images";
 import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
-import { forwardRef, Fragment, useEffect, useId, useImperativeHandle, useRef, useState, type RefObject } from "react";
+import { forwardRef, Fragment, useEffect, useId, useImperativeHandle, useRef, useState, type RefObject, type ReactNode } from "react";
 import type { Editor, Range } from "@tiptap/core";
 import { capabilities } from "@/lib/backend";
 import { cn } from "@/lib/utils";
@@ -11,15 +12,25 @@ export type InsertCommandOptions = {
   // Saves picked images and inserts them at a position, as pasting does.
   insertImages: (editor: Editor, files: File[], position: number) => void;
   insertDrawing?: (editor: Editor) => void;
+  // Only answer editors opt into the embedded iOS worksheet bridge.
+  nativeDrawing?: boolean;
+  allowedActions?: readonly string[];
+  flashcards?: boolean;
 };
 
 export type InsertItem = {
   group: string;
   retainSelection?: boolean;
+  label?: ReactNode;
+  // Optional, for lists that show where a match lives (the @ menu).
+  id?: string;
+  detail?: string;
+  // Shows a Tab hint while highlighted: the row can be entered.
+  expandable?: boolean;
   title: string;
   keywords: string[];
   hint: string;
-  when?: (editor: Editor) => boolean;
+  when?: (editor: Editor, options?: InsertCommandOptions) => boolean;
   run: (editor: Editor, range: Range, options: InsertCommandOptions) => void;
 };
 
@@ -61,7 +72,7 @@ const ITEMS: InsertItem[] = [
     group: "Sections",
     title: "Insert heading above",
     keywords: ["insert title", "insert heading above", "parent", "adopt"],
-    hint: "Nest the next section",
+    hint: "",
     when: editor => editor.state.selection.$from.depth === 1,
     run: (editor, range) => editor.chain().focus().deleteRange(range).insertHeadingAbove().run(),
   },
@@ -146,7 +157,7 @@ const ITEMS: InsertItem[] = [
   },
   {
     group: "Blocks", title: "Drawing", keywords: ["drawing", "draw", "ink", "pen", "sketch"], hint: "",
-    when: () => capabilities.macDrawing,
+    when: (_editor, options) => !!options?.insertDrawing && (capabilities.macDrawing || !!options.nativeDrawing),
     run: (editor, range, options) => { editor.chain().deleteRange(range).run(); options.insertDrawing?.(editor); },
   },
   {
@@ -197,9 +208,13 @@ const ITEMS: InsertItem[] = [
   })),
 ];
 
-export function filterItems(query: string, editor: Editor) {
+export function filterItems(query: string, editor: Editor, options?: InsertCommandOptions) {
   const q = query.toLowerCase().trim();
-  return ITEMS.filter(item => !item.when || item.when(editor)).filter(
+  const items: InsertItem[] = options?.allowedActions?.includes("Text") ? [{
+    group: "Blocks", title: "Text", keywords: ["text", "paragraph"], hint: "",
+    run: (editor, range) => { editor.chain().focus().deleteRange(range).setParagraph().run(); },
+  }, ...ITEMS] : ITEMS;
+  return items.filter(item => (!options?.allowedActions || options.allowedActions.includes(item.title)) && (!item.when || item.when(editor, options))).filter(
     (item) =>
       !q || item.title.toLowerCase().includes(q) ||
       item.keywords.some((keyword) => keyword.startsWith(q)),
@@ -208,17 +223,22 @@ export function filterItems(query: string, editor: Editor) {
 
 export type InsertMenuProps = {
   embedded?: boolean;
+  wide?: boolean;
   focusTarget?: RefObject<HTMLElement | null>;
   items: InsertItem[];
   command: (item: InsertItem) => void;
   editor: Editor;
+  // A muted line above the list, such as where the user is.
+  header?: string;
+  // Sees each key first with the highlighted item; return true to claim it.
+  onKey?: (event: KeyboardEvent, item: InsertItem | undefined) => boolean;
 };
 export type InsertMenuHandle = {
   onKeyDown: (props: { event: KeyboardEvent }) => boolean;
 };
 
 export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
-  ({ items, command, editor, embedded = false, focusTarget }, ref) => {
+  ({ items, command, editor, embedded = false, wide = false, focusTarget, header, onKey }, ref) => {
     const [selected, setSelected] = useState(0);
     const listRef = useRef<HTMLDivElement>(null);
     const listboxId = useId();
@@ -239,6 +259,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }) => {
+        if (onKey?.(event, items[selected])) return true;
         if (!items.length) return false;
         if (event.key === "ArrowUp") {
           setSelected((index) => (index + items.length - 1) % items.length);
@@ -261,10 +282,11 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
 
     return (
       <div
-        className={cn(!embedded && surfaceClass, "w-56 py-1 pl-1", embedded && "flex min-h-0 flex-col")}
+        className={cn(!embedded && surfaceClass, wide ? "w-[min(22rem,calc(100vw-1rem))]" : "w-56", "py-1 pl-1", embedded && "flex min-h-0 flex-col")}
         // Keep the editor focused while clicking items.
         onMouseDown={(event) => event.preventDefault()}
       >
+        {header && <div data-menu-header="" className="truncate px-2 pb-1 pt-0.5 text-xs text-muted-foreground">{header}</div>}
         <div
           ref={listRef}
           id={listboxId}
@@ -272,11 +294,11 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
           aria-label="Insert"
           // A stable gutter keeps the rows the same width whether or not
           // filtering leaves enough items to scroll.
-          className="min-h-0 max-h-72 overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
+          className="min-h-0 max-h-[min(18rem,var(--suggestion-max-height,18rem))] overflow-y-auto pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]"
         >
         {items.map((item, index) => (
-          <Fragment key={item.title}>
-            {item.group !== items[index - 1]?.group && (
+          <Fragment key={item.id ?? item.title}>
+            {item.group && item.group !== items[index - 1]?.group && (
               // Each option's name says what it is; the label is visual only.
               <div
                 aria-hidden="true"
@@ -302,11 +324,13 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
               onMouseEnter={() => setSelected(index)}
               onClick={() => command(item)}
             >
-              <span className="truncate">{item.title}</span>
+              <span className={item.detail !== undefined ? "min-w-0 break-words" : "shrink-0"}>{item.label ?? item.title}</span>
+              {item.detail && <span className="min-w-0 truncate text-xs text-muted-foreground">{item.detail}</span>}
+              {item.expandable && index === selected && <Kbd aria-hidden="true">Tab</Kbd>}
               {item.hint && (
-                <kbd className="shrink-0 font-sans text-xs text-muted-foreground">
+                <Kbd className="min-w-0 shrink truncate">
                   {item.hint}
-                </kbd>
+                </Kbd>
               )}
             </button>
           </Fragment>

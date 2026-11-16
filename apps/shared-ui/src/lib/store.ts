@@ -1,6 +1,8 @@
 import type { NativeViewState } from "../editor-host/protocol";
 import { capabilities, postNativeEvent, listen } from "./backend.ts";
-import { createStore } from "@tanstack/react-store";
+import { createStore, useSelector } from "@tanstack/react-store";
+
+export type ModulePage = "notes" | "questions";
 
 // Where the reader was in a module, restored when it is opened again.
 export type ModuleView = {
@@ -18,6 +20,7 @@ export type ModuleView = {
 
 type appState = {
   openedModuleId: string | null;
+  modulePageByModule: Record<string, ModulePage>;
   viewByModule: Record<string, ModuleView>;
   sidebarOpen: boolean;
   // Most recently opened first, for the welcome screen.
@@ -40,6 +43,7 @@ const SAVE_DEBOUNCE_MS = 250;
 
 const defaultState: appState = {
   openedModuleId: null,
+  modulePageByModule: {},
   viewByModule: {},
   sidebarOpen: true,
   recentModuleIds: [],
@@ -50,6 +54,10 @@ const defaultState: appState = {
 
 function normalizeState(value: Partial<appState> | null): appState {
   const state = { ...defaultState, ...value };
+  const pages = state.modulePageByModule;
+  state.modulePageByModule = pages && typeof pages === "object" && !Array.isArray(pages)
+    ? Object.fromEntries(Object.entries(pages).filter(([, page]) => page === "notes" || page === "questions"))
+    : {};
   if (!state.viewByModule || typeof state.viewByModule !== "object" || Array.isArray(state.viewByModule)) state.viewByModule = {};
   if (!Array.isArray(state.recentModuleIds)) state.recentModuleIds = [];
   return state;
@@ -119,6 +127,19 @@ export function saveModuleView(moduleId: string, view: ModuleView) {
   }));
 }
 
+export function useModulePage(moduleId: string | null | undefined): ModulePage {
+  return useSelector(appStore, state => moduleId ? state.modulePageByModule[moduleId] ?? "notes" : "notes");
+}
+
+export function setModulePage(moduleId: string, page: ModulePage) {
+  if (appStore.state.modulePageByModule[moduleId] === page) return;
+  appStore.setState(state => ({
+    ...state,
+    modulePageByModule: { ...state.modulePageByModule, [moduleId]: page },
+  }));
+  saveState();
+}
+
 // Drop only presentation state; note content and recent destinations are separate.
 export function clearModuleView(moduleId: string) {
   appStore.setState((state) => {
@@ -131,11 +152,13 @@ export function clearModuleView(moduleId: string) {
 export function forgetModule(moduleId: string) {
   appStore.setState((state) => {
     const { [moduleId]: _, ...viewByModule } = state.viewByModule;
+    const { [moduleId]: _page, ...modulePageByModule } = state.modulePageByModule;
     return {
       ...state,
       openedModuleId:
         state.openedModuleId === moduleId ? null : state.openedModuleId,
       viewByModule,
+      modulePageByModule,
       recentModuleIds: state.recentModuleIds.filter((id) => id !== moduleId),
     };
   });

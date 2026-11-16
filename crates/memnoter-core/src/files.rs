@@ -100,6 +100,19 @@ pub(crate) mod assets {
     // Only at startup, before uploads can run. Leases reference file rows, so a
     // managed UUID with no row cannot belong to any saved note or undo history.
     pub fn cleanup_orphans(conn: &Connection, files_dir: &Path) -> CommandResult<()> {
+        let modules = conn
+            .prepare("select module_id from contents")
+            .map_err(db_err)?
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(db_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(db_err)?;
+        for module in modules {
+            match crate::worksheets::load(conn, &module) {
+                Ok(doc) if crate::worksheets::read(&doc).is_ok() => {}
+                _ => return Ok(()), // Absence of known metadata is no proof of an orphan.
+            }
+        }
         for entry in std::fs::read_dir(files_dir).map_err(db_err)? {
             let entry = entry.map_err(db_err)?;
             let id = entry.file_name().to_string_lossy().into_owned();
@@ -167,6 +180,14 @@ pub fn save_file(
             params![id, module_id, path_str, mime_type],
         )
         .map_err(db_err)?;
+        // A note's first-load cleanup can race a worksheet image paste. Lease
+        // uploads before returning their IDs, then promote only after the
+        // worksheet's reference has committed. Unknown roots fail closed too.
+        let has_content: bool = tx.query_row("select exists(select 1 from contents where module_id=?1)", [&module_id], |r| r.get(0)).map_err(db_err)?;
+        if has_content && !matches!(crate::worksheets::load(&tx, &module_id)
+            .and_then(|doc| crate::worksheets::read(&doc)), Ok(None)) {
+            crate::asset_refs::retain_worksheet_asset(&tx, &module_id, &id, true)?;
+        }
         sync::record_file(&tx, &id, &module_id, &mime_type)?;
         tx.commit().map_err(db_err)
     })();
@@ -248,6 +269,12 @@ pub fn cleanup_files(
         return Ok(Vec::new());
     }
 
+    // Never collect from a module with an unknown root/schema, even when the
+    // caller is an older UI unaware of its asset references.
+    let document = crate::worksheets::load(&conn, module_id)?;
+    if crate::worksheets::read(&document).is_err() {
+        return Ok(Vec::new());
+    }
     // An invalid/incomplete persisted note cannot authorize asset destruction.
     asset_refs::retain_all(&conn, None)?;
     // The core independently checks current references. An older UI may not

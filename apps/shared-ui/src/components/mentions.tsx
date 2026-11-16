@@ -1,6 +1,7 @@
+import { IconTooltip } from "@/components/ui/icon-tooltip";
 import { Popover } from "@base-ui/react/popover";
 import { FileText, ArrowUpRight } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useState, useRef, forwardRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, useRef, forwardRef, useImperativeHandle, type ReactNode } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, ReactRenderer, type NodeViewProps } from "@tiptap/react";
 import { Extension, type Editor } from "@tiptap/core";
 import { PluginKey } from "@tiptap/pm/state";
@@ -13,7 +14,7 @@ import { stopScrollRestore } from "@/lib/view-persistence";
 import { Mention, mentionTarget, type MentionTarget } from "@/lib/mention";
 import { useMentionNotes } from "@/lib/use-mentions";
 import { useDocuments } from "@/lib/use-documents";
-import { backlinks } from "@/lib/mention-index";
+import { backlinks, mentionLabel } from "@/lib/mention-index";
 import { InsertMenu, type InsertMenuHandle, type InsertItem } from "./insert-menu";
 
 const Context = createContext<ReturnType<typeof useMentionNotes> & { files: { id: string; name: string }[] } | null>(null);
@@ -27,6 +28,8 @@ function useCatalog() {
   if (!value) throw new Error("MentionProvider missing");
   return value;
 }
+// The module open in the editor, so @ lists it first.
+let editingModule = "";
 const jump = createStore<{ moduleId: string; kind: "heading" | "mention"; id: string } | null>(null);
 function useOpenReference() {
   const navigate = useNavigate();
@@ -39,6 +42,7 @@ function useOpenReference() {
 }
 export function MentionNavigation({ editor, moduleId, ready }: { editor: Editor | null; moduleId: string; ready: boolean }) {
   const request = useSelector(jump, state => state);
+  useEffect(() => { editingModule = moduleId; }, [moduleId]);
   useEffect(() => {
     if (!editor || !ready || request?.moduleId !== moduleId) return;
     let position: number | null = null;
@@ -65,30 +69,72 @@ function MentionChip({ node }: NodeViewProps) {
   const catalog = useCatalog();
   const open = useOpenReference();
   const target = mentionTarget(node.attrs.target);
-  const module = catalog.notes.find(note => note.id === target?.id);
-  const title = target?.kind === "file" ? catalog.files.find(file => file.id === target.id)?.name : target?.kind === "heading" ? module?.note.headings.find(heading => heading.id === target.nodeId)?.title : module?.name;
-  const label = target?.kind === "heading" && title ? `${module?.name} › ${title}` : title;
+  const label = target ? mentionLabel(catalog.notes, catalog.files, target) : undefined;
   return <NodeViewWrapper as="span" className="mention-chip" contentEditable={false}><button type="button" onMouseDown={event => event.preventDefault()} onClick={() => target && open(target)} title={label ?? "Reference unavailable"}>@{label ?? (catalog.loading ? "Loading…" : "Reference unavailable")}</button></NodeViewWrapper>;
 }
 export const MentionView = Mention.extend({ addNodeView: () => ReactNodeViewRenderer(MentionChip) });
 
 const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, InsertItem>>((props, ref) => {
   const catalog = useCatalog();
-  const items = useMemo(() => {
-    const candidates: { title: string; group: string; target: MentionTarget }[] = [];
-    for (const note of catalog.notes) {
-      candidates.push({ title: note.name, group: "Modules", target: { kind: "module", id: note.id, nodeId: null, locator: null } });
-    }
-    for (const note of catalog.notes) for (const heading of note.note.headings) candidates.push({ title: `${note.name} › ${heading.title}`, group: "Headings", target: { kind: "heading", id: note.id, nodeId: heading.id, locator: null } });
-    for (const file of catalog.files) candidates.push({ title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
+  const menu = useRef<InsertMenuHandle>(null);
+  // Where Tab has dug to: a module id, then one section id per level below it.
+  const [trail, setTrail] = useState<string[]>([]);
+  const model = useMemo(() => {
+    // The module being edited comes first; the rest keep their order.
+    const notes = [...catalog.notes].sort((a, b) => Number(b.id === editingModule) - Number(a.id === editingModule));
     const terms = props.query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    return candidates.filter(item => terms.every(term => item.title.toLocaleLowerCase().includes(term))).slice(0, 100).map((item): InsertItem => ({
+    const searching = terms.length > 0;
+    const matches = (path: string[]) => { const text = path.join(" / ").toLocaleLowerCase(); return terms.every(term => text.includes(term)); };
+    const scope = trail[0];
+    const parent = trail.length > 1 ? trail[trail.length - 1] : null;
+    const enter = new Map<string, string[]>();
+    const candidates: { id: string; title: string; group: string; detail?: string; expandable?: boolean; target: MentionTarget }[] = [];
+    let header = "";
+    for (const note of notes) {
+      if (scope && note.id !== scope) continue;
+      const byId = new Map(note.note.headings.map(heading => [heading.id, heading]));
+      const parents = new Set(note.note.headings.map(heading => heading.parentId));
+      // Section ids from the module's top down to (and including) a section.
+      const chain = (id: string) => { const ids: string[] = []; for (let at = byId.get(id); at && ids.length < 50; at = at.parentId ? byId.get(at.parentId) : undefined) ids.unshift(at.id); return ids; };
+      if (scope) header = [note.name, ...trail.slice(1).map(id => byId.get(id)?.title ?? "")].join(" / ");
+      if (!scope && matches([note.name])) {
+        const expandable = note.note.headings.length > 0;
+        candidates.push({ id: `module:${note.id}`, title: note.name, group: "", expandable, target: { kind: "module", id: note.id, nodeId: null, locator: null } });
+        if (expandable) enter.set(`module:${note.id}`, [note.id]);
+      }
+      if (!scope && !searching) continue;
+      for (const heading of note.note.headings) {
+        const path = [note.name, ...(heading.path ?? [])];
+        if (searching ? !matches([...path, heading.title]) : parent ? heading.parentId !== parent : (heading.path ?? []).length > 0) continue;
+        if (searching && parent && !chain(heading.id).slice(0, -1).includes(parent)) continue;
+        const id = `heading:${note.id}:${heading.id}`;
+        const expandable = parents.has(heading.id);
+        candidates.push({ id, title: heading.title, group: "", expandable, ...(searching ? { detail: path.join(" / ") } : {}), target: { kind: "heading", id: note.id, nodeId: heading.id, locator: null } });
+        if (expandable) enter.set(id, [note.id, ...chain(heading.id)]);
+      }
+    }
+    if (!scope) for (const file of catalog.files) if (matches([file.name])) candidates.push({ id: `file:${file.id}`, title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
+    const items = candidates.slice(0, 100).map(({ target, ...item }): InsertItem => ({
       ...item, hint: "", keywords: [],
-      run: (editor, range) => { editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target: item.target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
+      run: (editor, range) => { editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
     }));
-  }, [catalog.notes, catalog.files, props.query]);
-  if (!items.length) return <div role="status" className="rounded-lg bg-popover p-3 text-sm text-muted-foreground shadow-md">{catalog.error ? "Could not load references" : catalog.loading ? "Loading…" : "No matches"}</div>;
-  return <InsertMenu ref={ref} editor={props.editor} items={items} command={item => props.command(item)} />;
+    return { items, enter, header };
+  }, [catalog.notes, catalog.files, props.query, trail]);
+  // Tab digs into the highlighted row, Shift+Tab (or Backspace on an empty query) climbs out.
+  // The document is never touched, and browser focus never moves.
+  const onKey = (event: KeyboardEvent, item: InsertItem | undefined) => {
+    if (event.key === "Tab") {
+      const next = item?.id ? model.enter.get(item.id) : undefined;
+      if (next && !event.shiftKey) setTrail(next);
+      else if (event.shiftKey) setTrail(current => current.slice(0, -1));
+      return true;
+    }
+    if (event.key === "Backspace" && !props.query && trail.length) { setTrail(current => current.slice(0, -1)); return true; }
+    return false;
+  };
+  useImperativeHandle(ref, () => ({ onKeyDown: args => menu.current ? menu.current.onKeyDown(args) : onKey(args.event, undefined) }));
+  if (!model.items.length) return <div role="status" className="rounded-lg bg-popover p-3 text-sm text-muted-foreground shadow-md">{catalog.error ? "Could not load references" : catalog.loading ? "Loading…" : "No matches"}</div>;
+  return <InsertMenu ref={menu} editor={props.editor} items={model.items} header={model.header} onKey={onKey} wide command={item => props.command(item)} />;
 });
 export const MentionSuggest = Extension.create({
   name: "mention-suggest", priority: 201,
@@ -125,6 +171,7 @@ export function MentionedIn({ target, onOpenChange }: { target: MentionTarget; o
     : target.kind === "heading"
       ? module?.note.headings.find(heading => heading.id === target.nodeId)?.title
       : module?.name;
+  const fullLabel = mentionLabel(catalog.notes, catalog.files, target);
   const label = `${sources.length} incoming ${sources.length === 1 ? "reference" : "references"}${title ? ` to ${title}` : ""}`;
 
   if (!sources.length && !open) return null;
@@ -133,13 +180,12 @@ export function MentionedIn({ target, onOpenChange }: { target: MentionTarget; o
     setOpen(next);
     onOpenChange?.(next);
   }}>
-    <Popover.Trigger
+    <IconTooltip label={label} hint={target.kind === "heading" ? "Alt+F10" : undefined}><Popover.Trigger
       data-backlink-trigger=""
       aria-label={label}
-      title={`${label}${target.kind === "heading" ? " (Alt+F10 from heading)" : ""}`}
       aria-keyshortcuts={target.kind === "heading" ? "Alt+F10" : undefined}
       className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-    >{sources.length > 99 ? "99+" : sources.length}</Popover.Trigger>
+    >{sources.length > 99 ? "99+" : sources.length}</Popover.Trigger></IconTooltip>
     <Popover.Portal>
       <Popover.Positioner side="bottom" align="end" sideOffset={8} collisionPadding={8} className="z-50">
         <Popover.Popup
@@ -147,7 +193,7 @@ export function MentionedIn({ target, onOpenChange }: { target: MentionTarget; o
           finalFocus={() => !navigating.current}
           className="floating-surface max-h-[min(24rem,60vh)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg bg-popover p-1.5 text-popover-foreground shadow-md outline-none"
         >
-          <Popover.Title className="truncate px-2 pt-1 pb-1.5 text-xs text-muted-foreground">Linked to {title ?? "this reference"}</Popover.Title>
+          <Popover.Title className="truncate px-2 pt-1 pb-1.5 text-xs text-muted-foreground">Linked to {fullLabel ?? "this reference"}</Popover.Title>
           {sources.map((source, index) => <button
             key={`${source.moduleId}:${source.mentionId}:${index}`}
             type="button"

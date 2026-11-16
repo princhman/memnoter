@@ -794,10 +794,13 @@ fn search_index_follows_module_lifecycle() {
 }
 
 fn compacted_test_state() -> Vec<u8> {
-    use yrs::{ReadTxn, Text, Transact};
+    use yrs::{ReadTxn, XmlFragment, Transact};
     let doc = yrs::Doc::new();
-    doc.get_or_insert_text("test")
-        .insert(&mut doc.transact_mut(), 0, "saved");
+    let root = doc.get_or_insert_xml_fragment("default");
+    let mut txn = doc.transact_mut();
+    let paragraph = root.push_back(&mut txn, yrs::XmlElementPrelim::empty("paragraph"));
+    paragraph.push_back(&mut txn, yrs::XmlTextPrelim::new("saved"));
+    drop(txn);
     let state = doc
         .transact()
         .encode_state_as_update_v1(&yrs::StateVector::default());

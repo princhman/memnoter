@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Editor } from '@tiptap/core';
 import { editorExtensions } from './support/editor.mjs';
+import { noteDrawingPersistence } from '../src/editor-host/drawings.ts';
+import { noteDrawingOwner } from '../src/lib/drawing.ts';
 import { execEditor } from '../src/editor-host/commands.ts';
 import { browserHarness } from './support/browser.mjs';
 
@@ -39,6 +41,27 @@ test('drawing revisions update only their embed, retry safely, and reject stale 
     const first = images().find(x => x.node.attrs.imageId === 'first');
     editor.view.dispatch(editor.state.tr.delete(first.pos, first.pos + first.node.nodeSize));
     assert.throws(() => execEditor(editor, 'commitDrawing', { ...firstRevision, expectedSourceId: 'source-3' }), /removed/);
+  } finally { editor.destroy(); }
+});
+
+test('note owner adapter keeps both source/preview pairs when publishing a conflict copy', () => {
+  const editor = new Editor({ element: null, extensions: editorExtensions({ collaborative: false }),
+    content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+  editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+  try {
+    execEditor(editor, 'beginDrawing', { imageId: 'original' });
+    execEditor(editor, 'commitDrawing', { imageId: 'original', sourceId: 'peer-source', previewId: 'peer-preview', expectedSourceId: null });
+    const persistence = noteDrawingPersistence(editor, noteDrawingOwner('module', 'original'));
+    const revision = { sourceId: 'local-source', previewId: 'local-preview', expectedSourceId: 'old-source', asCopy: false };
+    assert.throws(() => persistence.publish(revision), /changed/);
+    const copyId = persistence.publish({ ...revision, asCopy: true });
+    const images = editor.getJSON().content.filter(node => node.type === 'image');
+    assert.equal(images.length, 2);
+    assert.deepEqual(images.find(node => node.attrs.imageId === 'original').attrs.drawing,
+      { version: 1, sourceId: 'peer-source', previewId: 'peer-preview' });
+    assert.deepEqual(images.find(node => node.attrs.imageId === copyId).attrs.drawing,
+      { version: 1, sourceId: 'local-source', previewId: 'local-preview' });
+    assert.throws(() => noteDrawingPersistence(editor, { moduleId: 'module', answerId: 'answer', canvasId: 'canvas' }), /not a note/);
   } finally { editor.destroy(); }
 });
 

@@ -195,6 +195,7 @@ pub(crate) fn open_db(app_dir: &Path) -> CommandResult<Db> {
     .map_err(db_err)?;
     migrate(&conn)?;
 
+    crate::asset_refs::refresh_worksheet_leases(&conn)?;
     rebase_file_paths(&conn, &files_path)?;
     crate::files::assets::cleanup_orphans(&conn, &files_path)?;
 
@@ -284,6 +285,7 @@ const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] = &[
     pdf_annotations::migrate,
     // Sync tables added after databases had already passed version 2.
     crate::sync::migrate,
+    asset_refs::migrate_worksheet_leases,
 ];
 
 fn migrate_sidebar_items(conn: &Connection) -> CommandResult<()> {

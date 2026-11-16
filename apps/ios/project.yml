@@ -27,6 +27,13 @@ targets:
       - path: Resources/Web
         type: folder
     preBuildScripts:
+      - name: Reject development Rust core in release app
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "$CONFIGURATION" != Debug ] && [ "$(cat "$SRCROOT/MemnoterCore/MemnoterFFI.xcframework/memnoter-build-profile" 2>/dev/null)" = debug ]; then
+            echo "error: Debug Rust core is for local development only. Run ./scripts/build-ios-core.sh to restore the release core before a Release build."
+            exit 1
+          fi
       - name: Verify bundled web editor
         basedOnDependencyAnalysis: false
         script: |

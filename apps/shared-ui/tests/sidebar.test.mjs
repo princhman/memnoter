@@ -54,7 +54,8 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
     assert.equal(await page.getByText('Move to top level').count(), 0);
     assert.equal(await page.getByRole('button', { name: /^Move / }).count(), 0, 'no drag handles');
     await page.locator('.group').first().hover();
-    await page.getByRole('button', { name: 'Add module', exact: true }).click();
+    await page.getByRole('button', { name: 'Add module', exact: true }).focus();
+    await page.keyboard.press('ArrowDown');
     await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
     await page.getByLabel('Name', { exact: true }).fill('First folder');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -71,7 +72,8 @@ test('sidebar creates, renames, collapses and deletes folders while preserving m
     await row('0').waitFor();
     assert.deepEqual(await moduleOrder(), ['1', '0', '2']);
     await page.locator('.group').first().hover();
-    await page.getByRole('button', { name: 'Add module', exact: true }).click();
+    await page.getByRole('button', { name: 'Add module', exact: true }).focus();
+    await page.keyboard.press('ArrowDown');
     await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
     // The field is set apart from the title, as in the new-module dialog.
     const [titleBox, labelBox] = await Promise.all([page.getByRole('heading', { name: 'New folder', exact: true }).boundingBox(), page.getByText('Name', { exact: true }).boundingBox()]);

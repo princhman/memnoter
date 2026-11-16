@@ -35,7 +35,7 @@ import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
 // math has its own actions on its preview.
 const RAW_TEXT_NODES = new Set(["codeBlock", "mathBlock", "inlineMath"]);
 
-export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
+export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor | null; flashcards?: boolean }) {
   const pickerOpen = useRef(false);
   const menu = useRef<HTMLDivElement>(null);
   const [menuContainer] = useState(() => document.createElement("div"));
@@ -91,7 +91,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         return !inlineMath;
       });
       return {
-        groupActions: groupCardActions.filter(item => item.when?.(editor)).map(item => item.title),
+        groupActions: (flashcards ? groupCardActions : []).filter(item => item.when?.(editor)).map(item => item.title),
         cells: editor.state.selection instanceof CellSelection,
         inTable: editor.isActive("table"),
         inlineMath,
@@ -105,10 +105,10 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         link: editor.isActive("link"),
         // Only a selection within one textblock converts to a math block.
         canMathBlock: editor.can().toggleMathBlock(),
-        canMakeCard: editor.can().makeCloze(),
-        canJoinClozes: editor.can().joinClozes(),
-        canMakeClozeNote: editor.can().makeClozeNote(),
-        inCloze: editor.can().removeCloze(),
+        canMakeCard: flashcards && editor.can().makeCloze(),
+        canJoinClozes: flashcards && editor.can().joinClozes(),
+        canMakeClozeNote: flashcards && editor.can().makeClozeNote(),
+        inCloze: flashcards && editor.can().removeCloze(),
         inMathBlock: editor.state.selection.$from.sameParent(editor.state.selection.$to) &&
           editor.state.selection.$from.parent.type.name === "mathBlock",
       };
@@ -196,7 +196,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
         if (containsImage) return false;
         const { $from, $to } = selection;
         // A selection in one formula offers only to make it a cloze.
-        if ($from.sameParent($to) && $from.parent.type.name === "mathBlock") return true;
+        if ($from.sameParent($to) && $from.parent.type.name === "mathBlock") return flashcards;
         for (const $pos of [$from, $to]) {
           for (let depth = $pos.depth; depth > 0; depth--) {
             if (RAW_TEXT_NODES.has($pos.node(depth).type.name)) return false;
@@ -298,9 +298,9 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
       >
         <Sigma />
       </MarkButton>
-      {clozeButton}
+      {flashcards && clozeButton}
       {groupCardActions.filter(item => active.groupActions.includes(item.title)).map(item => <button key={item.title} type="button" className="rounded-md px-2 py-1 text-xs hover:bg-accent" title={item.hint} onClick={() => item.run(editor, editor.state.selection, { insertImages: () => {} })}>{item.title}</button>)}
-      {active.canJoinClozes && (
+      {flashcards && active.canJoinClozes && (
         <MarkButton
           label="Join clozes"
           hint="Hide selected answers together on one card"
@@ -310,7 +310,7 @@ export function TextBubbleMenu({ editor }: { editor: Editor | null }) {
           <Combine />
         </MarkButton>
       )}
-      {active.canMakeClozeNote && (
+      {flashcards && active.canMakeClozeNote && (
         <MarkButton
           label="Make one note"
           hint="Show these blocks together on each of their cloze cards"

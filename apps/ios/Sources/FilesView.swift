@@ -93,6 +93,7 @@ struct FilesView: View {
         .onReceive(NotificationCenter.default.publisher(for: .syncDidApply)) { _ in revision += 1 }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if UIDevice.current.userInterfaceIdiom == .phone {
                 Menu {
                     Button("All modules") { moduleFilter = nil }
                     ForEach(modules) { module in
@@ -103,6 +104,7 @@ struct FilesView: View {
                     }
                 } label: {
                     Label(moduleFilter.flatMap { id in modules.first { $0.id == id }?.name } ?? "All modules", systemImage: "line.3.horizontal.decrease")
+                }
                 }
                 importButton
             }

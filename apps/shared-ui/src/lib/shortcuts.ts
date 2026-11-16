@@ -10,6 +10,13 @@ export type ShortcutAction = {
 
 // TipTap key notation is also the source for hints and native accelerators.
 export const SHORTCUTS: readonly ShortcutAction[] = [
+  { id: "navigation.notes", title: "Go to Notes", keys: "Alt-n" },
+  { id: "navigation.files", title: "Go to Files", keys: "Alt-f" },
+  { id: "navigation.questions", title: "Go to Questions", keys: "Alt-q" },
+  { id: "navigation.review", title: "Go to Review", keys: "Alt-r" },
+  { id: "navigation.all.files", title: "Go to Files in all modules", keys: "Alt-Shift-f" },
+  { id: "navigation.all.questions", title: "Go to Questions in all modules", keys: "Alt-Shift-q" },
+  { id: "navigation.all.review", title: "Go to Review in all modules", keys: "Alt-Shift-r" },
   { id: "settings.open", title: "Settings", keys: "Mod-,", menuId: "settings" },
   { id: "module.new", title: "New module", keys: "Mod-n", menuId: "new-module" },
   { id: "module.importAnki", title: "Import Anki deck…", keys: "", menuId: "import-anki" },
@@ -20,7 +27,13 @@ export const SHORTCUTS: readonly ShortcutAction[] = [
   { id: "history.redo", title: "Redo", keys: "Mod-Shift-z", menuId: "editor-redo" },
   { id: "pdf.toggle-pane", title: "Toggle files panel", keys: "Mod-Shift-d" },
   { id: "pdf.open-beside", title: "Open PDF beside note", keys: "Mod-Shift-o" },
-  { id: "pdf.select-region", title: "Select PDF region", keys: "Mod-Shift-x" },
+  { id: "pdf.open-fullscreen", title: "Open PDF full screen", keys: "Mod-Shift-o" },
+  { id: "pdf.zoom-in", title: "Zoom in PDF", keys: "Mod-Alt-ArrowUp" },
+  { id: "pdf.zoom-out", title: "Zoom out PDF", keys: "Mod-Alt-ArrowDown" },
+  { id: "pdf.go-to-page", title: "Go to PDF page", keys: "Mod-Alt-p" },
+  { id: "pdf.crop-question", title: "Crop question", keys: "Mod-Alt-q" },
+  { id: "pdf.annotate-area", title: "Annotate PDF area", keys: "Mod-Alt-h" },
+  { id: "pdf.select-region", title: "Quote region", keys: "Mod-Shift-x" },
   { id: "pdf.quote.insert", title: "Insert PDF quote", keys: "Mod-Enter" },
   { id: "palette.open", title: "Search modules and commands", keys: "Mod-k" },
   { id: "section.sibling", title: "New section", keys: "Mod-Alt-s" },
@@ -65,10 +78,11 @@ export function formatKeys(keys: string, apple = IS_APPLE): string {
   const names: Record<string, string> = apple
     ? { Mod: "⌘", Alt: "⌥", Shift: "⇧", Control: "⌃", Enter: "↵", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→" }
     : { Mod: "Ctrl", Alt: "Alt", Shift: "Shift", Control: "Ctrl" };
-  return keys.split("-").map((key) => names[key] ?? (key.length === 1 ? key.toUpperCase() : key)).join(apple ? "" : "+");
+  return keys.split(" ").map(stroke => stroke.split("-").map((key) => names[key] ?? (key.length === 1 ? key.toUpperCase() : key)).join(apple ? "" : "+")).join(" ");
 }
 
 export function matchesShortcut(event: KeyboardEvent, keys: string): boolean {
+  if (!keys || keys.includes(" ")) return false;
   const parts = keys.split("-");
   const key = parts.pop()!;
   return (event.metaKey || event.ctrlKey) === parts.includes("Mod") &&

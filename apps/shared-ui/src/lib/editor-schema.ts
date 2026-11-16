@@ -36,7 +36,9 @@ import { Flashcards } from "@/lib/flashcards";
 import { FoldableBlock } from "@/lib/foldable-block";
 
 type NoteExtensionOptions = {
+  reduced?: boolean;
   document: Y.Doc;
+  fragment?: Y.XmlFragment;
   ui?: { mention?: typeof Mention; pdfTextQuote?: typeof PdfTextQuote; mermaidView?: AnyExtension; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
   insertImages?: (editor: Editor, files: File[], position: number) => void;
   scrollContainer?: () => HTMLElement | null;
@@ -48,6 +50,8 @@ type NoteExtensionOptions = {
 // schema lacks a node or attribute would delete it from the document.
 export function noteExtensions({
   document,
+  reduced = false,
+  fragment,
   ui = {},
   insertImages = () => {},
   scrollContainer,
@@ -55,7 +59,13 @@ export function noteExtensions({
   onFirstRender,
 }: NoteExtensionOptions) {
   return [
-    StarterKit.configure({
+    (reduced ? StarterKit.extend({
+      addExtensions() {
+        return (this.parent?.() ?? []).map(extension => extension.name === "heading"
+          ? extension.extend({ addKeyboardShortcuts: () => ({}), addInputRules: () => [] })
+          : extension);
+      },
+    }) : StarterKit).configure({
       undoRedo: false,
       // Links open in the browser on ⌘-click, through LinkEditor.
       link: { openOnClick: false },
@@ -77,16 +87,15 @@ export function noteExtensions({
     TextSelectionHighlight,
     ui.inlineMath ?? InlineMath,
     ui.mathBlock ?? MathBlock,
-    Flashcards,
+    reduced ? Flashcards.extend({ addCommands: () => ({}), addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] }) : Flashcards,
     ui.pdfTextQuote ?? PdfTextQuote,
     ...FoldableBlock,
-    HeadingHieararchy,
-    SectionFocus,
-    Sections,
-    HeadingFold,
-    HeadingNumbering,
+    ...(reduced ? [HeadingFold.extend({ addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] })] : [HeadingHieararchy, SectionFocus, Sections, HeadingFold, HeadingNumbering]),
     ...(ui.menus ?? []),
-    TableOfContents.configure({
+    (reduced ? TableOfContents.extend({
+      // Keep the persisted heading attributes without note navigation effects.
+      onCreate() {}, onTransaction() {}, onDestroy() {}, addProseMirrorPlugins: () => [],
+    }) : TableOfContents).configure({
       scrollParent: () => scrollContainer?.() ?? window,
       onUpdate: onTocUpdate,
     }),
@@ -94,7 +103,7 @@ export function noteExtensions({
       searchDebounceMs: 100,
       injectCSS: false,
     }),
-    GuardedCollaboration.configure({ document, onFirstRender }),
+    GuardedCollaboration.configure({ document, fragment, onFirstRender }),
     (ui.savedImage ?? SavedImage).configure({
       inline: false,
       allowBase64: false,

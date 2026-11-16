@@ -50,7 +50,7 @@ test('PDF quote markers navigate by identity, preserve text drag, and offer dupl
     await multiple.focus(); await page.keyboard.press('Enter');
     await page.getByRole('menuitem', { name: 'Overview, quote 1', exact: true }).focus(); await page.keyboard.press('Enter');
     await expectTarget('quote-first'); await reset();
-    await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Quote region', exact: true }).click();
     assert.equal(await viewer.getByRole('button', { name: /Show quote in note/ }).count(), 0);
     await viewer.getByRole('button', { name: 'Exit selection', exact: true }).click();
     await page.getByRole('button', { name: 'Stage pending', exact: true }).click();

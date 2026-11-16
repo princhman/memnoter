@@ -1,5 +1,6 @@
 import type { Schema } from "@tiptap/pm/model";
 import * as Y from "yjs";
+import { hasReadOnlyModuleRoots } from "./worksheets";
 
 export const NEWER_VERSION_MESSAGE = "This note was edited with a newer version of Memnoter. Update the app to edit it.";
 
@@ -14,6 +15,7 @@ function knownAttrs(value: object, declared: object = {}) {
 // can delete unknown nodes and marked text. Iterative traversal keeps large,
 // deeply nested notes safe without serializing their history or cloning a doc.
 export function hasUnknownContent(fragment: Y.XmlFragment, schema: Schema): boolean {
+  if (fragment.doc && hasReadOnlyModuleRoots(fragment.doc)) return true;
   const pending = fragment.toArray();
   while (pending.length) {
     const node = pending.pop()!;

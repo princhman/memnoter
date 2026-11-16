@@ -138,6 +138,15 @@ pub async fn edit_drawing(
                 if path.parent() != Some(temporary.0.as_path()) { return Err("Invalid drawing output path".into()); }
                 let bytes = fs::read(path).map_err(|error| error.to_string())?;
                 if bytes.len() as u64 > maximum { return Err("The drawing exceeds the sync file limit. Your local draft is retained.".into()); }
+                // DrawingDocument's paper size, not the cropped PNG bounds.
+                if result_field == "source" {
+                    let document: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+                    for dimension in ["width", "height"] {
+                        let value = document[dimension].as_f64().filter(|n| n.is_finite() && *n > 0.0)
+                            .ok_or("Invalid drawing paper dimensions. Your local draft is retained.")?;
+                        result[dimension] = json!(value);
+                    }
+                }
                 result[result_field] = call(&core, "save_file", json!({"moduleId":module_id,"bytes":bytes,"mimeType":mime}))?;
             }
         }

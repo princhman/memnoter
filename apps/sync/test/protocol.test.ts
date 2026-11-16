@@ -23,6 +23,29 @@ it("negotiates the fixture protocol and refuses incompatible hello versions", as
   const ws = response.webSocket!;
   ws.accept();
   const closed = new Promise<number>(resolve => ws.addEventListener("close", event => { ws.close(); resolve(event.code); }));
-  ws.send(JSON.stringify({ t: contract.clientFrames[0], cursor: 0, v: contract.version + 1 }));
+  ws.send(JSON.stringify({ t: contract.clientFrames[0], cursor: 0, v: 1 }));
   expect(await closed).toBe(contract.closePolicy);
+});
+
+it("revokes pre-upgrade hibernating sockets before they can publish or receive worksheet data", async () => {
+  const { env, runInDurableObject } = await import("cloudflare:test");
+  const { token, userId } = await signIn("protocol-hibernating@example.com");
+  const response = await SELF.fetch(BASE + contract.paths.sync, {
+    headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": `${contract.protocol}, ${contract.authPrefix}${token}` },
+  });
+  const ws = response.webSocket!;
+  ws.accept();
+  const messages: unknown[] = [];
+  ws.addEventListener("message", event => messages.push(JSON.parse(String(event.data))));
+  const closed = new Promise<number>(resolve => ws.addEventListener("close", event => { ws.close(); resolve(event.code); }));
+  await runInDurableObject(env.VAULT.getByName(userId), async (_instance, state) => {
+    // This is exactly the persisted attachment from the v0.1.5 worker.
+    state.getWebSockets()[0].serializeAttachment({ ready: true });
+  });
+  ws.send(JSON.stringify({ t: "push", id: 1, entries: [{ doc: "vault", data: "AA==" }] }));
+  expect(await closed).toBe(contract.closePolicy);
+  expect(messages).toContainEqual({ t: "error", message: "Please update Memnoter to keep syncing", fatal: true });
+  await runInDurableObject(env.VAULT.getByName(userId), async (_instance, state) => {
+    expect(state.storage.sql.exec("select * from log").toArray()).toEqual([]);
+  });
 });

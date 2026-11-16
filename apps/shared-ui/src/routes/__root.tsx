@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useIsFullscreen } from "@/hooks/use-fullscreen";
 import { IS_MAC } from "@/lib/platform";
+import { useSectionNavigationShortcuts } from "@/hooks/use-section-navigation-shortcuts";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { ModuleReviewButton } from "@/components/module-review-button";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
@@ -36,6 +37,7 @@ import { useCommand } from "@/lib/commands";
 import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/app-events";
 
 const RootLayout = () => {
+  useSectionNavigationShortcuts();
   const isFullscreen = useIsFullscreen();
   const path = useRouterState({ select: state => state.location.pathname });
   const isPdfReader = /^\/files\/[^/]+/.test(path);

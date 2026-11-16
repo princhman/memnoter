@@ -1,3 +1,4 @@
+import { Kbd } from "@/components/ui/kbd";
 import { type Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import { type Decoration } from "@tiptap/pm/view";
@@ -35,9 +36,9 @@ function PreviewAction({ label, hint, onClick, children }: {
         {children}
       </TooltipTrigger>
       <TooltipContent>
-        <span className="grid gap-0.5">
+        <span className="inline-flex items-center gap-2">
           <strong className="font-medium">{label}</strong>
-          <span className="text-muted-foreground">{hint}</span>
+          <Kbd>{hint}</Kbd>
         </span>
       </TooltipContent>
     </Tooltip>

@@ -94,14 +94,14 @@ test("long breadcrumbs remain within the desktop header", async () => {
           return { top: c.top, bottom: c.bottom, ht: h.top, hb: h.bottom, height: h.height };
         });
         await page.waitForFunction(() => {
-          const label = document.querySelector('[aria-label="breadcrumb"] span[title]');
+          const label = document.querySelector('[aria-label="Select notes module"] span[title]');
           const node = label?.lastChild;
           const shown = node?.textContent ?? "";
           const range = document.createRange();
           if (node) range.selectNodeContents(node);
           const used = range.getBoundingClientRect().width;
           // Both ends stay, and the cut fills the width, including after it grows back.
-          return shown.includes("…") && shown.startsWith("Computer") && shown.endsWith("Concurrency ")
+          return shown.includes("…") && shown.startsWith("Comp") && shown.endsWith("rency ")
             && used <= label.clientWidth + 0.5 && label.clientWidth - used < 30;
         });
         assert.equal(box.height, 32);

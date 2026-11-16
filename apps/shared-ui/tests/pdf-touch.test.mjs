@@ -25,7 +25,7 @@ test('PDF touch pinch/pan preserves the reading point and cancels a captured cro
     const level = viewer.getByLabel('Zoom level', { exact: true });
     const zoomIn = viewer.getByRole('button', { name: /^Zoom in/ });
     await page.waitForFunction(() => document.querySelector('#viewer canvas')?.getContext('2d').getImageData(0, 0, 1, 1).data[3] === 255);
-    for (const control of [zoomIn, viewer.getByRole('button', { name: 'Select region', exact: true }), viewer.getByLabel('Page number')]) {
+    for (const control of [zoomIn, viewer.getByRole('button', { name: 'Quote region', exact: true }), viewer.getByLabel('Page number')]) {
       const box = await control.boundingBox();
       assert.ok(box.width >= 44 && box.height >= 44, `44px touch target: ${JSON.stringify(box)}`);
     }
@@ -98,7 +98,7 @@ test('PDF touch pinch/pan preserves the reading point and cancels a captured cro
     await page.waitForTimeout(280);
     assert.equal(await level.textContent(), '225%', 'cancelled pinch discards its preview');
     await viewport.evaluate(element => { element.scrollTop = 0; element.scrollLeft = 0; });
-    await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Quote region', exact: true }).click();
     const selection = viewer.getByLabel('Drag a region on this PDF page').first(); await selection.waitFor();
     const regionBox = await selection.boundingBox();
     const x = regionBox.x + 100, y = regionBox.y + 100;
@@ -122,7 +122,7 @@ test('PDF touch pinch/pan preserves the reading point and cancels a captured cro
     assert.ok(Math.abs(crop.source.region.x - .3) < .005 && Math.abs(crop.source.region.width - .1) < .005);
     assert.deepEqual(crop.pixel, [0, 255, 0, 255]);
     await page.getByRole('button', { name: 'Clear quote', exact: true }).click();
-    await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Quote region', exact: true }).click();
     await selection.waitFor();
     const penBox = await selection.boundingBox();
     for (const [type, fraction, buttons] of [['mousePressed', .28, 1], ['mouseMoved', .36, 1], ['mouseReleased', .36, 0]]) {
@@ -153,7 +153,7 @@ test('PDF touch pinch/pan preserves the reading point and cancels a captured cro
     assert.equal(await level.textContent(), '262%', 'interrupted touch does not override the explicit zoom');
     await viewer.evaluate(element => { element.style.width = '320px'; });
     const tools = viewer.locator('.pdf-reader-controls');
-    for (const name of [/^Zoom out/, /^Zoom in/, 'Select region', 'Annotate area']) {
+    for (const name of [/^Zoom out/, /^Zoom in/, 'Quote region', 'Annotate area']) {
       const control = viewer.getByRole('button', { name, exact: typeof name === 'string' });
       await control.scrollIntoViewIfNeeded();
       const area = await tools.boundingBox(), button = await control.boundingBox();

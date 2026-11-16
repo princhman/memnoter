@@ -20,7 +20,7 @@ function EditorContextMenu({ editor, options, x, y, close }: ContextMenuProps) {
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const menu = useRef<InsertMenuHandle>(null);
-  const items = [...groupCardActions.filter(item => item.when?.(editor) && item.title.toLowerCase().includes(query.toLowerCase())), ...filterItems(query, editor)];
+  const items = [...(options.flashcards === false ? [] : groupCardActions).filter(item => item.when?.(editor) && item.title.toLowerCase().includes(query.toLowerCase())), ...filterItems(query, editor, options)];
   useLayoutEffect(() => {
     const frame = requestAnimationFrame(() => {
       const element = root.current;

@@ -203,16 +203,18 @@ export function isRestoring() {
   return queryClient.isMutating({ mutationKey: [MUTATIONS.restoreBackup] }) > 0;
 }
 
-const flushers = new Map<string, (permit?: WritePermit) => Promise<unknown>>();
-export function registerFlusher(name: string, fn: (permit?: WritePermit) => Promise<unknown>) {
-  flushers.set(name, fn);
-  return () => { if (flushers.get(name) === fn) flushers.delete(name); };
+type Flusher = (permit?: WritePermit) => Promise<unknown>;
+const flushers = new Map<string, { durable: Flusher; navigation: Flusher }>();
+export function registerFlusher(name: string, fn: Flusher, navigation: Flusher = fn) {
+  const owner = { durable: fn, navigation };
+  flushers.set(name, owner);
+  return () => { if (flushers.get(name) === owner) flushers.delete(name); };
 }
 
-export async function flushAll({ permit }: { permit?: WritePermit } = {}) {
+export async function flushAll({ permit, navigation = false }: { permit?: WritePermit; navigation?: boolean } = {}) {
   if (permit !== drainPermit) assertWritable();
   await settleWork();
-  for (const flush of flushers.values()) await flush(permit);
+  for (const flush of flushers.values()) await (navigation ? flush.navigation : flush.durable)(permit);
   if ((await Promise.all([...participants].map(owner => owner.flush()))).some(saved => !saved)) throw new Error("PDF annotations could not be saved. Please retry saving first.");
   if (!await flushSaves()) throw new Error("Pending edits could not be saved. Please retry saving first.");
   await drainMutations(undefined, true);

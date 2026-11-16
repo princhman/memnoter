@@ -1,3 +1,4 @@
+import { Kbd } from "@/components/ui/kbd";
 import { action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
 import {
@@ -424,14 +425,14 @@ export function CommandPalette() {
                           </div>
                         )}
                       </div>
-                      {item === active && <kbd className="shrink-0 font-sans text-xs text-muted-foreground">{formatKeys("Mod-Enter")}</kbd>}
+                      {item === active && <Kbd>{formatKeys("Mod-Enter")}</Kbd>}
                     </>
                   ) : item.kind === "heading" ? (
                     <>
                       <span className="min-w-0 flex-1 truncate">{item.heading.title}
                         {trimmed && item.heading.ancestors.length > 0 && <span className="block truncate text-xs text-muted-foreground">{item.heading.ancestors.map(heading => heading.title).join(" › ")}</span>}
                       </span>
-                      {item.hasChildren && <kbd className="shrink-0 font-sans text-xs text-muted-foreground">{formatKeys("Mod-Enter")}</kbd>}
+                      {item.hasChildren && <Kbd>{formatKeys("Mod-Enter")}</Kbd>}
                     </>
                   ) : (
                     <>
@@ -440,9 +441,9 @@ export function CommandPalette() {
                         {item.command.title}
                       </span>
                       {item.command.shortcut && (
-                        <kbd className="shrink-0 font-sans text-xs text-muted-foreground">
+                        <Kbd>
                           {item.command.shortcut}
-                        </kbd>
+                        </Kbd>
                       )}
                     </>
                   )}
@@ -457,9 +458,9 @@ export function CommandPalette() {
           )}
         </div>
         <div className="flex justify-end gap-4 px-3 py-2 text-xs text-muted-foreground">
-          {scope && <span className="flex items-center gap-2">Back <kbd className="font-sans">{formatKeys("ArrowLeft")}</kbd></span>}
-          <span className="flex items-center gap-2">Open <kbd className="font-sans">{formatKeys("Enter")}</kbd></span>
-          <span className="flex items-center gap-2">Browse sections <kbd className="font-sans">{formatKeys("Mod-Enter")}</kbd></span>
+          {scope && <span className="flex items-center gap-2">Back <Kbd>{formatKeys("ArrowLeft")}</Kbd></span>}
+          <span className="flex items-center gap-2">Open <Kbd>{formatKeys("Enter")}</Kbd></span>
+          <span className="flex items-center gap-2">Browse sections <Kbd>{formatKeys("Mod-Enter")}</Kbd></span>
         </div>
         <div aria-live="polite" className="sr-only">
           {open && !isSearching && trimmed

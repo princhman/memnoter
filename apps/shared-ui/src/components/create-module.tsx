@@ -1,3 +1,4 @@
+import { action, formatKeys } from "@/lib/shortcuts";
 import { ImportAnkiDialog } from "./import-anki";
 import { IMPORT_ANKI_EVENT, IMPORT_FOLDER_EVENT } from "@/lib/app-events";
 import { modulesCache } from "@/lib/modules";
@@ -28,7 +29,7 @@ import { IconTooltip } from "./icon-tooltip";
 
 export function CreateModuleButton({ onNewFolder }: { onNewFolder?: () => void }) {
   return <DropdownMenu>
-    <IconTooltip label="Add module" side="right"><DropdownMenuTrigger render={<SidebarGroupAction aria-label="Add module" className="invisible group-hover:visible pointer-coarse:visible" />}><Plus className="size-3" /></DropdownMenuTrigger></IconTooltip>
+    <IconTooltip label="New module" hint={formatKeys(action("module.new").keys)} side="right"><DropdownMenuTrigger render={<SidebarGroupAction aria-label="Add module" className="invisible group-hover:visible pointer-coarse:visible" />}><Plus className="size-3" /></DropdownMenuTrigger></IconTooltip>
     <DropdownMenuContent side="right" className="w-auto">
       <DropdownMenuItem onClick={() => window.dispatchEvent(new Event(NEW_MODULE_EVENT))}>New module</DropdownMenuItem>
       {onNewFolder && <DropdownMenuItem onClick={onNewFolder}>New folder</DropdownMenuItem>}
