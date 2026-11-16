@@ -60,8 +60,9 @@ final class PhoneNavigationUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.webViews.staticTexts["Saved from iPhone"].existsOrWait(timeout: 20))
         back(in: app)
-        XCTAssertTrue(app.buttons["Review"].existsOrWait(timeout: 5))
-        app.buttons["Review"].tap()
+        let review = app.buttons.containing(.staticText, identifier: "Review").firstMatch
+        XCTAssertTrue(review.existsOrWait(timeout: 5))
+        review.tap()
         XCTAssertTrue(app.descendants(matching: .any)["review.counts"].existsOrWait(timeout: 10))
         let reveal = app.buttons["Show answer"]
         XCTAssertTrue(reveal.existsOrWait(timeout: 10))
