@@ -9,6 +9,7 @@ import { forgetModule } from "@/lib/store";
 import { saveQueue } from "@/lib/saves";
 import { syncedFileArrived } from "./file-requests";
 import { documentsKey } from "@/lib/use-documents";
+import { bankKey } from "@/lib/question-bank";
 // Dispatched on window with the module id when another device deleted it.
 export const MODULE_DELETED_REMOTELY_EVENT = "memnoter:module-deleted-remotely";
 
@@ -55,6 +56,8 @@ export function onRemote(result: ApplyResult) {
     appendSavedUpdate(moduleId, update);
     // Closed notes may have no content cache entry to notify the mention index.
     void queryClient.invalidateQueries({ queryKey: ["mention-note", moduleId] });
+    // Questions, worksheets and answers live in the module's content too.
+    void queryClient.invalidateQueries({ queryKey: bankKey(moduleId) });
     scheduleReindex(moduleId);
   }
   for (const moduleId of result.deleted) {

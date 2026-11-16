@@ -31,6 +31,7 @@ fn write<T>(
     let tx = conn.transaction().map_err(db_err)?;
     let doc = load(&tx, module)?;
     let old = read(&doc)?.ok_or("Create questions before starting a worksheet")?;
+    let admitted = admitted_assets(&doc);
     let before = doc.transact().state_vector();
     if let Some(owner) = answer_owner { initialize_answer(&doc, &owner)?; }
     let (update, result) = {
@@ -39,7 +40,7 @@ fn write<T>(
         let result = change(&mut txn, &root, &old)?;
         (txn.encode_diff_v1(&before), result)
     };
-    admit(&tx, module, Some(old), &doc)?;
+    admit(&tx, module, Some(old), &admitted, &doc)?;
     let bank = read(&doc)?.ok_or_else(invalid)?;
     tx.execute(
         "insert into contents_updates(module_id,bytes,created_at) values (?1,?2,?3)",

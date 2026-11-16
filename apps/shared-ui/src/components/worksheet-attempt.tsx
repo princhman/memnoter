@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { call, fileUrl, isNativeHost, postNativeEvent } from "@/lib/backend";
+import { isNativeHost, postNativeEvent } from "@/lib/backend";
+import { useSyncedImageUrl } from "@/lib/synced-image";
 import { partOutline, questionLabel, type Bank } from "@/lib/question-bank";
 import type { WorksheetRevision } from "@/lib/worksheets";
 import { answerKey, useWorksheetAnswers } from "@/lib/worksheet-session";
@@ -45,7 +45,7 @@ export function worksheetProgress(bank: Bank, attemptId: string, drafts: Record<
 }
 function WorksheetCropImage({ assetId, label }: { assetId: string; label: string }) {
   const [failed, setFailed] = useState(false);
-  const image = useQuery({ queryKey: ["bank-image", assetId], queryFn: () => call<string>("resolve_card_image", { fileId: assetId }).then(fileUrl), retry: false, staleTime: Infinity });
+  const image = useSyncedImageUrl("bank-image", assetId);
   if (failed || image.isError) return <p role="alert" className="text-sm text-destructive">Question crop unavailable on this device.</p>;
   return image.data ? <figure className="relative w-fit max-w-full"><img src={image.data} alt={label} className={questionCropClass} onError={() => setFailed(true)} /></figure> : <p className="text-sm text-muted-foreground">Loading question crop…</p>;
 }

@@ -4,10 +4,10 @@ import { ImageActionsMenu, ImagePreviewDialog } from "@/components/image-actions
 import { updatePdfPane, requestPdfPage, setWorksheetOpen } from "@/lib/pdf-pane";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, ArrowDown, ArrowUp, ArrowUpDown, Crop, FilePlus2, Maximize2, Ellipsis, GripVertical, FileText, Pencil, Trash2 } from "lucide-react";
 import { DndContext, DragOverlay, MeasuringStrategy, PointerSensor, useDndContext, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
-import { call, fileUrl, isNativeHost, postNativeEvent } from "@/lib/backend";
+import { call, isNativeHost, postNativeEvent } from "@/lib/backend";
+import { useSyncedImageUrl } from "@/lib/synced-image";
 import { nextPartLabel, questionLabel, setBankTarget, useBankTarget, partOutline, useBank, useBankEdit, type BankEdit, type Bank } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 import { CropDialog, type Crop as CropBox } from "./image-crop-dialog";
@@ -23,7 +23,7 @@ import "./saved-image.css";
 import "./question-bank.css";
 
 function CropImage({ id, alt, onLoad }: { id: string; alt: string; onLoad: (image: HTMLImageElement) => void }) {
-  const { data, isError } = useQuery({ queryKey: ["bank-image", id], queryFn: () => call<string>("resolve_card_image", { fileId: id }).then(fileUrl), retry: false, staleTime: Infinity });
+  const { data, isError } = useSyncedImageUrl("bank-image", id);
   return data ? <img className={questionCropClass} src={data} alt={alt} onLoad={event => onLoad(event.currentTarget)} /> : <p className="rounded-md bg-muted p-5 text-sm text-muted-foreground">{isError ? "Crop unavailable on this device" : "Loading…"}</p>;
 }
 

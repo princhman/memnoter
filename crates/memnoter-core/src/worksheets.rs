@@ -500,10 +500,42 @@ pub(crate) fn preserve_history(old: &Bank, new: &Bank) -> CommandResult<()> {
 
 /// Generic local writes cannot erase future roots or rewrite pinned history.
 /// Incoming sync remains opaque/preserved; unknown data is quarantined on read.
+/// Every file a bank and its answers reference, with the type each must have.
+fn asset_requirements(doc: &Doc, bank: &Bank) -> CommandResult<Vec<(String, &'static str)>> {
+    let mut requirements = answer_asset_requirements(doc)?;
+    for revision in bank.revisions.values() {
+        for crop in revision.crops.values() {
+            requirements.push((crop.asset_id.clone(), "image/"));
+            requirements.push((crop.source_pdf_file_id.clone(), "application/pdf"));
+        }
+    }
+    for answer in bank.answers.values() {
+        for canvas in answer.canvases.values() {
+            for ink in canvas.revision.iter().chain(&canvas.copies) {
+                requirements.push((ink.source_id.clone(), "application/vnd.memnoter.drawing+json"));
+                requirements.push((ink.preview_id.clone(), "image/png"));
+            }
+        }
+    }
+    Ok(requirements)
+}
+
+/// Files the document already references. Synced content can arrive before its
+/// files, so a write only has to prove the references it adds.
+pub(crate) fn admitted_assets(doc: &Doc) -> std::collections::HashSet<String> {
+    match read(doc) {
+        Ok(Some(bank)) => asset_requirements(doc, &bank)
+            .map(|requirements| requirements.into_iter().map(|(file, _)| file).collect())
+            .unwrap_or_default(),
+        _ => Default::default(),
+    }
+}
+
 pub(crate) fn admit(
     conn: &Connection,
     module: &str,
     old: Option<Bank>,
+    admitted: &std::collections::HashSet<String>,
     after: &Doc,
 ) -> CommandResult<()> {
     let new = read(after)?;
@@ -511,22 +543,10 @@ pub(crate) fn admit(
         preserve_history(&old, new.as_ref().ok_or_else(invalid)?)?;
     }
     if let Some(bank) = new {
-        let mut requirements = answer_asset_requirements(after)?;
-        for revision in bank.revisions.values() {
-            for crop in revision.crops.values() {
-                requirements.push((crop.asset_id.clone(), "image/"));
-                requirements.push((crop.source_pdf_file_id.clone(), "application/pdf"));
+        for (file, expected) in asset_requirements(after, &bank)? {
+            if admitted.contains(&file) {
+                continue;
             }
-        }
-        for answer in bank.answers.values() {
-            for canvas in answer.canvases.values() {
-                for ink in canvas.revision.iter().chain(&canvas.copies) {
-                    requirements.push((ink.source_id.clone(), "application/vnd.memnoter.drawing+json"));
-                    requirements.push((ink.preview_id.clone(), "image/png"));
-                }
-            }
-        }
-        for (file, expected) in requirements {
             use rusqlite::OptionalExtension;
             let mime: Option<String> = conn
                 .query_row(

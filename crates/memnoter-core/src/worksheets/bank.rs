@@ -574,6 +574,7 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
             bank.revisions.insert(rid, target_revision);
         }
         bank.validate()?;
+        let admitted = admitted_assets(&doc);
         let before = doc.transact().state_vector();
         if old.is_none() {
             // Two devices can add their first questions offline. The bank's
@@ -613,7 +614,7 @@ pub fn edit(core: &Core, module: String, edit: Edit) -> Result<Receipt, CoreErro
         }
         let update = txn.encode_diff_v1(&before);
         drop(txn);
-        admit(&tx, &module, old, &doc)?;
+        admit(&tx, &module, old, &admitted, &doc)?;
         tx.execute(
             "insert into contents_updates(module_id,bytes,created_at) values (?1,?2,?3)",
             rusqlite::params![module, update, chrono::Utc::now().timestamp_millis()],

@@ -848,3 +848,20 @@ fn first_bank_questions_created_offline_on_two_devices_both_survive_sync() {
     assert_eq!(merged.questions.keys().cloned().collect::<HashSet<_>>(), question_ids);
     assert_eq!(bank::get(&peer, module).unwrap(), Some(merged));
 }
+
+#[test]
+fn note_writes_continue_while_synced_worksheet_files_are_still_downloading() {
+    let (_dir, core, module) = core();
+    let value = fixture();
+    let bank: Bank = serde_json::from_value(value.clone()).unwrap();
+    assets(&core, &module, &bank);
+    let doc = document(&value);
+    content::add_update(&core.db, module.clone(), bytes(&doc)).unwrap();
+    // Like a peer that received the content but not yet the files.
+    core.db.lock().unwrap().execute("delete from files", []).unwrap();
+    use yrs::XmlFragment;
+    doc.get_or_insert_xml_fragment("default")
+        .push_back(&mut doc.transact_mut(), yrs::XmlTextPrelim::new("Typed in the note"));
+    content::add_update(&core.db, module.clone(), bytes(&doc)).unwrap();
+    content::save_compaction(&core.db, module.clone(), bytes(&doc), i64::MAX).unwrap();
+}

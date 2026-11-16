@@ -286,6 +286,7 @@ pub fn add_update(db: &Db, module_id: String, bytes: Vec<u8>) -> CommandResult<C
 
     let after = crate::worksheets::load(&tx, &module_id)?;
     let before = crate::worksheets::read(&after)?;
+    let admitted = crate::worksheets::admitted_assets(&after);
     if !bytes.is_empty() {
         use yrs::{updates::decoder::Decode, Transact, Update};
         after
@@ -293,7 +294,7 @@ pub fn add_update(db: &Db, module_id: String, bytes: Vec<u8>) -> CommandResult<C
             .apply_update(Update::decode_v1(&bytes).map_err(db_err)?)
             .map_err(db_err)?;
     }
-    crate::worksheets::admit(&tx, &module_id, before, &after)?;
+    crate::worksheets::admit(&tx, &module_id, before, &admitted, &after)?;
     tx.execute(
         "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
         params![module_id, bytes, Utc::now().timestamp_millis()],
@@ -319,6 +320,7 @@ pub fn save_compaction(
     // revisions before discarding them, then validate/capture the new snapshot.
     let before = crate::worksheets::load(&tx, &module_id)?;
     let old_bank = crate::worksheets::read(&before)?;
+    let admitted = crate::worksheets::admitted_assets(&before);
     use yrs::{ReadTxn, StateVector, Transact};
     // A client may never have seen worksheet writes below its watermark.
     // Merge its state into the authoritative prefix before retiring any rows.
@@ -337,7 +339,7 @@ pub fn save_compaction(
         before.transact_mut().apply_update(Update::decode_v1(&new_state).map_err(db_err)?)
             .map_err(db_err)?;
     }
-    crate::worksheets::admit(&tx, &module_id, old_bank, &before)?;
+    crate::worksheets::admit(&tx, &module_id, old_bank, &admitted, &before)?;
     asset_refs::retain_module(&tx, &module_id)?;
     tx.execute(
         "update contents set state = ?1 where module_id = ?2",

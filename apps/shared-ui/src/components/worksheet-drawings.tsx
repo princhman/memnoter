@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { call, fileUrl, isTauri } from "@/lib/backend";
+import { call, isTauri } from "@/lib/backend";
+import { useSyncedImageUrl } from "@/lib/synced-image";
 import { IS_MAC } from "@/lib/platform";
 import { bankKey, type Bank } from "@/lib/question-bank";
 import { queryClient } from "@/lib/query-client";
@@ -13,7 +13,7 @@ type Result = { status: string; source?: FileType; preview?: FileType; width?: n
 type Pending = { canvasId: string; sourceId: string | null; result?: Result; attached?: boolean };
 function Preview({ id }: { id: string }) {
   const [failed, setFailed] = useState(false);
-  const image = useQuery({ queryKey: ["worksheet-drawing", id], queryFn: () => call<string>("resolve_card_image", { fileId: id }).then(fileUrl), staleTime: Infinity, retry: false });
+  const image = useSyncedImageUrl("worksheet-drawing", id);
   return failed || image.isError ? <div role="alert" className="text-sm text-destructive">Drawing preview unavailable. <Button size="sm" variant="ghost" onClick={() => { setFailed(false); void image.refetch(); }}>Retry preview</Button></div>
     : image.data ? <img className="max-h-96 max-w-full rounded-sm bg-white object-contain" src={image.data} alt="Answer drawing" onError={() => setFailed(true)} /> : <p className="text-sm text-muted-foreground">Loading drawing…</p>;
 }
