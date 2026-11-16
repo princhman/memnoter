@@ -11,10 +11,10 @@ final class PhoneNavigationUITests: XCTestCase {
         let app = launchNote(name)
         let editor = app.webViews.textViews.firstMatch
         editor.tap()
-        let style = app.buttons["Paragraph style"]
+        let style = app.buttons["Block style"]
         XCTAssertTrue(style.existsOrWait(timeout: 5))
         style.tap()
-        app.buttons["Heading 1"].tap()
+        app.buttons["H1"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Heading 1"), object: style)], timeout: 5), .completed)
         style.tap()
         app.buttons["Text"].tap()
