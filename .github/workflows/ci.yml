@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, benchmark]
     env:
       CARGO_BUILD_JOBS: 4
     steps:
@@ -99,10 +99,15 @@ jobs:
           cache: pnpm
       # Anki dialog coverage uses the real Rust command harness.
       - uses: dtolnay/rust-toolchain@stable
+        if: matrix.shard != 'benchmark'
       - uses: swatinem/rust-cache@v2
+        if: matrix.shard != 'benchmark'
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter memnoter-shared-ui exec playwright install --with-deps webkit chromium
-      - run: pnpm --filter memnoter-shared-ui test:ci --test-shard=${{ matrix.shard }}/8
+      - run: pnpm --filter memnoter-shared-ui test:ci --skip-benchmark --test-shard=${{ matrix.shard }}/16
+        if: matrix.shard != 'benchmark'
+      - run: pnpm --filter memnoter-shared-ui exec node --experimental-strip-types --import ./tests/support/register.mjs --test --test-timeout=240000 tests/copy-large-note.bench.mjs
+        if: matrix.shard == 'benchmark'
 
   # Preserve the existing required check name across the job split.
   check:
