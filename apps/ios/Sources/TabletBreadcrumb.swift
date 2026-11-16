@@ -28,7 +28,8 @@ struct TabletBreadcrumb: View {
     }
     private var labelWidths: (module: CGFloat, section: CGFloat, item: CGFloat) {
         let section = Self.textWidth(section.capitalized)
-        let chrome: CGFloat = 20 + 2 * 17 + 16 + 8 + (distinctItem == nil ? 0 : 16 + 8)
+        let itemChrome: CGFloat = distinctItem == nil ? 0 : 24
+        let chrome: CGFloat = 78 + itemChrome
         let available = max(40, maximumWidth - chrome - section)
         let module = Self.textWidth(moduleTitle)
         guard let item = distinctItem else { return (min(module, available), section, 0) }
