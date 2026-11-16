@@ -96,6 +96,13 @@ export class Vault extends DurableObject<Env> {
     this.sql.exec("delete from meta where key = 'usage_dirty'");
   }
 
+  private async drainUpload(request: Request) {
+    // Finish the streamed Worker -> DO request before returning a response.
+    // An unread body can reset the HTTP connection and hide the quota error
+    // from fetch clients. Discard chunks without buffering or writing to R2.
+    await request.body?.pipeTo(new WritableStream({ write() {} }));
+  }
+
   private objectRequest(request: Request) {
     return this.objectTask(async () => {
       const user = request.headers.get("X-User-Id")!;
@@ -110,11 +117,15 @@ export class Vault extends DurableObject<Env> {
       }
       if (kind === "files" && await this.env.FILES.head(goneKey(user, id))) return Response.json({ error: "File permanently deleted" }, { status: 410 });
       // Retried immutable uploads cost no additional space and cannot replace data.
-      if (await this.env.FILES.head(key)) return Response.json({ ok: true });
+      if (await this.env.FILES.head(key)) {
+        await this.drainUpload(request);
+        return Response.json({ ok: true });
+      }
       const usage = await this.usage();
       const length = Number(request.headers.get("Content-Length"));
       // blobs are large note updates, not attachments: note sync stays free.
       if (kind === "files" && usage.limitBytes !== null && usage.usedBytes + length > usage.limitBytes) {
+        await this.drainUpload(request);
         return Response.json({ error: "quota_exceeded", used: usage.usedBytes, limit: usage.limitBytes }, { status: 413 });
       }
       this.setMeta("usage_dirty", "1");
