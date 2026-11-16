@@ -8,7 +8,7 @@ if [ "${#bundles[@]}" != 1 ]; then
   echo "Expected one xctestrun bundle, found ${#bundles[@]}" >&2
   exit 1
 fi
-command=(xcodebuild test-without-building -xctestrun "${bundles[0]}"
+command=(/usr/bin/time -l xcodebuild test-without-building -xctestrun "${bundles[0]}"
   -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID"
   -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/ios-tests.xcresult")
 case "$IOS_TEST_SUITE" in

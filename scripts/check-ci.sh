@@ -53,7 +53,7 @@ else
     (cd apps/ios && xcodegen generate) &&
     xcodebuild build-for-testing -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
       -destination 'generic/platform=iOS Simulator' \
-      -derivedDataPath apps/ios/build-check ARCHS=arm64 CODE_SIGNING_ALLOWED=NO -quiet
+      -derivedDataPath apps/ios/build-check ARCHS="$(uname -m)" CODE_SIGNING_ALLOWED=NO -quiet
   }
   run "iOS build" ios_build
 fi
