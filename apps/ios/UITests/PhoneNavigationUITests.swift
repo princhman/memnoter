@@ -19,7 +19,11 @@ final class PhoneNavigationUITests: XCTestCase {
         style.tap()
         app.buttons["Text"].tap()
         editor.typeText("Saved from iPhone\nQuestion :: Answer")
-        XCTAssertTrue(app.navigationBars.staticTexts[name].isHittable, "Module title must remain visible beside note actions")
+        let title = app.navigationBars.staticTexts[name]
+        let scope = app.navigationBars.buttons["Module scope"]
+        XCTAssertTrue(title.exists, "The current module name must remain in the breadcrumb")
+        XCTAssertTrue(scope.isHittable, "Module scope must remain reachable beside note actions")
+        XCTAssertTrue(title.frame.intersects(scope.frame), "Module title must remain visible within its menu control")
         let actions = app.navigationBars.buttons["Note actions"]
         XCTAssertTrue(actions.isHittable, "Note actions must remain reachable beside the module title")
         actions.tap()
