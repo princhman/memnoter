@@ -8,6 +8,7 @@ mod pdf_picker;
 mod menu;
 #[cfg(target_os = "macos")]
 mod selection_limit;
+mod spelling;
 mod sync_credentials;
 #[cfg(target_os = "macos")]
 mod drawing;
@@ -55,6 +56,8 @@ async fn core(
 }
 
 pub fn run() {
+    let context = tauri::generate_context!();
+    spelling::apply_saved_language(&context.config().identifier);
     let builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
     let builder = builder.manage(drawing::DrawingGate::default());
@@ -137,9 +140,13 @@ pub fn run() {
             import_anki::read_anki_media,
             import_anki::close_anki_package,
             pdf_picker::pick_pdfs,
+            spelling::check_spelling,
+            spelling::add_to_dictionary,
+            spelling::spelling_languages,
+            spelling::set_spelling_language,
             import_folder::read_import_images
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {

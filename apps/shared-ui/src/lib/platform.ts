@@ -8,6 +8,8 @@ export const IS_IOS =
 
 export const IS_MAC = IS_APPLE && !IS_IOS;
 
+export const IS_WINDOWS = typeof navigator !== "undefined" && /Win/.test(navigator.platform + navigator.userAgent);
+
 // A finger, not a mouse or trackpad, is the main way to point: there is no
 // hover, so controls that only appear on hover need another way to show up.
 export function isCoarsePointer() {
