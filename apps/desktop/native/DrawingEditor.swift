@@ -3,13 +3,14 @@ import AppKit
 import PencilKit
 
 struct DrawingScreen: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var model: DrawingSession
     @State private var widths = false
     @State private var confirmingDiscard = false
     private let purple = Color(red: 67 / 255, green: 47 / 255, blue: 200 / 255)
     var body: some View {
         ZStack {
-            Color.white
+            Color(nsColor: .textBackgroundColor)
             Canvas(model: model)
             VStack {
                 HStack {
@@ -19,6 +20,11 @@ struct DrawingScreen: View {
                         Text("This drawing changed elsewhere.").font(.caption)
                         Button("Discard local changes", role: .destructive) { confirmingDiscard = true }
                     }
+                    Picker("Paper style", selection: $model.paperStyle) {
+                        ForEach(DrawingPaperStyle.allCases, id: \.self) { style in
+                            Text(style.rawValue.capitalized).tag(style)
+                        }
+                    }.frame(width: 160).disabled(!model.loaded || model.saving)
                     Menu {
                         Button("Save a copy") { model.done(copy: true) }
                         if model.hasChanges {
@@ -41,30 +47,30 @@ struct DrawingScreen: View {
                     Divider().frame(height: 25)
                     ForEach(InkColor.allCases, id: \.self) { color in
                         Button { model.color = color; if model.tool == .eraser { model.tool = .pen } } label: {
-                            Circle().fill(Color(nsColor: color.value)).frame(width: 21, height: 21)
-                                .overlay { if model.color == color { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white) } }
+                            Circle().fill(swatch(color)).frame(width: 21, height: 21)
+                                .overlay { if model.color == color { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(color == .black && colorScheme == .dark ? .black : .white) } }
                                 .frame(width: 34, height: 40)
                         }.accessibilityLabel("\(color.rawValue.capitalized) ink")
                     }
                     Divider().frame(height: 25)
                     Button { widths = true } label: {
-                        Circle().fill(Color(nsColor: model.color.value)).frame(width: max(3, model.width * 1.5), height: max(3, model.width * 1.5)).frame(width: 40, height: 40)
+                        Circle().fill(swatch(model.color)).frame(width: max(3, model.width * 1.5), height: max(3, model.width * 1.5)).frame(width: 40, height: 40)
                     }.accessibilityLabel("Stroke width").popover(isPresented: $widths) {
                         VStack(alignment: .leading, spacing: 18) {
                             Text("Stroke width").font(.headline)
                             Slider(value: $model.width, in: 1...10, step: 0.5).accessibilityLabel("Stroke width")
                             HStack { ForEach([1.5, 3.0, 6.0], id: \.self) { width in
-                                Button { model.width = width } label: { Capsule().fill(Color(nsColor: model.color.value)).frame(width: 50, height: width).frame(width: 64, height: 40) }
+                                Button { model.width = width } label: { Capsule().fill(swatch(model.color)).frame(width: 50, height: width).frame(width: 64, height: 40) }
                                     .accessibilityLabel("\(width.formatted()) point stroke")
                             } }
                         }.padding(24).frame(width: 250)
                     }
-                }.buttonStyle(.plain).padding(10).background(.white, in: Capsule()).shadow(color: .black.opacity(0.12), radius: 16, y: 4)
+                }.buttonStyle(.plain).padding(10).background(Color(nsColor: .controlBackgroundColor), in: Capsule()).shadow(color: .black.opacity(0.12), radius: 16, y: 4)
                     .padding(.bottom, 18).disabled(!model.loaded || model.saving)
                     .allowsHitTesting(!model.usingTool)
             }
-            if !model.loaded { VStack { ProgressView(); Text("Opening drawing…") }.padding(20).background(.white, in: RoundedRectangle(cornerRadius: 12)) }
-        }.background(.white).foregroundStyle(.black).preferredColorScheme(.light).tint(purple)
+            if !model.loaded { VStack { ProgressView(); Text("Opening drawing…") }.padding(20).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12)) }
+        }.background(Color(nsColor: .textBackgroundColor)).foregroundStyle(.primary).tint(purple)
             .frame(minWidth: 720, minHeight: 520)
             .task { await model.load() }
             .confirmationDialog("Discard local changes?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
@@ -75,9 +81,12 @@ struct DrawingScreen: View {
                 Button("OK") { model.error = nil }
             } message: { Text(model.error ?? "") }
     }
+    private func swatch(_ color: InkColor) -> Color {
+        color == .black && colorScheme == .dark ? .white : Color(nsColor: color.value)
+    }
     private func icon(_ title: String, _ symbol: String, selected: Bool = false, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(selected ? purple : .black.opacity(0.7))
+            Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(selected ? purple : .primary.opacity(0.7))
                 .frame(width: 40, height: 40).background(selected ? purple.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 10))
         }.accessibilityLabel(title).disabled(!enabled)
     }

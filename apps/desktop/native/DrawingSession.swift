@@ -58,12 +58,12 @@ actor DrawingStorage {
         if FileManager.default.fileExists(atPath: draftURL.path) {
             let draft = try JSONDecoder().decode(LocalDraft.self, from: Data(contentsOf: draftURL))
             try draft.document.validate()
-            return (try PKDrawing(data: draft.document.nativeData), draft.document.width, draft.document.height, draft.baseSourceId, true)
+            return (canonicalInk(try PKDrawing(data: draft.document.nativeData)), draft.document.width, draft.document.height, draft.baseSourceId, true)
         }
         if let sourcePath = request.sourcePath {
             let document = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: URL(fileURLWithPath: sourcePath)))
             try document.validate()
-            return (try PKDrawing(data: document.nativeData), document.width, document.height, request.sourceId, false)
+            return (canonicalInk(try PKDrawing(data: document.nativeData)), document.width, document.height, request.sourceId, false)
         }
         guard request.sourceId == nil else { throw NSError(domain: "Drawing", code: 1, userInfo: [NSLocalizedDescriptionKey: "The drawing source has not downloaded yet. Close and try again after sync finishes."]) }
         return (PKDrawing(), 1024, 1440, nil, false)
@@ -71,7 +71,7 @@ actor DrawingStorage {
 
     func checkpoint(_ drawing: PKDrawing, width: Double, height: Double, base: String?, revision: Int) throws {
         guard !discarded, revision >= self.revision else { return }
-        let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: width, height: height, geometry: nil)
+        let document = DrawingDocument(version: 1, nativeData: canonicalInk(drawing).dataRepresentation(), width: width, height: height, geometry: nil)
         try document.validate()
         let url = URL(fileURLWithPath: request.draftPath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -85,8 +85,8 @@ actor DrawingStorage {
         discarded = true // Queued autosaves must not recreate an abandoned draft.
     }
 
-    func publication(_ drawing: PKDrawing, width: Double, height: Double) throws -> (String, String) {
-        let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: width, height: height, geometry: nil)
+    func publication(_ drawing: PKDrawing, width: Double, height: Double, paperStyle: DrawingPaperStyle) throws -> (String, String) {
+        let document = DrawingDocument(version: 1, nativeData: canonicalInk(drawing).dataRepresentation(), width: width, height: height, geometry: nil)
         try document.validate()
         guard drawing.requiredContentVersion.rawValue <= PKContentVersion.version2.rawValue else {
             throw NSError(domain: "Drawing", code: 2, userInfo: [NSLocalizedDescriptionKey: "This ink requires a newer iPad version. Your Mac draft is safe."])
@@ -94,9 +94,15 @@ actor DrawingStorage {
         let source = try JSONEncoder().encode(document)
         guard source.count <= request.maximumBytes else { throw CocoaError(.fileWriteOutOfSpace) }
         let bounds = drawing.bounds
-        let rect = bounds.isNull || bounds.isEmpty ? CGRect(x: 0, y: 0, width: 640, height: 240) : bounds.insetBy(dx: -24, dy: -24)
-        let scale = min(2, 2048 / max(rect.width, rect.height))
+        // Keep page width so the image host does not magnify a small sketch.
+        let top = bounds.isNull || bounds.isEmpty ? 0 : max(0, bounds.minY - 24)
+        let rect = CGRect(x: 0, y: top, width: width,
+                          height: bounds.isNull || bounds.isEmpty ? 240 : bounds.maxY + 24 - top)
+        let scale: CGFloat = 2
         let pixelSize = CGSize(width: max(1, ceil(rect.width * scale)), height: max(1, ceil(rect.height * scale)))
+        // Retain retina resolution rather than silently reducing ink quality.
+        // Bound allocation for the document format's very large page limits.
+        guard pixelSize.width * pixelSize.height <= 64 * 1024 * 1024 else { throw CocoaError(.fileWriteOutOfSpace) }
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(pixelSize.width), pixelsHigh: Int(pixelSize.height), bitsPerSample: 8,
                                              samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: bitmap) else { throw CocoaError(.fileWriteUnknown) }
@@ -104,7 +110,17 @@ actor DrawingStorage {
         NSGraphicsContext.current = context
         NSColor.white.setFill(); CGRect(origin: .zero, size: pixelSize).fill()
         NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance {
-            drawing.image(from: rect, scale: scale).draw(in: CGRect(origin: .zero, size: pixelSize))
+            // Rules and ink use the same top-down page coordinates.
+            NSGraphicsContext.saveGraphicsState()
+            let transform = NSAffineTransform()
+            transform.scale(by: scale)
+            transform.translateX(by: 0, yBy: rect.height)
+            transform.scaleX(by: 1, yBy: -1)
+            transform.concat()
+            paperStyle.draw(in: rect, export: true)
+            NSGraphicsContext.restoreGraphicsState()
+            canonicalInk(drawing).image(from: rect, scale: scale)
+                .draw(in: CGRect(origin: .zero, size: pixelSize))
         }
         NSGraphicsContext.restoreGraphicsState()
         guard let preview = bitmap.representation(using: .png, properties: [:]), preview.count <= request.maximumBytes else { throw CocoaError(.fileWriteOutOfSpace) }
@@ -131,6 +147,12 @@ actor DrawingStorage {
     @Published var error: String?
     @Published var tool: InkTool = .pen { didSet { preferences.set(tool.rawValue, forKey: "tool") } }
     @Published var color: InkColor = .black { didSet { preferences.set(color.rawValue, forKey: "color") } }
+    @Published var paperStyle: DrawingPaperStyle = .blank {
+        didSet {
+            preferences.set(paperStyle.rawValue, forKey: "drawing.paper")
+            if loaded && paperStyle != oldValue { changed() }
+        }
+    }
     @Published var width: Double = 3 { didSet { preferences.set(width, forKey: "width") } }
     @Published var undoStack: [PKDrawing] = []
     @Published var redoStack: [PKDrawing] = []
@@ -162,6 +184,7 @@ actor DrawingStorage {
         super.init()
         tool = InkTool(rawValue: preferences.string(forKey: "tool") ?? "") ?? .pen
         color = InkColor(rawValue: preferences.string(forKey: "color") ?? "") ?? .black
+        paperStyle = DrawingPaperStyle(rawValue: preferences.string(forKey: "drawing.paper") ?? "") ?? .blank
         let savedWidth = preferences.object(forKey: "width") as? Double ?? 3
         width = savedWidth.isFinite ? max(1, min(10, savedWidth)) : 3
         scrollTop = max(0, preferences.double(forKey: viewKey))
@@ -211,7 +234,7 @@ actor DrawingStorage {
                 try await flush()
                 let makingCopy = copy && (request.sourceId != nil || requiresCopy)
                 if !hasChanges && !makingCopy { finish(EditorResult(status: request.sourceId == nil ? "empty" : "unchanged")); return }
-                let files = try await storage.publication(drawing, width: paperWidth, height: paperHeight)
+                let files = try await storage.publication(drawing, width: paperWidth, height: paperHeight, paperStyle: paperStyle)
                 finish(EditorResult(status: "save", sourcePath: files.0, previewPath: files.1, expectedSourceId: baseSourceId, asCopy: makingCopy, hasChanges: true))
             } catch { saving = false; self.error = error.localizedDescription }
         }

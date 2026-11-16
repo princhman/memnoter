@@ -4,11 +4,11 @@ import { ImageActionsMenu, ImagePreviewDialog } from "@/components/image-actions
 import { updatePdfPane, requestPdfPage, setWorksheetOpen } from "@/lib/pdf-pane";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, ArrowDown, ArrowUp, ArrowUpDown, Crop, FilePlus2, Maximize2, Ellipsis, GripVertical, FileText, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, ArrowDown, ArrowUp, ArrowUpDown, Crop, FilePlus2, Maximize2, Ellipsis, GripVertical, FileText, ListOrdered, Pencil, Trash2 } from "lucide-react";
 import { DndContext, DragOverlay, MeasuringStrategy, PointerSensor, useDndContext, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
 import { call, isNativeHost, postNativeEvent } from "@/lib/backend";
 import { useSyncedImageUrl } from "@/lib/synced-image";
-import { nextPartLabel, questionLabel, setBankTarget, useBankTarget, partOutline, useBank, useBankEdit, type BankEdit, type Bank } from "@/lib/question-bank";
+import { nextPartLabel, partStyleLabel, partStyleOf, PART_STYLES, type PartStyle, questionLabel, setBankTarget, useBankTarget, partOutline, useBank, useBankEdit, type BankEdit, type Bank } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 import { CropDialog, type Crop as CropBox } from "./image-crop-dialog";
 import type { WorksheetCrop } from "@/lib/worksheets";
@@ -189,7 +189,7 @@ function rememberWorksheet(moduleId: string, id: string | null) {
   catch { /* Storage may be unavailable; the worksheet just won't reopen. */ }
 }
 
-export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: { moduleId: string; onOpenSource?: (documentId: string) => void; nativeToolbar?: boolean }) {
+export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false, hideWhenEmpty = false }: { moduleId: string; onOpenSource?: (documentId: string) => void; nativeToolbar?: boolean; hideWhenEmpty?: boolean }) {
   const { data: savedBank, error, isLoading, refetch } = useBank(moduleId, true);
   const [pendingBank, setPendingBank] = useState<{ moduleId: string; bank: Bank; received?: boolean } | null>(null);
   const bank = pendingBank?.moduleId === moduleId ? pendingBank.bank : savedBank;
@@ -206,6 +206,7 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
   const [picking, setPicking] = useState(false);
   const [selectedQuestions, setSelectedQuestions] = useState<Set<string>>(new Set());
   const [worksheetTitle, setWorksheetTitle] = useState("");
+  const [namingWorksheet, setNamingWorksheet] = useState(false);
   // The open worksheet survives reloads and relaunches, per module.
   const [activeAttempt, setActiveAttemptState] = useState<{ moduleId: string; id: string } | null>(() => openWorksheet(moduleId));
   const setActiveAttempt = (next: { moduleId: string; id: string } | null) => {
@@ -356,6 +357,29 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
       setPendingBank(null);
     } finally { saving.current = false; setBusy(false); }
   };
+  // Relabel a parent's direct parts in order: (a)(b)(c) ⇄ (i)(ii)(iii) ⇄ (A)(B)(C) ⇄ (1)(2)(3).
+  // One rename per part; each receipt carries the revision the next edit expects.
+  const relabelParts = async (questionId: string, parentId: string, style: PartStyle) => {
+    if (saving.current || !bank) return;
+    saving.current = true; setBusy(true); setFailure("");
+    const previousTarget = target;
+    try {
+      let current = bank;
+      const revision = current.revisions[current.questions[questionId].revisionId];
+      const children = Object.entries(revision.parts).filter(([, p]) => p.parentId === parentId).sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]));
+      for (const [index, [partId, part]] of children.entries()) {
+        const label = partStyleLabel(style, index);
+        if (part.label.trim().replace(/^\((.*)\)$/, "$1") === label) continue;
+        current = (await edit({ kind: "renamePart", questionId, expectedRevisionId: current.questions[questionId].revisionId, partId, label })).bank;
+      }
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : String(error));
+      await refetch();
+    } finally {
+      if (previousTarget) setBankTarget({ moduleId, questionId: previousTarget.questionId, partId: previousTarget.partId });
+      saving.current = false; setBusy(false);
+    }
+  };
   const startWorksheet = async () => {
     if (busy) return;
     const questionIds = questions.filter(([id]) => selectedQuestions.has(id)).map(([id]) => id);
@@ -364,7 +388,7 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
     try {
       const id = await createWorksheet(worksheetTitle.trim() || "Worksheet", questionIds);
       setPendingBank(null);
-      setPicking(false); setSelectedQuestions(new Set()); setWorksheetTitle("");
+      setPicking(false); setSelectedQuestions(new Set()); setWorksheetTitle(""); setNamingWorksheet(false);
       setActiveAttempt({ moduleId, id });
     } catch (error) { setFailure(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
@@ -373,6 +397,9 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
     if (!savedBank) return <section className="space-y-3"><Button variant="ghost" onClick={() => setActiveAttempt(null)}>Back to questions</Button><p role={error ? "alert" : "status"}>{error ? `Could not load worksheet: ${error.message}` : "Loading worksheet…"}</p></section>;
     return <WorksheetAttempt key={`${moduleId}:${activeAttempt.id}`} moduleId={moduleId} attemptId={activeAttempt.id} bank={savedBank} onBack={() => setActiveAttempt(null)} />;
   }
+  // All modules lists only modules with questions; the page shows one shared hint
+  // when none have any. Markers let the page hide the heading and that hint by CSS.
+  if (hideWhenEmpty && !error && (isLoading || !questions.length)) return <span hidden data-bank-state={isLoading ? "loading" : "empty"} />;
   return <DndContext sensors={sensors} measuring={{ droppable: { strategy: MeasuringStrategy.Always } }} collisionDetection={args => {
     const pointer = args.pointerCoordinates;
     const bounds = section.current?.getBoundingClientRect();
@@ -467,25 +494,39 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
       dropBoundary.current = null;
       if (!saving.current && plan) void run(plan.edit);
     }}>
-  <section ref={section} aria-label="Question bank" className={cn(questionReadingWidth, "pb-16", reordering && "bank-reorder-outline")}
+  <section ref={section} aria-label="Question bank" className={cn(questionReadingWidth, "question-bank-page", reordering && "bank-reorder-outline")}
     onClickCapture={event => { if (performance.now() < suppressClickUntil.current) { event.preventDefault(); event.stopPropagation(); } }}
     onDoubleClickCapture={event => { if (performance.now() < suppressClickUntil.current) { event.preventDefault(); event.stopPropagation(); } }}>
-    {questions.length > 0 && !nativeToolbar && <div className="bank-toolbar mb-3 flex h-7 min-w-0 items-center justify-end">
+    {questions.length > 0 && !nativeToolbar && !picking && <div className="bank-toolbar mb-3 flex h-7 min-w-0 items-center justify-end">
       {reordering
         ? <Button size="sm" variant="ghost" aria-pressed disabled={picking || busy || !!dragging || renaming !== null} onClick={() => changeMode(false)}>Done</Button>
         : <ToolButton label="Reorder questions" disabled={picking || busy || !!dragging || renaming !== null} onClick={() => changeMode(true)}><ArrowUpDown /></ToolButton>}
       {!picking && <ToolButton label="New worksheet" disabled={reordering || busy || !!dragging || renaming !== null} onClick={() => { setPicking(true); setSelectedQuestions(new Set()); }}><FilePlus2 /></ToolButton>}
       <span className="sr-only" role="status">{busy ? "Saving…" : ""}</span>
     </div>}
-    {picking && <div className="mb-5 space-y-3">
-      <p className="text-sm text-muted-foreground">Worksheet for this module</p>
-      <input aria-label="Worksheet title" placeholder="Worksheet title" maxLength={120} value={worksheetTitle} onChange={event => setWorksheetTitle(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /> {/* lint-allow: surface-outline, text input */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSelectedQuestions(new Set(questions.map(([id]) => id)))}>Select all</Button>
+    {picking && (() => {
+      const count = questions.filter(([id]) => selectedQuestions.has(id)).length;
+      const allSelected = count === questions.length;
+      return <div className="bank-picking-bar sticky top-0 z-10 -mx-2 mb-4 flex h-10 items-center gap-1 bg-background px-2">
+        <span role="status" className="mr-auto text-sm text-muted-foreground">{count ? `${count} selected` : "Select questions for a worksheet"}</span>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSelectedQuestions(allSelected ? new Set() : new Set(questions.map(([id]) => id)))}>{allSelected ? "Clear" : "Select all"}</Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setPicking(false); setSelectedQuestions(new Set()); }}>Cancel</Button>
-        <Button size="sm" disabled={busy || !questions.some(([id]) => selectedQuestions.has(id))} onClick={() => void startWorksheet()}>{busy ? "Starting…" : `Start worksheet (${questions.filter(([id]) => selectedQuestions.has(id)).length})`}</Button>
-      </div>
-    </div>}
+        <Button size="sm" className="ml-1 rounded-full px-3.5" disabled={busy || !count} onClick={() => setNamingWorksheet(true)}>Create worksheet</Button>
+      </div>;
+    })()}
+    <Dialog open={namingWorksheet} onOpenChange={open => { if (!busy) setNamingWorksheet(open); }}>
+      <DialogContent>
+        <form className="grid gap-4" onSubmit={event => { event.preventDefault(); void startWorksheet(); }}>
+          <div className="grid gap-1">
+            <DialogTitle>New worksheet</DialogTitle>
+            <p className="text-sm text-muted-foreground">{(() => { const n = questions.filter(([id]) => selectedQuestions.has(id)).length; return `${n} ${n === 1 ? "question" : "questions"}`; })()}</p>
+          </div>
+          <input autoFocus aria-label="Worksheet title" placeholder="Worksheet" maxLength={120} value={worksheetTitle} onChange={event => setWorksheetTitle(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-primary" /> {/* lint-allow: surface-outline, text input */}
+          {failure && namingWorksheet && <p role="alert" className="text-sm text-destructive">{failure}</p>}
+          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" disabled={busy} onClick={() => setNamingWorksheet(false)}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? "Starting…" : "Start"}</Button></div>
+        </form>
+      </DialogContent>
+    </Dialog>
     {!picking && [false, true].map(finished => {
       const all = Object.entries(savedBank?.attempts ?? {}).filter(([, attempt]) => !attempt.deleted && !!attempt.finished === finished).reverse();
       const expanded = finished ? allFinished : allWorksheets;
@@ -534,6 +575,8 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
           const move = (to: number) => void run({ kind: root ? "moveQuestion" : "movePart", ...pin, partId: root ? undefined : part.id, index: to });
           const rowActions: RowAction[] = [
             { label: root ? "Rename question" : "Rename part", icon: <Pencil />, disabled: busy, run: () => setRenaming(key) },
+            ...(parts > 0 ? PART_STYLES.filter(({ style }) => style !== partStyleOf(revision, part.id)).map(({ style, example }) => (
+              { label: `Label parts ${example}`, icon: <ListOrdered />, disabled: busy, run: () => void relabelParts(qid, part.id, style) })) : []),
             { label: "Move up", icon: <ArrowUp />, disabled: busy || rowIndex === 0, run: () => move(rowIndex - 1) },
             { label: "Move down", icon: <ArrowDown />, disabled: busy || rowIndex === rowCount - 1, run: () => move(rowIndex + 1) },
             { label: root ? "Delete question" : "Delete part", icon: <Trash2 />, disabled: busy, destructive: true,
@@ -547,7 +590,7 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false }: 
                 onSave={text => { setRenaming(null); const trimmed = text.trim(); const pin = { questionId: qid, expectedRevisionId: question.revisionId };
                   if (root) { if (trimmed && trimmed !== questionLabel(question.title, index + 1)) void run({ kind: "renameQuestion", ...pin, title: trimmed }); }
                   else if (trimmed && trimmed !== own(revision.parts[part.id].label)) void run({ kind: "renamePart", ...pin, partId: part.id, label: trimmed }); }}
-                aria-label={`Add next crops to ${part.label}`} aria-pressed={current} className={cn(layout.labelClass, current && "text-foreground")} onClick={() => setBankTarget({ moduleId, questionId: qid, partId: part.id })}>{root ? questionLabel(question.title, index + 1) : own(revision.parts[part.id].label)}</EditableLabel>
+                aria-label={`Add next crops to ${part.label}`} aria-pressed={current} className={cn(layout.labelClass, "-mx-1 rounded-sm px-1", current && "bg-primary/20 text-foreground")} onClick={() => setBankTarget({ moduleId, questionId: qid, partId: part.id })}>{root ? questionLabel(question.title, index + 1) : own(revision.parts[part.id].label)}</EditableLabel>
               {parts > 0 && (reordering || folded) && <button type="button" disabled={!!dragging} aria-label={`${folded ? "Show" : "Hide"} parts of ${part.label}`} aria-expanded={!folded} className="bank-part-count ml-2 flex h-7 shrink-0 items-center self-center rounded-sm text-sm text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => toggle(key)}>{parts} {parts === 1 ? "part" : "parts"}</button>}
             </BankRow>
             <div className={layout.contentClass}>

@@ -12,7 +12,9 @@ import { applySavedContent, contentQueryOptions, acknowledgeCompaction, contentK
 import { parsePdfSource, quoteTarget } from "./pdf-quote";
 import { pendingPdfQuote, type PdfTextQuotePart, type QuoteDraft } from "./pending-pdf-quote";
 
-const COMPACTION_THRESHOLD = 300;
+// Every load (opening a note, the palette outline, indexing) replays the
+// unmerged updates; 231 of them cost a large note ~50ms and ~0.5MB of IPC.
+const COMPACTION_THRESHOLD = 50;
 const COMPACTION_IDLE_MS = 3_000;
 
 export function useNoteDocument(moduleId: string) {
@@ -32,14 +34,15 @@ export function useNoteDocument(moduleId: string) {
     queryFn: async () => {
       // Taken before reading, so an edit saved meanwhile is in one or the other.
       const pending = saveQueue.pending(moduleId);
-      const content = await loadContent(moduleId, yDoc);
-      applyPendingSaves(yDoc, pending);
       // Still in the task that filled the editor, so the note is never
-      // painted unfolded or at the top first.
-      const editor = editorRef.current;
-      if (editor && ySyncPluginKey.getState(editor.state)?.doc === yDoc) {
-        restoreView(editor, moduleId);
-      }
+      // painted unfolded or at the top first. The first load of a session
+      // then awaits file cleanup, so this must not wait for loadContent.
+      const filled = () => {
+        applyPendingSaves(yDoc, pending);
+        const editor = editorRef.current;
+        if (editor && ySyncPluginKey.getState(editor.state)?.doc === yDoc) restoreView(editor, moduleId);
+      };
+      const content = await loadContent(moduleId, yDoc, filled);
       return content;
     },
     // local mutations keep this cache current; focus/remount needs no disk read.

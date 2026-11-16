@@ -73,7 +73,7 @@ struct RootView: View {
         return reader.fullscreen || (reader.activeId != nil && reader.activeId == primaryLibraryDocumentId)
     }
     private var tabletBreadcrumbWidth: CGFloat {
-        max(100, min(session?.pdfReader != nil ? 240 : 360, detailWidth - 420))
+        max(100, min(session?.pdfReader != nil ? 320 : 560, detailWidth - 420))
     }
     private var currentSection: String {
         if selected == "questions" { return primaryFileContent ? "files" : "questions" }
@@ -597,17 +597,17 @@ struct RootView: View {
                             if chrome.count <= 3 && detailWidth >= 650 {
                                 ForEach(0..<chrome.count, id: \.self) { index in
                                     Button { session?.worksheetQuestion(index) } label: {
-                                        Text("\(index + 1)").font(.subheadline.weight(.medium)).frame(width: 30, height: 30)
+                                        Text(chrome.label(index)).font(.subheadline.weight(.medium)).lineLimit(1).padding(.horizontal, 6).frame(minWidth: 30, minHeight: 30)
                                             .foregroundStyle(index == chrome.index ? Color.white : Color.primary)
                                             .background(index == chrome.index ? DrawingStyle.accent : .clear, in: RoundedRectangle(cornerRadius: 8))
-                                    }.buttonStyle(.plain).accessibilityLabel("Question \(index + 1)")
+                                    }.buttonStyle(.plain).accessibilityLabel("Question \(chrome.label(index))")
                                 }
                             } else {
                                 Menu {
                                     ForEach(0..<chrome.count, id: \.self) { index in
-                                        Button("Question \(index + 1)") { session?.worksheetQuestion(index) }
+                                        Button("Question \(chrome.label(index))") { session?.worksheetQuestion(index) }
                                     }
-                                } label: { Text("\(chrome.index + 1) of \(chrome.count)") }
+                                } label: { Text("\(chrome.label(chrome.index)) · \(chrome.index + 1)/\(chrome.count)") }
                             }
                             Button { session?.worksheetQuestion(chrome.index + 1) } label: { Image(systemName: "chevron.right") }
                                 .disabled(chrome.index + 1 >= chrome.count).accessibilityLabel("Next question")
@@ -706,12 +706,12 @@ struct RootView: View {
                         ToolbarItem(placement: .principal) {
                             Menu {
                                 ForEach(0..<chrome.count, id: \.self) { index in
-                                    Button("Question \(index + 1)") { session.worksheetQuestion(index) }
+                                    Button("Question \(chrome.label(index))") { session.worksheetQuestion(index) }
                                 }
                             } label: {
-                                Text("\(chrome.index + 1) of \(chrome.count)").font(.subheadline.weight(.medium))
+                                Text("\(chrome.label(chrome.index)) · \(chrome.index + 1)/\(chrome.count)").font(.subheadline.weight(.medium))
                             }
-                            .accessibilityLabel("Question \(chrome.index + 1) of \(chrome.count)")
+                            .accessibilityLabel("Question \(chrome.label(chrome.index)), \(chrome.index + 1) of \(chrome.count)")
                         }
                         if session.worksheetAnswerFocused, session.worksheetDrawing.request == nil {
                             ToolbarItemGroup(placement: .topBarTrailing) {

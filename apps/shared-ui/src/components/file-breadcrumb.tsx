@@ -1,4 +1,5 @@
 import { MiddleTruncate } from "./middle-truncate";
+import { useAnyWorksheetOpen, WORKSHEET_CRUMB_SLOT } from "@/lib/pdf-pane";
 import { useDocuments } from "@/lib/use-documents";
 import { documentName } from "@/lib/pdf-state";
 import { useModulePage } from "@/lib/store";
@@ -54,6 +55,8 @@ export function FileBreadcrumb() {
   const page: ModuleSection = isQuestions ? "questions" : isFiles ? "files" : isReview ? "review" : bankEnabled && modulePage === "questions" ? "questions" : "notes";
   const scopedModuleId = moduleId ?? pdf?.moduleId ?? ((isFiles || isReview || isQuestions) ? search.module : undefined);
   const { activeEditor } = useActiveEditor();
+  // An open worksheet replaces the crumbs with its own back button and title, as on iPad.
+  const worksheet = useAnyWorksheetOpen() !== null && page === "questions";
   const editor =
     page === "notes" && activeEditor?.moduleId === moduleId ? activeEditor.editor : null;
 
@@ -89,7 +92,8 @@ export function FileBreadcrumb() {
       />
       {/* Below md the sidebar is a sheet, so always clear the window controls. */}
       <div className={cn("shrink-0 md:hidden", TOOLBAR_OFFSET)} />
-      <div className="min-w-0 overflow-hidden">
+      <div id={WORKSHEET_CRUMB_SLOT} className="flex min-w-0 items-center empty:hidden" />
+      <div className={cn("min-w-0 overflow-hidden", worksheet && "hidden")}>
         <Breadcrumb>
           <BreadcrumbList className="flex-nowrap whitespace-nowrap [&>[data-slot=breadcrumb-item]]:min-w-0 [&>[data-slot=breadcrumb-item]]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:block [&>[data-slot=breadcrumb-item]>*]:overflow-hidden [&>[data-slot=breadcrumb-item]>*]:min-w-0 [&>[data-slot=breadcrumb-item]>*]:max-w-full [&>[data-slot=breadcrumb-separator]]:shrink-0">
             {moduleId || isFiles || isReview || isQuestions ? (

@@ -42,3 +42,13 @@
   font-size: 12px;
   line-height: 22px;
 }
+
+/* All modules: hide modules without questions; one hint only when every module is empty. */
+.questions-module:has(> [data-bank-state]) { display: none; }
+.questions-all:has(> .questions-module:not(:has(> [data-bank-state="empty"]))) > .questions-all-empty { display: none; }
+
+/* Like the note editor: the last question can scroll up near the top. On All
+   modules only the page end gets the room, not every module's bank. */
+.question-bank-page { padding-bottom: 80dvh; }
+.questions-all .question-bank-page { padding-bottom: 4rem; }
+.questions-all { padding-bottom: 80dvh !important; }

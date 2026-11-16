@@ -202,12 +202,6 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-questions .worksheet-answer-input .note-image-block { margin-block: 0; }
 .native-questions .worksheet-answer-input > .note-image-block + p:last-child:has(> br:only-child) { margin: 0; height: 0; line-height: 0; }
 
-:is(.native-tablet, .native-phone) .native-questions :is(.worksheet-page-back, .worksheet-page-title, .worksheet-page-progress) { display: none; }
-
-:is(.native-tablet, .native-phone) .native-questions section:has(.worksheet-page-title) > h2 { display: none; }
-
-:is(.native-tablet, .native-phone) .native-questions :is(.worksheet-page-switcher, .worksheet-page-footer) { display: none; }
-
 .native-questions { padding-bottom: calc(var(--native-bottom-inset, 0px) + 24px); }
 
 /* iPad bank actions: desktop keeps its context-menu and whole-row drag model. */

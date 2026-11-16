@@ -18,7 +18,7 @@ enum InkColor: String, CaseIterable {
     case black, blue, red, green, purple, orange
     var value: NSColor {
         let rgb: UInt32 = switch self {
-        case .black: 0x171717
+        case .black: 0x000000
         case .blue: 0x2455DA
         case .red: 0xD32F40
         case .green: 0x14804A
@@ -30,6 +30,49 @@ enum InkColor: String, CaseIterable {
     }
 }
 
+// Match the iPad preference values and page-coordinate ruling.
+enum DrawingPaperStyle: String, CaseIterable {
+    case blank, lined, grid
+    func draw(in rect: CGRect, export: Bool = false) {
+        guard self != .blank else { return }
+        let spacing: CGFloat = 28
+        let path = NSBezierPath()
+        path.lineWidth = export ? 1 : 0.5
+        var y = (rect.minY / spacing).rounded(.up) * spacing
+        while y <= rect.maxY {
+            path.move(to: CGPoint(x: 0, y: y - rect.minY))
+            path.line(to: CGPoint(x: rect.width, y: y - rect.minY))
+            y += spacing
+        }
+        if self == .grid {
+            var x = (rect.minX / spacing).rounded(.up) * spacing
+            while x <= rect.maxX {
+                path.move(to: CGPoint(x: x - rect.minX, y: 0))
+                path.line(to: CGPoint(x: x - rect.minX, y: rect.height))
+                x += spacing
+            }
+        }
+        (export ? NSColor(white: 0.6, alpha: 1) : NSColor.labelColor.withAlphaComponent(0.22)).setStroke()
+        path.stroke()
+    }
+}
+
+// Keep canonical black as on iPad; PencilKit handles the drawing appearance.
+// Normalize legacy white drafts and the old Mac near-black without changing paths.
+func canonicalInk(_ drawing: PKDrawing) -> PKDrawing {
+    PKDrawing(strokes: drawing.strokes.map { original in
+        var stroke = original
+        if let color = stroke.ink.color.usingColorSpace(.sRGB) {
+            let r = color.redComponent, g = color.greenComponent, b = color.blueComponent
+            let oldMacBlack = abs(r - 23 / 255.0) < 0.001 && abs(g - r) < 0.001 && abs(b - r) < 0.001
+            if (r < 0.001 && g < 0.001 && b < 0.001) || (r > 0.999 && g > 0.999 && b > 0.999) || oldMacBlack {
+                stroke.ink = PKInk(stroke.ink.inkType, color: NSColor.black.withAlphaComponent(color.alphaComponent))
+            }
+        }
+        return stroke
+    })
+}
+
 final class PaperView: NSView {
     let model: DrawingSession
     var drawing = PKDrawing()
@@ -39,22 +82,33 @@ final class PaperView: NSView {
     private var revision = -1
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    init(_ model: DrawingSession) { self.model = model; super.init(frame: .zero); appearance = NSAppearance(named: .aqua) }
+    init(_ model: DrawingSession) { self.model = model; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     func refresh() {
-        if revision != model.revision { drawing = model.drawing; revision = model.revision; needsDisplay = true }
+        if revision != model.revision { drawing = model.drawing; revision = model.revision }
+        needsDisplay = true
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill(); dirtyRect.fill()
+        NSColor.textBackgroundColor.setFill(); dirtyRect.fill()
+        NSGraphicsContext.saveGraphicsState()
+        let translation = NSAffineTransform()
+        translation.translateX(by: dirtyRect.minX, yBy: dirtyRect.minY)
+        translation.concat()
+        model.paperStyle.draw(in: dirtyRect)
+        NSGraphicsContext.restoreGraphicsState()
         let visible = dirtyRect.intersection(visibleRect).intersection(bounds)
         if !drawing.strokes.isEmpty, !visible.isEmpty {
-            NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance {
+            effectiveAppearance.performAsCurrentDrawingAppearance {
                 drawing.image(from: visible, scale: window?.backingScaleFactor ?? 2)
                     .draw(in: visible, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             }
         }
         if !points.isEmpty {
-            model.color.value.withAlphaComponent(model.tool == .marker ? 0.35 : 1).setStroke()
+            (model.color == .black && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor.white : model.color.value).withAlphaComponent(model.tool == .marker ? 0.35 : 1).setStroke()
             livePath.lineWidth = model.strokeWidth; livePath.lineCapStyle = .round; livePath.lineJoinStyle = .round; livePath.stroke()
         }
     }
@@ -108,7 +162,7 @@ final class PaperScroll: NSScrollView {
     init(_ model: DrawingSession) {
         paper = PaperView(model); super.init(frame: .zero)
         documentView = paper; hasVerticalScroller = true; hasHorizontalScroller = false
-        drawsBackground = true; backgroundColor = .white
+        drawsBackground = true; backgroundColor = .textBackgroundColor
         contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: contentView)
     }

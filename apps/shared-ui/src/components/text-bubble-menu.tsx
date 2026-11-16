@@ -35,6 +35,13 @@ import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
 // math has its own actions on its preview.
 const RAW_TEXT_NODES = new Set(["codeBlock", "mathBlock", "inlineMath"]);
 
+const IDLE_STATE = {
+  groupActions: [] as string[], cells: false, inTable: false, inlineMath: false, highlight: false,
+  highlightColor: undefined as ReturnType<typeof highlightColor> | undefined,
+  bold: false, italic: false, underline: false, strike: false, code: false, link: false,
+  canMathBlock: false, canMakeCard: false, canJoinClozes: false, canMakeClozeNote: false, inCloze: false, inMathBlock: false,
+};
+
 export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor | null; flashcards?: boolean }) {
   const pickerOpen = useRef(false);
   const menu = useRef<HTMLDivElement>(null);
@@ -84,6 +91,9 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
     editor,
     selector: ({ editor }) => {
       if (!editor || editor.isDestroyed) return null;
+      // Shown only for a cell selection or a non-empty text selection (see
+      // shouldShow); a bare caret skips these checks on every transaction.
+      if (editor.state.selection.empty && !(editor.state.selection instanceof CellSelection)) return IDLE_STATE;
       const { from, to } = editor.state.selection;
       let inlineMath = false;
       editor.state.doc.nodesBetween(from, to, (node) => {

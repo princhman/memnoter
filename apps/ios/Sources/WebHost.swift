@@ -751,4 +751,7 @@ struct WorksheetChrome: Decodable, Equatable {
     let status: String
     let index, count: Int
     var finished: Bool?
+    /// The bank's question names (A1, B4…); older web bundles send none.
+    var labels: [String]?
+    func label(_ index: Int) -> String { labels?.indices.contains(index) == true ? labels![index] : "\(index + 1)" }
 }

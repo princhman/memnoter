@@ -173,7 +173,7 @@ export interface NativeEvents {
   pdfViewState: { documentId: string; page: number; zoom: number };
   pdfState: { moduleId: string | null; open: boolean; coveringNote: boolean; focused: boolean };
   worksheetEditorState: { active: boolean; moduleId: string; answerId?: string } & Partial<EditorState>;
-  worksheetState: { title: string | null; answered: number; total: number; status: string; index: number; count: number; finished?: boolean };
+  worksheetState: { title: string | null; answered: number; total: number; status: string; index: number; count: number; finished?: boolean; labels?: string[] };
   questionBankState: { open: boolean; moduleId: string | null; controls?: { visible: boolean; reordering: boolean; reorderDisabled: boolean; newWorksheetVisible: boolean; worksheetDisabled: boolean } };
   pdfReader: PdfReaderState | null;
   pdfSelectionChanged: PdfSelectionState;
