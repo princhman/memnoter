@@ -50,7 +50,7 @@ struct TabletBreadcrumb: View {
             } label: {
                 breadcrumbLabel(moduleTitle, width: widths.module)
             }.accessibilityLabel("Module scope")
-            Text(compact ? "–" : "/").foregroundStyle(.secondary)
+            Text("/").foregroundStyle(.secondary)
                 .fixedSize(horizontal: compact, vertical: false)
             Menu {
                 Button("Notes") { changeSection("notes") }
