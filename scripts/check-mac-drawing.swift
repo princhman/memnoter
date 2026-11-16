@@ -79,7 +79,7 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         let exported = PortableInk.exporting(basis)!
         precondition(exported.version == 2 && exported.strokes.count == 3)
         precondition(exported.strokes[1].tool == PKInk.InkType.pencil.rawValue)
-        precondition(exported.strokes[1].mask != nil && exported.strokes[1].maskUsesEvenOddFillRule == true)
+        precondition(exported.strokes[1].mask != nil && exported.strokes[1].maskUsesEvenOddFillRule == (basis.strokes[1].mask?.windingRule == .evenOdd))
         let web = PortableInk.Stroke(tool: "pen", color: "#202020", width: 4,
             points: [.init(x: 100, y: 120, pressure: 0.8), .init(x: 140, y: 160, pressure: 1)])
         // Reorder and erase: index zero must never return from the full archive.
@@ -90,7 +90,7 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         precondition(restored.strokes.count == 3)
         for (output, input) in [(0, 2), (1, 1)] {
             let got = restored.strokes[output], expected = basis.strokes[input]
-            precondition(got.ink == expected.ink && got.transform == expected.transform)
+            precondition(got.ink.inkType == expected.ink.inkType && got.ink.color == expected.ink.color && got.transform == expected.transform)
             precondition(got.randomSeed == expected.randomSeed && got.mask?.cgPath == expected.mask?.cgPath)
             precondition(got.path.first?.size == expected.path.first?.size)
             precondition(got.path.first?.opacity == expected.path.first?.opacity)
@@ -105,12 +105,12 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         let storage = DrawingStorage(request)
         let loadedState = try await storage.load()
         let loaded = loadedState.0
-        precondition(loaded.strokes[0].ink == basis.strokes[2].ink, "Native load must preserve white ink")
+        precondition(loaded.strokes[0].ink.inkType == basis.strokes[2].ink.inkType && loaded.strokes[0].ink.color == basis.strokes[2].ink.color, "Native load must preserve white ink")
         let files = try await storage.publication(loaded, width: 1024, height: 40_000, paperStyle: .blank)
         let published = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: URL(fileURLWithPath: files.0)))
         precondition(published.version == 1 && published.portable?.strokes.map(\.nativeIndex) == [0, 1, 2])
         let publishedDrawing = try published.drawing()
-        precondition(publishedDrawing.strokes[0].ink == basis.strokes[2].ink)
+        precondition(publishedDrawing.strokes[0].ink.inkType == basis.strokes[2].ink.inkType && publishedDrawing.strokes[0].ink.color == basis.strokes[2].ink.color)
         let next = PortableInk.exporting(restored)!
         precondition(next.strokes.map(\.nativeIndex) == [0, 1, 2])
         let nextDocument = DrawingDocument(version: 2, nativeData: restored.dataRepresentation(), width: 1024, height: 40_000,

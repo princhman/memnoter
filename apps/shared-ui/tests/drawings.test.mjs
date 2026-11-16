@@ -296,6 +296,13 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
       const {parseInk, paintInk, hitInk} = await import('/src/lib/portable-ink.ts');
       const doc = parseInk(JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets.native))));
       doc.portable.strokes[0].transform = [0,1,-1,0,200,100];
+      // Masks follow drawing coordinates, independently of the stroke transform.
+      for (const command of doc.portable.strokes[0].mask) {
+        for (let i=0;i<command.coordinates.length;i+=2) {
+          const [x,y] = command.coordinates.slice(i,i+2);
+          command.coordinates[i]=280-y; command.coordinates[i+1]=x;
+        }
+      }
       const copy = document.createElement('canvas'); copy.width=c.width; copy.height=c.height;
       paintInk(copy,doc);
       return { visible:copy.getContext('2d').getImageData(150,130,1,1).data[0],

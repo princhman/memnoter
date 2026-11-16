@@ -21,9 +21,10 @@ Apple publication creates a new archive and assigns fresh contiguous indices to
 all remaining strokes, including strokes added on the web.
 
 Portable rendering approximates native brush texture and nib opacity. Canvas2D
-applies the exported affine transform and exact quadratic, cubic, line, and close
-mask commands before drawing sampled elliptical nibs. Hit testing uses the inverse
-transform and the mask's fill rule. Whole-stroke erase and undo preserve all
+clips with exact quadratic, cubic, line, and close mask commands in drawing
+coordinates before transforming sampled elliptical nibs. Hit testing clips in
+drawing coordinates, then uses the inverse stroke transform. Whole-stroke erase
+and undo preserve all
 unselected descriptors and the archive. Native return retains original masks,
 texture, transforms, and opacity through the archived PKStroke, independent of
 portable rendering quality. Imported colors are preserved without rewriting

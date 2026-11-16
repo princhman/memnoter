@@ -70,11 +70,12 @@ export function hitInk(stroke: PortableStroke, x: number, y: number): boolean {
   if ("kind" in stroke) {
     const [a,b,c,d,e,f] = stroke.transform, det = a*d-b*c;
     if (!det) return false;
-    const px = x-e, py = y-f;
-    x = (d*px-c*py)/det; y = (-b*px+a*py)/det;
+    // PencilKit masks use drawing coordinates, before inverse stroke mapping.
     const path = clipPath(stroke);
     const ctx = document.createElement("canvas").getContext("2d");
     if (path && !ctx?.isPointInPath(path, x, y, stroke.maskUsesEvenOddFillRule ? "evenodd" : "nonzero")) return false;
+    const px = x-e, py = y-f;
+    x = (d*px-c*py)/det; y = (-b*px+a*py)/det;
     radius /= Math.max(.001, Math.hypot(a,b), Math.hypot(c,d));
     return stroke.points.some(p => {
       if (p.opacity * stroke.alpha === 0) return false;
@@ -106,8 +107,9 @@ export function paintInk(canvas: HTMLCanvasElement, doc: InkDocument) {
     c.save(); c.scale(canvas.width/doc.width, canvas.height/doc.height);
     c.strokeStyle = stroke.color; c.fillStyle = stroke.color; c.lineCap = "round";
     if ("kind" in stroke) {
-      const [a,b,d,e,x,y] = stroke.transform; c.transform(a,b,d,e,x,y);
+      // Clip in drawing space; only sampled nibs use the stroke transform.
       const path = clipPath(stroke); if (path) c.clip(path, stroke.maskUsesEvenOddFillRule ? "evenodd" : "nonzero");
+      const [a,b,d,e,x,y] = stroke.transform; c.transform(a,b,d,e,x,y);
       for (const p of stroke.points) {
         c.globalAlpha = p.opacity;
         c.beginPath(); c.ellipse(p.x,p.y,p.width/2,p.height/2,p.azimuth,0,Math.PI*2); c.fill();
