@@ -255,6 +255,9 @@ jobs:
         run: |
           sysctl hw.memsize vm.swapusage
           vm_stat
+          top -l 0 -s 10 -n 15 -o cpu -stats pid,command,cpu,mem,threads,state,time > "$RUNNER_TEMP/ios-resources.log" &
+          resource_monitor=$!
+          trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
           bash scripts/ci/run-ios-tests.sh
       - name: Verify native unit tests actually ran
         run: |
@@ -269,6 +272,7 @@ jobs:
             ${{ runner.temp }}/ios-tests.json
             ${{ runner.temp }}/wrangler.log
             ${{ runner.temp }}/simulators.json
+            ${{ runner.temp }}/ios-resources.log
 
   # Reserve the producer's Mac slot before consumers can occupy the pool.
   ios-build-started:
@@ -349,6 +353,9 @@ jobs:
         run: |
           sysctl hw.memsize vm.swapusage
           vm_stat
+          top -l 0 -s 10 -n 15 -o cpu -stats pid,command,cpu,mem,threads,state,time > "$RUNNER_TEMP/ios-resources.log" &
+          resource_monitor=$!
+          trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
           bash scripts/ci/run-ios-tests.sh
       - name: Verify native tests actually ran
         env:
@@ -364,6 +371,7 @@ jobs:
             ${{ runner.temp }}/ios-tests.xcresult
             ${{ runner.temp }}/ios-tests.json
             ${{ runner.temp }}/simulators.json
+            ${{ runner.temp }}/ios-resources.log
 
   # Preserve the required iOS check across the build/test split.
   ios:
