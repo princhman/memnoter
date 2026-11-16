@@ -34,7 +34,8 @@ being asked each time:
    it; a behaviour-only PR merges on green once the sol loop approves.
 6. Offer release notes. Ask before tagging. A `v*` tag runs `release.yml`:
    desktop installers, TestFlight and the Linear release. memnoter.com follows
-   the latest GitHub release by itself.
+   the latest GitHub release by itself. The sync worker (`apps/sync`)
+   deploys itself from `main`; never run `wrangler deploy` by hand.
 7. Clean up without being asked, on the Mac and on minipc: remove merged
    worktrees (`scripts/prune-worktrees.sh --apply`), delete merged local
    branches with `git branch -d`, stop leftover dev servers and test browsers,
