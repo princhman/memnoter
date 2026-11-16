@@ -116,14 +116,19 @@ def validate_archive(archive, manifest):
     require(digest == manifest['sha256'], 'archive digest mismatch')
     uuid = manifest['identity']['device']['uuid']
     paths = {}
+    sidecars = {}
     with tarfile.open(archive, 'r:gz') as tar:
         for member in tar:
             name = member.name.rstrip('/')
             parts = PurePosixPath(name).parts
             require(name and not name.startswith('/') and '..' not in parts and
                     name == '/'.join(parts), f'unsafe archive path: {name}')
-            require(parts == (uuid,) or parts[:2] == (uuid, 'data') or parts == (uuid, 'device.plist'),
-                    f'archive outside selected device: {name}')
+            if not (parts == (uuid,) or parts[:2] == (uuid, 'data') or parts == (uuid, 'device.plist')):
+                # BSD tar stores macOS metadata in regular AppleDouble siblings.
+                target = str(PurePosixPath(name).with_name(parts[-1][2:])) if parts[-1].startswith('._') else ''
+                require(member.isfile() and target in (uuid, f'{uuid}/data', f'{uuid}/device.plist'),
+                        f'archive outside selected device: {name}')
+                sidecars[name] = target
             require(name not in paths, f'duplicate archive path: {name}')
             require(member.isfile() or member.isdir() or member.issym() or member.islnk(),
                     f'unsupported archive entry: {name}')
@@ -131,6 +136,9 @@ def validate_archive(archive, manifest):
         require(uuid in paths and paths[uuid].isdir(), 'missing device directory')
         require(f'{uuid}/device.plist' in paths and paths[f'{uuid}/device.plist'].isfile(), 'missing device.plist')
         require(f'{uuid}/data' in paths and paths[f'{uuid}/data'].isdir(), 'missing data directory')
+        for name, target in sidecars.items():
+            require(target in paths and (paths[target].isdir() or paths[target].isfile()),
+                    f'unassociated AppleDouble metadata: {name}')
         for name, member in paths.items():
             for parent in PurePosixPath(name).parents:
                 require(str(parent) not in paths or paths[str(parent)].isdir(),
