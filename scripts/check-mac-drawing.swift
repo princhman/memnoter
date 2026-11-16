@@ -54,9 +54,77 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         let preview = try Data(contentsOf: URL(fileURLWithPath: files.1))
         precondition(Array(preview.prefix(8)) == [137, 80, 78, 71, 13, 10, 26, 10])
         try source.write(to: URL(fileURLWithPath: CommandLine.arguments[1]), options: .atomic)
+        try await checkPortableSelection(folder: folder, scope: scope)
         try await checkEmbeddedPresentation(folder: folder, scope: scope)
         try await checkAnswerSession(folder: folder, scope: scope, drawing: model.drawing)
         print("Mac canvas: mouse stroke, undo/redo, stroke erasing, local recovery and PNG/source publication passed. Archive written for the iPad test.")
+    }
+
+    // Real PKDrawing archives, masks and sampled descriptors: the v2 selection
+    // must win over the old full archive, without rebuilding selected native ink.
+    @MainActor private static func checkPortableSelection(folder: URL, scope: String) async throws {
+        let points = [CGFloat(-10), 80].enumerated().map { i, x in
+            PKStrokePoint(location: CGPoint(x: x, y: 50), timeOffset: Double(i)/10,
+                size: CGSize(width: 16, height: 5), opacity: 0.4, force: 0.7, azimuth: 0.6, altitude: 0.8)
+        }
+        let path = PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 123))
+        let mask = NSBezierPath(rect: CGRect(x: -20, y: 0, width: 65, height: 100))
+        mask.windingRule = .evenOdd
+        let original = PKDrawing(strokes: [PKInk.InkType.pen, .pencil, .marker].map { tool in
+            PKStroke(ink: PKInk(tool, color: (tool == .marker ? NSColor.white : NSColor.red).withAlphaComponent(0.6)), path: path,
+                transform: CGAffineTransform(translationX: 30, y: 40), mask: mask)
+        })
+        let archive = original.dataRepresentation()
+        let basis = try PKDrawing(data: archive)
+        let exported = PortableInk.exporting(basis)!
+        precondition(exported.version == 2 && exported.strokes.count == 3)
+        precondition(exported.strokes[1].tool == PKInk.InkType.pencil.rawValue)
+        precondition(exported.strokes[1].mask != nil && exported.strokes[1].maskUsesEvenOddFillRule == true)
+        let web = PortableInk.Stroke(tool: "pen", color: "#202020", width: 4,
+            points: [.init(x: 100, y: 120, pressure: 0.8), .init(x: 140, y: 160, pressure: 1)])
+        // Reorder and erase: index zero must never return from the full archive.
+        let selection = PortableInk(version: 2, strokes: [exported.strokes[2], exported.strokes[1], web])
+        let document = DrawingDocument(version: 2, nativeData: archive, width: 1024, height: 40_000, geometry: nil, portable: selection)
+        let decoded = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(document))
+        let restored = try decoded.drawing()
+        precondition(restored.strokes.count == 3)
+        for (output, input) in [(0, 2), (1, 1)] {
+            let got = restored.strokes[output], expected = basis.strokes[input]
+            precondition(got.ink == expected.ink && got.transform == expected.transform)
+            precondition(got.randomSeed == expected.randomSeed && got.mask?.cgPath == expected.mask?.cgPath)
+            precondition(got.path.first?.size == expected.path.first?.size)
+            precondition(got.path.first?.opacity == expected.path.first?.opacity)
+        }
+        precondition(restored.strokes[2].path.first?.location == CGPoint(x: 100, y: 120))
+        let sourcePath = folder.appendingPathComponent("indexed-source.json")
+        try JSONEncoder().encode(document).write(to: sourcePath)
+        let request = DrawingSessionRequest(owner: .note(moduleId: "portable", imageId: "indexed"), sourceId: "source",
+            sourcePath: sourcePath.path, draftPath: folder.appendingPathComponent("indexed-draft.json").path,
+            resultPath: folder.appendingPathComponent("indexed-result.json").path,
+            maximumBytes: 50 * 1024 * 1024 - 29, preferencesScope: scope)
+        let storage = DrawingStorage(request)
+        let loadedState = try await storage.load()
+        let loaded = loadedState.0
+        precondition(loaded.strokes[0].ink == basis.strokes[2].ink, "Native load must preserve white ink")
+        let files = try await storage.publication(loaded, width: 1024, height: 40_000, paperStyle: .blank)
+        let published = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: URL(fileURLWithPath: files.0)))
+        precondition(published.version == 1 && published.portable?.strokes.map(\.nativeIndex) == [0, 1, 2])
+        let publishedDrawing = try published.drawing()
+        precondition(publishedDrawing.strokes[0].ink == basis.strokes[2].ink)
+        let next = PortableInk.exporting(restored)!
+        precondition(next.strokes.map(\.nativeIndex) == [0, 1, 2])
+        let nextDocument = DrawingDocument(version: 2, nativeData: restored.dataRepresentation(), width: 1024, height: 40_000,
+            geometry: nil, portable: PortableInk(version: 2, strokes: [next.strokes[1]]))
+        let final = try nextDocument.drawing()
+        precondition(final.strokes.count == 1 && final.strokes[0].ink.inkType == .pencil)
+        var invalid = exported.strokes[0]; invalid.nativeIndex = 10
+        for data in [archive, Data()] {
+            let bad = DrawingDocument(version: 2, nativeData: data, width: 1024, height: 1440,
+                geometry: nil, portable: PortableInk(version: 2, strokes: [invalid]))
+            do { _ = try bad.drawing(); preconditionFailure("Invalid native basis must be rejected") }
+            catch { }
+        }
+        print("Portable v2: indexed masked/pencil/elliptical/translucent selection, reorder, web append, re-export and invalid basis rejection passed.")
     }
 
     // Independent session contract: an answer owner has no image/embed/window.

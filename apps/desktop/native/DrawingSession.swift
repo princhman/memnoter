@@ -58,12 +58,12 @@ actor DrawingStorage {
         if FileManager.default.fileExists(atPath: draftURL.path) {
             let draft = try JSONDecoder().decode(LocalDraft.self, from: Data(contentsOf: draftURL))
             try draft.document.validate()
-            return (canonicalInk(try draft.document.drawing()), draft.document.width, draft.document.height, draft.baseSourceId, true)
+            return (try draft.document.drawing(), draft.document.width, draft.document.height, draft.baseSourceId, true)
         }
         if let sourcePath = request.sourcePath {
             let document = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: URL(fileURLWithPath: sourcePath)))
             try document.validate()
-            return (canonicalInk(try document.drawing()), document.width, document.height, request.sourceId, false)
+            return (try document.drawing(), document.width, document.height, request.sourceId, false)
         }
         guard request.sourceId == nil else { throw NSError(domain: "Drawing", code: 1, userInfo: [NSLocalizedDescriptionKey: "The drawing source has not downloaded yet. Close and try again after sync finishes."]) }
         return (PKDrawing(), 1024, 1440, nil, false)
@@ -71,7 +71,7 @@ actor DrawingStorage {
 
     func checkpoint(_ drawing: PKDrawing, width: Double, height: Double, base: String?, revision: Int) throws {
         guard !discarded, revision >= self.revision else { return }
-        let document = DrawingDocument(version: 1, nativeData: canonicalInk(drawing).dataRepresentation(), width: width, height: height, geometry: nil)
+        let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: width, height: height, geometry: nil)
         try document.validate()
         let url = URL(fileURLWithPath: request.draftPath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -86,7 +86,7 @@ actor DrawingStorage {
     }
 
     func publication(_ drawing: PKDrawing, width: Double, height: Double, paperStyle: DrawingPaperStyle) throws -> (String, String) {
-        let document = DrawingDocument(version: 1, nativeData: canonicalInk(drawing).dataRepresentation(), width: width, height: height, geometry: nil, portable: PortableInk.exporting(canonicalInk(drawing)))
+        let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: width, height: height, geometry: nil, portable: PortableInk.exporting(drawing))
         try document.validate()
         guard drawing.requiredContentVersion.rawValue <= PKContentVersion.version2.rawValue else {
             throw NSError(domain: "Drawing", code: 2, userInfo: [NSLocalizedDescriptionKey: "This ink requires a newer iPad version. Your Mac draft is safe."])
@@ -119,7 +119,7 @@ actor DrawingStorage {
             transform.concat()
             paperStyle.draw(in: rect, export: true)
             NSGraphicsContext.restoreGraphicsState()
-            canonicalInk(drawing).image(from: rect, scale: scale)
+            drawing.image(from: rect, scale: scale)
                 .draw(in: CGRect(origin: .zero, size: pixelSize))
         }
         NSGraphicsContext.restoreGraphicsState()

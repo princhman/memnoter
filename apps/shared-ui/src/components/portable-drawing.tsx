@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { call } from "@/lib/backend";
 import type { FileType } from "@/lib/content";
-import { parseInk, paintInk, type InkDocument, type InkStroke } from "@/lib/portable-ink";
+import { parseInk, paintInk, hitInk, inkCanvasSize, type InkDocument, type InkStroke } from "@/lib/portable-ink";
 import { Button } from "./ui/button";
 
 type Request = { moduleId: string; imageId: string; sourceId?: string | null; displayLabel?: string };
@@ -64,16 +64,10 @@ function PortableDrawing({ request, initial, base, recovered, finish }: { reques
     const y = Math.max(0, Math.min(ink.height, (e.clientY - rect.top) * ink.height / rect.height));
     if (g.stroke) {
       g.stroke.points.push({ x, y, pressure: e.pointerType === "mouse" ? .75 : Math.max(.05, e.pressure) });
-      update({ ...g.before, portable: { version: 1, strokes: [...g.before.portable.strokes, g.stroke] } });
+      update({ ...g.before, portable: { version: g.before.portable.version, strokes: [...g.before.portable.strokes, g.stroke] } });
     } else {
-      // Whole-stroke eraser; distance to segments also catches sparse input.
-      const hit = (s: InkStroke) => s.points.some((p, i) => {
-        const a = s.points[Math.max(0, i - 1)], dx = p.x - a.x, dy = p.y - a.y;
-        const t = Math.max(0, Math.min(1, ((x-a.x)*dx+(y-a.y)*dy)/(dx*dx+dy*dy || 1)));
-        return Math.hypot(x-a.x-t*dx, y-a.y-t*dy) < 12 + s.width/2;
-      });
       const doc = start ? g.before : current.current;
-      update({ ...doc, portable: { version: 1, strokes: doc.portable.strokes.filter(s => !hit(s)) } });
+      update({ ...doc, portable: { version: doc.portable.version, strokes: doc.portable.strokes.filter(s => !hitInk(s, x, y)) } });
     }
   };
   const close = () => { cancel(); if (changed.current && !checkpoint(current.current)) return; finish({ status: "cancel", hasChanges: changed.current, expectedSourceId: base, asCopy: false }); };
@@ -110,7 +104,7 @@ function PortableDrawing({ request, initial, base, recovered, finish }: { reques
     <p className="px-3 text-sm text-muted-foreground">{recovered ? "Recovered local draft. " : ""}Round pen and translucent marker; eraser removes whole strokes. Close keeps a local draft. Scroll to move down the paper.</p>
     {error && <p role="alert" className="p-3 text-destructive">{error}</p>}
     <div className="flex-1 overflow-auto bg-muted p-4">
-      <canvas ref={canvas} aria-label="Drawing paper" width={ink.width} height={ink.height} className="mx-auto block bg-white" style={{ width: "min(100%, 1024px)", touchAction: touch ? "none" : "pan-y" }}
+      <canvas ref={canvas} aria-label="Drawing paper" width={inkCanvasSize(ink).width} height={inkCanvasSize(ink).height} className="mx-auto block bg-white" style={{ width: "min(100%, 1024px)", aspectRatio: `${ink.width} / ${ink.height}`, touchAction: touch ? "none" : "pan-y" }}
         onPointerEnter={e => { if (e.pointerType === "pen") e.currentTarget.style.touchAction = "none"; }}
         onPointerDown={e => {
           if (saving || gesture.current || e.button !== 0 || (e.pointerType === "touch" && (!touch || !e.isPrimary || e.width > 30 || e.height > 30))) return;

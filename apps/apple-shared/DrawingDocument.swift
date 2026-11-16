@@ -12,8 +12,7 @@ struct DrawingDocument: Codable, Sendable {
     func validate() throws {
         guard (version == 1 || version == 2), (version != 2 || portable != nil), width.isFinite, height.isFinite,
               width > 0, height > 0, width <= 100_000, height <= 1_000_000,
-              nativeData.count <= 64 * 1024 * 1024,
-              (version != 2 || (width <= 4096 && height <= 16384 && width * height <= 16_777_216)) else { throw CocoaError(.fileReadCorruptFile) }
+              nativeData.count <= 64 * 1024 * 1024 else { throw CocoaError(.fileReadCorruptFile) }
     }
 }
 
@@ -37,24 +36,59 @@ struct DrawingOwner: Hashable, Sendable {
 // Version 2 makes portable ink authoritative. Version 1 native archives remain
 // authoritative; optional portable ink is a bounded approximation for other OSes.
 struct PortableInk: Codable, Sendable {
-    struct Point: Codable, Sendable { let x, y, pressure: Double }
+    struct Point: Codable, Sendable { let x, y, pressure: Double
+        var width: Double? = nil
+        var height: Double? = nil
+        var opacity: Double? = nil
+        var azimuth: Double? = nil
+    }
     struct Stroke: Codable, Sendable {
         let tool, color: String
         let width: Double
         let points: [Point]
+        var kind: String? = nil
+        var nativeIndex: Int? = nil
+        var alpha: Double? = nil
+        var transform: [Double]? = nil
+        var mask: [MaskElement]? = nil
+        var maskUsesEvenOddFillRule: Bool? = nil
+    }
+    struct MaskElement: Codable, Sendable {
+        let command: String
+        let coordinates: [Double]
     }
     let version: Int
     let strokes: [Stroke]
     func validate() throws {
-        guard version == 1, strokes.count <= 20_000,
-              strokes.reduce(0, { $0 + $1.points.count }) <= 500_000 else { throw CocoaError(.fileReadCorruptFile) }
+        func bounded(_ n: Double, _ low: Double, _ high: Double) -> Bool { n.isFinite && n >= low && n <= high }
+        guard (version == 1 || version == 2), strokes.count <= 20_000,
+              strokes.reduce(0, { $0 + $1.points.count }) <= 500_000,
+              strokes.reduce(0, { $0 + ($1.mask?.count ?? 0) }) <= 500_000 else { throw CocoaError(.fileReadCorruptFile) }
         for s in strokes {
-            guard ["pen", "marker"].contains(s.tool), s.width.isFinite, (0.1...100).contains(s.width),
-                  s.color.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil,
-                  !s.points.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+            guard s.color.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil,
+                  bounded(s.width, 0.1, 1000), !s.points.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+            if s.kind == "native" {
+                guard version == 2, let index = s.nativeIndex, (0..<20_000).contains(index),
+                      let alpha = s.alpha, bounded(alpha, 0, 1),
+                      let t = s.transform, t.count == 6, t.allSatisfy({ bounded($0, -1_000_000, 1_000_000) }),
+                      s.maskUsesEvenOddFillRule != nil, !s.tool.isEmpty, s.tool.count <= 100 else { throw CocoaError(.fileReadCorruptFile) }
+                for e in s.mask ?? [] {
+                    let counts = ["move": 2, "line": 2, "quadratic": 4, "cubic": 6, "close": 0]
+                    guard counts[e.command] == e.coordinates.count,
+                          e.coordinates.allSatisfy({ bounded($0, -1_000_000, 1_000_000) }) else { throw CocoaError(.fileReadCorruptFile) }
+                }
+            } else {
+                guard s.kind == nil, s.nativeIndex == nil, ["pen", "marker"].contains(s.tool),
+                      s.width <= 100, s.transform == nil, s.mask == nil, s.alpha == nil else { throw CocoaError(.fileReadCorruptFile) }
+            }
             for p in s.points {
-                guard p.x.isFinite, p.y.isFinite, p.pressure.isFinite,
-                      (0...4096).contains(p.x), (0...16384).contains(p.y), (0...1).contains(p.pressure) else { throw CocoaError(.fileReadCorruptFile) }
+                guard bounded(p.x, -1_000_000, 1_000_000), bounded(p.y, -1_000_000, 1_000_000),
+                      bounded(p.pressure, 0, 1) else { throw CocoaError(.fileReadCorruptFile) }
+                if s.kind == "native" {
+                    guard let w = p.width, let h = p.height, let o = p.opacity, let a = p.azimuth,
+                          bounded(w, 0, 1000), bounded(h, 0, 1000), bounded(o, 0, 1),
+                          bounded(a, -1000, 1000) else { throw CocoaError(.fileReadCorruptFile) }
+                }
             }
         }
     }
@@ -77,7 +111,16 @@ extension DrawingDocument {
         guard version == 2 else { return try PKDrawing(data: nativeData) }
         guard let portable else { throw CocoaError(.fileReadCorruptFile) }
         try portable.validate()
-        let strokes = portable.strokes.map { s in
+        let indexed = portable.strokes.contains { $0.kind == "native" }
+        // The immutable basis is consulted only for explicitly selected indices.
+        let basis: [PKStroke]
+        if indexed { basis = try PKDrawing(data: nativeData).strokes } else { basis = [] }
+        guard basis.count <= 20_000 else { throw CocoaError(.fileReadCorruptFile) }
+        let strokes = try portable.strokes.map { s -> PKStroke in
+            if s.kind == "native" {
+                guard let index = s.nativeIndex, basis.indices.contains(index) else { throw CocoaError(.fileReadCorruptFile) }
+                return basis[index]
+            }
             let rgb = UInt32(s.color.dropFirst(), radix: 16)!
             let color = PortableInkColor(red: CGFloat((rgb >> 16) & 255)/255,
                                  green: CGFloat((rgb >> 8) & 255)/255,
@@ -96,15 +139,15 @@ extension DrawingDocument {
 }
 
 extension PortableInk {
-    // Native control points are splines, not raw pointer samples. Sample the
-    // on-curve path. Masks/unsupported tools are protected as native-only ink.
+    // Descriptors are sampled rendering approximations; original PKStrokes are
+    // the fidelity basis. Never reconstruct indexed ink from these samples.
     static func exporting(_ drawing: PKDrawing) -> PortableInk? {
+        guard drawing.strokes.count <= 20_000 else { return nil }
         var strokes: [Stroke] = []
         var pointCount = 0
-        for s in drawing.strokes {
-            guard s.mask == nil, s.transform == .identity,
-                  s.ink.inkType == .pen || s.ink.inkType == .monoline || s.ink.inkType == .marker,
-                  !s.path.isEmpty else { return nil }
+        var maskCount = 0
+        for (index, s) in drawing.strokes.enumerated() {
+            guard !s.path.isEmpty else { return nil }
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
             #if canImport(UIKit)
             guard s.ink.color.getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
@@ -112,19 +155,50 @@ extension PortableInk {
             guard let color = s.ink.color.usingColorSpace(.deviceRGB) else { return nil }
             color.getRed(&r, green: &g, blue: &b, alpha: &a)
             #endif
-            guard a >= 0.999 else { return nil }
-            let samples = Array(s.path.interpolatedPoints(by: .distance(1)).prefix(500_001))
+            let samples = Array(s.path.interpolatedPoints(by: .distance(1)).prefix(500_001 - pointCount))
             pointCount += samples.count
             guard pointCount <= 500_000 else { return nil }
-            let width = samples.map { Double($0.size.width) }.max() ?? 1
-            guard width >= 0.1, width <= 100,
-                  samples.allSatisfy({ abs($0.size.width - $0.size.height) < 0.01 && $0.opacity >= 0.999 }) else { return nil }
+            var mask: [MaskElement]? = nil
+            if let path = s.mask {
+                var elements: [MaskElement] = []
+                path.cgPath.applyWithBlock { pointer in
+                    guard elements.count <= 500_000 - maskCount else { return }
+                    let e = pointer.pointee
+                    let command: String
+                    let count: Int
+                    switch e.type {
+                    case .moveToPoint: command = "move"; count = 1
+                    case .addLineToPoint: command = "line"; count = 1
+                    case .addQuadCurveToPoint: command = "quadratic"; count = 2
+                    case .addCurveToPoint: command = "cubic"; count = 3
+                    case .closeSubpath: command = "close"; count = 0
+                    @unknown default: command = "unsupported"; count = 0
+                    }
+                    elements.append(MaskElement(command: command, coordinates: (0..<count).flatMap {
+                        [Double(e.points[$0].x), Double(e.points[$0].y)]
+                    }))
+                }
+                maskCount += elements.count
+                guard maskCount <= 500_000 else { return nil }
+                mask = elements
+            }
+            #if canImport(UIKit)
+            let evenOdd = s.mask?.usesEvenOddFillRule ?? false
+            #else
+            let evenOdd = s.mask?.windingRule == .evenOdd
+            #endif
+            let t = s.transform
             let points = samples.map { p in Point(x: p.location.x, y: p.location.y,
-                pressure: max(0, min(1, (Double(p.size.width)/width - 0.25)/0.75))) }
-            strokes.append(Stroke(tool: s.ink.inkType == .marker ? "marker" : "pen",
-                color: String(format: "#%02x%02x%02x", Int(r*255), Int(g*255), Int(b*255)), width: width, points: points))
+                pressure: max(0, min(1, p.force)), width: p.size.width, height: p.size.height,
+                opacity: p.opacity, azimuth: p.azimuth) }
+            strokes.append(Stroke(tool: s.ink.inkType.rawValue,
+                color: String(format: "#%02x%02x%02x", Int(r*255), Int(g*255), Int(b*255)),
+                width: max(0.1, points.map { $0.width ?? 0 }.max() ?? 1), points: points,
+                kind: "native", nativeIndex: index, alpha: a,
+                transform: [t.a, t.b, t.c, t.d, t.tx, t.ty], mask: mask,
+                maskUsesEvenOddFillRule: evenOdd))
         }
-        let ink = PortableInk(version: 1, strokes: strokes)
+        let ink = PortableInk(version: 2, strokes: strokes)
         guard (try? ink.validate()) != nil else { return nil }
         return ink
     }

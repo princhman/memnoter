@@ -422,7 +422,7 @@ final class DrawingCanvas: PKCanvasView {
             if let document {
                 let drawing = try await drafts.decodeDrawing(document)
                 guard !retired else { return }
-                canvas.drawing = worksheetInk(drawing, dark: false)
+                canvas.drawing = drawing
                 canvas.restoreSize(CGSize(width: document.width, height: document.height))
             }
             if request.answer != nil {
@@ -508,7 +508,7 @@ final class DrawingCanvas: PKCanvasView {
             do { try await self.flush() } catch { self.error = error.localizedDescription }
         }
     }
-    private var snapshot: DrawingSnapshot { DrawingSnapshot(drawing: worksheetInk(canvas.drawing, dark: false), size: canvas.documentSize, paperStyle: canvas.paperStyle) }
+    private var snapshot: DrawingSnapshot { DrawingSnapshot(drawing: canvas.drawing, size: canvas.documentSize, paperStyle: canvas.paperStyle) }
     func flush() async throws {
         guard loaded, hasLocalEdits, !retired else { return }
         if request.answer != nil {
@@ -524,25 +524,14 @@ final class DrawingCanvas: PKCanvasView {
     }
     @objc private func undoGesture() { guard loaded, !saving, !usingTool else { return }; undo() }
     @objc private func redoGesture() { guard loaded, !saving, !usingTool else { return }; redo() }
-    func undo() { canvas.undoManager?.undo(); refreshWorksheetInk(); refreshHistory() }
-    func redo() { canvas.undoManager?.redo(); refreshWorksheetInk(); refreshHistory() }
+    func undo() { canvas.undoManager?.undo(); refreshHistory() }
+    func redo() { canvas.undoManager?.redo(); refreshHistory() }
 
-    func worksheetAppearanceChanged(dark: Bool) {
-        let delegate = canvas.delegate
-        canvas.delegate = nil
-        canvas.drawing = worksheetInk(canvas.drawing, dark: false)
-        canvas.delegate = delegate
+    func worksheetAppearanceChanged(dark _: Bool) {
         if ink == .black, tool.usesInk {
             let type: PKInkingTool.InkType = tool == .marker ? .marker : tool == .pencil ? .pencil : .monoline
             canvas.tool = PKInkingTool(type, color: .black, width: tool == .marker ? inkWidth * 5 : inkWidth)
         }
-    }
-
-    private func refreshWorksheetInk() {
-        let delegate = canvas.delegate
-        canvas.delegate = nil
-        canvas.drawing = worksheetInk(canvas.drawing, dark: false)
-        canvas.delegate = delegate
     }
 
     private func updateTool() {
@@ -928,25 +917,10 @@ private enum ScribbleDeletion {
     }
 }
 
-// PencilKit adapts canonical black ink to white in dark appearance itself.
-// Never feed it manually whitened ink: it inverts that back to invisible black.
-// Normalize old white drafts on load; preserve paths, masks and seeds.
-private func worksheetInk(_ drawing: PKDrawing, dark: Bool) -> PKDrawing {
-    PKDrawing(strokes: drawing.strokes.map { original in
-        var stroke = original
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        if stroke.ink.color.getRed(&r, green: &g, blue: &b, alpha: &a),
-           (r < 0.001 && g < 0.001 && b < 0.001) || (r > 0.999 && g > 0.999 && b > 0.999) {
-            stroke.ink = PKInk(stroke.ink.inkType, color: (dark ? UIColor.white : UIColor.black).withAlphaComponent(a))
-        }
-        return stroke
-    })
-}
-
 // Compare actual canonical strokes, independent of page growth, appearance,
 // PencilKit archive metadata, and whether a Mac file includes geometry.
 private func worksheetInkFingerprint(_ drawing: PKDrawing) throws -> Data {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    return try encoder.encode(DrawingStrokeExport(drawing: worksheetInk(drawing, dark: false), page: CGSize(width: 1024, height: 1440)).strokes)
+    return try encoder.encode(DrawingStrokeExport(drawing: drawing, page: CGSize(width: 1024, height: 1440)).strokes)
 }

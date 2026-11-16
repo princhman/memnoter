@@ -18,7 +18,13 @@ final class DrawingTests: XCTestCase {
         let stroke = drawing.strokes[0]
         let masked = PKStroke(ink: stroke.ink, path: stroke.path, transform: stroke.transform,
                               mask: UIBezierPath(rect: CGRect(x: 0, y: 0, width: 45, height: 100)))
-        XCTAssertNil(PortableInk.exporting(PKDrawing(strokes: [masked])), "Never resurrect partially erased ink")
+        let descriptors = try XCTUnwrap(PortableInk.exporting(PKDrawing(strokes: [masked])))
+        XCTAssertEqual(descriptors.version, 2)
+        XCTAssertNotNil(descriptors.strokes[0].mask)
+        let returned = try DrawingDocument(version: 2, nativeData: PKDrawing(strokes: [masked]).dataRepresentation(),
+            width: 1024, height: 1440, geometry: nil, portable: descriptors).drawing()
+        XCTAssertEqual(returned.strokes.count, 1)
+        XCTAssertEqual(returned.strokes[0].mask?.cgPath, masked.mask?.cgPath)
     }
 
     func testMacCanvasArchiveOpensAsEditableNativeInkOnIPad() throws {
