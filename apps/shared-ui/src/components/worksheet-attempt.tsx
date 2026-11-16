@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
-import { ChevronRight } from "lucide-react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { isNativeHost, postNativeEvent } from "@/lib/backend";
 import { useSyncedImageUrl } from "@/lib/synced-image";
 import { partOutline, questionLabel, type Bank } from "@/lib/question-bank";
@@ -7,9 +8,12 @@ import type { WorksheetRevision } from "@/lib/worksheets";
 import { answerKey, useWorksheetAnswers } from "@/lib/worksheet-session";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
+import { IconTooltip } from "./ui/icon-tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { WorksheetAnswerEditor } from "./worksheet-answer-editor";
 import { ownPartLabel, questionCropClass, questionHeadingClass, questionReadingLayout, questionReadingWidth } from "./question-reading-layout";
 import { cn } from "@/lib/utils";
+import { WORKSHEET_ACTIONS_SLOT, WORKSHEET_CRUMB_SLOT } from "@/lib/pdf-pane";
 
 // Validate before walking: missing or cyclic historical content must not crash
 // the whole bank, and must never silently fall back to the latest revision.
@@ -49,12 +53,41 @@ function WorksheetCropImage({ assetId, label }: { assetId: string; label: string
   if (failed || image.isError) return <p role="alert" className="text-sm text-destructive">Question crop unavailable on this device.</p>;
   return image.data ? <figure className="relative w-fit max-w-full"><img src={image.data} alt={label} className={questionCropClass} onError={() => setFailed(true)} /></figure> : <p className="text-sm text-muted-foreground">Loading question crop…</p>;
 }
+// Desktop answers in a modal: the page stays a clean reading view. The overlay is
+// not a focus-trapping dialog, so the editor's slash/LaTeX menus (mounted on
+// body, above z-40) stay clickable. Escape already handled by a menu is ignored.
+function AnswerModal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); close.current(); } };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, []);
+  return createPortal(<div className="worksheet-answer-modal fixed inset-0 z-[45] flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[8vh] supports-backdrop-filter:backdrop-blur-xs" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <div role="dialog" aria-modal="true" aria-label={title} className="floating-surface w-full max-w-3xl space-y-4 rounded-xl p-5 text-sm shadow-2xl">
+      <div className="flex items-center justify-between gap-3"><h3 className="text-base font-semibold">{title}</h3><Button size="sm" onClick={onClose}>Done</Button></div>
+      {children}
+    </div>
+  </div>, document.body);
+}
 export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { moduleId: string; attemptId: string; bank: Bank; onBack: () => void }) {
   const answers = useWorksheetAnswers(moduleId, attemptId);
   const [index, setIndex] = useState(0);
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
   const attempt = bank.attempts[attemptId];
   const [confirmFinish, setConfirmFinish] = useState(false);
+  // iPad/iPhone keep inline answers: PencilKit drawing anchors to the question on the page.
+  const inlineAnswers = isNativeHost();
+  const [editing, setEditing] = useState<{ revisionId: string; partId: string } | null>(null);
+  const [previewVersion, setPreviewVersion] = useState(0);
+  // Desktop puts the worksheet's title and controls in the window header (the
+  // root layout's slots); iPad/iPhone show them in the native toolbar instead.
+  const [slots, setSlots] = useState<{ crumb: HTMLElement | null; actions: HTMLElement | null }>({ crumb: null, actions: null });
+  useEffect(() => {
+    if (!isNativeHost()) setSlots({ crumb: document.getElementById(WORKSHEET_CRUMB_SLOT), actions: document.getElementById(WORKSHEET_ACTIONS_SLOT) });
+  }, []);
+  const closeAnswer = () => { setEditing(null); setPreviewVersion(value => value + 1); };
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState("");
   const finished = attempt?.finished === true;
@@ -77,6 +110,14 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
   const pending = Object.keys(answers.drafts).length > 0;
   const nativeStatus = answers.error ? "Save failed" : "";
   const questionCount = attempt?.questions.length ?? 0;
+  // The bank's own names (A1, B4…), falling back to the position like the bank does.
+  const bankOrder = Object.entries(bank.questions).filter(([, question]) => !question.deleted)
+    .sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0])).map(([id]) => id);
+  const questionLabels = (attempt?.questions ?? []).map((question, number) => {
+    const position = bankOrder.indexOf(question.questionId);
+    return questionLabel(bank.questions[question.questionId]?.title, position >= 0 ? position + 1 : number + 1);
+  });
+  const labelsKey = questionLabels.join("\n");
   const currentIndex = Math.min(index, Math.max(0, questionCount - 1));
   const actions = useRef({ close, finish: () => setConfirmFinish(true), retry: () => { void answers.flush(); } });
   actions.current = { close, finish: () => { if (!finished) setConfirmFinish(true); }, retry: () => { void answers.flush(); } };
@@ -102,14 +143,22 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
     };
   }, []);
   useEffect(() => {
-    if (isNativeHost()) postNativeEvent("worksheetState", { title: attempt?.title || "Worksheet", answered: progress.answered, total: progress.total, status: nativeStatus, finished, index: currentIndex, count: questionCount });
-  }, [attempt?.title, progress.answered, progress.total, nativeStatus, finished, currentIndex, questionCount]);
+    if (isNativeHost()) postNativeEvent("worksheetState", { title: attempt?.title || "Worksheet", answered: progress.answered, total: progress.total, status: nativeStatus, finished, index: currentIndex, count: questionCount, labels: questionLabels });
+  }, [attempt?.title, progress.answered, progress.total, nativeStatus, finished, currentIndex, questionCount, labelsKey]);
   if (!attempt || attempt.deleted) return <section className="space-y-3"><Button variant="ghost" onClick={close}>Back to questions</Button><p role="alert">This worksheet is unavailable.</p></section>;
   const pin = attempt.questions[currentIndex];
   const revision = pin && bank.revisions[pin.revisionId];
-  const label = pin ? questionLabel(bank.questions[pin.questionId]?.title, currentIndex + 1) : "";
+  const label = pin ? questionLabels[currentIndex] : "";
   const outline = pinnedOutline(revision, label);
-  return <section aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "space-y-5 pb-8")}>
+  const answerEditor = (partId: string, partLabel: string, mode: { preview?: boolean; modal?: boolean } = {}) => {
+    const key = answerKey(attemptId, pin!.revisionId, partId);
+    return <WorksheetAnswerEditor readOnly={finished || finishing || mode.preview} moduleId={moduleId} attemptId={attemptId} revisionId={pin!.revisionId} leafPartId={partId} answer={bank.answers[key]}
+      autoFocus={mode.modal} placeholder={mode.preview ? (finished ? "No answer" : "Click to answer") : undefined}
+      flushDurable={() => answers.flushDurable(pin!.revisionId, partId)} key={`${moduleId}:${key}:text:${answers.resets[key] || 0}:${mode.preview ? `preview:${previewVersion}` : "edit"}`} label={partLabel}
+      load={() => answers.loadDocument(pin!.revisionId, partId)} save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
+  };
+  const editingPart = editing && pin && revision && editing.revisionId === pin.revisionId ? outline?.find(part => part.id === editing.partId && part.leaf) : undefined;
+  return <section aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
     <Dialog open={confirmFinish} onOpenChange={open => { if (!finishing) setConfirmFinish(open); }}>
       <DialogContent><DialogTitle>Finish worksheet?</DialogTitle>
         <p className="text-sm text-muted-foreground">Answers become read-only.</p>
@@ -117,18 +166,39 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
         <div className="flex justify-end gap-2"><Button variant="ghost" disabled={finishing} onClick={() => setConfirmFinish(false)}>Cancel</Button><Button disabled={finishing} onClick={() => void finish()}>{finishing ? "Finishing…" : "Finish"}</Button></div>
       </DialogContent>
     </Dialog>
-    <header className="space-y-3">
-      <Button className="worksheet-page-back" size="sm" variant="ghost" onClick={close}>Back to questions</Button>
-      <div className="worksheet-page-title flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{attempt.title || "Worksheet"}</h2><Button size="sm" variant="ghost" disabled={finishing} onClick={finished ? close : () => setConfirmFinish(true)}>{finished ? "Close" : "Finish"}</Button></div>
-      <div className="worksheet-page-progress flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
-        <span role="status">{answers.error ? "Save failed" : answers.saving || pending ? "Saving…" : "Saved"}</span>
-        {answers.error && <Button size="sm" variant="ghost" onClick={() => void answers.flush()}>Retry save</Button>}
-      </div>
+    {editingPart && revision && !finished && <AnswerModal title={`Question ${editingPart.label}`} onClose={closeAnswer}>
+      {revision.parts[editingPart.id].cropIds.map(cropId => {
+        const crop = revision.crops[cropId];
+        return crop ? <WorksheetCropImage key={`${cropId}:${crop.assetId}`} assetId={crop.assetId} label={`Question ${editingPart.label}`} /> : null;
+      })}
+      {answerEditor(editingPart.id, editingPart.label, { modal: true })}
+    </AnswerModal>}
+    {slots.crumb && createPortal(<div className="flex min-w-0 items-center gap-0.5">
+      <IconTooltip label="Back to questions"><Button size="icon-sm" variant="ghost" aria-label="Back to questions" onClick={close}><ChevronLeft /></Button></IconTooltip>
+      <h2 className="min-w-0 truncate text-sm font-medium text-foreground" data-tauri-drag-region="deep">{attempt.title || "Worksheet"}</h2>
+    </div>, slots.crumb)}
+    {slots.actions && createPortal(<div className="flex items-center gap-1">
+      {answers.saving || pending ? <span role="status" className="mr-1 text-xs text-muted-foreground">Saving…</span> : null}
+      {answers.error && <IconTooltip label="Save failed. Retry"><Button size="icon-sm" variant="ghost" className="text-destructive" aria-label="Save failed. Retry" onClick={() => void answers.flush()}><AlertTriangle /></Button></IconTooltip>}
+      {questionCount > 0 && <nav aria-label="Worksheet questions" className="flex items-center gap-0.5">
+        <IconTooltip label="Previous question"><Button size="icon-xs" variant="ghost" aria-label="Previous question" disabled={currentIndex === 0} onClick={() => setIndex(currentIndex - 1)}><ChevronLeft /></Button></IconTooltip>
+        {questionCount <= 3 ? attempt.questions.map((question, number) => <Button key={`${question.revisionId}:${number}`} size="xs" className="min-w-6 px-1.5 tabular-nums" variant={number === currentIndex ? "default" : "ghost"} aria-label={`Question ${questionLabels[number]}`} aria-current={number === currentIndex ? "step" : undefined} onClick={() => setIndex(number)}>{questionLabels[number]}</Button>)
+          : <DropdownMenu>
+            <DropdownMenuTrigger render={<Button size="xs" variant="ghost" className="gap-1 tabular-nums" aria-label="Choose question"><span className="font-semibold">{questionLabels[currentIndex]}</span><span className="text-muted-foreground">{currentIndex + 1}/{questionCount}</span><ChevronDown className="size-3" /></Button>} />
+            <DropdownMenuContent align="end" className="max-h-80 min-w-36">
+              <DropdownMenuRadioGroup value={String(currentIndex)} onValueChange={value => setIndex(Number(value))}>
+                {attempt.questions.map((question, number) => <DropdownMenuRadioItem key={`${question.revisionId}:${number}`} value={String(number)} showIndicator={false} closeOnClick>Question {questionLabels[number]}</DropdownMenuRadioItem>)}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>}
+        <IconTooltip label="Next question"><Button size="icon-xs" variant="ghost" aria-label="Next question" disabled={currentIndex + 1 >= questionCount} onClick={() => setIndex(currentIndex + 1)}><ChevronRight /></Button></IconTooltip>
+      </nav>}
+      {finished ? <IconTooltip label="Close worksheet"><Button size="icon-xs" variant="ghost" aria-label="Close worksheet" onClick={close}><X /></Button></IconTooltip>
+        : <Button size="xs" className="ml-1 rounded-full px-3" disabled={finishing} onClick={() => setConfirmFinish(true)}>Finish</Button>}
+    </div>, slots.actions)}
+    <header className="space-y-2 empty:hidden">
       {answers.error && <p role="alert" className="text-sm text-destructive">{answers.error} Your draft is retained.</p>}
       {answers.backupError && <p role="alert" className="text-sm text-destructive">{answers.backupError}</p>}
-      {attempt.questions.length > 0 && <nav aria-label="Worksheet questions" className="worksheet-page-switcher flex flex-wrap items-center gap-1">
-        {attempt.questions.map((question, number) => <Button key={`${question.revisionId}:${number}`} size="sm" variant={number === currentIndex ? "default" : "ghost"} aria-current={number === currentIndex ? "step" : undefined} onClick={() => setIndex(number)}>{number + 1}</Button>)}
-      </nav>}
     </header>
     {!pin ? <p role="alert">This worksheet has no questions.</p> : !outline || !revision || revision.questionId !== pin.questionId ? <p role="alert" className="text-sm text-destructive">The pinned question revision is unavailable. Return to questions and try reopening the worksheet.</p> : <article aria-label={`Question ${label}`}>
       {outline.map((part, partIndex) => {
@@ -168,17 +238,17 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
           })}
           {!cropIds.length && !root && <p className="py-1 text-sm text-muted-foreground">No crops yet</p>}
           {part.leaf && <>
-            <WorksheetAnswerEditor readOnly={finished || finishing} moduleId={moduleId} attemptId={attemptId} revisionId={pin.revisionId} leafPartId={part.id} answer={bank.answers[key]} flushDurable={() => answers.flushDurable(pin.revisionId, part.id)} key={`${moduleId}:${key}:text:${answers.resets[key] || 0}`} label={part.label} load={() => answers.loadDocument(pin.revisionId, part.id)} save={(document, expected, text, hasContent) => answers.setDocument(pin.revisionId, part.id, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />
+            {inlineAnswers ? answerEditor(part.id, part.label)
+              : <div className={cn("worksheet-answer-preview", !finished && "cursor-pointer")} role={finished ? undefined : "button"} tabIndex={finished ? undefined : 0} aria-label={finished ? undefined : `Answer question ${part.label}`}
+                onClick={() => { if (!finished) setEditing({ revisionId: pin.revisionId, partId: part.id }); }}
+                onKeyDown={event => { if (!finished && (event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) { event.preventDefault(); setEditing({ revisionId: pin.revisionId, partId: part.id }); } }}>
+                {answerEditor(part.id, part.label, { preview: true })}
+              </div>}
             {answers.errors[key] && <p role="alert" className="text-sm text-destructive">Couldn't save: {answers.errors[key]} <Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => void answers.retryAnswer(pin.revisionId, part.id)}>Retry</Button><Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => answers.discardAnswer(pin.revisionId, part.id)}>Discard</Button></p>}
           </>}
           </div>
         </section>;
       })}
     </article>}
-    <footer className="worksheet-page-footer flex items-center justify-between gap-3">
-      <Button size="sm" variant="ghost" disabled={currentIndex === 0} onClick={() => setIndex(value => value - 1)}>Previous</Button>
-      <span className="text-sm text-muted-foreground">{attempt.questions.length ? currentIndex + 1 : 0} of {attempt.questions.length}</span>
-      {currentIndex < attempt.questions.length - 1 ? <Button size="sm" onClick={() => setIndex(value => value + 1)}>Next</Button> : <Button size="sm" disabled={finishing} onClick={finished ? close : () => setConfirmFinish(true)}>{finished ? "Close" : "Finish"}</Button>}
-    </footer>
   </section>;
 }

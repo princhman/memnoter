@@ -23,9 +23,11 @@ struct TabletBreadcrumb: View {
 
     /// Toolbar items are laid out at their ideal size, so a cap on the row alone lets long
     /// names draw past it. Give each label a measured width that already fits the row.
-    private static func textWidth(_ text: String) -> CGFloat {
+    static func textWidth(_ text: String) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .subheadline)]).width) + 1
     }
+    /// Natural widths unless the row really overflows. Then the shorter name keeps its full
+    /// width (up to half) and the longer one takes the rest, so nothing truncates needlessly.
     private var labelWidths: (module: CGFloat, section: CGFloat, item: CGFloat) {
         let section = Self.textWidth(section.capitalized)
         let itemChrome: CGFloat = distinctItem == nil ? 0 : 24
@@ -33,8 +35,12 @@ struct TabletBreadcrumb: View {
         let available = max(40, maximumWidth - chrome - section)
         let module = Self.textWidth(moduleTitle)
         guard let item = distinctItem else { return (min(module, available), section, 0) }
-        let moduleWidth = min(module, max(40, available * 0.5))
-        return (moduleWidth, section, max(30, min(Self.textWidth(item), available - moduleWidth)))
+        let itemWidth = Self.textWidth(item)
+        if module + itemWidth <= available { return (module, section, itemWidth) }
+        let half = available / 2
+        if module <= half { return (module, section, max(30, available - module)) }
+        if itemWidth <= half { return (max(40, available - itemWidth), section, itemWidth) }
+        return (max(40, half), section, max(30, half))
     }
 
     var body: some View {
@@ -59,7 +65,7 @@ struct TabletBreadcrumb: View {
             }.accessibilityLabel("Select module section")
             if let item = distinctItem {
                 Text("›").foregroundStyle(.secondary)
-                Text(item).lineLimit(1).truncationMode(.tail).frame(width: widths.item, alignment: .leading)
+                fittedText(item, width: widths.item)
             }
         }
         .font(.subheadline)
@@ -71,9 +77,19 @@ struct TabletBreadcrumb: View {
 
     private func breadcrumbLabel(_ title: String, width: CGFloat) -> some View {
         HStack(spacing: 5) {
-            Text(title).lineLimit(1).truncationMode(.tail).frame(width: width, alignment: .leading)
+            fittedText(title, width: width)
             Image(systemName: "chevron.down").font(.caption)
         }.frame(minHeight: 44)
+    }
+}
+
+/// A label clamps only when its measured width was actually reduced. Otherwise it keeps its
+/// own size: a hard frame at the measured width truncates whenever SwiftUI's text is a hair wider.
+@ViewBuilder func fittedText(_ text: String, width: CGFloat) -> some View {
+    if width >= TabletBreadcrumb.textWidth(text) {
+        Text(text).lineLimit(1).fixedSize()
+    } else {
+        Text(text).lineLimit(1).truncationMode(.tail).frame(width: width, alignment: .leading)
     }
 }
 
@@ -101,12 +117,8 @@ struct TabletWorksheetTitle: View {
     let maximumWidth: CGFloat
 
     var body: some View {
-        let natural = ceil((title as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .subheadline)]).width) + 1
-        Text(title)
+        fittedText(title, width: max(0, maximumWidth - 20))
             .font(.subheadline)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(width: max(0, min(natural, maximumWidth - 20)), alignment: .leading)
             .padding(.horizontal, 10)
             .frame(minHeight: 44)
             .layoutPriority(1)

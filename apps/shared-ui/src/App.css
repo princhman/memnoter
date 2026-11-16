@@ -221,7 +221,7 @@ body {
     padding-inline: 0.4rem;
     /* Lets the last line scroll almost to the top of the window. Clicks here
        put the caret at the end. */
-    padding-bottom: 95dvh;
+    padding-bottom: 80dvh;
     min-height: 55vh;
     tab-size: 4;
     --card-list-indent: 1.75rem;
@@ -242,6 +242,22 @@ body {
     padding: 0.75rem;
     border: 1px solid var(--border);
     border-radius: 0.5rem;
+}
+
+.worksheet-answer-preview .tiptap.worksheet-answer-input {
+    transition: border-color 120ms ease-out;
+}
+
+.worksheet-answer-preview[role="button"]:is(:hover, :focus-visible) .tiptap.worksheet-answer-input {
+    border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
+}
+
+.worksheet-answer-preview[role="button"] .tiptap {
+    cursor: pointer;
+}
+
+.worksheet-answer-preview[role="button"]:focus-visible {
+    outline: none;
 }
 
 .tiptap.worksheet-answer-input:focus-within {

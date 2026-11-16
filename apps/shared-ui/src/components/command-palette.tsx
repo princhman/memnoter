@@ -2,6 +2,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
 import {
+  Fragment,
   useEffect,
   useId,
   useMemo,
@@ -9,10 +10,18 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMatchRoute, useNavigate } from "@tanstack/react-router";
+import { appStore, setModulePage } from "@/lib/store";
 import { call as invoke } from "../lib/backend.ts";
-import { ChevronLeft, FileText, Search, SquareChevronRight } from "lucide-react";
+import { FileText, Search, SquareChevronRight } from "lucide-react";
+import { headingNumbers } from "@/lib/heading-numbering";
+import { headingTitleHtml } from "@/components/table-of-contents";
+import type { Node as PMNode } from "@tiptap/pm/model";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Breadcrumb, BreadcrumbEllipsis, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useActiveEditor } from "@/lib/active-editor-context";
@@ -109,18 +118,110 @@ function useBuiltinCommands() {
   }, [hasEditor]);
 }
 
+// Where a drilled-in palette is, in the window breadcrumb's shape:
+// Module / Notes › Section / Subsection, with … before longer paths.
+function PalettePath({ name, trail, titleHtml, inputRef, onModule, onHeading }: {
+  name: string;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  titleHtml?: Map<number, string>;
+  trail: { pos: number; title: string }[];
+  onModule: () => void;
+  onHeading: (pos: number) => void;
+}) {
+  // The last two sections, as in the window breadcrumb; earlier ones open from "…".
+  const shown = trail.slice(-2);
+  const hidden = trail.slice(0, -2);
+  // Long titles shorten with an ellipsis; the current one keeps the most room.
+  const crumb = (title: string, run: (() => void) | null, html?: string) => {
+    const content = html ? <span dangerouslySetInnerHTML={{ __html: html }} /> : title;
+    return run
+      ? <BreadcrumbLink title={title} className="block min-w-0 truncate" render={<button type="button" onMouseDown={event => event.preventDefault()} onClick={run} />}>{content}</BreadcrumbLink>
+      : <BreadcrumbPage title={title} className="block min-w-0 truncate">{content}</BreadcrumbPage>;
+  };
+  return <Breadcrumb className="mr-auto min-w-0 flex-1 overflow-hidden text-xs">
+    <BreadcrumbList className="flex-nowrap gap-1.5 text-xs whitespace-nowrap sm:gap-1.5 [&>[data-slot=breadcrumb-separator]]:shrink-0">
+      <BreadcrumbItem className="max-w-[8rem] min-w-0 shrink-0 overflow-hidden">{crumb(name, trail.length ? onModule : null)}</BreadcrumbItem>
+      <BreadcrumbSeparator>/</BreadcrumbSeparator>
+      <BreadcrumbItem className="shrink-0">Notes</BreadcrumbItem>
+      {hidden.length > 0 && <><BreadcrumbSeparator /><BreadcrumbItem className="shrink-0">
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Show parent sections" />}><BreadcrumbEllipsis className="size-4" /></DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" className="min-w-56 max-w-80" finalFocus={inputRef}>
+            {hidden.map(heading => <DropdownMenuItem key={heading.pos} onClick={() => onHeading(heading.pos)}>
+              <span className="min-w-0 truncate">{titleHtml?.has(heading.pos) ? <span dangerouslySetInnerHTML={{ __html: titleHtml.get(heading.pos)! }} /> : heading.title}</span>
+            </DropdownMenuItem>)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </BreadcrumbItem></>}
+      {shown.map((heading, index) => <Fragment key={heading.pos}>
+        {index === 0 && hidden.length === 0 ? <BreadcrumbSeparator /> : <BreadcrumbSeparator>/</BreadcrumbSeparator>}
+        <BreadcrumbItem className={cn("min-w-0 overflow-hidden", index === shown.length - 1 ? "flex-[0_1_auto]" : "flex-[0_2_auto]")}>{crumb(heading.title, index === shown.length - 1 ? null : () => onHeading(heading.pos), titleHtml?.get(heading.pos))}</BreadcrumbItem>
+      </Fragment>)}
+    </BreadcrumbList>
+  </Breadcrumb>;
+}
+
+// Rendered titles for headings with inline math; plain titles need none.
+function mathTitles(doc: PMNode) {
+  const titles = new Map<number, string>();
+  for (const { pos } of outline(doc)) {
+    const node = doc.nodeAt(pos);
+    let math = false;
+    node?.forEach(child => { if (child.type.name === "inlineMath") math = true; });
+    if (node && math) titles.set(pos, headingTitleHtml(node));
+  }
+  return titles;
+}
+
+// One schema for every outline read; building it from the extensions is not free.
+let outlineSchema: ReturnType<typeof getSchema> | null = null;
+// Kept briefly so a prefetch (highlighted row) serves the drill-in that follows;
+// never reused across palette sessions long enough to show an old outline.
+const outlineQuery = (moduleId: string) => ({
+  queryKey: ["palette-outline", moduleId],
+  gcTime: 5_000,
+  staleTime: 5_000,
+  queryFn: async () => {
+    const doc = await loadStoredNote(moduleId);
+    try {
+      outlineSchema ??= getSchema(noteExtensions({ document: doc }));
+      const node = outlineSchema.nodeFromJSON(yDocToProsemirrorJSON(doc, "default"));
+      return { headings: outline(node), numbers: headingNumbers(node), titles: mathTitles(node) };
+    } finally { doc.destroy(); }
+  },
+});
+
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [actionIndex, setActionIndex] = useState(0);
+  const openRef = useRef(false);
+  openRef.current = open;
   const [scope, setScope] = useState<{ moduleId: string; name: string; parent: number | null; moduleQuery: string } | null>(null);
   const [headingRequest, setHeadingRequest] = useState<{ moduleId: string; id: string | null; pos: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Whether closing returns focus to where it was; opening a note moves it.
   const restoreFocus = useRef(true);
   const afterClose = useRef<(() => void) | null>(null);
+  const [instantClose, setInstantClose] = useState(false);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { activeEditor } = useActiveEditor();
+  const matchRoute = useMatchRoute();
+  // A module's note stays mounted behind its Questions page and the /questions
+  // and /files pages, so an active editor alone doesn't mean the note is showing.
+  const showingNote = (moduleId: string) => {
+    const match = matchRoute({ to: "/$moduleId" });
+    return activeEditor?.moduleId === moduleId && !!match && match.moduleId === moduleId
+      && (appStore.state.modulePageByModule[moduleId] ?? "notes") === "notes";
+  };
+  const openNote = (moduleId: string) => {
+    setModulePage(moduleId, "notes");
+    const match = matchRoute({ to: "/$moduleId" });
+    if (!match || match.moduleId !== moduleId) void navigate({ to: "/$moduleId", params: { moduleId } });
+  };
   const commands = useCommands();
   const listId = useId();
 
@@ -134,8 +235,11 @@ export function CommandPalette() {
       event.stopPropagation();
       // Keep the restore modal in control throughout its flush and DB swap.
       if (!isWriteAdmitted() || isRestoring()) return;
+      // Inside the palette, the same keys open its actions, like Raycast;
+      // Escape closes the palette.
+      if (openRef.current) { setActionsOpen(value => !value); setActionIndex(0); return; }
       restoreFocus.current = true;
-      setOpen((value) => !value);
+      setOpen(true);
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
@@ -162,20 +266,16 @@ export function CommandPalette() {
   const liveDoc = useEditorState({ editor: activeEditor?.editor ?? null,
     selector: ({ editor }) => editor?.state.doc, equalityFn: Object.is });
   const storedOutline = useQuery({
-    queryKey: ["palette-outline", scope?.moduleId],
+    ...outlineQuery(scope?.moduleId ?? ""),
     enabled: open && !!scope && activeEditor?.moduleId !== scope.moduleId,
-    gcTime: 0,
-    queryFn: async () => {
-      if (!scope) return [];
-      const doc = await loadStoredNote(scope.moduleId);
-      try {
-        const schema = getSchema(noteExtensions({ document: doc }));
-        return outline(schema.nodeFromJSON(yDocToProsemirrorJSON(doc, "default")));
-      } finally { doc.destroy(); }
-    },
   });
-  const headings = scope && activeEditor?.moduleId === scope.moduleId && liveDoc
-    ? outline(liveDoc) : storedOutline.data ?? [];
+  const live = !!scope && activeEditor?.moduleId === scope.moduleId && !!liveDoc;
+  const headings = live && liveDoc ? outline(liveDoc) : storedOutline.data?.headings ?? [];
+  // Section numbers replace the row icon when the module numbers its headings.
+  const numbered = !!scope && (modules.data ?? []).some(module => module.id === scope.moduleId && module.heading_numbering);
+  const headingNumberMap = numbered ? (live && liveDoc ? headingNumbers(liveDoc) : storedOutline.data?.numbers) : undefined;
+  const liveTitles = useMemo(() => live && liveDoc ? mathTitles(liveDoc) : null, [live, liveDoc]);
+  const titleHtml = liveTitles ?? storedOutline.data?.titles;
   const parent = headings.find(heading => heading.pos === scope?.parent);
 
   useEffect(() => {
@@ -241,6 +341,25 @@ export function CommandPalette() {
   const itemsKey = items.map((item) => item.key).join("\n");
   const active = items[Math.min(activeIndex, items.length - 1)];
 
+  // What the highlighted row can do; the first is the footer's main action.
+  const actions: { label: string; keys: string; run: () => void }[] = !active ? [] : [
+    { label: active.kind === "command" ? "Run command" : active.kind === "note" ? "Open note" : "Open section", keys: "Enter", run: () => activate(active) },
+    ...(active.kind === "note" || (active.kind === "heading" && active.hasChildren) ? [{ label: "Browse sections", keys: "Mod-Enter", run: () => drill(active) }] : []),
+    ...(scope ? [{ label: parent ? "Back to parent section" : "Back to modules", keys: "ArrowLeft", run: () => back() }] : []),
+  ];
+  const runAction = (index: number) => { const chosen = actions[index]; setActionsOpen(false); chosen?.run(); };
+  useEffect(() => { if (!open) setActionsOpen(false); }, [open]);
+  useEffect(() => setActionsOpen(false), [active?.key]);
+
+  // Read the highlighted module's sections ahead of a drill-in, after a short
+  // pause so arrowing through the list doesn't load every note.
+  const prefetchId = open && !scope && active?.kind === "note" && activeEditor?.moduleId !== active.moduleId ? active.moduleId : null;
+  useEffect(() => {
+    if (!prefetchId) return;
+    const timer = window.setTimeout(() => { void queryClient.prefetchQuery(outlineQuery(prefetchId)); }, 120);
+    return () => window.clearTimeout(timer);
+  }, [prefetchId, queryClient]);
+
   useEffect(() => setActiveIndex(0), [itemsKey]);
 
   useEffect(() => {
@@ -281,9 +400,14 @@ export function CommandPalette() {
   const activate = (item: Item) => {
     if (item.kind === "heading" && scope) {
       restoreFocus.current = false;
-      afterClose.current = () => setHeadingRequest({ moduleId: scope.moduleId, id: item.heading.id, pos: item.heading.pos });
+      const request = { moduleId: scope.moduleId, id: item.heading.id, pos: item.heading.pos };
+      // Jump as soon as the note is ready, not after the palette's ~150ms exit
+      // animation; a jump into another note also skips that animation.
+      const other = !showingNote(scope.moduleId);
+      setHeadingRequest(request);
+      if (other) setInstantClose(true);
       setOpen(false);
-      if (activeEditor?.moduleId !== scope.moduleId) void navigate({ to: "/$moduleId", params: { moduleId: scope.moduleId } });
+      if (other) openNote(scope.moduleId);
       return;
     }
     if (item.kind === "heading") return;
@@ -302,18 +426,27 @@ export function CommandPalette() {
     if (trimmed && (trimmed !== debouncedQuery || search.isPlaceholderData)) return;
 
     const terms = trimmed ? findTermsFor(trimmed, item.snippet ?? "") : [];
-    const isOpenNote = activeEditor?.moduleId === item.moduleId;
+    const isOpenNote = showingNote(item.moduleId);
     // The find bar or the opened note takes focus instead.
     restoreFocus.current = isOpenNote && terms.length === 0;
     setOpen(false);
     if (terms.length) requestFind({ moduleId: item.moduleId, terms });
-    if (!isOpenNote) {
-      void navigate({ to: "/$moduleId", params: { moduleId: item.moduleId } });
-    }
+    if (!isOpenNote) openNote(item.moduleId);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing) return;
+    if (actionsOpen) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        setActionIndex(index => (index + step + actions.length) % Math.max(1, actions.length));
+        return;
+      }
+      if (event.key === "Enter") { event.preventDefault(); runAction(actionIndex); return; }
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setActionsOpen(false); return; }
+      setActionsOpen(false);
+    }
     const count = items.length;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -341,6 +474,7 @@ export function CommandPalette() {
       onOpenChange={handleOpenChange}
       onOpenChangeComplete={(isOpen) => {
         if (isOpen) return;
+        setInstantClose(false);
         setQuery("");
         setScope(null);
         runAfterClose();
@@ -350,13 +484,9 @@ export function CommandPalette() {
         showCloseButton={false}
         initialFocus={inputRef}
         finalFocus={() => restoreFocus.current}
-        className="top-[18vh] translate-y-0 gap-0 overflow-hidden p-0 shadow-2xl ring-0 sm:max-w-xl data-open:zoom-in-100"
+        className={instantClose ? "top-[18vh] translate-y-0 gap-0 overflow-hidden p-0 shadow-2xl ring-0 sm:max-w-2xl data-open:zoom-in-100 data-closed:animate-none" : "top-[18vh] translate-y-0 gap-0 overflow-hidden p-0 shadow-2xl ring-0 sm:max-w-2xl data-open:zoom-in-100"}
       >
         <DialogTitle className="sr-only">Search modules and commands</DialogTitle>
-        {scope && <div className="flex items-center gap-2 px-3 pt-2 text-xs text-muted-foreground">
-          <button type="button" aria-label="Back to parent" onClick={back} className="rounded p-1 hover:bg-accent"><ChevronLeft className="size-4" /></button>
-          <span className="truncate">{[scope.name, ...(parent ? [...parent.ancestors, parent].map(heading => heading.title) : [])].join(" › ")}</span>
-        </div>}
         <div className="flex items-center gap-2 border-b border-border px-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
           <input
@@ -396,7 +526,8 @@ export function CommandPalette() {
                 role="presentation"
                 className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground"
               >
-                {group.label}
+                {group.id === "headings" && parent && titleHtml?.has(parent.pos)
+                  ? <span dangerouslySetInnerHTML={{ __html: titleHtml.get(parent.pos)! }} /> : group.label}
               </div>
               {group.items.map((item) => (
                 <div
@@ -429,10 +560,11 @@ export function CommandPalette() {
                     </>
                   ) : item.kind === "heading" ? (
                     <>
-                      <span className="min-w-0 flex-1 truncate">{item.heading.title}
+                      {headingNumberMap?.get(item.heading.pos) && <span className="shrink-0 tabular-nums text-muted-foreground">{headingNumberMap.get(item.heading.pos)}</span>}
+                      <span className="min-w-0 flex-1 truncate">{titleHtml?.has(item.heading.pos) ? <span dangerouslySetInnerHTML={{ __html: titleHtml.get(item.heading.pos)! }} /> : item.heading.title}
                         {trimmed && item.heading.ancestors.length > 0 && <span className="block truncate text-xs text-muted-foreground">{item.heading.ancestors.map(heading => heading.title).join(" › ")}</span>}
                       </span>
-                      {item.hasChildren && <Kbd>{formatKeys("Mod-Enter")}</Kbd>}
+                      {item.hasChildren && item === active && <Kbd>{formatKeys("Mod-Enter")}</Kbd>}
                     </>
                   ) : (
                     <>
@@ -457,10 +589,26 @@ export function CommandPalette() {
             </div>
           )}
         </div>
-        <div className="flex justify-end gap-4 px-3 py-2 text-xs text-muted-foreground">
-          {scope && <span className="flex items-center gap-2">Back <Kbd>{formatKeys("ArrowLeft")}</Kbd></span>}
-          <span className="flex items-center gap-2">Open <Kbd>{formatKeys("Enter")}</Kbd></span>
-          <span className="flex items-center gap-2">Browse sections <Kbd>{formatKeys("Mod-Enter")}</Kbd></span>
+        <div className="relative flex items-center gap-3 px-3 py-1.5 text-xs text-muted-foreground">
+          {scope ? <PalettePath name={scope.name} trail={parent ? [...parent.ancestors, parent] : []} titleHtml={titleHtml} inputRef={inputRef}
+            onModule={() => { setScope({ ...scope, parent: null }); setQuery(""); setActiveIndex(0); }}
+            onHeading={pos => { setScope({ ...scope, parent: pos }); setQuery(""); setActiveIndex(0); }} />
+            : <span className="mr-auto">Modules and commands</span>}
+          {actions[0] && <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => runAction(0)}
+            className="flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 whitespace-nowrap text-foreground hover:bg-accent">
+            {actions[0].label.split(" ")[0]} <Kbd>{formatKeys(actions[0].keys)}</Kbd>
+          </button>}
+          <button type="button" aria-expanded={actionsOpen} onMouseDown={event => event.preventDefault()} onClick={() => { setActionsOpen(value => !value); setActionIndex(0); }}
+            className="flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 whitespace-nowrap hover:bg-accent aria-expanded:bg-accent">
+            Actions <Kbd>{formatKeys(action("palette.open").keys)}</Kbd>
+          </button>
+          {actionsOpen && actions.length > 0 && <div role="menu" aria-label="Actions" className="floating-surface absolute right-2 bottom-full mb-1 w-60 rounded-lg p-1 text-sm shadow-xl">
+            {actions.map((item, index) => <div key={item.label} role="menuitem" aria-selected={index === actionIndex}
+              onMouseDown={event => event.preventDefault()} onMouseMove={() => setActionIndex(index)} onClick={() => runAction(index)}
+              className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 aria-selected:bg-accent aria-selected:text-accent-foreground">
+              <span className="min-w-0 flex-1 truncate">{item.label}</span><Kbd>{formatKeys(item.keys)}</Kbd>
+            </div>)}
+          </div>}
         </div>
         <div aria-live="polite" className="sr-only">
           {open && !isSearching && trimmed

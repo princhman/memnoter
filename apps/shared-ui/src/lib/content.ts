@@ -25,15 +25,26 @@ export type GetContentResponse = {
 // may overlap pending pastes/saves or an editor with live undo/redo history.
 const loadedModules = new Set<string>();
 
+// Byte arrays each doc has already integrated. Reconciled query data reuses
+// the arrays it was read with, and re-applying a Yjs update is a no-op that
+// still decodes it in full (twice per large note open, before this).
+const appliedBytes = new WeakMap<Y.Doc, WeakSet<number[]>>();
+
 export function applySavedContent(doc: Y.Doc, content: GetContentResponse) {
+  let applied = appliedBytes.get(doc);
+  if (!applied) appliedBytes.set(doc, applied = new WeakSet());
+  const seen = applied;
   // Notify the editor once with the finished document, not after every edit
   // in the persisted history. Loading must not enter autosave or undo history.
   doc.transact(() => {
-    if (content.state.length > 0) {
+    if (content.state.length > 0 && !seen.has(content.state)) {
       Y.applyUpdate(doc, new Uint8Array(content.state));
+      seen.add(content.state);
     }
     for (const update of content.updates) {
+      if (seen.has(update.bytes)) continue;
       Y.applyUpdate(doc, new Uint8Array(update.bytes));
+      seen.add(update.bytes);
     }
   }, LOAD_ORIGIN);
 }
@@ -41,13 +52,15 @@ export function applySavedContent(doc: Y.Doc, content: GetContentResponse) {
 export async function loadContent(
   moduleId: string,
   document?: Y.Doc,
+  // Runs right after the content reaches the document, before cleanup awaits.
+  onFilled?: () => void,
 ): Promise<GetContentResponse> {
   const canCleanUp = !loadedModules.has(moduleId);
   loadedModules.add(moduleId);
   const content = await invoke<GetContentResponse>("get_content", { moduleId });
   // Reuse the live document for cleanup instead of decoding its history twice.
   // A restore failure must reject loading, rather than expose an empty editor.
-  if (document) applySavedContent(document, content);
+  if (document) { applySavedContent(document, content); onFilled?.(); }
   if (!canCleanUp || content.files.length === 0) return content;
 
   const doc = document ?? new Y.Doc();

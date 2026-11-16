@@ -117,6 +117,10 @@ export function SavedImageView(props: NodeViewProps) {
   const [occlusionOpen, setOcclusionOpen] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Mounted from the first opening on (so closing still animates); a note with
+  // many images otherwise builds a closed dialog for each one as it opens.
+  const previewMounted = useRef(false);
+  if (previewOpen) previewMounted.current = true;
   const previewElement = useRef<HTMLElement | null>(null);
   // Popup refs follow the portal's actual lifetime, including its exit animation.
   const reportPreview = useCallback((element: HTMLDivElement | null) => {
@@ -513,7 +517,7 @@ export function SavedImageView(props: NodeViewProps) {
       )}
       {occlusionOpen && src && <OcclusionEditor src={src} masks={validMasks(node.attrs.masks)} onCancel={() => setOcclusionOpen(false)} onSave={masks => { if (!isWriteAdmitted() || editor.isDestroyed || !editor.isEditable) return; updateAttributes({ masks, imageId: node.attrs.imageId || crypto.randomUUID() }); setOcclusionOpen(false); }} />}
       {cropOpen && image.current && <CropDialog image={image.current} onCancel={() => setCropOpen(false)} onSave={applyCrop} />}
-      {src && (
+      {src && previewMounted.current && (
         <ImagePreviewDialog
           open={previewOpen}
           onOpenChange={setPreviewOpen}
@@ -538,7 +542,9 @@ function swapImage(img: HTMLImageElement, next: string) {
   const hidden = img.style.opacity === "0";
   img.style.opacity = "";
   if (img.src === next) return;
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !img.isConnected) {
+  // Nothing on screen yet (still loading or failed): no crossfade, and no
+  // offset reads, which force a layout of the whole note per image on open.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !img.isConnected || !img.complete || !img.naturalWidth) {
     img.src = next;
     return;
   }

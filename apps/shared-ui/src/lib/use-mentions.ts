@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { queryClient } from "./query-client";
 import { useQueries } from "@tanstack/react-query";
 import { useEditorState } from "@tiptap/react";
@@ -14,6 +14,14 @@ export function useMentionNotes() {
   const { activeEditor } = useActiveEditor();
   const live = useEditorState({ editor: activeEditor?.editor ?? null, selector: ({ editor }) => editor?.state.doc, equalityFn: Object.is });
   const liveNote = useMemo(() => live ? extractMentions(live.toJSON()) : null, [live]);
+  // On leaving a note, keep its last live mentions as the stored result, so
+  // the next note's opening never competes with re-reading this one from disk.
+  const leaving = useRef<{ id: string; note: ReturnType<typeof extractMentions> } | null>(null);
+  useEffect(() => {
+    const previous = leaving.current;
+    if (previous && previous.id !== activeEditor?.moduleId) queryClient.setQueryData(["mention-note", previous.id], previous.note);
+    leaving.current = activeEditor && liveNote ? { id: activeEditor.moduleId, note: liveNote } : null;
+  }, [activeEditor?.moduleId, liveNote]);
   useEffect(() => {
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
     const unsubscribe = queryClient.getQueryCache().subscribe(event => {
@@ -32,6 +40,10 @@ export function useMentionNotes() {
       finally { doc.destroy(); }
     },
     staleTime: Infinity,
+    // The open note's mentions come from the live editor below. Reading it from
+    // disk too repeats the whole note load right as it opens; once another note
+    // is active, the invalidated (stale) query refetches on being enabled.
+    enabled: activeEditor?.moduleId !== module.id,
   })) });
-  return { notes: modules.map((module, index) => ({ ...module, note: activeEditor?.moduleId === module.id && liveNote ? liveNote : queries[index].data ?? { headings: [], mentions: [] } })), loading: queries.some(query => query.isPending), error: queries.find(query => query.error)?.error };
+  return { notes: modules.map((module, index) => ({ ...module, note: activeEditor?.moduleId === module.id && liveNote ? liveNote : queries[index].data ?? { headings: [], mentions: [] } })), loading: queries.some((query, index) => query.isPending && !(activeEditor?.moduleId === modules[index].id && liveNote)), error: queries.find(query => query.error)?.error };
 }

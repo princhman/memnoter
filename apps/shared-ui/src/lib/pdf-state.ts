@@ -45,7 +45,7 @@ export function parsePdfPane(value: unknown): PdfPaneState {
   if (typeof value !== "object" || value === null) return { open: false, width: 420, active: null };
   return {
     open: "open" in value && value.open === true,
-    width: "width" in value && typeof value.width === "number" && Number.isFinite(value.width) ? Math.max(320, Math.min(1000, value.width)) : 420,
+    width: "width" in value && typeof value.width === "number" && Number.isFinite(value.width) ? Math.max(320, Math.min(4000, value.width)) : 420,
     active: "active" in value && typeof value.active === "string" ? value.active : null,
   };
 }

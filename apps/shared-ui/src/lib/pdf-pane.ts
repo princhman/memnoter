@@ -23,6 +23,10 @@ const worksheetModules = createStore<readonly string[]>([]);
 export function setWorksheetOpen(moduleId: string, open: boolean) {
   worksheetModules.setState(list => open ? (list.includes(moduleId) ? list : [...list, moduleId]) : list.filter(id => id !== moduleId));
 }
+export function useAnyWorksheetOpen() { return useSelector(worksheetModules, list => list[0] ?? null); }
+// Root header slots a desktop worksheet portals its back/title and controls into.
+export const WORKSHEET_CRUMB_SLOT = "worksheet-crumb-slot";
+export const WORKSHEET_ACTIONS_SLOT = "worksheet-actions-slot";
 export function useWorksheetOpen(moduleId: string) { return useSelector(worksheetModules, list => list.includes(moduleId)); }
 export function usePdfPane(moduleId: string) {
   const pane = useSelector(paneStore(moduleId), state => state);

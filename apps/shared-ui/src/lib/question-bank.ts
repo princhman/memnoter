@@ -83,17 +83,40 @@ export function useBankEdit(moduleId: string) {
   });
 }
 const ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"];
-/** The next label under a part: (a), (b)… then (i), (ii)… then (A), (B)…, like paper worksheets. */
+export type PartStyle = "lower" | "roman" | "upper" | "number";
+export const PART_STYLES: { style: PartStyle; example: string }[] = [
+  { style: "lower", example: "a, b, c" }, { style: "roman", example: "i, ii, iii" },
+  { style: "upper", example: "A, B, C" }, { style: "number", example: "1, 2, 3" },
+];
+export function partStyleLabel(style: PartStyle, index: number) {
+  if (style === "number") return String(index + 1);
+  if (style === "roman") return ROMAN[index] ?? String(index + 1);
+  const letter = String.fromCharCode(97 + (index % 26));
+  return style === "upper" ? letter.toUpperCase() : letter;
+}
+const bare = (label: string) => label.trim().replace(/^\((.*)\)$/, "$1");
+const childParts = (revision: WorksheetRevision, parentId: string) => Object.entries(revision.parts).filter(([, p]) => p.parentId === parentId)
+  .sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]));
+/** The style the first child label is written in, or null for custom labels. */
+export function partStyleOf(revision: WorksheetRevision, parentId: string): PartStyle | null {
+  const first = childParts(revision, parentId)[0];
+  if (!first) return null;
+  const label = bare(first[1].label);
+  if (/^\d+$/.test(label)) return "number";
+  if (label === "i" || (label.length > 1 && ROMAN.includes(label))) return "roman";
+  if (/^[a-z]$/.test(label)) return "lower";
+  if (/^[A-Z]$/.test(label)) return "upper";
+  return null;
+}
+/** The next label under a part: (a), (b)… then (i), (ii)… then (A), (B)…, like paper worksheets,
+ *  unless the existing parts were switched to another style; new parts continue that one. */
 export function nextPartLabel(revision: WorksheetRevision, parentId: string) {
   let depth = 0;
   for (let id: string | null = parentId; id && revision.parts[id]?.parentId; id = revision.parts[id].parentId) depth++;
-  const label = (index: number) => {
-    if (depth % 3 === 1) return ROMAN[index] ?? String(index + 1);
-    const letter = String.fromCharCode(97 + (index % 26));
-    return depth % 3 === 2 ? letter.toUpperCase() : letter;
-  };
+  const style: PartStyle = partStyleOf(revision, parentId) ?? (depth % 3 === 1 ? "roman" : depth % 3 === 2 ? "upper" : "lower");
+  const label = (index: number) => partStyleLabel(style, index);
   // After the last label in use, so removing (b) from (a)-(c) never gives a second (c).
-  const used = new Set(Object.values(revision.parts).filter(p => p.parentId === parentId).map(p => p.label.replace(/^\((.*)\)$/, "$1").toLowerCase()));
+  const used = new Set(childParts(revision, parentId).map(([, p]) => bare(p.label).toLowerCase()));
   let next = 0;
   for (let index = 0; index < 52; index++) if (used.has(label(index).toLowerCase())) next = index + 1;
   return label(next);

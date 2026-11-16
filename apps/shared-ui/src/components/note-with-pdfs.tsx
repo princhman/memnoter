@@ -1,7 +1,7 @@
 import { useBankGate } from "@/lib/question-bank";
 import { setOpenedModule, useModulePage } from "@/lib/store";
 import { QuestionBank } from "./question-bank";
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, Maximize2 } from "lucide-react";
 import { useDocuments } from "@/lib/use-documents";
@@ -15,8 +15,10 @@ import { PdfQuoteNavigation } from "@/lib/pdf-quote-navigation";
 import { PdfQuoteControls } from "./pdf-quote-controls";
 import { ToolButton } from "./ui/tool-button";
 
-const clampWidth = (width: number) => Math.max(320, Math.min(1000, width));
-const paneWidth = (width: number) => `min(${width}px, max(320px, 65vw))`;
+// No fixed cap: on wide screens the pane may grow until the notes keep 360px.
+const MIN_MAIN = 360;
+const clampWidth = (width: number) => Math.max(320, Math.min(4000, width));
+const paneWidth = (width: number) => `min(${width}px, max(320px, calc(100% - ${MIN_MAIN}px)))`;
 
 export function NoteWithPdfs({ moduleId, children }: { moduleId: string; children: ReactNode }) {
   const bankEnabled = useBankGate();
@@ -40,9 +42,19 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
   // A remembered file that was since deleted falls back to the list.
   const active = docs.find(doc => doc.id === pane.active);
   const open = pane.open;
-  useEffect(() => {
-    document.documentElement.style.setProperty("--pdf-pane-width", open ? paneWidth(pane.width) : "0px");
-    return () => { document.documentElement.style.removeProperty("--pdf-pane-width"); };
+  // The pane's width depends on its container (paneWidth uses %), so publish
+  // the measured width for page-level overlays positioned beside it.
+  const aside = useRef<HTMLElement>(null);
+  // Set before paint on every width change; the observer covers window resizes.
+  useLayoutEffect(() => {
+    const root = document.documentElement.style;
+    const element = aside.current;
+    if (!open || !element) { root.setProperty("--pdf-pane-width", "0px"); return () => root.removeProperty("--pdf-pane-width"); }
+    const publish = () => root.setProperty("--pdf-pane-width", `${element.getBoundingClientRect().width}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(element);
+    return () => { observer.disconnect(); root.removeProperty("--pdf-pane-width"); };
   }, [open, pane.width]);
   useEffect(() => registerCommand({ id: "pdf.toggle-pane", title: "Toggle files panel", keywords: ["pdf"],
     run: () => updatePdfPane(moduleId, { open: !pane.open }) }), [moduleId, pane.open]);
@@ -58,7 +70,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
   return <div ref={root} data-pdf-note={moduleId} className="relative flex h-full min-h-0 flex-col"><PdfQuoteNavigation moduleId={moduleId} /><PdfQuoteControls moduleId={moduleId} /><div className="note-with-pdfs flex min-h-0 min-w-0 flex-1">
     <div className="app-scroll-container min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-8">{bankEnabled && showingBank ? <QuestionBank moduleId={moduleId} onOpenSource={documentId => updatePdfPane(moduleId, { open: true, active: documentId })} /> : children}</div>
     {open && <>
-      <div role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuenow={pane.width} aria-valuemin={320} aria-valuemax={1000} tabIndex={0} className="relative w-1 shrink-0 touch-none cursor-col-resize bg-border hover:bg-primary focus-visible:bg-primary focus-visible:outline-none" onKeyDown={event => {
+      <div role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuenow={pane.width} aria-valuemin={320} aria-valuemax={4000} tabIndex={0} className="relative w-1 shrink-0 touch-none cursor-col-resize bg-border hover:bg-primary focus-visible:bg-primary focus-visible:outline-none" onKeyDown={event => {
         if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); finishResize(false); updatePdfPane(moduleId, { width: clampWidth(pane.width + (event.key === "ArrowLeft" ? 20 : -20)) }); }
       }} onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary || resize.current) return;
@@ -81,7 +93,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
         document.addEventListener("selectstart", preventSelection, true);
         document.addEventListener("dragstart", preventSelection, true);
         resize.current = { pointer: event.pointerId, element, width: pane.width, right, left: bounds.left, dividerWidth: bounds.width,
-          maxWidth: Math.max(320, window.innerWidth * 0.65), cleanup: () => {
+          maxWidth: Math.max(320, right - (element.parentElement?.getBoundingClientRect().left ?? 0) - MIN_MAIN), cleanup: () => {
           preview.hidden = true;
           preview.style.removeProperty("transform");
           sheet.remove();
@@ -104,7 +116,7 @@ export function NoteWithPdfs({ moduleId, children }: { moduleId: string; childre
       onClick={event => { event.preventDefault(); event.stopPropagation(); }}>
         <div ref={guide} hidden aria-hidden="true" className="pointer-events-none absolute inset-0 z-50 bg-primary shadow-sm" style={{ transition: "none", willChange: "transform" }} />
       </div>
-      <aside aria-label="Files" className="flex min-h-0 shrink-0 flex-col bg-background" style={{ width: paneWidth(pane.width) }}>
+      <aside ref={aside} aria-label="Files" className="flex min-h-0 shrink-0 flex-col bg-background" style={{ width: paneWidth(pane.width) }}>
         {active ? <div className="min-h-0 flex-1"><PdfViewer key={active.id} doc={active}
           leading={<>
             <ToolButton label="All files" onClick={() => updatePdfPane(moduleId, { active: null })}><ChevronLeft /></ToolButton>

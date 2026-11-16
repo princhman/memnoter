@@ -29,7 +29,7 @@ type DrawingResult = { status: string; source?: FileType; preview?: FileType; ex
 type PendingDrawing = { imageId: string; sourceId: string | null; result?: DrawingResult; copyId?: string; anchorId?: string };
 type AnswerOwner = { readOnly?: boolean; moduleId: string; attemptId: string; revisionId: string; leafPartId: string; answer?: Bank["answers"][string]; flushDurable: () => Promise<void> };
 const ANSWER_ACTIONS = ["Text", "Table", "Bullet list", "Numbered list", "Code block", "Mermaid diagram", "Quote", "Drawing", "Foldable block", "Image", "Inline math", "Math block", "Add row above", "Add row below", "Add column left", "Add column right", "Delete row", "Delete column", "Toggle header row", "Delete table"];
-function AnswerEditor({ doc, label, flush, owner }: { doc: Y.Doc; label: string; flush: () => void; owner: AnswerOwner }) {
+function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { doc: Y.Doc; label: string; flush: () => void; owner: AnswerOwner; autoFocus?: boolean; placeholder?: string }) {
   const storageKey = `worksheet-inline-drawing:${JSON.stringify([owner.moduleId, owner.attemptId, owner.revisionId, owner.leafPartId])}`;
   const [pending, setPending] = useState<PendingDrawing | null>(() => {
     try { const value = JSON.parse(localStorage.getItem(storageKey) || "null"); return value && typeof value.imageId === "string" && (value.sourceId === null || typeof value.sourceId === "string") ? value : null; } catch { return null; }
@@ -157,6 +157,7 @@ function AnswerEditor({ doc, label, flush, owner }: { doc: Y.Doc; label: string;
   };
   const editor = useEditor({
     editable: !owner.readOnly,
+    autofocus: autoFocus && !owner.readOnly ? "end" : false,
     extensions: noteExtensions({ document: doc, reduced: true, fragment: doc.getXmlFragment("default"), insertImages, ui: {
       savedImage: SavedImage, inlineImage: InlineImage,
       inlineMath: InlineMathView, mathBlock: MathBlockView, mermaidView: MermaidView, menus: [LatexSuggest, SlashCommand.configure({ insertImages, nativeDrawing: isNativeHost(), insertDrawing: current => { void runDrawing(current); }, allowedActions: ANSWER_ACTIONS, flashcards: false })],
@@ -165,7 +166,7 @@ function AnswerEditor({ doc, label, flush, owner }: { doc: Y.Doc; label: string;
       class: "tiptap worksheet-answer-input",
       "aria-label": `Your answer for question ${label}`,
       "data-answer-empty": String(state.doc.childCount === 1 && state.doc.firstChild?.type.name === "paragraph" && state.doc.firstChild.content.size === 0),
-      "data-placeholder": "Type your answer here, or type /drawing to insert a drawing.",
+      "data-placeholder": placeholder ?? "Type your answer here, or type /drawing to insert a drawing.",
       autocapitalize: "off", autocorrect: "off",
     }) },
     onBlur: flush,
@@ -248,8 +249,10 @@ export function answerHasContent(fragment: Y.XmlFragment): boolean {
   return fragment.toArray().some(node => node instanceof Y.XmlText ? node.toDelta().some((delta: { insert?: unknown }) => typeof delta.insert === "string" && delta.insert.trim().length > 0)
     : node instanceof Y.XmlElement && (["image", "inlineImage", "horizontalRule", "mention", "pdfTextQuote"].includes(node.nodeName) || answerHasContent(node)));
 }
-export function WorksheetAnswerEditor({ label, load, save, flush, ...owner }: AnswerOwner & {
+export function WorksheetAnswerEditor({ label, load, save, flush, autoFocus, placeholder, ...owner }: AnswerOwner & {
   label: string;
+  autoFocus?: boolean;
+  placeholder?: string;
   load: () => Promise<AnswerDocument & { legacyDraft?: string }>;
   save: (document: number[], expected: string, text: string, hasContent: boolean) => void;
   flush: () => void;
@@ -300,5 +303,5 @@ export function WorksheetAnswerEditor({ label, load, save, flush, ...owner }: An
     };
   }, [retry]);
   if (error) return <div role="alert" className="text-sm text-destructive">{error} <Button size="sm" variant="ghost" onClick={() => setRetry(value => value + 1)}>Retry opening answer</Button></div>;
-  return doc ? <AnswerEditor doc={doc} label={label} owner={owner} flush={() => callbacks.current.flush()} /> : <p role="status">Loading answer…</p>;
+  return doc ? <AnswerEditor doc={doc} label={label} owner={owner} autoFocus={autoFocus} placeholder={placeholder} flush={() => callbacks.current.flush()} /> : <p role="status">Loading answer…</p>;
 }

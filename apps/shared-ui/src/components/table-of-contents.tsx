@@ -39,26 +39,26 @@ const DASH_WIDTHS = [28, 20, 14, 9];
 // Keeps the popup this far from the window edges.
 const VIEWPORT_MARGIN = 16;
 // Headings keep inline math as raw LaTeX, so render it like the editor does.
+export function headingTitleHtml(node: PMNode) {
+  const parts: string[] = [];
+  node.forEach((child) => {
+    if (child.type.name === "inlineMath") {
+      parts.push(
+        katex.renderToString(groupMathScripts(child.textContent.replace(/\u200b/g, "")), {
+          throwOnError: false,
+          displayMode: false,
+        }),
+      );
+    } else if (child.isText) {
+      const span = document.createElement("span");
+      span.textContent = child.text ?? "";
+      parts.push(span.innerHTML);
+    }
+  });
+  return parts.join("");
+}
 function HeadingTitle({ node }: { node: PMNode }) {
-  const html = useMemo(() => {
-    const parts: string[] = [];
-    node.forEach((child) => {
-      if (child.type.name === "inlineMath") {
-        parts.push(
-          katex.renderToString(groupMathScripts(child.textContent.replace(/\u200b/g, "")), {
-            throwOnError: false,
-            displayMode: false,
-          }),
-        );
-      } else if (child.isText) {
-        const span = document.createElement("span");
-        span.textContent = child.text ?? "";
-        parts.push(span.innerHTML);
-      }
-    });
-    return parts.join("");
-  }, [node]);
-
+  const html = useMemo(() => headingTitleHtml(node), [node]);
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 

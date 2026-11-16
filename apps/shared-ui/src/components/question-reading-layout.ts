@@ -10,7 +10,8 @@ export function questionReadingLayout(depth: number, folded: boolean, hasCrops: 
   const root = depth === 0;
   const inline = !reordering && !folded && hasCrops;
   return {
-    marginLeft: Math.max(0, depth - 1) * 24,
+    // Parts sit visibly inside their question: one step per level, from (a) on.
+    marginLeft: depth * 28,
     partClass: cn("group/part", !root && "mt-1", !reordering && !folded && hasCrops && "pb-2", inline && "grid grid-cols-[3rem_minmax(0,1fr)] items-start gap-x-2"),
     labelClass: cn("min-w-0 text-left font-semibold tabular-nums [overflow-wrap:anywhere]", root ? "text-xl leading-7" : "text-base leading-7 text-muted-foreground"),
     contentClass: cn("min-w-0 space-y-3 empty:hidden", reordering ? "hidden" : !inline && (root ? "mt-2 pl-14" : "mt-2 pl-5")),

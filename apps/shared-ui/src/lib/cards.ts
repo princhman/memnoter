@@ -169,6 +169,10 @@ export function parseBlock(block: Node): BlockSyntax {
     }
     return syntax;
   }
+  // Card syntax is only ever made of text characters, so a block whose text
+  // has neither `{{` nor `::` has none; skip building per-character units.
+  const plain = block.textContent;
+  if (!plain.includes("{{") && !plain.includes("::")) return syntax;
   const units = unitsOf(block);
 
   // Clozes do not nest: the last `{{` before a `}}` opens it.
@@ -455,6 +459,10 @@ export type CardGroup = Range & {
 // Delimiters are real editable text. Only document siblings participate in v1.
 export function groupOpener(node: Node) {
   if (!["paragraph", "heading"].includes(node.type.name)) return null;
+  // Necessary condition, checked without building per-character units: this
+  // runs over every block of the note on load and on edits.
+  const plain = node.textContent;
+  if (!plain.endsWith("::list") && !plain.endsWith("::block")) return null;
   const units = unitsOf(node);
   const text = units.map(u => u.type === "char" ? u.char : "\n").join("");
   const match = /\s(::list|::block)$/.exec(text);

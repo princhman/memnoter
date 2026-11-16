@@ -196,7 +196,7 @@ test('files resize previews a fixed layout, commits on release, and cleans up ev
     assert.equal(await storedWidth(), cancelWidth);
     assert.equal(await writes(), cancelWrites);
     assert.equal(await page.locator('#outside').evaluate(element => getComputedStyle(element).cursor), 'help');
-    for (const [x, expected] of [[1, 1000], [1399, 320]]) {
+    for (const [x, expected] of [[1, 1399], [1399, 320]]) {
       await start(); await page.mouse.move(x, 250);
       const preview = await guide.boundingBox();
       await page.mouse.up();
@@ -204,14 +204,14 @@ test('files resize previews a fixed layout, commits on release, and cleans up ev
       assert.equal(await storedWidth(), expected);
     }
     assert.equal(await separator.getAttribute('aria-valuemin'), '320');
-    assert.equal(await separator.getAttribute('aria-valuemax'), '1000');
+    assert.equal(await separator.getAttribute('aria-valuemax'), '4000');
     const width = await storedWidth();
     await separator.focus(); await page.keyboard.press('ArrowLeft');
-    assert.equal(await storedWidth(), Math.min(1000, width + 20));
-    assert.equal((await files.boundingBox()).width, Math.min(1000, width + 20));
-    assert.equal(await separator.getAttribute('aria-valuenow'), String(Math.min(1000, width + 20)));
+    assert.equal(await storedWidth(), Math.min(4000, width + 20));
+    assert.equal((await files.boundingBox()).width, Math.min(4000, width + 20));
+    assert.equal(await separator.getAttribute('aria-valuenow'), String(Math.min(4000, width + 20)));
     await page.keyboard.press('ArrowRight');
-    assert.equal(await storedWidth(), Math.min(1000, width + 20) - 20);
+    assert.equal(await storedWidth(), Math.min(4000, width + 20) - 20);
     for (const input of [{ pointerId: 11, button: 2, isPrimary: true }, { pointerId: 12, button: 0, isPrimary: false }]) {
       await separator.dispatchEvent('pointerdown', input);
       assert.equal(await page.locator('#outside').evaluate(element => getComputedStyle(element).cursor), 'help');
