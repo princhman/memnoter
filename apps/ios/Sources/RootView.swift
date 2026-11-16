@@ -558,7 +558,7 @@ struct RootView: View {
         // PDF controls own the iPad bar; a competing title can collapse to just an ellipsis.
         .modifier(QuestionScrollEdge(hidden: questionsUnderBar))
         .toolbarBackground(questionsUnderBar ? .hidden : .automatic, for: .navigationBar)
-        .navigationTitle(!isPhone || selected == "questions" || phoneSplitLayout || (selected == "review" && detailWidth < 500) ? "" : sectionTitle)
+        .navigationTitle(!isPhone || selected == "questions" || phoneSplitLayout || module != nil || ["files", "review"].contains(selected ?? "") ? "" : sectionTitle)
         .navigationBarTitleDisplayMode(.inline)
         .rootViewBoundary()
         .toolbar {
@@ -695,28 +695,23 @@ struct RootView: View {
                         ToolbarItem(placement: .topBarTrailing) { tabletTrailingControls(session) }
                     }
                 } else if isPhone && session.pdfReader == nil {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
-                            .accessibilityLabel("Undo")
-                        Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
-                            .accessibilityLabel("Redo")
-                    }
-                    // Note actions belong to notes; a worksheet has no PDF pane either.
-                    if selected != "questions" {
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu { noteActions(session) } label: { Image(systemName: "ellipsis") }
-                            .accessibilityLabel("Note actions")
-                            .accessibilityValue(session.saveStatus)
-                    }
-                    }
-                    if session.worksheetChrome == nil {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
-                            .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
-                            .accessibilityValue(session.filesOpen ? "Open" : "Closed")
-                            .keyboardShortcut("d", modifiers: [.command, .shift])
-                            .disabled(busy || !session.ready)
-                    }
+                    if selected == "questions" && session.worksheetChrome != nil {
+                        // Worksheet: answers need undo/redo; no PDF pane or note actions.
+                        ToolbarItemGroup(placement: .topBarTrailing) {
+                            Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
+                                .accessibilityLabel("Undo")
+                            Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                                .accessibilityLabel("Redo")
+                        }
+                    } else if selected == "questions" {
+                        ToolbarItem(placement: .topBarTrailing) { phoneFilesToggle(session) }
+                    } else {
+                        // One menu beside the breadcrumb instead of a row the system folds into its own "…".
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Menu { phoneNoteMenu(session) } label: { Image(systemName: "ellipsis") }
+                                .accessibilityLabel("Note actions")
+                                .accessibilityValue(session.saveStatus)
+                        }
                     }
                 }
             }
@@ -892,11 +887,48 @@ struct RootView: View {
         }
     }
 
-    @ViewBuilder private func noteActions(_ session: WebSession, includePdf: Bool = true) -> some View {
-        if isPhone {
-            // The breadcrumb replaced the tappable title, so contents lives here on iPhone.
-            Button { showingContents = true } label: { Label("Contents", systemImage: "list.bullet.indent") }
+    private func phoneFilesToggle(_ session: WebSession) -> some View {
+        Button { session.toggleFiles() } label: { Label("Files", systemImage: "sidebar.right") }
+            .accessibilityLabel(session.filesOpen ? "Hide files" : "Show files")
+            .accessibilityValue(session.filesOpen ? "Open" : "Closed")
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(busy || !session.ready)
+    }
+
+    /// iPhone note menu: edit history, navigation, inserts, then the PDF pane.
+    @ViewBuilder private func phoneNoteMenu(_ session: WebSession) -> some View {
+        Section {
+            Button { session.exec(.undo) } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+                .disabled(!session.state.canUndo).menuActionDismissBehavior(.disabled)
+            Button { session.exec(.redo) } label: { Label("Redo", systemImage: "arrow.uturn.forward") }
+                .disabled(!session.state.canRedo).menuActionDismissBehavior(.disabled)
         }
+        Section {
+            Button { showingContents = true } label: { Label("Contents", systemImage: "list.bullet.indent") }
+            Button { showingFind = true; findFocused = true } label: { Label("Find in note", systemImage: "magnifyingglass") }
+        }
+        Section {
+            if session.state.inTable {
+                Menu { TableEditingActions(session: session) } label: { Label("Table actions", systemImage: "tablecells") }
+                    .disabled(!session.state.editable)
+            }
+            Button { newDrawing() } label: { Label("Insert drawing", systemImage: "pencil.tip.crop.circle") }
+                .disabled(busy || !session.state.editable)
+            if prototypeDrawingAvailable {
+                Button { newDrawing(importPrototype: true) } label: { Label("Import scratchpad", systemImage: "square.and.arrow.down") }
+                    .disabled(busy || !session.state.editable)
+            }
+            PhotosPicker(selection: $image, matching: .images) { Label("Insert photo", systemImage: "photo.badge.plus") }.disabled(busy)
+            Button { if let id = module?.id { beginPdfImport(id) } } label: { Label("Add PDF", systemImage: "doc.badge.plus") }.disabled(busy || !session.ready)
+        }
+        Section {
+            Button { session.toggleFiles() } label: { Label(session.filesOpen ? "Hide files" : "Show files", systemImage: "sidebar.right") }
+                .disabled(busy || !session.ready)
+        }
+        if !session.saveStatus.isEmpty { Section { Text(session.saveStatus) } }
+    }
+
+    @ViewBuilder private func noteActions(_ session: WebSession, includePdf: Bool = true) -> some View {
         if session.state.inTable {
             Menu {
                 TableEditingActions(session: session)
