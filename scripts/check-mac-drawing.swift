@@ -49,7 +49,7 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         try await model.flush()
         let recovered = DrawingSession(request); await recovered.load()
         precondition(recovered.loaded && recovered.hasChanges && recovered.drawing.strokes.count == 1)
-        let files = try await model.storage.publication(model.drawing, width: model.paperWidth, height: model.paperHeight)
+        let files = try await model.storage.publication(model.drawing, width: model.paperWidth, height: model.paperHeight, paperStyle: model.paperStyle)
         let source = try Data(contentsOf: URL(fileURLWithPath: files.0))
         let preview = try Data(contentsOf: URL(fileURLWithPath: files.1))
         precondition(Array(preview.prefix(8)) == [137, 80, 78, 71, 13, 10, 26, 10])

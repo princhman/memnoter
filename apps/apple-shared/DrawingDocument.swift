@@ -64,10 +64,10 @@ struct PortableInk: Codable, Sendable {
 import PencilKit
 #if canImport(UIKit)
 import UIKit
-private typealias InkColor = UIColor
+private typealias PortableInkColor = UIColor
 #else
 import AppKit
-private typealias InkColor = NSColor
+private typealias PortableInkColor = NSColor
 #endif
 
 extension DrawingDocument {
@@ -79,7 +79,7 @@ extension DrawingDocument {
         try portable.validate()
         let strokes = portable.strokes.map { s in
             let rgb = UInt32(s.color.dropFirst(), radix: 16)!
-            let color = InkColor(red: CGFloat((rgb >> 16) & 255)/255,
+            let color = PortableInkColor(red: CGFloat((rgb >> 16) & 255)/255,
                                  green: CGFloat((rgb >> 8) & 255)/255,
                                  blue: CGFloat(rgb & 255)/255, alpha: 1)
             let points = s.points.enumerated().map { i, p in
