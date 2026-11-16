@@ -234,6 +234,39 @@ jobs:
           xcodebuild build -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
             -configuration Release -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/ios-release" CODE_SIGNING_ALLOWED=NO
+      # Reuse this runner's products and dependencies instead of a fourth consumer.
+      # The overall 25m build cap still bounds the individual step allowances.
+      - name: Start the unit-test simulator
+        timeout-minutes: 5
+        run: bash scripts/ci/boot-ios-simulator.sh iPad
+      - name: Reuse the local test bundle
+        run: |
+          mkdir -p "$RUNNER_TEMP/ios-tests"
+          ln -s "$RUNNER_TEMP/ios-build/Build/Products" "$RUNNER_TEMP/ios-tests/Products"
+      - name: Wait for the unit-test simulator
+        timeout-minutes: 5
+        run: xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
+      - name: Run native unit and sync tests
+        timeout-minutes: 15
+        env:
+          IOS_TEST_SUITE: unit
+        run: |
+          sysctl hw.memsize vm.swapusage
+          vm_stat
+          bash scripts/ci/run-ios-tests.sh
+      - name: Verify native unit tests actually ran
+        run: |
+          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/ios-tests.xcresult" > "$RUNNER_TEMP/ios-tests.json"
+          python3 scripts/ci/check-ios-results.py unit "$RUNNER_TEMP/ios-tests.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-test-results-unit
+          path: |
+            ${{ runner.temp }}/ios-tests.xcresult
+            ${{ runner.temp }}/ios-tests.json
+            ${{ runner.temp }}/wrangler.log
+            ${{ runner.temp }}/simulators.json
 
   # Reserve the producer's Mac slot before consumers can occupy the pool.
   ios-build-started:
@@ -265,21 +298,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [unit, drawing, navigation, phone]
+        suite: [drawing, navigation, phone]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
-      # Only the unit target's sync E2E needs the local Worker.
-      - uses: pnpm/action-setup@v4
-        if: matrix.suite == 'unit'
-      - uses: actions/setup-node@v4
-        if: matrix.suite == 'unit'
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-        if: matrix.suite == 'unit'
       # Boot on this VM while ios-build runs on its separate VM.
       - name: Start the iOS simulator
         timeout-minutes: 5
@@ -338,7 +361,6 @@ jobs:
           path: |
             ${{ runner.temp }}/ios-tests.xcresult
             ${{ runner.temp }}/ios-tests.json
-            ${{ runner.temp }}/wrangler.log
             ${{ runner.temp }}/simulators.json
 
   # Preserve the required iOS check across the build/test split.
