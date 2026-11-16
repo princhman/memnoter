@@ -71,7 +71,9 @@ final class PhoneNavigationUITests: XCTestCase {
         XCTAssertTrue(good.existsOrWait(timeout: 5))
         XCTAssertTrue(good.isHittable, "Rating must fit on a small phone")
         good.tap()
+        app.buttons["Review actions"].tap()
         XCTAssertTrue(app.buttons["Undo"].isEnabled, "A phone rating must be persisted and undoable")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.4)).tap()
         back(in: app)
         XCTAssertTrue(note.existsOrWait(timeout: 5))
     }

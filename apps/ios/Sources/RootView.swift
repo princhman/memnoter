@@ -802,7 +802,8 @@ struct RootView: View {
     }
     /// Room the trailing bar item needs, so the breadcrumb truncates instead of evicting it.
     private var phoneBarTrailingWidth: CGFloat {
-        module != nil && selected != "questions" ? 165 : 120
+        if selected == "review" { return 230 }
+        return module != nil && selected != "questions" ? 165 : 120
     }
     private var phoneBreadcrumb: some View {
         TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
