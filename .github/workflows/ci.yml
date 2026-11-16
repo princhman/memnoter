@@ -294,15 +294,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci/wait-ios-artifact.py 2400
-      - uses: actions/download-artifact@v4
+      - name: Download and verify the test bundle
         timeout-minutes: 3
-        with:
-          artifact-ids: ${{ steps.bundle.outputs.artifact-id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.bundle.outputs.artifact-id }}
+        run: |
+          artifact="repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID"
+          digest=$(gh api "$artifact" --jq '.digest')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          archive="$RUNNER_TEMP/ios-test-bundle.zip"
+          gh api "$artifact/zip" > "$archive"
+          printf '%s  %s\n' "${digest#sha256:}" "$archive" | shasum -a 256 --check
       - name: Unpack the test bundle
         timeout-minutes: 2
         run: |
+          unzip -q "$RUNNER_TEMP/ios-test-bundle.zip" -d "$RUNNER_TEMP"
           mkdir -p "$RUNNER_TEMP/ios-tests"
           tar -C "$RUNNER_TEMP/ios-tests" -xzf "$RUNNER_TEMP/ios-tests.tar.gz"
       - name: Wait for the simulator
