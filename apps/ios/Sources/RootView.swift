@@ -695,13 +695,41 @@ struct RootView: View {
                         ToolbarItem(placement: .topBarTrailing) { tabletTrailingControls(session) }
                     }
                 } else if isPhone && session.pdfReader == nil {
-                    if selected == "questions" && session.worksheetChrome != nil {
-                        // Worksheet: answers need undo/redo; no PDF pane or note actions.
-                        ToolbarItemGroup(placement: .topBarTrailing) {
-                            Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
-                                .accessibilityLabel("Undo")
-                            Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
-                                .accessibilityLabel("Redo")
+                    if selected == "questions", let chrome = session.worksheetChrome {
+                        // Worksheet: the same native controls as iPad, so the web header stays hidden.
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button { session.worksheetAction() } label: { Image(systemName: "chevron.left") }
+                                .accessibilityLabel("Back to questions")
+                        }
+                        ToolbarItem(placement: .principal) {
+                            Menu {
+                                ForEach(0..<chrome.count, id: \.self) { index in
+                                    Button("Question \(index + 1)") { session.worksheetQuestion(index) }
+                                }
+                            } label: {
+                                Text("\(chrome.index + 1) of \(chrome.count)").font(.subheadline.weight(.medium))
+                            }
+                            .accessibilityLabel("Question \(chrome.index + 1) of \(chrome.count)")
+                        }
+                        if session.worksheetAnswerFocused, session.worksheetDrawing.request == nil {
+                            ToolbarItemGroup(placement: .topBarTrailing) {
+                                Button { session.exec(.undo) } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.state.canUndo).keyboardShortcut("z")
+                                    .accessibilityLabel("Undo")
+                                Button { session.exec(.redo) } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!session.state.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                                    .accessibilityLabel("Redo")
+                            }
+                        }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            if chrome.status == "Save failed" {
+                                Button { session.worksheetAction("worksheet-retry") } label: { Image(systemName: "exclamationmark.triangle") }
+                                    .accessibilityLabel("Save failed. Retry")
+                            } else if chrome.finished == true {
+                                Button { session.worksheetAction() } label: { Image(systemName: "xmark") }
+                                    .accessibilityLabel("Close worksheet")
+                            } else {
+                                Button("Finish") { session.worksheetAction("worksheet-finish") }
+                                    .font(.subheadline.weight(.semibold))
+                            }
                         }
                     } else if selected == "questions" {
                         ToolbarItem(placement: .topBarTrailing) { phoneFilesToggle(session) }

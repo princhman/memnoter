@@ -599,7 +599,8 @@ private struct PdfViewStateRecord: Codable {
                     }
                     #endif
                     ready = true
-                    if UIDevice.current.userInterfaceIdiom == .pad { Task { _ = try? await run("document.documentElement.classList.add(\"native-tablet\"); return null") } }
+                    let deviceClass = UIDevice.current.userInterfaceIdiom == .pad ? "native-tablet" : "native-phone"
+                    Task { _ = try? await run("document.documentElement.classList.add(\"\(deviceClass)\"); return null") }
                     trackOutline(outlineTracking)
                     reportBottomInset()
                     let token = generation
