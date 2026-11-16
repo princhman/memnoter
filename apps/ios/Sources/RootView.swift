@@ -802,11 +802,16 @@ struct RootView: View {
                 .disabled(busy)
         }
     }
+    /// Room the trailing bar items need, so the breadcrumb truncates instead of evicting them.
+    private var phoneBarTrailingWidth: CGFloat {
+        if selected == "questions" { return session?.bankControls?.visible == true ? 210 : 120 }
+        return module != nil ? 165 : 120
+    }
     private var phoneBreadcrumb: some View {
         TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
                          item: breadcrumbItem,
                          questionsEnabled: session != nil,
-                         maximumWidth: max(150, detailWidth - (module != nil && selected != "questions" ? 165 : 120)),
+                         maximumWidth: max(120, detailWidth - phoneBarTrailingWidth),
                          changeScope: changeSectionScope, changeSection: selectSection)
             .disabled(busy)
     }

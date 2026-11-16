@@ -82,18 +82,22 @@ struct FormattingBar: View {
         .tint(Color("BrandAccent"))
     }
 
-    @ViewBuilder private var cardGroup: some View {
-        Button { session.exec(session.state.inCloze ? .removeCard : .makeCard) } label: {
-            Label("Cloze", systemImage: "curlybraces")
-                .labelStyle(.titleAndIcon)
-                .fixedSize()
-                .padding(.horizontal, 4)
-        }
-        .buttonStyle(FormatButtonStyle(active: session.state.inCloze))
-        .disabled(!session.state.inCloze && !session.state.canMakeCard)
-        .accessibilityLabel(session.state.inCloze ? "Remove cloze" : "Make cloze from selection")
-        .accessibilityAddTraits(session.state.inCloze ? .isSelected : [])
+    /// Cloze and every card action in one icon dropdown.
+    private var cardGroup: some View {
         Menu {
+            if session.state.inCloze {
+                Button("Remove cloze", systemImage: "curlybraces") { session.exec(.removeCard) }
+            } else {
+                Button("Make cloze", systemImage: "curlybraces") { session.exec(.makeCard) }
+                    .disabled(!session.state.canMakeCard)
+            }
+            if session.state.canJoinClozes {
+                Button("Join clozes", systemImage: "rectangle.stack") { session.exec(.joinClozes) }
+            }
+            if session.state.canMakeClozeNote {
+                Button("Make one note", systemImage: "square.dashed") { session.exec(.makeClozeNote) }
+            }
+            Divider()
             Button("List card", systemImage: "list.bullet") { session.exec(.insertListCard, focusAfter: true) }
                 .disabled(!session.state.canInsertListCard)
             Button("Block card", systemImage: "text.alignleft") { session.exec(.insertBlockCard, focusAfter: true) }
@@ -111,19 +115,13 @@ struct FormattingBar: View {
                 Button("Remove block card", systemImage: "text.alignleft") { session.exec(.removeBlockCard, focusAfter: true) }
             }
         } label: {
-            Label("Cards", systemImage: "rectangle.on.rectangle")
-                .labelStyle(.titleAndIcon)
-                .fixedSize()
-                .padding(.horizontal, 4)
+            HStack(spacing: 4) {
+                Image(systemName: "rectangle.on.rectangle")
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+            }
         }
-        .buttonStyle(FormatButtonStyle())
+        .buttonStyle(FormatButtonStyle(active: session.state.inCloze || session.state.inListCard || session.state.inBlockCard))
         .accessibilityLabel("Cards")
-        if session.state.canJoinClozes {
-            formatButton("Join clozes", "rectangle.stack", .joinClozes)
-        }
-        if session.state.canMakeClozeNote {
-            formatButton("Make one note", "square.dashed", .makeClozeNote)
-        }
     }
 
     @ViewBuilder private var styleGroup: some View {
