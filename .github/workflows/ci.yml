@@ -108,12 +108,9 @@ jobs:
         with:
           shared-key: web-ubuntu24
       - run: pnpm install --frozen-lockfile
-      - name: Skip unrelated OS index maintenance
+      - name: Skip command-suggestion index maintenance
         if: matrix.shard != 'benchmark'
-        run: |
-          # Skip manual-page and command-suggestion indexes on this ephemeral runner.
-          sudo rm -f /var/lib/man-db/auto-update \
-            /etc/apt/apt.conf.d/50command-not-found
+        run: sudo rm -f /etc/apt/apt.conf.d/50command-not-found
       - run: pnpm --filter memnoter-shared-ui exec playwright install --with-deps webkit chromium
         if: matrix.shard != 'benchmark'
       - run: pnpm --filter memnoter-shared-ui test:ci --skip-benchmark --test-shard=${{ matrix.shard }}/16
