@@ -163,6 +163,8 @@ test('Mac drawing sessions preserve existing draft slots, clean only new slots, 
     await server.listen(); browser = await webkit.launch();
     const page = await browser.newPage();
     await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", {value:"MacIntel"});
+      Object.defineProperty(navigator, "userAgent", {value:"Mac browser"});
       window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command === 'edit_drawing') {
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -210,4 +212,96 @@ test('Mac drawing sessions preserve existing draft slots, clean only new slots, 
     assert.match(recovered.text, /Removed by peer/);
     assert.equal(recovered.acknowledged, 'peer-slot');
   } finally { await browser?.close(); await server.close(); }
+});
+
+test('portable ink recovers drafts, publishes immutable editable sources, and protects missing or legacy ink', async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen(); browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64' }); Object.defineProperty(navigator, 'userAgent', { value: 'Linux browser' }); window.assets = {};
+      window.installTestBridge({ tauri: { invoke: async (cmd, args) => {
+        if (cmd === 'save_file') { const id = crypto.randomUUID(); window.assets[id] = args.bytes; return { id, path: id, file_type: args.mimeType }; }
+        if (cmd === 'read_file') { if (!window.assets[args.fileId]) throw new Error('Source not downloaded'); return { bytes: window.assets[args.fileId] }; }
+        throw new Error(`Unexpected ${cmd}`);
+      } } });
+    });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/images.html`);
+    await page.evaluate(async () => {
+      const { call } = await import('/src/lib/backend.ts');
+      window.openInk = sourceId => { window.result = null; void call('edit_drawing', { moduleId: 'm', imageId: 'canvas', sourceId }).then(r => window.result = r); };
+      window.openInk(null);
+    });
+    const paper = page.getByLabel('Drawing paper'); await paper.waitFor(); const box = await paper.boundingBox();
+    const draw = async y => { await page.mouse.move(box.x+40,box.y+y); await page.mouse.down(); await page.mouse.move(box.x+160,box.y+y+40,{steps:8}); await page.mouse.up(); };
+    await draw(40); await page.getByRole('button', { name: 'Close', exact: true }).click(); await page.waitForFunction(() => window.result?.status === 'cancel');
+    assert.equal(await page.evaluate(() => window.result.hasChanges), true);
+    await page.evaluate(() => window.openInk(null)); await paper.waitFor(); await page.getByText(/Recovered local draft/).waitFor();
+    await page.getByRole('button', { name: 'Done', exact: true }).click(); await page.waitForFunction(() => window.result?.status === 'save');
+    const first = await page.evaluate(() => ({ result: window.result, doc: JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets[window.result.source.id]))) }));
+    assert.equal(first.doc.version, 2); assert.equal(first.doc.portable.strokes.length, 1); assert.ok(first.doc.portable.strokes[0].points.length >= 8);
+    assert.equal(first.result.source.file_type, 'application/vnd.memnoter.drawing+json');
+    assert.ok(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('portable-ink:'))));
+    await page.evaluate(async source => { const { call } = await import('/src/lib/backend.ts'); await call('drawing_committed', { moduleId:'m',imageId:'canvas' }); window.openInk(source); }, first.result.source.id);
+    await paper.waitFor();
+    await page.mouse.move(box.x+50,box.y+50); await page.mouse.down();
+    await paper.dispatchEvent('pointercancel', {pointerId:1,pointerType:'mouse'}); await page.mouse.up();
+    if (process.env.BROWSER === 'chromium') {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Input.dispatchMouseEvent', {type:'mousePressed',x:box.x+60,y:box.y+60,button:'left',buttons:1,clickCount:1,pointerType:'pen',force:.4});
+      await cdp.send('Input.dispatchMouseEvent', {type:'mouseMoved',x:box.x+90,y:box.y+90,button:'left',buttons:1,pointerType:'pen',force:.8});
+      await cdp.send('Input.dispatchMouseEvent', {type:'mouseReleased',x:box.x+90,y:box.y+90,button:'left',buttons:0,clickCount:1,pointerType:'pen'});
+      assert.ok(await page.evaluate(() => Object.keys(localStorage).filter(k=>k.startsWith('portable-ink:')).some(k=>JSON.parse(localStorage[k]).document.portable.strokes.some(s=>s.points.some(p=>Math.abs(p.pressure-.4)<.01)))));
+      await page.getByRole('button',{name:'Undo',exact:true}).click();
+      await page.getByLabel('Touch drawing').check();
+      await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5});
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:box.x+200,y:box.y+200,radiusX:2,radiusY:2,force:.6}]});
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:box.x+250,y:box.y+240,radiusX:2,radiusY:2,force:.6}]});
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+      assert.equal(await page.evaluate(()=>JSON.parse(localStorage[Object.keys(localStorage).find(k=>k.startsWith('portable-ink:'))]).document.portable.strokes.length),2);
+      await page.getByRole('button',{name:'Undo',exact:true}).click();
+      await page.getByLabel('Touch drawing').uncheck(); await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:false}); await cdp.detach();
+    }
+    await page.getByRole('button', {name:'Marker',exact:true}).click(); await draw(140);
+    await page.getByRole('button',{name:'Eraser',exact:true}).click(); await page.mouse.click(box.x+40,box.y+40);
+    assert.equal(await page.evaluate(()=>JSON.parse(localStorage[Object.keys(localStorage).find(k=>k.startsWith('portable-ink:'))]).document.portable.strokes.length),1);
+    await page.getByRole('button',{name:'Undo',exact:true}).click();
+    await page.getByRole('button', {name:'Undo',exact:true}).click(); await page.getByRole('button', {name:'Redo',exact:true}).click();
+    await page.getByRole('button', {name:'Done',exact:true}).click(); await page.waitForFunction(() => window.result?.status === 'save');
+    assert.equal(await page.evaluate(() => JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets[window.result.source.id]))).portable.strokes.length), 2);
+    assert.equal(await page.evaluate(id => JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets[id]))).portable.strokes.length, first.result.source.id), 1);
+    await page.evaluate(async () => {
+      const { call } = await import('/src/lib/backend.ts'); await call('drawing_committed', {moduleId:'m',imageId:'canvas'});
+      try { await call('edit_drawing', {moduleId:'m',imageId:'missing',sourceId:'missing'}); } catch(e) { window.missingError=String(e); }
+      window.assets.legacy=Array.from(new TextEncoder().encode(JSON.stringify({version:1,nativeData:'AQID',width:1024,height:1440,geometry:'masked'})));
+      try { await call('edit_drawing', {moduleId:'m',imageId:'legacy',sourceId:'legacy'}); } catch(e) { window.legacyError=String(e); }
+    });
+    assert.match(await page.evaluate(() => window.missingError), /not downloaded/); assert.match(await page.evaluate(() => window.legacyError), /unsupported or legacy/);
+    await page.evaluate(async () => {
+      const {openMacDrawing} = await import('/src/lib/mac-drawing.ts');
+      window.editor.commands.setContent('<p>Portable note</p>'); window.noteDone=false;
+      void openMacDrawing(window.editor,'m').then(()=>window.noteDone=true);
+    });
+    await paper.waitFor(); await draw(220);
+    await page.getByRole('button',{name:'Done',exact:true}).click(); await page.waitForFunction(()=>window.noteDone);
+    const note = await page.evaluate(()=>{
+      const ref=window.editor.getJSON().content.find(n=>n.type==='image').attrs.drawing;
+      return {ref, source:JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets[ref.sourceId]))), preview:!!window.assets[ref.previewId], drafts:Object.keys(localStorage).filter(k=>k.startsWith('portable-ink:'))};
+    });
+    assert.equal(note.source.portable.strokes.length,1); assert.equal(note.preview,true); assert.deepEqual(note.drafts,[]);
+  } finally { await browser?.close(); await server.close(); }
+});
+
+
+test('portable Apple round-trip fixture retains authoritative ink and rejects unknown geometry', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { parseInk } = await import('../src/lib/portable-ink.ts');
+  const fixture = JSON.parse(await readFile(new URL('../../ios/Tests/Fixtures/portable-drawing.json', import.meta.url), 'utf8'));
+  const ink = parseInk(fixture);
+  assert.equal(ink.nativeData, 'AQID');
+  assert.deepEqual(ink.portable.strokes[0].points, [{x:30,y:40,pressure:1},{x:70,y:80,pressure:.5}]);
+  assert.throws(() => parseInk({...fixture, portable:{version:2,strokes:[]}}), /unsupported/);
+  assert.throws(() => parseInk({...fixture, portable:null}), /unsupported/);
 });

@@ -3,6 +3,24 @@ import PencilKit
 @testable import Memnoter
 
 final class DrawingTests: XCTestCase {
+    func testPortableGeometryOverridesStaleArchiveAndExportsSubsequentNativeEdits() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "portable-drawing", withExtension: "json"))
+        let document = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: url))
+        // AQID is not a PKDrawing: using the stale sidecar must fail this test.
+        let drawing = try document.drawing()
+        XCTAssertEqual(drawing.strokes.count, 1)
+        XCTAssertEqual(drawing.strokes.first?.path.first?.location, CGPoint(x: 30, y: 40))
+        let edited = PKDrawing(strokes: drawing.strokes + drawing.strokes)
+        let published = try DrawingSnapshot(drawing: edited, size: CGSize(width: 1024, height: 1440)).document(includeGeometry: true)
+        let portable = try XCTUnwrap(published.portable)
+        XCTAssertEqual(portable.strokes.count, 2)
+        try portable.validate()
+        let stroke = drawing.strokes[0]
+        let masked = PKStroke(ink: stroke.ink, path: stroke.path, transform: stroke.transform,
+                              mask: UIBezierPath(rect: CGRect(x: 0, y: 0, width: 45, height: 100)))
+        XCTAssertNil(PortableInk.exporting(PKDrawing(strokes: [masked])), "Never resurrect partially erased ink")
+    }
+
     func testMacCanvasArchiveOpensAsEditableNativeInkOnIPad() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "mac-drawing", withExtension: "json"))
         let document = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: url))

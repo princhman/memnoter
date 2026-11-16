@@ -80,7 +80,7 @@ actor DrawingDraftStore {
     }
     func decodeDrawing(_ document: DrawingDocument) throws -> PKDrawing {
         try document.validate()
-        return try PKDrawing(data: document.nativeData)
+        return try document.drawing()
     }
 }
 

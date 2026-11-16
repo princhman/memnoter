@@ -49,6 +49,14 @@ function installBridge() {
 if (typeof window !== "undefined") installBridge();
 
 export async function call<T>(command: string, args?: object): Promise<T> {
+  if (isTauri() && !IS_MAC && (command === "edit_drawing" || command === "drawing_committed")) {
+    const portable = await import("../components/portable-drawing");
+    if (!args || !("moduleId" in args) || typeof args.moduleId !== "string" || !("imageId" in args) || typeof args.imageId !== "string") throw new Error("Missing drawing owner");
+    const request = { moduleId: args.moduleId, imageId: args.imageId,
+      sourceId: "sourceId" in args && typeof args.sourceId === "string" ? args.sourceId : null,
+      displayLabel: "displayLabel" in args && typeof args.displayLabel === "string" ? args.displayLabel : undefined };
+    return (command === "edit_drawing" ? await portable.openPortableDrawing(request) : portable.acknowledgePortableDrawing(request)) as T;
+  }
   const result = await dispatchCall<T>(command, args);
   if (["question_bank_edit", "worksheet_attempt_create", "worksheet_attempt_finish", "worksheet_answer_document_save", "worksheet_answer_save", "worksheet_canvas_save"].includes(command) && args && "moduleId" in args) {
     void queryClient.invalidateQueries({ queryKey: ["content", args.moduleId] });
@@ -106,8 +114,8 @@ export function fileUrl(path: string): string {
 }
 
 export const capabilities = {
-  get macDrawing() { return isTauri() && IS_MAC; },
-  get worksheetDrawing() { return (isTauri() && IS_MAC) || isNativeHost(); },
+  get drawing() { return isTauri(); },
+  get worksheetDrawing() { return isTauri() || isNativeHost(); },
   get nativeViewState() { return isNativeHost(); },
   get nativeMenu() { return isTauri() && IS_MAC; },
   get nativeHistory() { return isTauri(); },

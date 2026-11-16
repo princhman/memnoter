@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "nativeData": "AQID",
+  "width": 1024,
+  "height": 1440,
+  "portable": {
+    "version": 1,
+    "strokes": [
+      {
+        "tool": "pen",
+        "color": "#2455da",
+        "width": 4,
+        "points": [
+          {
+            "x": 30,
+            "y": 40,
+            "pressure": 1
+          },
+          {
+            "x": 70,
+            "y": 80,
+            "pressure": 0.5
+          }
+        ]
+      }
+    ]
+  }
+}
