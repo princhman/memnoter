@@ -29,6 +29,22 @@ export class SyncApiError extends Error {
   }
 }
 
+export type StorageUsage = { plan: "free" | "founder" | "pro"; usedBytes: number; limitBytes: number | null };
+
+export class StorageQuotaError extends SyncApiError {
+  readonly used: number;
+  readonly limit: number;
+  constructor(used: number, limit: number) {
+    super("Your free file storage is full. Files stay available on this device. Notes and review history keep syncing.", 413);
+    this.used = used;
+    this.limit = limit;
+  }
+}
+
+export function getUsage(server: string, token: string, signal?: AbortSignal) {
+  return api<StorageUsage>(server, "/v1/usage", { token, signal });
+}
+
 async function api<T>(server: string, path: string, init: { method?: string; body?: unknown; token?: string; signal?: AbortSignal } = {}) {
   return syncRequest(`${server.replace(/\/+$/, "")}${path}`, {
     method: init.method ?? (init.body === undefined ? "GET" : "POST"),
@@ -76,6 +92,10 @@ export async function putObject(server: string, token: string, kind: "files" | "
   }, async response => {
     // Consume even success responses under the same cancellation deadline.
     const text = await response.text();
+    if (response.status === 413) {
+      const data = await Promise.resolve().then(() => JSON.parse(text || "{}")).catch(() => ({}));
+      if (data.error === "quota_exceeded") throw new StorageQuotaError(data.used, data.limit);
+    }
     if (!response.ok) throw new SyncApiError(text || `Upload failed (${response.status})`, response.status);
   }, signal, transferTimeout(bytes.length));
 }

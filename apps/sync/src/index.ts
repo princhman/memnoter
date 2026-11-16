@@ -51,12 +51,24 @@ async function route(request: Request, env: Env): Promise<Response> {
     return json({ error: "Not found" }, 404);
   }
 
+  const admin = pathname.match(/^\/v1\/admin\/users\/([^/]+)\/(plan|recompute)$/);
+  if (admin && method === "POST") {
+    if (!env.ADMIN_SECRET || request.headers.get("Authorization") !== `Bearer ${env.ADMIN_SECRET}`) return json({ error: "Forbidden" }, 403);
+    const vault = env.VAULT.getByName(admin[1]);
+    if (admin[2] === "recompute") return json(await vault.recomputeUsage(admin[1]));
+    const body = await readJson<{ plan?: string }>(request);
+    if (body?.plan !== "free" && body?.plan !== "founder" && body?.plan !== "pro") return json({ error: "Invalid plan" }, 400);
+    return json(await vault.setPlan(admin[1], body.plan));
+  }
+
   if (pathname === "/v1/sync") return connect(request, env);
 
   const claims = await authenticate(request, env);
   if (!claims) return json({ error: "Sign in again" }, 401);
   const vault = env.VAULT.getByName(claims.sub);
   if (!(await vault.authorize(claims.sub, claims.iat))) return json({ error: "Sign in again" }, 401);
+
+  if (pathname === "/v1/usage" && method === "GET") return json(await vault.getUsage());
 
   if (pathname === "/v1/key" && method === "GET") {
     return json({ key: await vault.getKeyInfo() });
@@ -83,15 +95,18 @@ async function route(request: Request, env: Env): Promise<Response> {
       // protocol advances: legacy clients must then lose deletion access too.
       const version = request.headers.get(PROTOCOL_HEADER) ?? "1";
       if (version !== String(PROTOCOL_VERSION)) return json({ error: UPDATE_REQUIRED_MESSAGE }, 426);
-      // Publish permanence before removing bytes, including when deletion is retried.
-      await env.FILES.put(goneKey(claims.sub, id), new Uint8Array());
-      await env.FILES.delete(key);
-      return json({ ok: true });
+      return vault.fetch(objectRequest(request, claims));
     }
     if (kind === "files" && (method === "GET" || method === "PUT") && await env.FILES.head(goneKey(claims.sub, id))) {
       return json({ error: "File permanently deleted" }, 410);
     }
-    if (method === "PUT") return putObject(request, env, key, kind === "files" ? MAX_FILE_BYTES : MAX_LARGE_BLOB_BYTES);
+    if (method === "PUT") {
+      const length = Number(request.headers.get("Content-Length"));
+      if (!Number.isSafeInteger(length) || length <= 0) return json({ error: "Content-Length is required" }, 411);
+      if (length > (kind === "files" ? MAX_FILE_BYTES : MAX_LARGE_BLOB_BYTES)) return json({ error: "Too large" }, 413);
+      if (!request.body) return json({ error: "Empty body" }, 400);
+      return vault.fetch(objectRequest(request, claims));
+    }
     if (method === "GET") {
       const stored = await env.FILES.get(key);
       if (!stored) return json({ error: "Not found" }, 404);
@@ -103,13 +118,11 @@ async function route(request: Request, env: Env): Promise<Response> {
   return json({ error: "Not found" }, 404);
 }
 
-async function putObject(request: Request, env: Env, key: string, maxBytes: number) {
-  const length = Number(request.headers.get("Content-Length"));
-  if (!Number.isFinite(length) || length <= 0) return json({ error: "Content-Length is required" }, 411);
-  if (length > maxBytes) return json({ error: "Too large" }, 413);
-  if (!request.body) return json({ error: "Empty body" }, 400);
-  await env.FILES.put(key, request.body);
-  return json({ ok: true });
+function objectRequest(request: Request, claims: Claims) {
+  const headers = new Headers(request.headers);
+  headers.set("X-User-Id", claims.sub);
+  headers.set("X-Token-Iat", String(claims.iat));
+  return new Request(request, { headers });
 }
 
 async function withinAuthLimit(request: Request, env: Env) {
@@ -161,18 +174,12 @@ async function connect(request: Request, env: Env) {
   const token = protocols.find((part) => part.startsWith(AUTH_PROTOCOL_PREFIX))?.slice(AUTH_PROTOCOL_PREFIX.length);
   const claims = token ? await verifyToken(token, env.AUTH_SECRET) : null;
   if (!claims) return new Response("Sign in again", { status: 401 });
-  if (!(await hasSyncAccess(env, claims.sub))) return new Response("Sync needs a subscription", { status: 402 });
 
   const headers = new Headers(request.headers);
   if (protocols.includes(SYNC_PROTOCOL)) headers.set("X-Selected-Protocol", SYNC_PROTOCOL);
   headers.set("X-User-Id", claims.sub);
   headers.set("X-Token-Iat", String(claims.iat));
   return env.VAULT.getByName(claims.sub).fetch(new Request(request, { headers }));
-}
-
-// Phase 4 (billing) decides this from the user's entitlement.
-async function hasSyncAccess(_env: Env, _userId: string) {
-  return true;
 }
 
 async function authenticate(request: Request, env: Env) {

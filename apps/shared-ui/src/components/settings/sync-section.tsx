@@ -1,5 +1,5 @@
 import { PASSPHRASE_MIN_LENGTH as MIN_PASSPHRASE } from "@/lib/sync/protocol";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   DEFAULT_SYNC_SERVER,
+  type StorageUsage,
   startSignIn,
   unlockKey,
   getKeyInfo,
@@ -25,6 +26,7 @@ import {
   disableSync,
   enableSync,
   retrySync,
+  refreshStorageUsage,
   syncStatusStore,
   type SyncUiStatus,
 } from "@/lib/sync/manager";
@@ -229,8 +231,19 @@ const SignIn = () => {
   );
 };
 
+const formatBytes = (bytes: number) => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(1)} GB` : `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(bytes / 1_000_000)} MB`;
+
 const SyncSection = () => {
   const status = useSelector(syncStatusStore, (state) => state);
+  const [usage, setUsage] = useState<StorageUsage | null>(null);
+  useEffect(() => {
+    let active = true;
+    setUsage(null);
+    const refresh = () => { void refreshStorageUsage().then(value => { if (active) setUsage(value); }).catch(() => {}); };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [status.account?.userId, status.fileQuotaExceeded]);
   const [signingOut, setSigningOut] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -270,6 +283,23 @@ const SyncSection = () => {
           </div>
         )}
       </div>
+      {status.account && usage && (
+        <div className="flex flex-col gap-2 rounded-lg bg-muted/50 p-3 text-sm">
+          <p className="font-medium">{usage.plan === "founder" ? "Founder lifetime" : usage.plan === "pro" ? "Pro" : "Free"} plan</p>
+          <p>Files: {formatBytes(usage.usedBytes)}{usage.limitBytes === null ? " with unlimited storage" : ` of ${formatBytes(usage.limitBytes)}`}</p>
+          {usage.limitBytes !== null && <div role="progressbar" aria-label="File storage" aria-valuemin={0} aria-valuemax={usage.limitBytes} aria-valuenow={Math.min(usage.usedBytes, usage.limitBytes)} className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, usage.usedBytes / Math.max(1, usage.limitBytes) * 100)}%` }} />
+          </div>}
+          <p className="text-muted-foreground">Notes and review history sync for free. {usage.plan === "free" && "More file storage with Founder lifetime or Pro. Upgrades are coming soon."}</p>
+        </div>
+      )}
+      {status.account && status.fileQuotaExceeded && (
+        <div role="status" className="rounded-lg bg-muted/50 p-3 text-sm">
+          <p>Your free file storage is full. New files stay available on this device. Notes and review history keep syncing.</p>
+          <p className="mt-1 text-muted-foreground">File uploads retry automatically when space is available or after an upgrade.</p>
+          <Button variant="ghost" size="sm" onClick={() => void retrySync()}>Retry file uploads</Button>
+        </div>
+      )}
       {!status.account && status.error && (
         <p role="alert" className="text-sm text-destructive">
           {status.error}

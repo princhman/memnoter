@@ -6,7 +6,7 @@
 
 import { call as invoke } from "@/lib/backend";
 import type { FileType } from "@/lib/content";
-import { deleteObject, getObject, putObject, SyncApiError } from "./account";
+import { deleteObject, getObject, putObject, SyncApiError, StorageQuotaError } from "./account";
 import { SYNC_CONTRACT } from "./protocol";
 import { decryptBlob, encryptBlob } from "./crypto";
 
@@ -26,9 +26,10 @@ export type FileSyncOptions = {
   key: CryptoKey;
   onStored: (moduleId: string, file: FileType) => void;
   onUnauthorized: () => void;
+  onQuota?: (blocked: boolean) => void;
 };
 
-export function createFileSync({ generation, signal, server, token, key, onStored, onUnauthorized }: FileSyncOptions) {
+export function createFileSync({ generation, signal, server, token, key, onStored, onUnauthorized, onQuota }: FileSyncOptions) {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
@@ -78,6 +79,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
 
   async function pass() {
     let failed = false;
+    let quotaBlocked = false;
     const attempt = async (fileId: string, task: () => Promise<void>) => {
       try {
         await task();
@@ -96,6 +98,12 @@ export function createFileSync({ generation, signal, server, token, key, onStore
         if (error instanceof SyncApiError && error.status === 401) {
           running = false;
           onUnauthorized();
+          return;
+        }
+        if (error instanceof StorageQuotaError) {
+          quotaBlocked = true;
+          failed = true;
+          onQuota?.(true);
           return;
         }
         console.error("Image sync failed:", error);
@@ -123,6 +131,9 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     for (const file of missing) {
       if (!running) return;
       await attempt(file.fileId, () => download(file));
+    }
+    if (running) {
+      if (!failed) onQuota?.(quotaBlocked);
     }
     if (running && (failed || notYet.size > 0)) {
       window.clearTimeout(retryTimer);

@@ -10,7 +10,7 @@ import { createStore } from "@tanstack/react-store";
 import * as Y from "yjs";
 import { exclusiveWrite, assertWritable } from "@/lib/write-lifecycle";
 import { saveQueue } from "@/lib/saves";
-import { getObject, isTokenValid, putObject, wipeCloudData, type SyncAccount } from "./account";
+import { getUsage, type StorageUsage, getObject, isTokenValid, putObject, wipeCloudData, type SyncAccount } from "./account";
 import { importKey } from "./crypto";
 import { createFileSync, type FileSync } from "./files";
 import { setSyncedFileHandler } from "./file-requests";
@@ -27,6 +27,7 @@ import {
 export type SyncUiStatus = {
   account: Omit<SyncAccount, "key" | "token"> | null;
   loaded: boolean;
+  fileQuotaExceeded?: boolean;
   state: SyncState;
   error: string | null;
   lastSyncedAt: number | null;
@@ -197,11 +198,14 @@ async function run(account: SyncAccount) {
     token: account.token,
     key,
     onStored: onFileStored,
+    onQuota: (blocked) => {
+      if (fileSync === files) syncStatusStore.setState((state) => ({ ...state, fileQuotaExceeded: blocked }));
+    },
     onUnauthorized: unauthorized,
   });
   fileSync = files;
   setSyncedFileHandler((fileId) => files.request(fileId));
-  syncStatusStore.setState((state) => ({ ...state, account: publicAccount(account), loaded: true }));
+  syncStatusStore.setState((state) => ({ ...state, account: publicAccount(account), loaded: true, fileQuotaExceeded: false }));
 
   // Finish deletions interrupted by a crash before applying anything new.
   onRemote(await invoke<ApplyResult>("sync_reconcile", { generation }));
@@ -311,6 +315,12 @@ export function deleteCloudData() {
     await wipeCloudData(account.server, account.token, requestController?.signal);
     await signedOut(null);
   });
+}
+
+export async function refreshStorageUsage(): Promise<StorageUsage | null> {
+  const account = activeAccount;
+  if (!account) return null;
+  return getUsage(account.server, account.token, requestController?.signal);
 }
 
 export function retrySync() {
