@@ -19,16 +19,20 @@ final class PhoneNavigationUITests: XCTestCase {
         style.tap()
         app.buttons["Text"].tap()
         editor.typeText("Saved from iPhone\nQuestion :: Answer")
-        XCTAssertTrue(app.buttons["module.title"].isHittable, "Module title must remain visible beside undo/redo")
-        let undo = app.navigationBars.buttons["Undo"]
-        let redo = app.navigationBars.buttons["Redo"]
+        XCTAssertTrue(app.navigationBars.staticTexts[name].isHittable, "Module title must remain visible beside note actions")
+        let actions = app.navigationBars.buttons["Note actions"]
+        XCTAssertTrue(actions.isHittable, "Note actions must remain reachable beside the module title")
+        actions.tap()
+        let undo = app.buttons["Undo"]
+        let redo = app.buttons["Redo"]
         XCTAssertTrue(undo.existsOrWait(timeout: 5))
-        XCTAssertTrue(undo.isHittable, "Editor undo must be visible in the navigation bar")
+        XCTAssertTrue(undo.isHittable, "Editor undo must be reachable in Note actions")
         undo.tap()
         let canRedo = NSPredicate(format: "exists == true AND enabled == true")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: canRedo, object: redo)], timeout: 5), .completed)
-        XCTAssertTrue(redo.isHittable, "Editor redo must be visible in the navigation bar")
+        XCTAssertTrue(redo.isHittable, "Editor redo must be reachable in Note actions")
         redo.tap()
+        actions.tap()
         let dismissKeyboard = app.buttons["Hide keyboard"]
         XCTAssertTrue(dismissKeyboard.existsOrWait(timeout: 5))
         dismissKeyboard.tap()
