@@ -235,8 +235,24 @@ jobs:
             -configuration Release -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/ios-release" CODE_SIGNING_ALLOWED=NO
 
-  ios-tests:
+  # Reserve the producer's Mac slot before consumers can occupy the pool.
+  ios-build-started:
     needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 41
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for the build runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/wait-ios-artifact.py 2400 --producer-started
+
+  ios-tests:
+    needs: [changes, ios-build-started]
     if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
     permissions:
@@ -320,7 +336,7 @@ jobs:
 
   # Preserve the required iOS check across the build/test split.
   ios:
-    needs: [changes, ios-build, ios-tests]
+    needs: [changes, ios-build, ios-build-started, ios-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -328,10 +344,12 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           REQUIRED: ${{ needs.changes.outputs.ios }}
           BUILD: ${{ needs.ios-build.result }}
+          ADMISSION: ${{ needs.ios-build-started.result }}
           TESTS: ${{ needs.ios-tests.result }}
         run: |
           test "$CHANGES" = success
           if [ "$REQUIRED" = true ]; then
             test "$BUILD" = success
+            test "$ADMISSION" = success
             test "$TESTS" = success
           fi

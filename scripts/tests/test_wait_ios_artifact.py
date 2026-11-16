@@ -26,7 +26,7 @@ def producer(conclusion=None):
 
 
 class HandoffTests(unittest.TestCase):
-    def run_wait(self, responses, timeout=30):
+    def run_wait(self, responses, timeout=30, producer_started=False):
         """A fake HTTP transport and clock; production owns all polling decisions."""
         clock = [0]
         requests = []
@@ -54,14 +54,39 @@ class HandoffTests(unittest.TestCase):
             with patch.dict(os.environ, env), patch.object(handoff.urllib.request, 'urlopen', get), \
                     patch.object(handoff.time, 'monotonic', lambda: clock[0]), \
                     patch.object(handoff.time, 'sleep', sleep), contextlib.redirect_stdout(io.StringIO()):
-                handoff.wait(timeout)
-            return output.read_text(), requests
+                handoff.wait(timeout, producer_started)
+            return output.read_text() if output.exists() else '', requests
 
     def jobs(self, conclusion=None):
         return ('/jobs?per_page=100&page=1', {'jobs': [producer(conclusion)]})
 
     def artifacts(self, items):
         return ('/artifacts?per_page=100&page=1', {'artifacts': items})
+
+    def test_admission_waits_for_a_running_producer_without_allocating_artifact(self):
+        queued = {'name': 'ios-build', 'status': 'queued', 'conclusion': None}
+        output, requests = self.run_wait([
+            ('/jobs?per_page=100&page=1', {'jobs': [queued]}), self.jobs(),
+        ], producer_started=True)
+        self.assertEqual(output, '')
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(all('/jobs?' in url for url in requests))
+
+    def test_admission_accepts_a_producer_that_already_succeeded(self):
+        output, _ = self.run_wait([self.jobs('success')], producer_started=True)
+        self.assertEqual(output, '')
+
+    def test_admission_rejects_failed_or_cancelled_producer(self):
+        for conclusion in ['failure', 'cancelled', 'skipped', 'timed_out']:
+            with self.subTest(conclusion=conclusion), self.assertRaisesRegex(RuntimeError, conclusion):
+                self.run_wait([self.jobs(conclusion)], producer_started=True)
+
+    def test_admission_cannot_wait_forever_for_queued_or_missing_producer(self):
+        queued = {'name': 'ios-build', 'status': 'queued', 'conclusion': None}
+        for jobs in [[], [queued]]:
+            with self.subTest(jobs=jobs), self.assertRaisesRegex(RuntimeError, 'deadline'):
+                self.run_wait([('/jobs?per_page=100&page=1', {'jobs': jobs})],
+                              timeout=1, producer_started=True)
 
     def test_waits_then_accepts_publication_before_producer_finishes(self):
         output, requests = self.run_wait([
