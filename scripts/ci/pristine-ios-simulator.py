@@ -152,9 +152,11 @@ def capture(output):
     identity, folder, state = metadata(output)
     uuid = identity['device']['uuid']
     require(os.environ.get('IOS_SIMULATOR_ID') == uuid and state == 'Booted', 'boot helper selection mismatch')
-    raw = run('xcrun', 'simctl', 'listapps', uuid)
-    (output / 'apps.plist').write_bytes(raw)
-    inventory(raw)
+    apps = output / 'apps.plist'
+    apps.write_bytes(run('xcrun', 'simctl', 'listapps', uuid))
+    # simctl can emit OpenStep plists, which Python's plistlib cannot read.
+    run('plutil', '-convert', 'xml1', str(apps))
+    inventory(apps.read_bytes())
     run('xcrun', 'simctl', 'shutdown', uuid)
     deadline = time.monotonic() + 60
     while True:
