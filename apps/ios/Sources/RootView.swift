@@ -555,6 +555,8 @@ struct RootView: View {
         .toolbar(session?.imagePreviewOpen == true ? .hidden : .automatic, for: .navigationBar)
         .statusBarHidden(session?.imagePreviewOpen == true)
         .toolbar(removing: .sidebarToggle)
+        // The worksheet's own chevron returns to questions; the stack's back would leave the module.
+        .navigationBarBackButtonHidden(isPhone && selected == "questions" && session?.worksheetChrome != nil)
         // PDF controls own the iPad bar; a competing title can collapse to just an ellipsis.
         .modifier(QuestionScrollEdge(hidden: questionsUnderBar))
         .toolbarBackground(questionsUnderBar ? .hidden : .automatic, for: .navigationBar)

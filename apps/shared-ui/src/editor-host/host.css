@@ -263,15 +263,15 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 
 /* iPad: all outline controls share the label's first 44px line. The
    disclosure span stays present for leaves, including in Reorder mode. */
-.native-tablet .native-questions :is(.bank-drag-row, .worksheet-question-heading) {
+:is(.native-tablet, .native-phone) .native-questions :is(.bank-drag-row, .worksheet-question-heading) {
   align-items: flex-start;
   min-height: 44px;
 }
-.native-tablet .native-questions .bank-disclosure {
+:is(.native-tablet, .native-phone) .native-questions .bank-disclosure {
   height: 44px;
   flex: 0 0 16px;
 }
-.native-tablet .native-questions .bank-disclosure > button {
+:is(.native-tablet, .native-phone) .native-questions .bank-disclosure > button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -279,11 +279,11 @@ html .image-preview-dialog [data-slot="dialog-close"] {
   height: 44px;
   padding: 0;
 }
-.native-tablet .native-questions .worksheet-question-heading > button:first-of-type {
+:is(.native-tablet, .native-phone) .native-questions .worksheet-question-heading > button:first-of-type {
   padding-block: 8px;
   line-height: 28px;
 }
-.native-tablet .native-questions :is(.bank-drag-row, .worksheet-question-heading) > .bank-part-count {
+:is(.native-tablet, .native-phone) .native-questions :is(.bank-drag-row, .worksheet-question-heading) > .bank-part-count {
   height: 44px;
   align-self: flex-start;
 }
@@ -291,13 +291,13 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-tablet .question-crop-bar > ul button { min-height: 44px; white-space: nowrap; }
 
 /* Keep WebKit's native button text readable in either appearance. */
-.native-tablet .native-questions [data-bank-drag-label][aria-pressed="true"] {
+:is(.native-tablet, .native-phone) .native-questions [data-bank-drag-label][aria-pressed="true"] {
   color: var(--foreground);
   -webkit-text-fill-color: currentColor;
   background: none;
   box-shadow: none;
 }
-.native-tablet .native-questions [data-bank-drag-label] {
+:is(.native-tablet, .native-phone) .native-questions [data-bank-drag-label] {
   padding: 8px 6px;
   flex: 0 1 auto;
   overflow: visible;
