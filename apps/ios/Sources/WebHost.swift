@@ -458,12 +458,21 @@ private struct PdfViewStateRecord: Codable {
         }
     }
     private func serialized(_ method: EditorApiMethod, _ arguments: [String: Any] = [:], parameters: [String] = []) async throws {
+        #if DEBUG
+        if method == .open { NSLog("[editor startup] Open queued") }
+        #endif
         let previous = barrier
         let next = Task { @MainActor in
             // A failed flush can be retried; open itself also drains pending writes.
             do { _ = try await previous?.value }
             catch { NSLog("Previous editor operation failed; retrying: %@", String(describing: error)) }
+            #if DEBUG
+            if method == .open { NSLog("[editor startup] Open JavaScript dispatch") }
+            #endif
             _ = try await callEditor(method, arguments, parameters: parameters)
+            #if DEBUG
+            if method == .open { NSLog("[editor startup] Open JavaScript completed") }
+            #endif
         }
         barrier = next
         try await next.value
@@ -489,6 +498,9 @@ private struct PdfViewStateRecord: Codable {
         state = EditorState()
     }
     func open(_ id: String) async throws {
+        #if DEBUG
+        NSLog("[editor startup] Open requested")
+        #endif
         try await worksheetDrawing.cancel()
         try await closeQuestions()
         if moduleId != id {
