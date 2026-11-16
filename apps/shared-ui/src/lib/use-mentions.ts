@@ -45,5 +45,5 @@ export function useMentionNotes() {
     // is active, the invalidated (stale) query refetches on being enabled.
     enabled: activeEditor?.moduleId !== module.id,
   })) });
-  return { notes: modules.map((module, index) => ({ ...module, note: activeEditor?.moduleId === module.id && liveNote ? liveNote : queries[index].data ?? { headings: [], mentions: [] } })), loading: queries.some(query => query.isPending), error: queries.find(query => query.error)?.error };
+  return { notes: modules.map((module, index) => ({ ...module, note: activeEditor?.moduleId === module.id && liveNote ? liveNote : queries[index].data ?? { headings: [], mentions: [] } })), loading: queries.some((query, index) => query.isPending && !(activeEditor?.moduleId === modules[index].id && liveNote)), error: queries.find(query => query.error)?.error };
 }
