@@ -17,7 +17,8 @@ case "$IOS_TEST_SUITE" in
     node scripts/ios-test-with-worker.mjs "${command[@]}" -only-testing:MemnoterTests
     ;;
   drawing) "${command[@]}" -only-testing:MemnoterUITests/DrawingUITests ;;
+  phone) "${command[@]}" -only-testing:MemnoterUITests/PhoneNavigationUITests ;;
   # Includes future UI classes, so adding a test never silently removes coverage.
-  navigation) "${command[@]}" -only-testing:MemnoterUITests -skip-testing:MemnoterUITests/DrawingUITests ;;
+  navigation) "${command[@]}" -only-testing:MemnoterUITests -skip-testing:MemnoterUITests/DrawingUITests -skip-testing:MemnoterUITests/PhoneNavigationUITests ;;
   *) echo "Unknown iOS suite: $IOS_TEST_SUITE" >&2; exit 2 ;;
 esac

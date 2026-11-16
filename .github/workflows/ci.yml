@@ -54,6 +54,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm lint
+      - run: node --test scripts/tests/ios-results.test.mjs
       - uses: actions/upload-artifact@v4
         if: needs.changes.outputs.ios == 'true'
         with:
@@ -234,7 +235,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [unit, drawing, navigation]
+        suite: [unit, drawing, navigation, phone]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
@@ -258,11 +259,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ios-tests"
           tar -C "$RUNNER_TEMP/ios-tests" -xzf "$RUNNER_TEMP/ios-tests.tar.gz"
       # Finish downloads and extraction before starting the simulator.
-      - name: Start the iPad simulator
+      - name: Start the iOS simulator
         run: |
           sysctl hw.memsize vm.swapusage
           vm_stat
-          bash scripts/ci/boot-ios-simulator.sh
+          bash scripts/ci/boot-ios-simulator.sh "${{ matrix.suite == 'phone' && 'iPhone' || 'iPad' }}"
       - name: Wait for the simulator
         run: xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
       - name: Run native tests
