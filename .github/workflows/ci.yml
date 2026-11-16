@@ -298,7 +298,7 @@ jobs:
           test "$(stat -f %z "$pkg")" = 152235308
           echo "435531105e32242f2603518686161f27f637d521ceaa0f7931afc5cec1ea5db9  $pkg" | shasum -a 256 --check
           pkgutil --check-signature "$pkg" | tee "$RUNNER_TEMP/package-signature.txt"
-          grep -F 'Status: signed by a certificate trusted by macOS' "$RUNNER_TEMP/package-signature.txt"
+          grep -F 'Status: signed Apple Software' "$RUNNER_TEMP/package-signature.txt"
           grep -F 'Apple Software Update Certification Authority' "$RUNNER_TEMP/package-signature.txt"
           pkgutil --expand "$pkg" "$RUNNER_TEMP/resource-package-expanded"
           cat "$RUNNER_TEMP/resource-package-expanded/PackageInfo"
@@ -376,7 +376,7 @@ jobs:
           pkg="$RUNNER_TEMP/simulator-package/XcodeSystemResources.pkg"
           echo "435531105e32242f2603518686161f27f637d521ceaa0f7931afc5cec1ea5db9  $pkg" | shasum -a 256 --check
           pkgutil --check-signature "$pkg" | tee "$RUNNER_TEMP/package-signature.txt"
-          grep -F 'Status: signed by a certificate trusted by macOS' "$RUNNER_TEMP/package-signature.txt"
+          grep -F 'Status: signed Apple Software' "$RUNNER_TEMP/package-signature.txt"
           grep -F 'Apple Software Update Certification Authority' "$RUNNER_TEMP/package-signature.txt"
           sudo installer -pkg "$pkg" -target /
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/Info.plist)
