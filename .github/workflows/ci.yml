@@ -55,6 +55,7 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: node --test scripts/tests/ios-results.test.mjs
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_wait_ios_artifact.py'
       - uses: actions/upload-artifact@v4
         if: needs.changes.outputs.ios == 'true'
         with:
@@ -229,9 +230,15 @@ jobs:
           retention-days: 1
 
   ios-tests:
-    needs: ios-build
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
-    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    # 40m handoff (frontend 15m + producer 25m), 15m native execution,
+    # 10m setup/download/verification. Queueing can still exhaust this bound.
+    timeout-minutes: 65
     strategy:
       fail-fast: false
       matrix:
@@ -250,23 +257,38 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         if: matrix.suite == 'unit'
-      - uses: actions/download-artifact@v4
-        with:
-          name: ios-test-bundle
-          path: ${{ runner.temp }}
-      - name: Unpack the test bundle
-        run: |
-          mkdir -p "$RUNNER_TEMP/ios-tests"
-          tar -C "$RUNNER_TEMP/ios-tests" -xzf "$RUNNER_TEMP/ios-tests.tar.gz"
-      # Finish downloads and extraction before starting the simulator.
+      # Boot on this VM while ios-build runs on its separate VM.
       - name: Start the iOS simulator
+        timeout-minutes: 5
         run: |
+          date -u '+%FT%TZ simulator boot starting'
           sysctl hw.memsize vm.swapusage
           vm_stat
           bash scripts/ci/boot-ios-simulator.sh "${{ matrix.suite == 'phone' && 'iPhone' || 'iPad' }}"
+      - name: Wait for this run's test bundle
+        id: bundle
+        timeout-minutes: 41
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/wait-ios-artifact.py 2400
+      - uses: actions/download-artifact@v4
+        timeout-minutes: 3
+        with:
+          artifact-ids: ${{ steps.bundle.outputs.artifact-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}
+      - name: Unpack the test bundle
+        timeout-minutes: 2
+        run: |
+          mkdir -p "$RUNNER_TEMP/ios-tests"
+          tar -C "$RUNNER_TEMP/ios-tests" -xzf "$RUNNER_TEMP/ios-tests.tar.gz"
       - name: Wait for the simulator
-        run: xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
+        timeout-minutes: 5
+        run: |
+          xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
+          date -u '+%FT%TZ simulator ready, bundle unpacked'
       - name: Run native tests
+        timeout-minutes: 15
         env:
           IOS_TEST_SUITE: ${{ matrix.suite }}
         run: |
