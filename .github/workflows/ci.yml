@@ -228,7 +228,12 @@ jobs:
           path: ${{ runner.temp }}/ios-tests.tar.gz
           if-no-files-found: error
           retention-days: 1
-      # Publish test products first so Release validation overlaps native tests.
+      # Start first-boot migration after publication, alongside Release validation.
+      # Unit execution still waits for both Release success and simulator readiness.
+      - name: Start the unit-test simulator
+        timeout-minutes: 5
+        run: bash scripts/ci/boot-ios-simulator.sh iPad
+      # Published products let the UI consumers proceed independently.
       - name: Build iOS release configuration
         run: |
           xcodebuild build -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
@@ -236,9 +241,6 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/ios-release" CODE_SIGNING_ALLOWED=NO
       # Reuse this runner's products and dependencies instead of a fourth consumer.
       # The overall 25m build cap still bounds the individual step allowances.
-      - name: Start the unit-test simulator
-        timeout-minutes: 5
-        run: bash scripts/ci/boot-ios-simulator.sh iPad
       - name: Reuse the local test bundle
         run: |
           mkdir -p "$RUNNER_TEMP/ios-tests"
