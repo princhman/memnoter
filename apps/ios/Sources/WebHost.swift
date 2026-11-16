@@ -68,7 +68,14 @@ private struct PdfViewStateRecord: Codable {
             task.didReceive(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil))
             #endif
             task.didReceive(data); task.didFinish()
-          } catch { if !Task.isCancelled { task.didFailWithError(error) } }
+          } catch {
+            if !Task.isCancelled {
+                #if DEBUG
+                NSLog("[editor resource] %@: %@", url.lastPathComponent, error.localizedDescription)
+                #endif
+                task.didFailWithError(error)
+            }
+          }
         }
     }
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
@@ -232,6 +239,12 @@ private struct PdfViewStateRecord: Codable {
         config.userContentController.add(self, name: "memnoter")
         #if DEBUG
         config.userContentController.add(self, name: "memnoterLive")
+        config.userContentController.add(self, name: "memnoterDiagnostics")
+        config.userContentController.addUserScript(WKUserScript(source: """
+            const reportStartupError = message => window.webkit.messageHandlers.memnoterDiagnostics.postMessage(String(message));
+            window.addEventListener('error', event => reportStartupError(event.message || `Resource failed: ${event.target?.src || event.target?.href || 'unknown'}`), true);
+            window.addEventListener('unhandledrejection', event => reportStartupError(event.reason));
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         #endif
         // Inject decoded JSON before the shared store mounts, independent of
         // Web Storage support for our custom scheme origin.
@@ -487,9 +500,15 @@ private struct PdfViewStateRecord: Codable {
         try await serialized(.open, ["id": id], parameters: ["id"])
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        #if DEBUG
+        NSLog("[editor startup] Navigation finished; ready=%d", ready)
+        #endif
         hideEditorInputAssistant()
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        #if DEBUG
+        NSLog("[editor startup] Navigation started")
+        #endif
         Task { try? await worksheetDrawing.cancel() }
         (webView as? EditorWebView)?.pdfSelection = PdfSelectionState()
         #if DEBUG
@@ -521,6 +540,10 @@ private struct PdfViewStateRecord: Codable {
     }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         #if DEBUG
+        if message.name == "memnoterDiagnostics", message.frameInfo.isMainFrame {
+            NSLog("[editor startup] JavaScript: %@", String(describing: message.body))
+            return
+        }
         if message.name == "memnoterLive", message.frameInfo.isMainFrame {
             fallbackToBundle()
             return
@@ -582,6 +605,9 @@ private struct PdfViewStateRecord: Codable {
                     states[id] = state
                     preferences.set(states.mapValues { $0.payload }, forKey: "pdfViewState")
                 case .ready:
+                    #if DEBUG
+                    NSLog("[editor startup] Ready event received")
+                    #endif
                     guard payload["protocolVersion"] as? Int == BridgeProtocol.version else {
                         throw NSError(domain: "BridgeProtocol", code: 1, userInfo: [NSLocalizedDescriptionKey: "Incompatible web bridge protocol version"])
                     }
@@ -609,6 +635,9 @@ private struct PdfViewStateRecord: Codable {
                         guard token == generation else { return }
                         let callback = onReady
                         onReady = nil
+                        #if DEBUG
+                        NSLog("[editor startup] Ready callback; deferred navigation=%d", callback != nil)
+                        #endif
                         callback?()
                     }
                 case .worksheetEditorState:
@@ -705,11 +734,17 @@ private struct PdfViewStateRecord: Codable {
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
         #if DEBUG
+        NSLog("[editor startup] Provisional navigation failed: %@", error.localizedDescription)
+        #endif
+        #if DEBUG
         if liveURL != nil { fallbackToBundle(); return }
         #endif
         self.error = String(describing: error)
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        #if DEBUG
+        NSLog("[editor startup] Navigation failed: %@", error.localizedDescription)
+        #endif
         #if DEBUG
         if liveURL != nil { fallbackToBundle(); return }
         #endif
@@ -727,6 +762,7 @@ private struct PdfViewStateRecord: Codable {
         #if DEBUG
         liveWatchdog?.cancel()
         web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoterLive")
+        web.configuration.userContentController.removeScriptMessageHandler(forName: "memnoterDiagnostics")
         #endif
         web.scrollView.delegate = nil
         onReady = nil
