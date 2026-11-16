@@ -21,7 +21,23 @@ struct TabletBreadcrumb: View {
         return item
     }
 
+    /// Toolbar items are laid out at their ideal size, so a cap on the row alone lets long
+    /// names draw past it. Give each label a measured width that already fits the row.
+    private static func textWidth(_ text: String) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .subheadline)]).width) + 1
+    }
+    private var labelWidths: (module: CGFloat, section: CGFloat, item: CGFloat) {
+        let section = Self.textWidth(section.capitalized)
+        let chrome: CGFloat = 20 + 2 * 17 + 16 + 8 + (distinctItem == nil ? 0 : 16 + 8)
+        let available = max(40, maximumWidth - chrome - section)
+        let module = Self.textWidth(moduleTitle)
+        guard let item = distinctItem else { return (min(module, available), section, 0) }
+        let moduleWidth = min(module, max(40, available * 0.5))
+        return (moduleWidth, section, max(30, min(Self.textWidth(item), available - moduleWidth)))
+    }
+
     var body: some View {
+        let widths = labelWidths
         HStack(spacing: 8) {
             Menu {
                 Button("All modules") { changeScope(nil) }
@@ -29,7 +45,7 @@ struct TabletBreadcrumb: View {
                     Button { changeScope(module.id) } label: { Text(module.name).lineLimit(1) }
                 }
             } label: {
-                breadcrumbLabel(moduleTitle)
+                breadcrumbLabel(moduleTitle, width: widths.module)
             }.accessibilityLabel("Module scope")
             Text("/").foregroundStyle(.secondary)
             Menu {
@@ -38,11 +54,11 @@ struct TabletBreadcrumb: View {
                 if questionsEnabled { Button("Questions") { changeSection("questions") } }
                 Button("Review") { changeSection("review") }
             } label: {
-                breadcrumbLabel(section.capitalized)
+                breadcrumbLabel(section.capitalized, width: widths.section)
             }.accessibilityLabel("Select module section")
             if let item = distinctItem {
                 Text("›").foregroundStyle(.secondary)
-                Text(item).lineLimit(1).truncationMode(.tail).layoutPriority(-1)
+                Text(item).lineLimit(1).truncationMode(.tail).frame(width: widths.item, alignment: .leading)
             }
         }
         .font(.subheadline)
@@ -52,9 +68,9 @@ struct TabletBreadcrumb: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private func breadcrumbLabel(_ title: String) -> some View {
+    private func breadcrumbLabel(_ title: String, width: CGFloat) -> some View {
         HStack(spacing: 5) {
-            Text(title).lineLimit(1).truncationMode(.tail)
+            Text(title).lineLimit(1).truncationMode(.tail).frame(width: width, alignment: .leading)
             Image(systemName: "chevron.down").font(.caption)
         }.frame(minHeight: 44)
     }
@@ -84,13 +100,14 @@ struct TabletWorksheetTitle: View {
     let maximumWidth: CGFloat
 
     var body: some View {
+        let natural = ceil((title as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .subheadline)]).width) + 1
         Text(title)
             .font(.subheadline)
             .lineLimit(1)
             .truncationMode(.tail)
+            .frame(width: max(0, min(natural, maximumWidth - 20)), alignment: .leading)
             .padding(.horizontal, 10)
-            .frame(maxWidth: maximumWidth, minHeight: 44, alignment: .leading)
-            .fixedSize(horizontal: true, vertical: false)
+            .frame(minHeight: 44)
             .layoutPriority(1)
             .accessibilityIdentifier("worksheet.title")
     }
