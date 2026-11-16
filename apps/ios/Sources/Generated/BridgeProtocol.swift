@@ -16,6 +16,9 @@ enum NativeEventName: String, Codable {
     case openModule = "openModule"
     case pdfViewState = "pdfViewState"
     case pdfState = "pdfState"
+    case worksheetEditorState = "worksheetEditorState"
+    case worksheetState = "worksheetState"
+    case questionBankState = "questionBankState"
     case pdfReader = "pdfReader"
     case pdfSelectionChanged = "pdfSelectionChanged"
     case error = "error"
@@ -89,6 +92,8 @@ enum PdfCommand: String, Codable {
     case zoomOut = "zoomOut"
     case toggleSelect = "toggleSelect"
     case toggleAnnotate = "toggleAnnotate"
+    case toggleQuestionCrop = "toggleQuestionCrop"
+    case toggleFind = "toggleFind"
     case goToPage = "goToPage"
     case openFullscreen = "openFullscreen"
     case openBeside = "openBeside"
@@ -106,6 +111,8 @@ enum EditorApiMethod: String, Codable {
     case setTopInset = "setTopInset"
     case revealCard = "revealCard"
     case open = "open"
+    case openQuestions = "openQuestions"
+    case closeQuestions = "closeQuestions"
     case flush = "flush"
     case refreshModules = "refreshModules"
     case toggleFiles = "toggleFiles"
@@ -224,6 +231,8 @@ struct PdfReaderState: Codable, Equatable {
     var zoom: Int = 0
     var selecting: Bool = false
     var annotating: Bool = false
+    var questionCropping: Bool = false
+    var canCropQuestion: Bool = false
     var canSelect: Bool = false
     var canAnnotate: Bool = false
     var canZoomIn: Bool = false

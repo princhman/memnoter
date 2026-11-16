@@ -1,3 +1,4 @@
+import { Kbd } from "@/components/ui/kbd";
 import { useRef, type ReactElement, type RefObject } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -31,9 +32,9 @@ export function IconTooltip({
       <TooltipTrigger render={children} />
       <TooltipContent side={side} container={container}>
         {hint ? (
-          <span className="grid gap-0.5">
+          <span className="inline-flex items-center gap-2">
             <strong className="font-medium">{label}</strong>
-            <span className="text-muted-foreground">{hint}</span>
+            <Kbd>{hint}</Kbd>
           </span>
         ) : (
           label

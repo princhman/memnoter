@@ -114,7 +114,7 @@ test('files resize previews a fixed layout, commits on release, and cleans up ev
     assert.equal(await page.locator('#pending').textContent(), 'none');
     assert.equal(await page.locator('.textLayer span').first().evaluate(element => getComputedStyle(element).userSelect), 'text');
     assert.notEqual(await storedWidth(), 500);
-    await page.getByRole('button', { name: 'Select region', exact: true }).click();
+    await page.getByRole('button', { name: 'Quote region', exact: true }).click();
     bounds = await start();
     const region = await page.getByLabel('Drag a region on this PDF page').boundingBox();
     await page.mouse.move(region.x + 150, region.y + 140, { steps: 5 }); await page.mouse.up();
@@ -248,7 +248,7 @@ for (const engine of [chromium, webkit]) test(`PDF navigation and find across pa
     await page.getByRole('button', { name: 'Show files', exact: true }).click();
     await files.getByText('Resize', { exact: true }).click();
     await files.locator('.textLayer span').first().waitFor();
-    const controls = ['All files', 'Open full screen', 'Find in PDF', 'Zoom in (100%)', 'Select region', 'Annotate area'];
+    const controls = ['All files', 'Open full screen', 'Find in PDF', 'Zoom in', 'Quote region', 'Annotate area'];
     const centers = await Promise.all(controls.map(async name => { const box = await files.getByRole('button', { name, exact: true }).boundingBox(); return box.y + box.height / 2; }));
     assert.ok(Math.max(...centers) - Math.min(...centers) < 1, 'desktop PDF tools share one row even with touch input');
     const findKey = await page.evaluate(async () => (await import('/src/lib/platform.ts')).IS_APPLE ? 'Meta+f' : 'Control+f');

@@ -33,6 +33,59 @@ scripts/ios-install.sh --all      # both, one build; add --core after crates/ ch
 
 It prints the build stamp that Settings → About shows.
 
+## Isolated question bank development on iPad
+
+This is an explicit local Debug opt-in. From the repository root:
+
+```sh
+scripts/ios-install.sh --ipad --question-bank-dev
+# Add --live to use the running pnpm dev:device server.
+```
+
+Question banks and worksheets are enabled in normal Debug and Release builds,
+including with sync. This option only selects a separate offline development
+vault and preferences. Add `--core` when Rust sources changed. The usual
+Release/TestFlight core build remains `scripts/build-ios-core.sh`.
+
+For an already installed Debug app/core, an explicit physical iPad relaunch is:
+
+```sh
+xcrun devicectl device process launch --terminate-existing \
+  --device 00008101-0013399E0CD8001E \
+  com.vladyslavnalyvaiko.memnoter.ipad --question-bank-dev
+```
+
+For simulator testing, prepare the core with `scripts/build-ios-core.sh --debug`
+and build the Debug app for the retained iPad UDID below. Use T3 `device_open`
+and its returned `agent-device` command to install/open the app, supplying
+`--question-bank-dev` as an app launch argument (consult `help open` for syntax).
+For Xcode, put that argument in Scheme → Run → Arguments Passed On Launch.
+
+Before opening the core, native startup provisions only the fixed sandbox path
+`Application Support/MemnoterQuestionBankDevelopment/v2`, outside `Memnoter`.
+It creates a path-bound `.question-bank-development` marker only for a newly
+created vault and sets `MEMNOTER_DATA_DIR` to its canonical path. Existing
+unmarked, moved or redirected directories cause startup to fail;
+there is no fallback to the real vault. The directory is excluded from device
+backups. Preferences use the separate `com.memnoter.question-bank-development.v1`
+suite. The sync coordinator is not created, so no Keychain login is loaded, and
+the core marker also blocks `sync_enable`. UI-test vault arguments cannot be
+combined with this mode. Release apps refuse this launch argument.
+
+The first launch is **empty**: no real vault or desktop fixture is read or
+copied, and no questions or PDFs are preloaded. Create a module and bank content
+through the existing UI/APIs (`create_module`, then `question_bank_edit`), or
+import test PDFs through the existing document APIs. Subsequent flagged launches
+reuse this disposable vault; it is not automatically cleared. Native views can
+identify the session with `AppStore.questionBankDevelopment`, and access its
+selected path through `AppStore.directory`.
+
+The opt-in is per launch. A Home Screen launch or an install without the option
+opens the normal vault and may migrate it as usual. The app keeps its existing
+bundle ID, so the development install replaces the installed app, while leaving
+the normal vault untouched during flagged launches. Use the explicit flagged
+relaunch above throughout bank testing; this option is not a persistent switch.
+
 ## Live shared-ui development
 
 Run `pnpm dev:device` on your Mac, then in another terminal run

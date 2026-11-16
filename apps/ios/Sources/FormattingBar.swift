@@ -24,7 +24,7 @@ struct FormattingBar: View {
     let busy: Bool
     @State private var editingLink = false
     @State private var link = ""
-    private let isPhone = UIDevice.current.userInterfaceIdiom == .phone
+    @State private var pickingImage = false
 
     private var rowWidth: CGFloat { max(36, maximumWidth - 8) }
     private var pinnedWidth: CGFloat { session.state.inTable ? 94 : 44 }
@@ -58,42 +58,46 @@ struct FormattingBar: View {
         .accessibilityElement(children: .contain)
     }
 
-    // Left to right: cards, inline style, block type, lists, insertions, note
-    // sections, clipboard. Hide keyboard stays pinned outside the scrolling row.
+    /// One row for iPad and iPhone: direct style buttons, everything else in menus.
     private var buttons: some View {
         HStack(spacing: 0) {
-            if isPhone {
-                paragraphMenu
-                divider
+            if !session.questionsOpen { cardGroup; divider }
+            styleGroup.disabled(!session.state.editable)
+            divider
+            FormatBlockStyleMenu(session: session)
+            FormatListMenu(session: session)
+            divider
+            FormatInsertMenu(session: session, busy: busy,
+                             editingLink: $editingLink, pickingImage: $pickingImage)
+                .popover(isPresented: $editingLink) {
+                    linkEditor.padding().presentationCompactAdaptation(.popover)
+                }
+                .photosPicker(isPresented: $pickingImage, selection: $image, matching: .images)
+            if !session.questionsOpen {
+                FormatSectionMenu(session: session)
             }
-            cardGroup
             divider
-            styleGroup
-            divider
-            blockGroup
-            divider
-            listGroup
-            divider
-            insertGroup
-            divider
-            sectionGroup
-            divider
-            clipboardGroup
+            FormatClipboardMenu(session: session)
         }
+        .tint(Color("BrandAccent"))
     }
 
-    @ViewBuilder private var cardGroup: some View {
-        Button { session.exec(session.state.inCloze ? .removeCard : .makeCard) } label: {
-            Label("Cloze", systemImage: "curlybraces")
-                .labelStyle(.titleAndIcon)
-                .fixedSize()
-                .padding(.horizontal, 4)
-        }
-        .buttonStyle(FormatButtonStyle(active: session.state.inCloze))
-        .disabled(!session.state.inCloze && !session.state.canMakeCard)
-        .accessibilityLabel(session.state.inCloze ? "Remove cloze" : "Make cloze from selection")
-        .accessibilityAddTraits(session.state.inCloze ? .isSelected : [])
+    /// Cloze and every card action in one icon dropdown.
+    private var cardGroup: some View {
         Menu {
+            if session.state.inCloze {
+                Button("Remove cloze", systemImage: "curlybraces") { session.exec(.removeCard) }
+            } else {
+                Button("Make cloze", systemImage: "curlybraces") { session.exec(.makeCard) }
+                    .disabled(!session.state.canMakeCard)
+            }
+            if session.state.canJoinClozes {
+                Button("Join clozes", systemImage: "rectangle.stack") { session.exec(.joinClozes) }
+            }
+            if session.state.canMakeClozeNote {
+                Button("Make one note", systemImage: "square.dashed") { session.exec(.makeClozeNote) }
+            }
+            Divider()
             Button("List card", systemImage: "list.bullet") { session.exec(.insertListCard, focusAfter: true) }
                 .disabled(!session.state.canInsertListCard)
             Button("Block card", systemImage: "text.alignleft") { session.exec(.insertBlockCard, focusAfter: true) }
@@ -111,19 +115,13 @@ struct FormattingBar: View {
                 Button("Remove block card", systemImage: "text.alignleft") { session.exec(.removeBlockCard, focusAfter: true) }
             }
         } label: {
-            Label("Cards", systemImage: "rectangle.on.rectangle")
-                .labelStyle(.titleAndIcon)
-                .fixedSize()
-                .padding(.horizontal, 4)
+            HStack(spacing: 4) {
+                Image(systemName: "rectangle.on.rectangle")
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+            }
         }
-        .buttonStyle(FormatButtonStyle())
+        .buttonStyle(FormatButtonStyle(active: session.state.inCloze || session.state.inListCard || session.state.inBlockCard))
         .accessibilityLabel("Cards")
-        if session.state.canJoinClozes {
-            formatButton("Join clozes", "rectangle.stack", .joinClozes)
-        }
-        if session.state.canMakeClozeNote {
-            formatButton("Make one note", "square.dashed", .makeClozeNote)
-        }
     }
 
     @ViewBuilder private var styleGroup: some View {
@@ -150,71 +148,6 @@ struct FormattingBar: View {
         formatButton("Code", "chevron.left.forwardslash.chevron.right", .code, active: mark("code"))
     }
 
-    @ViewBuilder private var blockGroup: some View {
-        if !isPhone {
-            paragraph("Text", level: nil)
-            ForEach(1...6, id: \.self) { level in paragraph("H\(level)", level: level) }
-        }
-        formatButton("Quote", "text.quote", .blockquote, active: session.state.blockquote)
-    }
-
-    private var paragraphMenu: some View {
-        Menu {
-            paragraphChoice("Text", level: nil)
-            ForEach(1...6, id: \.self) { level in paragraphChoice("Heading \(level)", level: level) }
-        } label: {
-            HStack(spacing: 4) {
-                Text(session.state.headingLevel.map { "H\($0)" } ?? "Text")
-                    .font(.system(size: 12, weight: .semibold))
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-            }
-            .padding(.horizontal, 4)
-        }
-        .buttonStyle(FormatButtonStyle(active: session.state.headingLevel != nil))
-        .accessibilityLabel("Paragraph style")
-        .accessibilityValue(session.state.headingLevel.map { "Heading \($0)" } ?? "Text")
-    }
-
-    private func paragraphChoice(_ title: String, level: Int?) -> some View {
-        let active = level == nil ? session.state.blockType == "paragraph" : session.state.headingLevel == level
-        return Button { session.exec(level == nil ? .paragraph : .heading, level.map { ["level": $0] } ?? [:]) } label: {
-            if active { Label(title, systemImage: "checkmark") }
-            else { Text(title) }
-        }
-    }
-
-    @ViewBuilder private var listGroup: some View {
-        formatButton("Bullet list", "list.bullet", .bulletList, active: session.state.bulletList)
-        formatButton("Numbered list", "list.number", .orderedList, active: session.state.orderedList)
-        formatButton("Outdent list item", "decrease.indent", .outdent).disabled(!session.state.canOutdent)
-        formatButton("Indent list item", "increase.indent", .indent).disabled(!session.state.canIndent)
-    }
-
-    @ViewBuilder private var insertGroup: some View {
-        formatButton("Inline math", "function", .inlineMath, active: session.state.blockType == "inlineMath")
-        formatButton("Math block", "x.squareroot", .mathBlock, active: session.state.blockType == "mathBlock")
-        Button { session.exec(.codeBlock) } label: {
-            Label("Code block", systemImage: "chevron.left.forwardslash.chevron.right")
-                .labelStyle(.titleAndIcon)
-                .fixedSize()
-                .padding(.horizontal, 4)
-        }
-        .buttonStyle(FormatButtonStyle(active: session.state.blockType == "codeBlock"))
-        .accessibilityLabel("Code block")
-        .accessibilityAddTraits(session.state.blockType == "codeBlock" ? .isSelected : [])
-        Button { editingLink = true } label: { Image(systemName: "link") }
-            .buttonStyle(FormatButtonStyle(active: mark("link")))
-            .accessibilityLabel("Edit link").accessibilityAddTraits(mark("link") ? .isSelected : [])
-            .popover(isPresented: $editingLink) {
-                linkEditor.padding().presentationCompactAdaptation(.popover)
-            }
-        if !session.state.inTable { tableMenu }
-        Button { session.exec(.insertFoldableBlock) } label: { Image(systemName: "rectangle.expand.vertical") }
-            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Insert foldable block")
-        PhotosPicker(selection: $image, matching: .images) { Image(systemName: "photo.badge.plus") }
-            .buttonStyle(FormatButtonStyle()).disabled(busy).accessibilityLabel("Insert image")
-    }
-
     private var tableMenu: some View {
         Menu {
             if session.state.inTable {
@@ -225,26 +158,6 @@ struct FormattingBar: View {
         } label: { Image(systemName: "tablecells").frame(minWidth: 38, minHeight: 30) }
         .buttonStyle(FormatButtonStyle(active: session.state.inTable))
         .accessibilityLabel(session.state.inTable ? "Table actions" : "Insert table")
-    }
-
-    @ViewBuilder private var sectionGroup: some View {
-        Button { session.exec(.insertSection, ["kind": "sibling"]) } label: { Image(systemName: "text.badge.plus") }
-            .buttonStyle(FormatButtonStyle()).accessibilityLabel("New section")
-        Button { session.exec(.insertSection, ["kind": "subsection"]) } label: { Image(systemName: "text.insert") }
-            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Subsection")
-        formatButton(session.state.folded ? "Unfold current section" : "Fold current section",
-                     session.state.folded ? "chevron.right" : "chevron.down",
-                     session.state.folded ? .unfoldCurrentSection : .foldCurrentSection, active: session.state.folded)
-            .disabled(!session.state.folded && !session.state.canFold)
-    }
-
-    @ViewBuilder private var clipboardGroup: some View {
-        Button { session.clipboard(#selector(UIResponderStandardEditActions.cut(_:))) } label: { Image(systemName: "scissors") }
-            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Cut")
-        Button { session.clipboard(#selector(UIResponderStandardEditActions.copy(_:))) } label: { Image(systemName: "doc.on.doc") }
-            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Copy")
-        Button { session.clipboard(#selector(UIResponderStandardEditActions.paste(_:))) } label: { Image(systemName: "doc.on.clipboard") }
-            .buttonStyle(FormatButtonStyle()).accessibilityLabel("Paste")
     }
 
     private var linkEditor: some View {
@@ -277,19 +190,143 @@ struct FormattingBar: View {
     private var divider: some View { Divider().frame(height: 16).padding(.horizontal, 3) }
     private func mark(_ name: String) -> Bool { session.state.marks.contains(name) }
 
-    private func paragraph(_ title: String, level: Int?) -> some View {
-        let active = level == nil ? session.state.blockType == "paragraph" : session.state.headingLevel == level
-        return Button { session.exec(level == nil ? .paragraph : .heading, level.map { ["level": $0] } ?? [:]) } label: {
-            Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1).padding(.horizontal, 4)
-        }
-        .buttonStyle(FormatButtonStyle(active: active))
-        .accessibilityLabel(level.map { "Heading \($0)" } ?? "Text").accessibilityAddTraits(active ? .isSelected : [])
-    }
-
     private func formatButton(_ title: String, _ symbol: String, _ command: ExecCommand, active: Bool = false) -> some View {
         Button { session.exec(command) } label: { Image(systemName: symbol) }
             .buttonStyle(FormatButtonStyle(active: active))
             .accessibilityLabel(title).accessibilityAddTraits(active ? .isSelected : [])
+    }
+}
+
+// Keep menu bodies in separate view types: large nested SwiftUI bodies can
+// exhaust the main-thread stack on physical devices.
+private struct FormatBlockStyleMenu: View {
+    @Bindable var session: WebSession
+
+    private var selection: Binding<Int> {
+        Binding {
+            session.state.headingLevel ?? (session.state.blockType == "paragraph" ? 0 : -1)
+        } set: { level in
+            session.exec(level == 0 ? .paragraph : .heading, level == 0 ? [:] : ["level": level])
+        }
+    }
+
+    var body: some View {
+        Menu {
+            Picker("Block style", selection: selection) {
+                Text("Text").tag(0)
+                ForEach(1...6, id: \.self) { level in
+                    Text("H\(level)").tag(level)
+                }
+            }
+            Toggle("Quote", systemImage: "text.quote", isOn: Binding(
+                get: { session.state.blockquote },
+                set: { _ in session.exec(.blockquote) }))
+        } label: {
+            HStack(spacing: 4) {
+                Text(session.state.headingLevel.map { "H\($0)" } ?? (session.state.blockquote ? "Quote" : "Text"))
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+            }
+            .padding(.horizontal, 4)
+        }
+        .buttonStyle(FormatButtonStyle(active: session.state.headingLevel != nil || session.state.blockquote))
+        .disabled(!session.state.editable)
+        .accessibilityLabel("Block style")
+        .accessibilityValue(session.state.headingLevel.map { "Heading \($0)" } ?? (session.state.blockquote ? "Quote" : "Text"))
+    }
+}
+
+private struct FormatListMenu: View {
+    @Bindable var session: WebSession
+
+    var body: some View {
+        Menu {
+            Toggle("Bullet list", systemImage: "list.bullet", isOn: Binding(
+                get: { session.state.bulletList }, set: { _ in session.exec(.bulletList) }))
+            Toggle("Numbered list", systemImage: "list.number", isOn: Binding(
+                get: { session.state.orderedList }, set: { _ in session.exec(.orderedList) }))
+            Divider()
+            Button("Outdent", systemImage: "decrease.indent") { session.exec(.outdent) }
+                .disabled(!session.state.canOutdent)
+            Button("Indent", systemImage: "increase.indent") { session.exec(.indent) }
+                .disabled(!session.state.canIndent)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: session.state.orderedList ? "list.number" : "list.bullet")
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+            }
+        }
+        .buttonStyle(FormatButtonStyle(active: session.state.bulletList || session.state.orderedList))
+        .disabled(!session.state.editable)
+        .accessibilityLabel("Lists")
+        .accessibilityValue(session.state.orderedList ? "Numbered list" : (session.state.bulletList ? "Bullet list" : "No list"))
+    }
+}
+
+private struct FormatInsertMenu: View {
+    @Bindable var session: WebSession
+    let busy: Bool
+    @Binding var editingLink: Bool
+    @Binding var pickingImage: Bool
+
+    var body: some View {
+        Menu {
+            Toggle("Inline math", systemImage: "function", isOn: Binding(
+                get: { session.state.blockType == "inlineMath" }, set: { _ in session.exec(.inlineMath) }))
+            Toggle("Math block", systemImage: "x.squareroot", isOn: Binding(
+                get: { session.state.blockType == "mathBlock" }, set: { _ in session.exec(.mathBlock) }))
+            Toggle("Code block", systemImage: "chevron.left.forwardslash.chevron.right", isOn: Binding(
+                get: { session.state.blockType == "codeBlock" }, set: { _ in session.exec(.codeBlock) }))
+            Divider()
+            Button(session.state.marks.contains("link") ? "Edit link" : "Link", systemImage: "link") { editingLink = true }
+            Button("Table", systemImage: "tablecells") { session.exec(.insertTable) }
+            Button("Foldable block", systemImage: "rectangle.expand.vertical") { session.exec(.insertFoldableBlock) }
+            Button("Photo", systemImage: "photo.badge.plus") { pickingImage = true }
+                .disabled(busy)
+            if session.worksheetAnswerFocused {
+                Button("Drawing", systemImage: "pencil.tip.crop.circle") { session.insertWorksheetDrawing() }
+                    .disabled(busy)
+            }
+        } label: {
+            Label("Insert", systemImage: "plus").fixedSize().padding(.horizontal, 4)
+        }
+        .buttonStyle(FormatButtonStyle())
+        .disabled(!session.state.editable)
+    }
+}
+
+private struct FormatSectionMenu: View {
+    @Bindable var session: WebSession
+
+    var body: some View {
+        Menu {
+            Button("New section", systemImage: "text.badge.plus") { session.exec(.insertSection, ["kind": "sibling"]) }
+            Button("Subsection", systemImage: "text.insert") { session.exec(.insertSection, ["kind": "subsection"]) }
+            Button(session.state.folded ? "Unfold current section" : "Fold current section",
+                   systemImage: session.state.folded ? "chevron.right" : "chevron.down") {
+                session.exec(session.state.folded ? .unfoldCurrentSection : .foldCurrentSection)
+            }
+            .disabled(!session.state.folded && !session.state.canFold)
+        } label: { Image(systemName: "text.badge.plus") }
+        .buttonStyle(FormatButtonStyle(active: session.state.folded))
+        .disabled(!session.state.editable)
+        .accessibilityLabel("Sections")
+    }
+}
+
+private struct FormatClipboardMenu: View {
+    @Bindable var session: WebSession
+
+    var body: some View {
+        Menu {
+            Button("Cut", systemImage: "scissors") { session.clipboard(#selector(UIResponderStandardEditActions.cut(_:))) }
+                .disabled(!session.state.hasSelection || !session.state.editable)
+            Button("Copy", systemImage: "doc.on.doc") { session.clipboard(#selector(UIResponderStandardEditActions.copy(_:))) }
+                .disabled(!session.state.hasSelection)
+            Button("Paste", systemImage: "doc.on.clipboard") { session.clipboard(#selector(UIResponderStandardEditActions.paste(_:))) }
+                .disabled(!session.state.editable)
+        } label: { Image(systemName: "doc.on.clipboard") }
+        .buttonStyle(FormatButtonStyle())
+        .accessibilityLabel("Clipboard")
     }
 }
 

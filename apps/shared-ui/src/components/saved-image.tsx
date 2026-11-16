@@ -6,7 +6,7 @@ import { Menu } from "@base-ui/react/menu";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { SavedImage as ImageSchema, InlineImage as InlineImageSchema } from "@/lib/editor-schema/images";
 import { occlusionCardId } from "@/lib/card-id";
-import { ImagePreview } from "@/components/image-preview";
+import { ImageActionsMenu, ImagePreviewDialog } from "@/components/image-actions-menu";
 import { imageOperation, isWriteAdmitted, type WritePermit } from "@/lib/write-lifecycle";
 import { OcclusionEditor } from "@/components/occlusion-editor";
 import { maskCards, validMasks } from "@/lib/occlusion";
@@ -18,10 +18,9 @@ import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/rea
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { call as invoke, fileUrl as convertFileSrc, postNativeEvent } from "../lib/backend.ts";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Ellipsis, Scan, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Scan, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
 import type { FileType } from "@/lib/content";
 import { startImagePointerMove } from "@/lib/image-pointer-move";
 import { adaptedUrl, cachedAdaptedUrl, scheduleTrim } from "@/lib/image-adapt";
@@ -33,7 +32,10 @@ import { ImageControlsLayer } from "./image-controls-layer";
 import "./saved-image.css";
 
 type FilesContextValue = {
+  flashcards?: boolean;
   editDrawing?: (imageId: string, sourceId: string | null) => void;
+  /** Drawing whose newer strokes are only in a local draft; shown with an "Unsaved" badge. */
+  unsavedDrawingId?: string | null;
   moduleId?: string;
   files: ReadonlyMap<string, FileType>;
   saveImage: (file: File, permit?: WritePermit) => Promise<FileType>;
@@ -58,7 +60,7 @@ export function SavedImageView(props: NodeViewProps) {
       return selection instanceof NodeSelection && selection.from === props.getPos();
     },
   });
-  const { files, saveImage, readImage, moduleId, editDrawing } = useContext(FilesContext);
+  const { files, saveImage, readImage, moduleId, editDrawing, unsavedDrawingId, flashcards = true } = useContext(FilesContext);
   const drawing = drawingReference(node.attrs.drawing);
   const canEditDrawing = !!drawing && (environment.isNative || !!editDrawing);
   const previewId = drawing?.previewId ?? node.attrs.fileId;
@@ -128,8 +130,8 @@ export function SavedImageView(props: NodeViewProps) {
   const lastTap = useRef<{ time: number; x: number; y: number } | null>(null);
   const openDrawing = () => {
     if (!drawing || !moduleId || !editor.isEditable) return;
-    if (environment.isNative) postNativeEvent("editDrawing", { moduleId, imageId: node.attrs.imageId, sourceId: drawing.sourceId });
-    else editDrawing?.(node.attrs.imageId, drawing.sourceId);
+    if (editDrawing) editDrawing(node.attrs.imageId, drawing.sourceId);
+    else if (environment.isNative) postNativeEvent("editDrawing", { moduleId, imageId: node.attrs.imageId, sourceId: drawing.sourceId });
   };
   const imagePress = useRef<{ id: number; time: number; x: number; y: number; selectedAtStart: boolean } | null>(null);
   const endImageTap = (event: ReactPointerEvent, cancelled = false) => {
@@ -155,19 +157,19 @@ export function SavedImageView(props: NodeViewProps) {
   const [displayedImage, setDisplayedImage] = useState<{ source: string; url: string } | null>(null);
   const [describing, setDescribing] = useState(false);
   const dark = useDarkTheme();
-  const adaptive = Boolean(node.attrs.adaptive);
+  const adaptive = Boolean(node.attrs.adaptive) || (environment.isNative && !!drawing);
 
   // The image's cards get the dot text cards have: due state and schedule on
   // hover, and a way into the mask editor.
   const schedules = useEditorState({ editor, selector: ({ editor }) => cardSchedulesOf(editor.state) });
   const infoHost = useRef<HTMLSpanElement>(null);
-  const canEditMasks = editor.isEditable && !!src && !failed && !!node.attrs.fileId;
+  const canEditMasks = flashcards && editor.isEditable && !!src && !failed && !!node.attrs.fileId;
   useEffect(() => {
     const element = infoHost.current;
     if (!element) return;
     const { imageId, fileId } = node.attrs;
     const masks = validMasks(node.attrs.masks);
-    if (isInline || typeof imageId !== "string" || typeof fileId !== "string" || !masks.length || !schedules) {
+    if (!flashcards || isInline || typeof imageId !== "string" || typeof fileId !== "string" || !masks.length || !schedules) {
       element.replaceChildren();
       return;
     }
@@ -179,7 +181,7 @@ export function SavedImageView(props: NodeViewProps) {
     const due = entries.some(({ schedule }) => schedule && schedule.dueAt <= schedules.now);
     element.replaceChildren(cardInfo(entries, due, schedules.now,
       canEditMasks ? { label: "Edit masks", run: () => setOcclusionOpen(true) } : null));
-  }, [schedules, node.attrs.imageId, node.attrs.fileId, node.attrs.masks, isInline, canEditMasks]);
+  }, [schedules, node.attrs.imageId, node.attrs.fileId, node.attrs.masks, isInline, canEditMasks, flashcards]);
 
   const hasSrc = !!src;
   // Preview revisions must not detach editor DOM while a text caret is active.
@@ -243,9 +245,9 @@ export function SavedImageView(props: NodeViewProps) {
     setFailedSource(null);
     // Retain the decoded old preview until the source effect below swaps it.
     if (!img.getAttribute("src")) {
-      if (latest.current.node.attrs.adaptive) {
+      if (latest.current.node.attrs.adaptive || (environment.isNative && drawing)) {
         // Hide the original until its recolored copy is ready.
-        const cached = cachedAdaptedUrl(latest.current.node.attrs.fileId ?? src, dark);
+        const cached = cachedAdaptedUrl(previewId ?? src, dark);
         if (cached) img.src = cached;
         else {
           img.src = src;
@@ -271,7 +273,7 @@ export function SavedImageView(props: NodeViewProps) {
   useEffect(() => {
     const img = image.current;
     if (!img || !src) return;
-    const fileId = node.attrs.fileId as string | null;
+    const fileId = previewId as string | null;
     const key = fileId ?? src;
     if (img.src === (adaptive ? cachedAdaptedUrl(key, dark) : src)) return;
     let cancelled = false;
@@ -317,7 +319,7 @@ export function SavedImageView(props: NodeViewProps) {
       stopWaiting?.();
       release?.();
     };
-  }, [src, adaptive, dark, node.attrs.fileId, readImage]);
+  }, [src, adaptive, dark, previewId, readImage]);
 
   const resizeTo = (fraction: number) => {
     const img = image.current;
@@ -457,6 +459,7 @@ export function SavedImageView(props: NodeViewProps) {
       {isInline
         ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && !canEditDrawing && src && !failed) { setPreviewOpen(true); } }} />
         : <div ref={host as RefObject<HTMLDivElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && !canEditDrawing && src && !failed) { setPreviewOpen(true); } }} />}
+      {drawing && unsavedDrawingId && unsavedDrawingId === node.attrs.imageId && !loading && <span className="note-image-unsaved" title="Open the drawing to continue; its newest strokes are not saved yet.">Unsaved changes</span>}
       {loading && <span className="note-image-loading" role="status"><LoaderCircle className="animate-spin motion-reduce:animate-none" size={20} /><span>{drawing ? "Updating drawing…" : "Loading image…"}</span></span>}
       {(!src || failed) && !loading && (drawing
         ? <Button variant="outline" onClick={openDrawing}>{canEditDrawing ? "Open drawing" : "Drawing (edit on iPad)"}</Button>
@@ -464,14 +467,12 @@ export function SavedImageView(props: NodeViewProps) {
       {node.attrs.pdfSource && <PdfSourceCaption value={node.attrs.pdfSource} />}
       {selected && editor.isEditable && (
         <ImageControlsLayer anchor={host}>
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" className="note-image-menu-button" aria-label="Image actions" />}><Ellipsis /></DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60" finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}>
+          <ImageActionsMenu label="Image actions" finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}>
               <DropdownMenuItem disabled={!src || failed} onClick={() => setPreviewOpen(true)}><Maximize2 />Open image full screen</DropdownMenuItem>
               <DropdownMenuSeparator />
               <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />} disabled={!src || failed}><Maximize2 />Size<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent className="w-48">
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-48">
                   {IMAGE_SIZES.map(([fraction, label]) => <DropdownMenuItem key={label} onClick={() => resizeTo(fraction)}>{label}</DropdownMenuItem>)}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => updateAttributes({ width: null, height: null })}>Original size</DropdownMenuItem>
@@ -479,7 +480,7 @@ export function SavedImageView(props: NodeViewProps) {
               </Menu.SubmenuRoot>
               <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />}><WrapText />Text wrapping<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent className="w-48">
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-48">
                   <DropdownMenuRadioGroup value={layout}>
                     {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => <DropdownMenuRadioItem closeOnClick key={value} value={value} title={hint} disabled={inTableCell && value === "wrap"} onClick={() => setLayout(value)}><Icon />{label}</DropdownMenuRadioItem>)}
                   </DropdownMenuRadioGroup>
@@ -487,22 +488,21 @@ export function SavedImageView(props: NodeViewProps) {
               </Menu.SubmenuRoot>
               {!isInline && <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />}><AlignLeft />Alignment<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent className="w-60">
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-60">
                   <DropdownMenuRadioGroup value={node.attrs.alignment}>
                     {IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => <DropdownMenuRadioItem closeOnClick key={alignment} value={alignment} onClick={() => updateAttributes({ alignment })}><Icon />{layout === "wrap" ? `Image on the ${alignment}, text beside it` : label}</DropdownMenuRadioItem>)}
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </Menu.SubmenuRoot>}
-              <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>
+              {!(environment.isNative && drawing) && <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>}
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}><Scan />Occlusion ({validMasks(node.attrs.masks).length})</DropdownMenuItem>
+              {flashcards && <DropdownMenuItem disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}><Scan />Occlusion ({validMasks(node.attrs.masks).length})</DropdownMenuItem>}
               <DropdownMenuItem disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop />Crop</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setDescribing(open => !open)}><Captions />Alt text and title</DropdownMenuItem>
               {drawing && <DropdownMenuItem disabled={!canEditDrawing} onClick={openDrawing}><Pencil />{canEditDrawing ? "Edit drawing" : "Edit on iPad"}</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onClick={deleteNode}><Trash2 />Remove image</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          </ImageActionsMenu>
           {describing && (
             <div className="note-image-description">
               <label>Alt text<input key={`alt-${node.attrs.alt}`} defaultValue={node.attrs.alt ?? ""} placeholder="Describe the image" onBlur={(event) => { if (event.target.value !== (node.attrs.alt ?? "")) updateAttributes({ alt: event.target.value }); }} /></label>
@@ -514,22 +514,17 @@ export function SavedImageView(props: NodeViewProps) {
       {occlusionOpen && src && <OcclusionEditor src={src} masks={validMasks(node.attrs.masks)} onCancel={() => setOcclusionOpen(false)} onSave={masks => { if (!isWriteAdmitted() || editor.isDestroyed || !editor.isEditable) return; updateAttributes({ masks, imageId: node.attrs.imageId || crypto.randomUUID() }); setOcclusionOpen(false); }} />}
       {cropOpen && image.current && <CropDialog image={image.current} onCancel={() => setCropOpen(false)} onSave={applyCrop} />}
       {src && (
-        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-          <DialogContent
-            ref={reportPreview}
-            className="image-preview-dialog h-dvh max-w-none overflow-hidden rounded-none p-4 pt-12 sm:max-w-none"
-            // Focusing the native contenteditable materializes the image's node
-            // range as iOS text-selection handles, including its control toolbar.
-            // Keep the node outline without requesting text input on return.
-            finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}
-          >
-            <DialogTitle className="sr-only">Image preview</DialogTitle>
-            <ImagePreview
-              src={displayedImage && displayedImage.source === src && displayedImage.url ? displayedImage.url : undefined}
-              alt={node.attrs.alt || node.attrs.title || "Image"}
-            />
-          </DialogContent>
-        </Dialog>
+        <ImagePreviewDialog
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          contentRef={reportPreview}
+          // Focusing the native contenteditable materializes the image's node
+          // range as iOS text-selection handles, including its control toolbar.
+          // Keep the node outline without requesting text input on return.
+          finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}
+          src={displayedImage && displayedImage.source === src && displayedImage.url ? displayedImage.url : undefined}
+          alt={node.attrs.alt || node.attrs.title || "Image"}
+        />
       )}
     </NodeViewWrapper>
   );

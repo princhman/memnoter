@@ -2,7 +2,7 @@ import { textPdfBytes } from "./browser/pdf-text-selection-pdf.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as Y from 'yjs';
-import { extractMentions, backlinks } from '../src/lib/mention-index.ts';
+import { extractMentions, backlinks, mentionLabel } from '../src/lib/mention-index.ts';
 import { browserHarness } from './support/browser.mjs';
 const target = { kind: 'heading', id: 'm2', nodeId: 'stable-heading', locator: null };
 test('backlinks track the exact node and source location, and disappear on deletion', () => {
@@ -12,6 +12,13 @@ test('backlinks track the exact node and source location, and disappear on delet
   assert.equal(backlinks(notes, { ...target, nodeId: 'other' }).length, 0);
   assert.equal(backlinks(notes, { ...target, kind: 'module', nodeId: null }).length, 0);
   doc.content.pop(); assert.equal(backlinks([{ ...notes[0], note: extractMentions(doc) }], target).length, 0);
+});
+test('a nested section reference is labelled with its full path', () => {
+  const notes = [{ id: 'm1', name: 'Logic', note: { headings: [{ id: 'h1', title: 'Hello', path: [] }, { id: 'h2', title: 'Hello 2', path: ['Hello'] }], mentions: [] } }];
+  const heading = id => ({ kind: 'heading', id: 'm1', nodeId: id, locator: null });
+  assert.equal(mentionLabel(notes, [], heading('h2')), 'Logic › Hello / Hello 2');
+  assert.equal(mentionLabel(notes, [], heading('h1')), 'Logic › Hello');
+  assert.equal(mentionLabel(notes, [], { kind: 'module', id: 'm1', nodeId: null, locator: null }), 'Logic');
 });
 function seed(blocks) {
   const doc = new Y.Doc();
@@ -41,7 +48,7 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
         if (command === 'list_documents') return [{ id: 'pdf1', moduleId: 'm2', moduleName: 'Biology', name: 'Field guide.pdf', size: 1, pageCount: 1, available: true }];
         return [];
       } } });
-    }, { source: seed([['paragraph', 'See ']]), destination: seed([...Array.from({ length: 50 }, (_, i) => ['paragraph', `Background ${i}`]), ['heading', 'Cells', { level: 1, id: 'stable-heading', 'data-toc-id': 'stable-heading' }], ['paragraph', 'Cell notes']]) });
+    }, { source: seed([['paragraph', 'See ']]), destination: seed([...Array.from({ length: 50 }, (_, i) => ['paragraph', `Background ${i}`]), ['heading', 'Cells', { level: 1, id: 'stable-heading', 'data-toc-id': 'stable-heading' }], ['heading', 'Organelles', { level: 2, 'data-toc-id': 'child-heading' }], ['paragraph', 'Cell notes']]) });
     await page.route('**/mention-guide.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
     const origin = `http://localhost:${server.httpServer.address().port}`;
     // Persist a saved view near the top before following a reference far below it.
@@ -52,8 +59,52 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await page.getByRole('link', { name: 'Research', exact: true }).click();
     await page.waitForURL(`${origin}/m1`);
     const editor = page.locator('.tiptap[contenteditable=true]'); await editor.waitFor();
-    await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('@Cells');
-    await page.getByRole('option', { name: 'Biology › Cells', exact: true }).click();
+    await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('@');
+    // Browsing lists modules (the edited one first) and files; sections wait behind Tab.
+    const names = async () => page.getByRole('option').evaluateAll(options => options.map(option => [...option.childNodes].filter(node => node.nodeName !== 'KBD').map(node => node.textContent).join('')));
+    const header = page.locator('[data-menu-header]');
+    const paragraph = page.locator('.tiptap p').last();
+    await page.getByRole('option', { name: 'Biology', exact: true }).waitFor();
+    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf']);
+    assert.equal(await header.count(), 0);
+    await page.keyboard.press('Tab');
+    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf'], 'Tab on a module without sections does nothing');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Tab');
+    await page.getByRole('option', { name: 'Cells', exact: true }).waitFor();
+    assert.deepEqual(await names(), ['Cells']);
+    assert.equal(await header.innerText(), 'Biology');
+    await page.keyboard.press('Tab');
+    await page.getByRole('option', { name: 'Organelles', exact: true }).waitFor();
+    assert.deepEqual(await names(), ['Organelles']);
+    assert.equal(await header.innerText(), 'Biology / Cells');
+    await page.keyboard.press('Tab');
+    assert.deepEqual(await names(), ['Organelles']);
+    await page.keyboard.press('Shift+Tab');
+    await page.getByRole('option', { name: 'Cells', exact: true }).waitFor();
+    assert.equal(await header.innerText(), 'Biology');
+    // Digging never edits the note, and Backspace on an empty query climbs out instead of deleting "@".
+    assert.equal(await paragraph.innerText(), 'See @');
+    await page.keyboard.press('Backspace');
+    await page.getByRole('option', { name: 'Biology', exact: true }).waitFor();
+    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf']);
+    assert.equal(await paragraph.innerText(), 'See @');
+    // Enter inside a level references the highlighted section.
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('Tab');
+    await page.getByRole('option', { name: 'Cells', exact: true }).waitFor();
+    await page.keyboard.press('Enter');
+    await page.getByRole('button', { name: '@Biology › Cells', exact: true }).waitFor();
+    await page.keyboard.press('Backspace'); await page.keyboard.press('Backspace');
+    await page.waitForFunction(() => !document.querySelector('.mention-chip'));
+    await page.keyboard.type('@');
+    // Searching matches the full path and shows where each section lives.
+    await page.keyboard.type('biology organelles');
+    await page.getByRole('option', { name: 'Organelles Biology / Cells', exact: true }).waitFor();
+    assert.deepEqual(await names(), ['OrganellesBiology / Cells']);
+    await page.keyboard.press('Escape');
+    for (let i = 0; i < '@biology organelles'.length; i++) await page.keyboard.press('Backspace');
+    await page.keyboard.type('@Cells');
+    await page.getByRole('option', { name: 'Cells Biology', exact: true }).click();
     await page.getByRole('button', { name: '@Biology › Cells', exact: true }).waitFor();
     await page.waitForTimeout(1600); await page.reload();
     await page.evaluate(async () => {

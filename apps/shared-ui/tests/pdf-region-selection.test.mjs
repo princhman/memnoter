@@ -56,13 +56,13 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     assert.equal(await viewer.getByLabel('Drag a region on this PDF page').count(), 0);
     const contentBounds = await viewer.locator('.pdf-page').first().boundingBox();
     const assertStablePage = async () => assert.deepEqual(await viewer.locator('.pdf-page').first().boundingBox(), contentBounds);
-    await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Quote region', exact: true }).click();
     await assertStablePage();
-    assert.equal(await viewer.getByRole('button', { name: 'Select region', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await viewer.getByRole('button', { name: 'Quote region', exact: true }).getAttribute('aria-pressed'), 'true');
     await viewer.getByRole('button', { name: 'Exit selection', exact: true }).focus();
     await page.keyboard.press('Enter');
     await assertStablePage();
-    await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Quote region', exact: true }).click();
     const pageSelection = viewer.getByLabel('Drag a region on this PDF page').first();
     await pageSelection.waitFor();
     // Virtualizing a page away disposes its captured drag; other pages stay usable.
@@ -81,11 +81,11 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     let bounds = await pageSelection.boundingBox();
     await page.mouse.move(bounds.x + 40, bounds.y + 40); await page.mouse.down();
     await page.mouse.move(bounds.x + 160, bounds.y + 160);
-    await viewer.getByRole('button', { name: 'Zoom in (100%)', exact: true }).dispatchEvent('click');
+    await viewer.getByRole('button', { name: 'Zoom in', exact: true }).dispatchEvent('click');
     await page.mouse.up();
     assert.equal(await page.locator('#pending').textContent(), 'none');
     await pageSelection.waitFor();
-    await viewer.getByRole('button', { name: 'Zoom out (110%)', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Zoom out', exact: true }).click();
     await pageSelection.waitFor();
     async function dragCrop() {
       const bounds = await pageSelection.boundingBox();
@@ -101,7 +101,7 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     await dragCrop();
     await viewer.getByRole('status').filter({ hasText: 'Preparing quote' }).waitFor();
     await page.keyboard.press('Control+Shift+x');
-    assert.equal(await viewer.getByRole('button', { name: 'Select region', exact: true }).isDisabled(), true);
+    assert.equal(await viewer.getByRole('button', { name: 'Quote region', exact: true }).isDisabled(), true);
     assert.equal(await viewer.getByLabel('Drag a region on this PDF page').count(), 0);
     await assertStablePage();
     await page.evaluate(() => { window.finishCrop(); HTMLCanvasElement.prototype.toBlob = window.originalToBlob; });
@@ -119,7 +119,7 @@ test('region pointer lifecycle and ready PDF canvas crops', async () => {
     assert.equal(await marker.first().evaluate(element => getComputedStyle(element).pointerEvents), 'none');
     // Encoding failure must leave selection recoverable and no draft behind.
     await page.getByRole('button', { name: 'Clear quote', exact: true }).click();
-    await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Quote region', exact: true }).click();
     await page.evaluate(() => { window.originalToBlob = HTMLCanvasElement.prototype.toBlob; HTMLCanvasElement.prototype.toBlob = function(callback) { callback(null); }; });
     await dragCrop(); await viewer.getByRole('alert').filter({ hasText: 'Could not create quote PNG' }).waitFor();
     assert.equal(await page.locator('#pending').textContent(), 'none');

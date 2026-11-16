@@ -36,14 +36,15 @@ function FullscreenPdf({ documentId }: { documentId: string }) {
 }
 
 /** The note stays mounted, with the native host's original scroll container. */
-export function NativePdfWorkspace({ moduleId, actions, children }: { moduleId: string | null; actions: Ref<NativePdfActions>; children: ReactNode }) {
+export function NativePdfWorkspace({ moduleId, actions, children, sourceDocumentId, onCloseSource, questions = false }: { moduleId: string | null; actions: Ref<NativePdfActions>; children: ReactNode; sourceDocumentId?: string | null; onCloseSource?: () => void; questions?: boolean }) {
   const pane = usePdfPane(moduleId ?? "");
   const router = useRouter();
   const location = useRouterState({ select: state => state.location });
-  const documentId = useRouterState({ select: state => {
+  const routedDocumentId = useRouterState({ select: state => {
     const match = state.matches.find(match => "documentId" in match.params);
     return match && "documentId" in match.params ? match.params.documentId : null;
   } });
+  const documentId = sourceDocumentId ?? routedDocumentId;
   const { activeEditor } = useActiveEditor();
   const host = useRef<HTMLDivElement>(null);
   const [insertedEditor, setInsertedEditor] = useState<Editor | null>(null);
@@ -74,10 +75,12 @@ export function NativePdfWorkspace({ moduleId, actions, children }: { moduleId: 
   }, [moduleId, open, coveringNote, focused]);
   useEffect(() => { if (coveringNote) activeEditor?.editor.view.dom.blur(); }, [coveringNote, activeEditor?.editor]);
   const showNote = () => {
-    if (!moduleId) return;
-    updatePdfPane(moduleId, { open: false });
+    if (sourceDocumentId) { onCloseSource?.(); return; }
+    if (moduleId) updatePdfPane(moduleId, { open: false });
     setFocused(false);
-    void router.navigate({ to: "/$moduleId", params: { moduleId } });
+    if (questions) void router.navigate({ to: "/" });
+    else if (moduleId) void router.navigate({ to: "/$moduleId", params: { moduleId } });
+    else void router.navigate({ to: "/" });
   };
   const toggleFiles = () => {
     if (!moduleId) return;
@@ -88,14 +91,16 @@ export function NativePdfWorkspace({ moduleId, actions, children }: { moduleId: 
   const { data: allDocs = [] } = useDocuments();
   const controls = useSyncExternalStore(pdfReaderControls.subscribe, pdfReaderControls.get);
   const activeId = documentId ?? (pane.open ? pane.active : null);
-  const files = allDocs.filter(doc => doc.moduleId === moduleId);
   const activeDoc = allDocs.find(doc => doc.id === activeId);
+  const readerModuleId = activeDoc?.moduleId ?? moduleId;
+  const files = allDocs.filter(doc => doc.moduleId === readerModuleId);
   const view = controls && controls.documentId === activeId ? controls.state : null;
-  const reader: PdfReaderState | null = open && moduleId ? {
-    moduleId, activeId: activeDoc ? activeDoc.id : null, title: activeDoc ? documentName(activeDoc.name) : "Files", fullscreen: !!documentId,
+  const reader: PdfReaderState | null = open && readerModuleId ? {
+    moduleId: readerModuleId, activeId: activeDoc ? activeDoc.id : null, title: activeDoc ? documentName(activeDoc.name) : "Files", fullscreen: !!documentId,
     files: files.map(doc => ({ id: doc.id, name: documentName(doc.name) })),
     page: view?.page ?? 0, pageCount: view?.pageCount ?? 0, zoom: view?.zoom ?? 100,
     selecting: view?.selecting ?? false, annotating: view?.annotating ?? false, canSelect: view?.canSelect ?? false,
+    questionCropping: view?.questionCropping ?? false, canCropQuestion: view?.canCropQuestion ?? false,
     canAnnotate: view?.canAnnotate ?? false, canZoomIn: view?.canZoomIn ?? false, canZoomOut: view?.canZoomOut ?? false,
   } : null;
   const readerJson = JSON.stringify(reader);
@@ -104,14 +109,22 @@ export function NativePdfWorkspace({ moduleId, actions, children }: { moduleId: 
     const reader = pdfReaderControls.get()?.actions;
     switch (command) {
       case "showFiles": if (documentId) showNote(); if (moduleId) updatePdfPane(moduleId, { open: true, active: null }); break;
-      case "openFile": if (moduleId && typeof value === "string") { if (documentId) void router.navigate({ to: "/files/$documentId", params: { documentId: value } }); else updatePdfPane(moduleId, { open: true, active: value }); } break;
+      case "openFile": if (typeof value === "string") { if (documentId) void router.navigate({ to: "/files/$documentId", params: { documentId: value } }); else if (moduleId) updatePdfPane(moduleId, { open: true, active: value }); } break;
       case "zoomIn": reader?.zoomIn(); break;
       case "zoomOut": reader?.zoomOut(); break;
       case "toggleSelect": reader?.toggleSelect(); break;
       case "toggleAnnotate": reader?.toggleAnnotate(); break;
+      case "toggleQuestionCrop": reader?.toggleQuestionCrop(); break;
+      case "toggleFind": reader?.toggleFind?.(); break;
       case "goToPage": if (typeof value === "number") reader?.goToPage(value); break;
       case "openFullscreen": if (activeId) void router.navigate({ to: "/files/$documentId", params: { documentId: activeId } }); break;
-      case "openBeside": reader?.openBeside(); break;
+      case "openBeside":
+        if (questions && activeId && readerModuleId) {
+          updatePdfPane(readerModuleId, { open: true, active: activeId });
+          onCloseSource?.();
+          void router.navigate({ to: "/" });
+        } else reader?.openBeside();
+        break;
       case "backToNote": showNote(); break;
     }
   };

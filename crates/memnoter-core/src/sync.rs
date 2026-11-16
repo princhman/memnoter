@@ -1203,6 +1203,7 @@ fn apply_remote(
 
     let now = chrono::Utc::now().timestamp_millis();
     let mut touched = HashSet::new();
+    let mut worksheet_history = BTreeMap::new();
     for entry in content_entries {
         if vault.get(&entry.doc).is_some_and(|module| module.deleted) {
             continue;
@@ -1212,6 +1213,13 @@ fn apply_remote(
             // example after the vault was compacted. The name follows later.
             crate::content::module_rows::insert(&tx, &entry.doc, "Untitled", &[])?;
             result.modules_changed = true;
+        }
+        if !touched.contains(&entry.doc) {
+            if let Ok(before) = crate::worksheets::load(&tx, &entry.doc) {
+                if let Ok(Some(bank)) = crate::worksheets::read(&before) {
+                    worksheet_history.insert(entry.doc.clone(), bank);
+                }
+            }
         }
         tx.execute(
             "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
@@ -1226,6 +1234,14 @@ fn apply_remote(
             },
         });
         touched.insert(entry.doc);
+    }
+    for (module, old) in worksheet_history {
+        let after = crate::worksheets::load(&tx, &module)?;
+        match crate::worksheets::read(&after) {
+            Ok(Some(new)) => crate::worksheets::preserve_history(&old, &new)?,
+            Ok(None) => return Err("Worksheet history cannot be removed".into()),
+            Err(_) => {} // Future roots/fields remain opaque and quarantined.
+        }
     }
     let mut reviews: BTreeMap<String, Vec<RemoteEntry>> = BTreeMap::new();
     for entry in review_entries {
@@ -1250,6 +1266,7 @@ fn apply_remote(
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
     for module_id in &touched {
+        crate::asset_refs::publish_current(&tx, module_id)?;
         crate::search::invalidate_indexes(&tx, module_id)?;
     }
     let previous = cursor(&tx)?;
@@ -1433,11 +1450,19 @@ fn store_file(
         .to_str()
         .ok_or("File path is not valid UTF-8")?
         .to_owned();
-    conn.execute(
+    let tx = conn.unchecked_transaction().map_err(db_err)?;
+    tx.execute(
         "insert or ignore into files (id, module_id, path, file_type) values (?1, ?2, ?3, ?4)",
         params![file_id, module_id, path_str, file_type],
     )
     .map_err(db_err)?;
+    // Downloads can outrun the note update that publishes their references.
+    // Keep this lease atomic with the file row, just like local answer uploads.
+    if file_type.starts_with("image/") || file_type == "application/vnd.memnoter.drawing+json" {
+        crate::asset_refs::retain_worksheet_asset(&tx, module_id, file_id, true)?;
+        crate::asset_refs::publish_current(&tx, module_id)?;
+    }
+    tx.commit().map_err(db_err)?;
     Ok(crate::FileType {
         id: file_id.to_string(),
         path: path_str,
@@ -1452,6 +1477,7 @@ pub fn sync_status(db: &Db) -> CommandResult<SyncStatus> {
 // Turns sync on (seeding the outbox) or replaces the stored account, e.g. a
 // renewed token. `account` is the frontend's JSON.
 pub fn sync_enable(db: &Db, account: String) -> CommandResult<()> {
+    if db.data_dir.join(crate::worksheets::bank::DEV_MARKER).exists() { return Err("This development vault cannot sync".into()); }
     enable(&mut *db.lock()?, &account)?;
     Ok(())
 }

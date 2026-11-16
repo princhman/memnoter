@@ -2,6 +2,7 @@ import { Extension } from "@tiptap/core";
 import { ReactRenderer } from "@tiptap/react";
 import { PluginKey } from "@tiptap/pm/state";
 import Suggestion from "@tiptap/suggestion";
+import { flip, shift, size } from "@floating-ui/dom";
 import { InsertMenu, filterItems, type InsertMenuHandle, type InsertMenuProps, type InsertItem, type InsertCommandOptions } from "./insert-menu";
 import { editorContextMenu } from "./editor-context-menu";
 
@@ -27,7 +28,17 @@ export const SlashCommand = Extension.create<InsertCommandOptions>({
         pluginKey: suggestionKey,
         char: "/",
         allowSpaces: true,
-        items: ({ query, editor }) => filterItems(query, editor),
+        // On iPhone/iPad the native formatting bar and keyboard cover the bottom of the
+        // web view; treat that strip as off-screen so the menu opens above the caret instead.
+        floatingUi: { middleware: [
+          flip(() => ({ padding: { bottom: nativeBottomInset() + 8, top: 8 }, fallbackStrategy: "bestFit" })),
+          shift({ padding: 8 }),
+          // Whichever side it lands on, shrink the list to the room left there (it scrolls).
+          size(() => ({ padding: { bottom: nativeBottomInset() + 8, top: 8 }, apply({ availableHeight, elements }) {
+            elements.floating.style.setProperty("--suggestion-max-height", `${Math.max(96, availableHeight - 48)}px`);
+          } })),
+        ] },
+        items: ({ query, editor }) => filterItems(query, editor, options),
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from);
           for (let depth = $from.depth; depth > 0; depth--) {
@@ -65,3 +76,8 @@ export const SlashCommand = Extension.create<InsertCommandOptions>({
     ];
   },
 });
+
+function nativeBottomInset() {
+  const value = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--native-bottom-inset"));
+  return Number.isFinite(value) ? value : 0;
+}

@@ -1,3 +1,4 @@
+import { Kbd } from "@/components/ui/kbd";
 import { useEffect, useRef } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { CheckCircle2, Clock } from "lucide-react";
@@ -31,13 +32,6 @@ function isTypingInField() {
 const REVIEW_BUTTON =
   "group relative flex h-12 items-center justify-center gap-1.5 rounded-xl px-2 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring";
 
-function KeyHint({ children }: { children: string }) {
-  return (
-    <kbd className="pointer-events-none absolute top-1 right-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded bg-foreground/5 px-1 font-sans text-[0.55rem] leading-none text-current opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-      {children}
-    </kbd>
-  );
-}
 
 function Review() {
   const { module: moduleId } = Route.useSearch();
@@ -129,7 +123,7 @@ function Review() {
             <p className="text-muted-foreground">It shows here once it is due.</p>
             <Button variant="secondary" className="mt-2" disabled={!canShowNow} onClick={() => showNow()}>
               Show now
-              <kbd className="font-sans text-xs text-muted-foreground">Space</kbd>
+              <Kbd>Space</Kbd>
             </Button>
           </div>
         )}
@@ -171,7 +165,7 @@ function Review() {
               onClick={reveal}
             >
               Show answer
-              <KeyHint>Space</KeyHint>
+              <Kbd>Space</Kbd>
             </button>
           ) : (
             GRADES.map(({ rating, label, key }) => (
@@ -187,7 +181,7 @@ function Review() {
                     ({formatInterval(preview[rating] - now)})
                   </span>
                 )}
-                <KeyHint>{key}</KeyHint>
+                <Kbd>{key}</Kbd>
               </button>
             ))
           )}

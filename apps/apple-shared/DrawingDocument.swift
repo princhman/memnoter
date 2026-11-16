@@ -14,3 +14,20 @@ struct DrawingDocument: Codable, Sendable {
               nativeData.count <= 64 * 1024 * 1024 else { throw CocoaError(.fileReadCorruptFile) }
     }
 }
+
+// Session identity only: deliberately excluded from the version-1 document.
+struct DrawingOwner: Hashable, Sendable {
+    let moduleId: String
+    var answerId: String? = nil
+    let canvasId: String
+
+    static func note(moduleId: String, imageId: String) -> DrawingOwner {
+        DrawingOwner(moduleId: moduleId, canvasId: imageId)
+    }
+
+    var viewportKey: String {
+        // Preserve existing note viewport preferences, without migration.
+        guard let answerId else { return "viewport.\(moduleId)/\(canvasId)" }
+        return "viewport.answer.\(moduleId.utf8.count):\(moduleId)\(answerId.utf8.count):\(answerId)\(canvasId.utf8.count):\(canvasId)"
+    }
+}

@@ -21,7 +21,7 @@ import { blobKey, userPrefix } from "./storage";
 const FRAME_TARGET_BYTES = 512 * 1024;
 const HINT_CHECK_EVERY = 64;
 
-type Attachment = { ready: boolean };
+type Attachment = { ready: boolean; version?: number };
 
 export type KeyInfo = { salt: string; check: string };
 
@@ -159,7 +159,7 @@ export class Vault extends DurableObject<Env> {
       }
     }
     if (frame.length > 0) this.send(ws, { t: "entries", entries: frame });
-    ws.serializeAttachment({ ready: true } satisfies Attachment);
+    ws.serializeAttachment({ ready: true, version: PROTOCOL_VERSION } satisfies Attachment);
     this.send(ws, { t: "ready", head: Math.max(head, this.head()) });
     this.hintCompaction(ws);
   }
@@ -290,7 +290,14 @@ export class Vault extends DurableObject<Env> {
   }
 
   private isReady(ws: WebSocket) {
-    return (ws.deserializeAttachment() as Attachment | null)?.ready === true;
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    // Hibernating sockets may have said hello before a worker deployment.
+    // Never let an old ready socket publish tombstones or receive new entries.
+    if (attachment?.ready && attachment.version !== PROTOCOL_VERSION) {
+      this.fail(ws, "Please update Memnoter to keep syncing", true);
+      return false;
+    }
+    return attachment?.ready === true;
   }
 
   private send(ws: WebSocket, message: ServerMessage) {

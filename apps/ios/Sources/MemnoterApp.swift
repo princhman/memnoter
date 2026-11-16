@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 
 @main struct MemnoterApp: App {
     @State private var store = AppStore()
@@ -28,21 +29,37 @@ import SwiftUI
     var counts: [DueCount] = []
     let preferences: UserDefaults
     private let uiTesting: Bool
+    /// Native UI may use this to identify the disposable, offline bank session.
+    let questionBankDevelopment: Bool
+    private var startupFailure: String?
     private var recentModuleIds: [String]
     init() {
         var testID: String?
+        let bankRequested = ProcessInfo.processInfo.arguments.contains("--question-bank-dev")
+        var bankDevelopment = false
         #if DEBUG
+        bankDevelopment = bankRequested
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "--ui-testing-data-id"),
            arguments.indices.contains(index + 1), let id = UUID(uuidString: arguments[index + 1]) {
             testID = id.uuidString
         }
         #endif
+        questionBankDevelopment = bankDevelopment
         uiTesting = testID != nil
-        if let testID {
+        if bankDevelopment {
+            directory = URL.applicationSupportDirectory.appendingPathComponent("MemnoterQuestionBankDevelopment/v2", isDirectory: true)
+            preferences = UserDefaults(suiteName: "com.memnoter.question-bank-development.v1")!
+            if ProcessInfo.processInfo.arguments.contains("--ui-testing-data-id") {
+                startupFailure = "Question bank development and UI-test vaults cannot be combined."
+            }
+        } else if let testID {
             directory = URL.applicationSupportDirectory.appendingPathComponent("MemnoterUITests/\(testID)", isDirectory: true)
             preferences = UserDefaults(suiteName: "com.memnoter.uitests.\(testID)")!
         } else { preferences = .standard }
+        if bankRequested && !bankDevelopment {
+            startupFailure = "The isolated development vault requires a Debug app."
+        }
         recentModuleIds = preferences.stringArray(forKey: "recentModuleIds") ?? []
     }
     var recentModules: [NoteModule] {
@@ -59,8 +76,15 @@ import SwiftUI
     var directory = URL.applicationSupportDirectory.appendingPathComponent("Memnoter", isDirectory: true)
     func start() async {
         guard client == nil else { return }
-        do { client = try await CoreClient.open(directory); await refresh()
-            if let client {
+        if let startupFailure { error = startupFailure; return }
+        do {
+            #if DEBUG
+            if questionBankDevelopment { try prepareQuestionBankVault() }
+            #endif
+            let opened = try await CoreClient.open(directory)
+            client = opened
+            await refresh()
+            if !questionBankDevelopment, let client {
                 let sync = SyncClient(core: client)
                 self.sync = sync
                 // Keep the coordinator available to the normal view lifecycle,
@@ -70,6 +94,77 @@ import SwiftUI
             try await client?.dailyBackup() }
         catch { self.error = error.localizedDescription }
     }
+
+    #if DEBUG
+    /// Only this fixed sandbox namespace is provisioned; no supplied path or
+    /// desktop vault is accepted. Existing unmarked directories fail closed.
+    private func prepareQuestionBankVault() throws {
+        let manager = FileManager.default
+        let support = URL.applicationSupportDirectory.resolvingSymlinksInPath().standardizedFileURL
+        let root = support.appendingPathComponent("MemnoterQuestionBankDevelopment", isDirectory: true)
+        let vault = root.appendingPathComponent("v2", isDirectory: true)
+        func failure(_ message: String) -> NSError {
+            NSError(domain: "QuestionBankDevelopment", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        for path in [root, vault] {
+            guard path.resolvingSymlinksInPath().standardizedFileURL.path == path.path else {
+                throw failure("Refusing a redirected question bank development directory.")
+            }
+        }
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        var excludedRoot = root
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try excludedRoot.setResourceValues(values)
+        let marker = vault.appendingPathComponent(".question-bank-development")
+        let provenance = vault.appendingPathComponent(".ios-question-bank-development")
+        let identity = "memnoter-ios-offline-question-bank-v2\n"
+        if manager.fileExists(atPath: vault.path) {
+            guard (try? String(contentsOf: provenance, encoding: .utf8)) == identity else {
+                throw failure("Refusing an unmarked question bank development vault. The production vault will not be opened.")
+            }
+        } else {
+            let seed = URL.documentsDirectory.appendingPathComponent("QuestionBankDevelopmentSeed", isDirectory: true)
+            if manager.fileExists(atPath: seed.path) {
+                guard (try? String(contentsOf: seed.appendingPathComponent(".seed-manifest"), encoding: .utf8)) == "memnoter-offline-question-bank-seed-v1\n" else {
+                    throw failure("Refusing an unmarked question bank seed.")
+                }
+                // Only database + assets enter the disposable vault. No account,
+                // preferences, backups or Keychain credentials are imported.
+                for item in try manager.subpathsOfDirectory(atPath: seed.path) {
+                    let source = seed.appendingPathComponent(item)
+                    if try source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true {
+                        throw failure("Refusing a redirected question bank seed.")
+                    }
+                }
+                try manager.createDirectory(at: vault, withIntermediateDirectories: false)
+                for name in ["main.db", "files", "documents"] {
+                    let source = seed.appendingPathComponent(name)
+                    if manager.fileExists(atPath: source.path) {
+                        try manager.copyItem(at: source, to: vault.appendingPathComponent(name))
+                    }
+                }
+            } else {
+                try manager.createDirectory(at: vault, withIntermediateDirectories: false)
+            }
+            try identity.write(to: provenance, atomically: true, encoding: .utf8)
+        }
+        // Foundation normalizes /private/var to /var on iOS, while Rust's
+        // canonicalize uses realpath. Bind the marker and opt-in to exactly the
+        // filesystem path Rust checks. Rebind only this proven fixed sandbox
+        // namespace, since iOS can relocate an app container during installation.
+        guard let resolved = realpath(vault.path, nil) else {
+            throw failure("Could not resolve the question bank development vault.")
+        }
+        let canonicalPath = String(cString: resolved)
+        free(resolved)
+        try (canonicalPath + "\n").write(to: marker, atomically: true, encoding: .utf8)
+        guard setenv("MEMNOTER_DATA_DIR", canonicalPath, 1) == 0 else {
+            throw failure("Could not configure the question bank development environment.")
+        }
+        directory = vault
+    }
+    #endif
     func refresh() async {
         guard let client else { return }
         do {

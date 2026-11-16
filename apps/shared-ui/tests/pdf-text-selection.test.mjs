@@ -66,7 +66,7 @@ test('native PDF text selections quote only on demand, with per-page sources and
     assert.ok(Math.abs(quote.parts[0].source.region.x - region.x) < .005);
     assert.equal(quote.parts[0].text, 'Page 1 first line'); await clear();
     await select(); await page.keyboard.press('Escape'); await action.waitFor({ state: 'detached' });
-    await select(); await viewer.getByRole('button', { name: 'Select region', exact: true }).click();
+    await select(); await viewer.getByRole('button', { name: 'Quote region', exact: true }).click();
     assert.equal(await action.count(), 0); assert.equal(await draft(), null);
     await viewer.getByRole('button', { name: 'Exit selection', exact: true }).click();
     await page.locator('#outside').evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); });

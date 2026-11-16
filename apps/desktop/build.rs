@@ -2,6 +2,9 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         for source in [
             "native/DrawingEditor.swift",
+            "native/DrawingSession.swift",
+            "native/DrawingCanvas.swift",
+            "native/EmbeddedDrawingHost.swift",
             "native/DrawingPresentation.swift",
             "../apple-shared/DrawingDocument.swift",
         ] {
@@ -30,6 +33,9 @@ fn main() {
                 "@rpath/libMemnoterDrawing.dylib",
                 "../apple-shared/DrawingDocument.swift",
                 "native/DrawingEditor.swift",
+                "native/DrawingSession.swift",
+                "native/DrawingCanvas.swift",
+                "native/EmbeddedDrawingHost.swift",
                 "native/DrawingPresentation.swift",
                 "-o",
                 "native/libMemnoterDrawing.dylib",

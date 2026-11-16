@@ -1,3 +1,6 @@
+import { useBankGate, type CropDraft } from "@/lib/question-bank";
+import { QuestionCropDialog } from "./question-crop-dialog";
+import { IconTooltip } from "@/components/ui/icon-tooltip";
 import { usePdfFind, PdfFindHighlights } from "./pdf-find";
 import { IS_IOS } from "@/lib/platform";
 import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
@@ -44,7 +47,7 @@ type Size = { width: number; height: number };
 
 // Memoized: scrolling re-renders the viewer, but a page only redraws when it
 // arrives, the zoom changes, or it enters or leaves the render window.
-const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, annotations, onAnnotationOpen, quoteRegions, quoteNavigationDisabled, onQuoteNavigate, onSelect, onCancel, find }: { find: ReturnType<typeof usePdfFind>; page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; annotations: readonly PdfAnnotation[]; onAnnotationOpen: (id: string, bounds: DOMRect, page: number) => void; quoteRegions?: readonly PdfQuoteRegion[]; quoteNavigationDisabled: boolean; onQuoteNavigate: (quoteId: string) => void; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number) => void; onCancel: () => void }) {
+const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, active, selecting, annotations, onAnnotationOpen, quoteRegions, quoteNavigationDisabled, onQuoteNavigate, onSelect, onCancel, find }: { find: ReturnType<typeof usePdfFind>; page?: PDFPageProxy; pageNumber: number; width: number; height: number; zoom: number; active: boolean; selecting: boolean; annotations: readonly PdfAnnotation[]; onAnnotationOpen: (id: string, bounds: DOMRect, page: number) => void; quoteRegions?: readonly PdfQuoteRegion[]; quoteNavigationDisabled: boolean; onQuoteNavigate: (quoteId: string) => void; onSelect: (canvas: HTMLCanvasElement, region: PdfRegion, pageNumber: number, rotation: number) => void; onCancel: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
@@ -84,7 +87,7 @@ const PdfPage = memo(function PdfPage({ page, pageNumber, width, height, zoom, a
     {live && <PdfFindHighlights layer={text} matches={findMatches} selected={find.selected} ready={ready} />}
     {live && <PdfAnnotationLayer annotations={annotations} pageNumber={pageNumber} disabled={quoteNavigationDisabled} onOpen={onAnnotationOpen} />}
     {live && <PdfQuoteRegions regions={quoteRegions} disabled={quoteNavigationDisabled} onNavigate={onQuoteNavigate} />}
-    {live && ready && ready.page === page && ready.zoom === zoom && selecting && <PdfRegionSelection key={zoom} onCancel={onCancel} onSelect={region => { if (canvas.current) onSelect(canvas.current, region, pageNumber); }} />}
+    {live && ready && ready.page === page && ready.zoom === zoom && selecting && <PdfRegionSelection key={zoom} onCancel={onCancel} onSelect={region => { if (canvas.current) onSelect(canvas.current, region, pageNumber, page?.rotate ?? 0); }} />}
     {error && <p role="alert" className="relative bg-background p-2 text-sm text-destructive">{error}</p>}
   </div>;
 });
@@ -104,12 +107,18 @@ const sameList = (a: number[], b: number[]) => a.length === b.length && a.every(
 
 /** With `nativeTools`, the host draws the reader's tools (pdfReaderControls). */
 export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage, nativeTools = false }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number; nativeTools?: boolean }) {
+  const bankEnabled = useBankGate();
+  const [questionCropping, setQuestionCropping] = useState(false);
+  const [questionDraft, setQuestionDraft] = useState<CropDraft | null>(null);
+  useEffect(() => () => { if (questionDraft) URL.revokeObjectURL(questionDraft.url); }, [questionDraft]);
+  useEffect(() => { setQuestionDraft(null); setQuestionCropping(false); }, [doc.id]);
   const nativeSelectionMenu = nativeTools && isNativeHost();
   const savedTextSelection = useRef<ReturnType<typeof readPdfTextSelection>>(null);
   const client = useQueryClient();
   const quoteRegions = usePdfQuoteRegions(doc.moduleId, doc.id);
   const navigateToQuote = usePdfQuoteNavigation(doc.moduleId);
   const root = useRef<HTMLDivElement>(null);
+  const pageInput = useRef<HTMLInputElement>(null);
   const [selecting, setSelecting] = useState(false);
   const annotations = usePdfAnnotations(doc.id);
   const [writeBlocked, setWriteBlocked] = useState(false);
@@ -146,14 +155,14 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   documentIdentity.current = doc.id;
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const cancelSelection = useCallback(() => { setSelecting(false); setAnnotationArea(false); }, []);
+  const cancelSelection = useCallback(() => { setSelecting(false); setAnnotationArea(false); setQuestionCropping(false); }, []);
   useEffect(() => {
     if (!selecting) return;
     const cancel = (event: KeyboardEvent) => { if (event.key === "Escape") cancelSelection(); };
     window.addEventListener("keydown", cancel);
     return () => window.removeEventListener("keydown", cancel);
   }, [selecting, cancelSelection]);
-  const selectRegion = useCallback(async (canvas: HTMLCanvasElement, region: PdfRegion, page: number) => {
+  const selectRegion = useCallback(async (canvas: HTMLCanvasElement, region: PdfRegion, page: number, rotation: number) => {
     if (annotationArea) {
       const bounds = canvas.getBoundingClientRect();
       setAnnotationEditor({ kind: "area", anchorPage: page, anchors: [{ page, regions: [region] }], ...annotationPosition(new DOMRect(bounds.left + region.x * bounds.width, bounds.top + region.y * bounds.height, region.width * bounds.width, region.height * bounds.height)) });
@@ -163,13 +172,20 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     cropBusy.current = true; setCropping(true); setQuoteError(""); setSelecting(false);
     try {
       const blob = await cropPdfCanvas(canvas, region);
+      if (questionCropping && bankEnabled) {
+        const header = new DataView(await blob.arrayBuffer());
+        if (!mounted.current || documentIdentity.current !== doc.id) return;
+        setQuestionDraft({ blob, url: URL.createObjectURL(blob), sourcePdfFileId: doc.id, pageIndex: page - 1,
+          rect: [region.x, region.y, region.width, region.height], rotation: ((rotation % 360 + 360) % 360) as CropDraft["rotation"], pixelSize: [header.getUint32(16), header.getUint32(20)] });
+        setQuestionCropping(false); return;
+      }
       if (!mounted.current || documentIdentity.current !== doc.id) return;
       if (pendingPdfQuote.state) throw new Error("Another quote is waiting. Finish it, then select this region again.");
       pendingPdfQuote.setState(previous => previous ?? ({ id: crypto.randomUUID(), kind: "image", moduleId: doc.moduleId, file: new File([blob], `${doc.name}, page ${page}.png`, { type: "image/png" }),
         source: { documentId: doc.id, name: doc.name, page, region }, status: "draft" }));
     } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); setSelecting(!pendingPdfQuote.state); }
     finally { cropBusy.current = false; setCropping(false); }
-  }, [doc.id, doc.moduleId, doc.name, annotationArea, annotationPosition]);
+  }, [doc.id, doc.moduleId, doc.name, annotationArea, annotationPosition, questionCropping, bankEnabled]);
   const navigate = useNavigate();
   const [saved] = useState(() => ({ ...readPdfView(doc.id), ...(initialPage ? { page: initialPage } : {}) }));
   const [zoom, setZoom] = useState(saved.zoom);
@@ -636,8 +652,18 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   }, [pageRequest, doc.id, pages.length]);
   const toggleSelection = useCallback(() => {
     if (cropBusy.current || pendingPdfQuote.state || !pdf) return;
-    setQuoteError(""); setAnnotationArea(false); setSelecting(value => !value);
-  }, [pdf]);
+    setQuoteError(""); setQuestionCropping(false); setAnnotationArea(false); setSelecting(value => questionCropping || annotationArea || !value);
+  }, [pdf, questionCropping, annotationArea]);
+  const toggleQuestionCrop = useCallback(() => {
+    if (!bankEnabled || writeBlocked || cropBusy.current || pendingPdfQuote.state || !pdf || questionDraft) return;
+    setQuestionCropping(!questionCropping); setAnnotationArea(false); setSelecting(!questionCropping);
+  }, [bankEnabled, writeBlocked, pdf, questionDraft, questionCropping]);
+  const toggleAnnotate = useCallback(() => {
+    setQuestionCropping(false); setAnnotationEditor(null); setAnnotationArea(value => !value); setSelecting(!annotationArea);
+  }, [annotationArea]);
+  const openFullscreen = useCallback(() => {
+    void navigate({ to: "/files/$documentId", params: { documentId: doc.id } }).catch(error => setQuoteError(String(error)));
+  }, [doc.id, navigate]);
   const openBeside = useCallback(() => {
     const finalZoom = finishPinch.current?.() ?? zoomValue.current;
     writePdfView(doc.id, { page: shownPage.current, zoom: finalZoom });
@@ -662,7 +688,23 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   useEffect(() => {
     const handle = (event: KeyboardEvent) => {
       if (!acceptsPdfShortcut(event, [root.current, root.current?.closest('[data-pdf-note]') ?? null, fullscreen ? document.getElementById("pdf-toolbar") : null])) return;
-      if (matchesShortcut(event, action("text.highlight").keys)) {
+      if (matchesShortcut(event, action("pdf.zoom-in").keys) || matchesShortcut(event, action("pdf.zoom-out").keys)) {
+        // Leave note-editor zoom/movement keys to the editor beside the PDF.
+        if (!acceptsPdfShortcut(event, [root.current, fullscreen ? document.getElementById("pdf-toolbar") : null])) return;
+        const delta = matchesShortcut(event, action("pdf.zoom-in").keys) ? 0.1 : -0.1;
+        event.preventDefault(); event.stopPropagation(); changeZoom((finishPinch.current?.() ?? zoomValue.current) + delta);
+      } else if (matchesShortcut(event, action("pdf.go-to-page").keys)) {
+        if (!pages.length || !pageInput.current) return;
+        event.preventDefault(); event.stopPropagation(); pageInput.current.focus(); pageInput.current.select();
+      } else if (matchesShortcut(event, action("pdf.crop-question").keys)) {
+        if (!bankEnabled || !pdf || pending || cropping || questionDraft) return;
+        event.preventDefault(); event.stopPropagation(); toggleQuestionCrop();
+      } else if (matchesShortcut(event, action("pdf.annotate-area").keys)) {
+        if (!pdf || pending || cropping || !annotations.ready || writeBlocked) return;
+        event.preventDefault(); event.stopPropagation(); toggleAnnotate();
+      } else if (!fullscreen && matchesShortcut(event, action("pdf.open-fullscreen").keys)) {
+        event.preventDefault(); event.stopPropagation(); openFullscreen();
+      } else if (matchesShortcut(event, action("text.highlight").keys)) {
         if (annotationEditor || selecting || cropping || pinching || pending || writeBlocked || !annotations.ready || !content.current || !readPdfTextSelection(content.current, doc)) return;
         event.preventDefault(); event.stopPropagation(); annotateText("highlight");
       } else if (matchesShortcut(event, action("pdf.select-region").keys)) {
@@ -676,7 +718,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     };
     window.addEventListener("keydown", handle, true);
     return () => window.removeEventListener("keydown", handle, true);
-  }, [fullscreen, pdf, pending, cropping, doc.moduleId, toggleSelection, openBeside, showCursorAction, annotateText, annotationEditor, selecting, pinching, writeBlocked, annotations.ready]);
+  }, [fullscreen, pdf, pending, cropping, doc.moduleId, toggleSelection, toggleQuestionCrop, toggleAnnotate, openFullscreen, openBeside, showCursorAction, annotateText, annotationEditor, selecting, pinching, writeBlocked, annotations.ready, bankEnabled, questionDraft, pages.length, changeZoom]);
   useEffect(() => {
     if (!fullscreen || pending?.moduleId !== doc.moduleId || pending.status !== "draft") return;
     return registerCommand({ ...action("pdf.quote.insert"), keywords: ["pdf", "quote", "cursor"], run: showCursorAction });
@@ -684,20 +726,22 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const activeSet = useMemo(() => new Set(active), [active]);
 
   // The backdrop matches the app header, so the page sits on one surface.
-  const toggleAnnotate = () => { setAnnotationEditor(null); setAnnotationArea(value => !value); setSelecting(!annotationArea); };
   const nativeActions = useRef<PdfReaderActions | null>(null);
   nativeActions.current = {
     zoomIn: () => changeZoom((finishPinch.current?.() ?? zoom) + 0.1),
     zoomOut: () => changeZoom((finishPinch.current?.() ?? zoom) - 0.1),
     toggleSelect: toggleSelection,
     toggleAnnotate,
+    toggleQuestionCrop,
+    toggleFind: find.toggle,
     goToPage: page => { if (pages.length) jump(Math.max(1, Math.min(pages.length, Math.round(page)))); },
     openBeside,
   };
   const canSelect = !pending && !cropping && !!pdf;
   const nativeState = nativeTools ? JSON.stringify({
     page: current, pageCount: pages.length || doc.pageCount || 0, zoom: Math.round(zoom * 100),
-    selecting: selecting && !annotationArea, annotating: annotationArea,
+    selecting: selecting && !annotationArea && !questionCropping, annotating: annotationArea,
+    questionCropping, canCropQuestion: bankEnabled && canSelect && !questionDraft && !writeBlocked,
     canSelect, canAnnotate: canSelect && annotations.ready && !writeBlocked, canZoomIn: zoom < 3, canZoomOut: zoom > 0.25,
   }) : null;
   useEffect(() => {
@@ -705,6 +749,8 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     const actions: PdfReaderActions = {
       zoomIn: () => nativeActions.current?.zoomIn(), zoomOut: () => nativeActions.current?.zoomOut(),
       toggleSelect: () => nativeActions.current?.toggleSelect(), toggleAnnotate: () => nativeActions.current?.toggleAnnotate(),
+      toggleQuestionCrop: () => nativeActions.current?.toggleQuestionCrop(),
+      toggleFind: () => nativeActions.current?.toggleFind?.(),
       goToPage: page => nativeActions.current?.goToPage(page), openBeside: () => nativeActions.current?.openBeside(),
     };
     return pdfReaderControls.set({ documentId: doc.id, state: JSON.parse(nativeState), actions });
@@ -713,7 +759,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     {!nativeSelectionMenu && textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
       <div className="flex items-center gap-0.5 overflow-x-auto">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
-        <Button size="xs" variant="ghost" className="px-1.5" title={`Highlight (${formatKeys(action("text.highlight").keys)})`} aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button>
+        <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}><Button size="xs" variant="ghost" className="px-1.5" aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button></IconTooltip>
         <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => setShowHighlightColors(value => !value)}>
           <span className="size-2 rounded-full" style={{ backgroundColor: pdfHighlightColors[highlightColor].value }} /><ChevronDown className="size-3" />
         </ToolButton>
@@ -750,31 +796,39 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       {annotations.error || (annotations.saving ? "Saving annotations…" : "Loading annotations…")}
       {annotations.error && <button type="button" className="ml-2 underline" disabled={writeBlocked} onClick={() => { try { annotations.retry(); } catch (error) { setQuoteError(error instanceof Error ? error.message : String(error)); } }}>Retry annotations</button>}
     </div>}
+    {bankEnabled && questionDraft && <QuestionCropDialog moduleId={doc.moduleId} draft={questionDraft} onClose={() => setQuestionDraft(null)} onSaved={() => { setQuestionCropping(true); setAnnotationArea(false); setSelecting(true); }} />}
     {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
-      <div className="flex items-center gap-1 text-xs tabular-nums"><input aria-label="Page number" disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pages.length || doc.pageCount || 0).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
+      <div className="flex items-center gap-1 text-xs tabular-nums"><IconTooltip label="Go to page" hint={formatKeys(action("pdf.go-to-page").keys)}><input ref={pageInput} aria-label="Page number" disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pages.length || doc.pageCount || 0).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
-      }} /><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
+      }} /></IconTooltip><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
       <span aria-hidden="true" className="pdf-tool-divider hidden" />
-      <ToolButton label={`Zoom out (${Math.round(zoom * 100)}%)`} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
+      <ToolButton label="Zoom out" hint={formatKeys(action("pdf.zoom-out").keys)} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
       <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
-      <ToolButton label={`Zoom in (${Math.round(zoom * 100)}%)`} disabled={zoom >= 3} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn /></ToolButton>
+      <ToolButton label="Zoom in" hint={formatKeys(action("pdf.zoom-in").keys)} disabled={zoom >= 3} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn /></ToolButton>
       <span aria-hidden="true" className="pdf-tool-divider hidden" />
-      <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Select region" pressed={selecting && !annotationArea} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>
-      <ToolButton label="Annotate area" pressed={annotationArea} disabled={!!pending || cropping || !pdf || !annotations.ready || writeBlocked} onClick={toggleAnnotate}><Highlighter /></ToolButton>
+      <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Quote region" pressed={selecting && !annotationArea && !questionCropping} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>
+      {bankEnabled && <ToolButton label="Crop question" hint={formatKeys(action("pdf.crop-question").keys)} pressed={questionCropping} disabled={!!pending || cropping || !pdf || !!questionDraft} onClick={toggleQuestionCrop}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3" />
+          <path d="M9.5 9a2.5 2.5 0 0 1 5 .5c0 1.5-2.5 2-2.5 3.5" />
+          <path d="M12 16h.01" />
+        </svg>
+      </ToolButton>}
+      <ToolButton label="Annotate area" hint={formatKeys(action("pdf.annotate-area").keys)} pressed={annotationArea} disabled={!!pending || cropping || !pdf || !annotations.ready || writeBlocked} onClick={toggleAnnotate}><Highlighter /></ToolButton>
       {find.button}
       {fullscreen && <ToolButton label="Open beside note" hint={formatKeys(action("pdf.open-beside").keys)} onClick={openBeside}>
         {/* The small arrow says this moves the PDF into the note's side panel. */}
         <span className="relative"><PanelRight /><ArrowUpRight strokeWidth={3} className="absolute -right-1 -bottom-1 size-2.5 rounded-full bg-background" /></span>
       </ToolButton>}
     </ReaderTools>}
-    {nativeTools && <div className="flex justify-end">{find.button}</div>}
+    {nativeTools && <div className="native-pdf-find-launcher flex justify-end">{find.button}</div>}
     {find.bar}
     {(selecting || cropping || quoteError || (fullscreen && pending?.moduleId === doc.moduleId)) && <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] justify-center">
       <div className="pdf-hint pointer-events-auto flex min-w-0 max-w-sm flex-wrap items-center gap-2 overflow-y-auto rounded-lg floating-surface p-2 text-xs shadow-md [overflow-wrap:anywhere]" role="status">
-        {selecting && !pending && <><span className="min-w-0 flex-1">{annotationArea ? "Drag to highlight or comment on an area" : "Drag to select a quote"}</span><ToolButton size="icon-xs" className="pdf-menu-close" label="Exit selection" onClick={cancelSelection}><X /></ToolButton></>}
+        {selecting && !pending && <><span className="min-w-0 flex-1">{questionCropping ? "Drag around the question or part" : annotationArea ? "Drag to highlight or comment on an area" : "Drag to select a quote"}</span><ToolButton size="icon-xs" className="pdf-menu-close" label="Exit selection" onClick={cancelSelection}><X /></ToolButton></>}
         {cropping && "Preparing quote"}{quoteError && <span role="alert">{quoteError}</span>}
-        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<Button size="xs" title={`Insert at cursor (${formatKeys(action("pdf.quote.insert").keys)})`} aria-keyshortcuts="Meta+Enter Control+Enter" disabled={pending.status !== "draft"} onClick={showCursorAction}>Insert at cursor</Button>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current?.id === pending.id && current.status === "draft" ? null : current)}>Discard</Button>}</>}
+        {fullscreen && pending?.moduleId === doc.moduleId && <>{pending.status === "draft" ? "Quote ready" : pending.status === "saving" ? "Saving quote" : "Quote needs attention"}<IconTooltip label="Insert at cursor" hint={formatKeys(action("pdf.quote.insert").keys)}><Button size="xs" aria-keyshortcuts="Meta+Enter Control+Enter" disabled={pending.status !== "draft"} onClick={showCursorAction}>Insert at cursor</Button></IconTooltip>{pending.status === "draft" && <Button size="xs" variant="ghost" onClick={() => pendingPdfQuote.setState(current => current?.id === pending.id && current.status === "draft" ? null : current)}>Discard</Button>}</>}
       </div>
     </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="pdf-viewport min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>

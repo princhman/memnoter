@@ -215,6 +215,9 @@ pub fn set_document_page_count(db: &Db, id: String, page_count: i64) -> CommandR
 
 pub(crate) fn remove_local(data_dir: &Path, conn: &Connection, id: &str) -> CommandResult<()> {
     let path = files::assets::path(data_dir, id)?;
+    if crate::asset_refs::is_leased(conn, id)? {
+        return Ok(());
+    }
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     crate::pdf_annotations::retire(&tx, id)?;
     tx.execute("delete from documents where id=?1", [id])
@@ -235,6 +238,9 @@ pub fn delete_document(data_dir: &Path, db: &Db, id: String) -> CommandResult<()
     files::assets::path(data_dir, &id)?;
     let conn = db.lock()?;
     document_record(data_dir, &conn, &id)?;
+    if crate::asset_refs::is_leased(&conn, &id)? {
+        return Err("This PDF is retained by module content".into());
+    }
     // Persist the tombstone first; reconcile can retry disk cleanup after a crash.
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     sync::record_document(&tx, &id, true)?;
