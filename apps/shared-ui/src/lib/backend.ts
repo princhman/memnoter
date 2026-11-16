@@ -1,5 +1,5 @@
 import { queryClient } from "./query-client";
-import { IS_MAC, IS_IOS } from "./platform.ts";
+import { IS_MAC, IS_IOS, IS_WINDOWS } from "./platform.ts";
 import { FILE_SCHEME, type NativeEvent, type NativeEvents } from "../editor-host/protocol.ts";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
@@ -58,7 +58,7 @@ export async function call<T>(command: string, args?: object): Promise<T> {
 
 function dispatchCall<T>(command: string, args?: object): Promise<T> {
   if (!isNativeHost()) {
-    const shell = command.startsWith("plugin:") || ["confirm_exit", "confirm_restart", "set_editor_history", "pick_pdfs", "pick_import_folder", "pick_import_image_folder", "read_import_images", "pick_anki_package", "read_anki_media", "close_anki_package", "edit_drawing", "drawing_committed"].includes(command);
+    const shell = command.startsWith("plugin:") || ["confirm_exit", "confirm_restart", "set_editor_history", "pick_pdfs", "pick_import_folder", "pick_import_image_folder", "read_import_images", "pick_anki_package", "read_anki_media", "close_anki_package", "edit_drawing", "drawing_committed", "check_spelling", "add_to_dictionary", "spelling_languages", "set_spelling_language"].includes(command);
     return (shell ? invoke<T>(command, args as Record<string, unknown> | undefined)
       : invoke<T>("core", { command, args: args ?? {} })).catch(error => {
         throw new Error(typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error));
@@ -114,6 +114,8 @@ export const capabilities = {
   get updates() { return isTauri(); },
   get folderImport() { return isTauri(); },
   get windowControls() { return isTauri(); },
+  // WebView2 spell checks with the Windows checker, which the shell can ask.
+  get spelling() { return isTauri() && IS_WINDOWS; },
   get fullscreenLayout() { return IS_IOS; },
   get appVersion() { return isTauri(); },
   get appExit() { return isTauri(); },

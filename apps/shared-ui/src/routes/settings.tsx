@@ -7,6 +7,7 @@ import BackupsSection from "@/components/settings/backups-section";
 import NumberingSection from "@/components/settings/numbering-section";
 import OutlineSection from "@/components/settings/outline-section";
 import ReviewSection from "@/components/settings/review-section";
+import SpellingSection from "@/components/settings/spelling-section";
 import SyncSection from "@/components/settings/sync-section";
 
 export const Route = createFileRoute("/settings")({
@@ -33,6 +34,7 @@ function Settings() {
       <ReviewSection />
       <NumberingSection />
       <OutlineSection />
+      <SpellingSection />
       <BackupsSection />
       <AboutSection />
     </div>
