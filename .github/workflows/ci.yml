@@ -274,9 +274,54 @@ jobs:
             ${{ runner.temp }}/simulators.json
             ${{ runner.temp }}/ios-resources.log
 
+  # Bounded comparison only: remove after hosted measurement, before merge.
+  ios-simulator-package:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    # Expression keeps older actionlint runner-label catalogs usable.
+    runs-on: ${{ 'xcode-27' }}
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - name: Verify and stage Apple's simulator resource package
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          exec > >(tee "$RUNNER_TEMP/simulator-package.log") 2>&1
+          sw_vers
+          printf 'ImageOS=%s ImageVersion=%s\n' "$ImageOS" "$ImageVersion"
+          xcodebuild -version
+          test "$(xcodebuild -version)" = $'Xcode 27.2\nBuild version 27B52'
+          pkg="$RUNNER_TEMP/XcodeSystemResources.pkg"
+          cp "$DEVELOPER_DIR/../Resources/Packages/XcodeSystemResources.pkg" "$pkg"
+          test "$(stat -f %z "$pkg")" = 152235308
+          echo "435531105e32242f2603518686161f27f637d521ceaa0f7931afc5cec1ea5db9  $pkg" | shasum -a 256 --check
+          pkgutil --check-signature "$pkg" | tee "$RUNNER_TEMP/package-signature.txt"
+          grep -F 'Status: signed by a certificate trusted by macOS' "$RUNNER_TEMP/package-signature.txt"
+          grep -F 'Apple Software Update Certification Authority' "$RUNNER_TEMP/package-signature.txt"
+          pkgutil --expand "$pkg" "$RUNNER_TEMP/resource-package-expanded"
+          cat "$RUNNER_TEMP/resource-package-expanded/PackageInfo"
+          python3 -c 'import sys, xml.etree.ElementTree as E; p=E.parse(sys.argv[1]).getroot(); assert (p.get("identifier"), p.get("version")) == ("com.apple.pkg.XcodeSystemResources", "27.2.0.0.1792721295")' "$RUNNER_TEMP/resource-package-expanded/PackageInfo"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-package
+          path: ${{ runner.temp }}/XcodeSystemResources.pkg
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-package-metadata
+          path: |
+            ${{ runner.temp }}/simulator-package.log
+            ${{ runner.temp }}/package-signature.txt
+          retention-days: 1
+
   # Reserve the producer's Mac slot before consumers can occupy the pool.
   ios-build-started:
-    needs: changes
+    needs: [changes, ios-simulator-package]
     if: needs.changes.outputs.ios == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 41
@@ -291,6 +336,7 @@ jobs:
         run: python3 scripts/ci/wait-ios-artifact.py 2400 --producer-started
 
   ios-tests:
+    name: ${{ matrix.simulator == 'new' && 'ios-tests (drawing, new simulator)' || format('ios-tests ({0})', matrix.suite) }}
     needs: [changes, ios-build-started]
     if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
@@ -305,10 +351,42 @@ jobs:
       fail-fast: false
       matrix:
         suite: [drawing, navigation, phone]
+        simulator: [stock]
+        include:
+          - suite: drawing
+            simulator: new
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        if: matrix.simulator == 'new'
+        timeout-minutes: 3
+        with:
+          name: ios-simulator-package
+          path: ${{ runner.temp }}/simulator-package
+      - name: Install the comparison simulator resources
+        if: matrix.simulator == 'new'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          exec > >(tee "$RUNNER_TEMP/simulator-install.log") 2>&1
+          sw_vers
+          printf 'ImageOS=%s ImageVersion=%s\n' "$ImageOS" "$ImageVersion"
+          pkg="$RUNNER_TEMP/simulator-package/XcodeSystemResources.pkg"
+          echo "435531105e32242f2603518686161f27f637d521ceaa0f7931afc5cec1ea5db9  $pkg" | shasum -a 256 --check
+          pkgutil --check-signature "$pkg" | tee "$RUNNER_TEMP/package-signature.txt"
+          grep -F 'Status: signed by a certificate trusted by macOS' "$RUNNER_TEMP/package-signature.txt"
+          grep -F 'Apple Software Update Certification Authority' "$RUNNER_TEMP/package-signature.txt"
+          sudo installer -pkg "$pkg" -target /
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/Info.plist)
+          echo "Installed CoreSimulator: $version"
+          test "$version" = 1174.21
+          xcodebuild -version
+          test "$(xcodebuild -version | head -n 1)" = 'Xcode 26.6'
+          sdk=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          echo "Selected simulator SDK: $sdk"
+          test "$sdk" = 26.5
       # Boot on this VM while ios-build runs on its separate VM.
       - name: Start the iOS simulator
         timeout-minutes: 5
@@ -366,16 +444,18 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios-test-results-${{ matrix.suite }}
+          name: ios-test-results-${{ matrix.suite }}${{ matrix.simulator == 'new' && '-new-simulator' || '' }}
           path: |
             ${{ runner.temp }}/ios-tests.xcresult
             ${{ runner.temp }}/ios-tests.json
             ${{ runner.temp }}/simulators.json
             ${{ runner.temp }}/ios-resources.log
+            ${{ runner.temp }}/simulator-install.log
+            ${{ runner.temp }}/package-signature.txt
 
   # Preserve the required iOS check across the build/test split.
   ios:
-    needs: [changes, ios-build, ios-build-started, ios-tests]
+    needs: [changes, ios-build, ios-build-started, ios-tests, ios-simulator-package]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -385,10 +465,12 @@ jobs:
           BUILD: ${{ needs.ios-build.result }}
           ADMISSION: ${{ needs.ios-build-started.result }}
           TESTS: ${{ needs.ios-tests.result }}
+          PACKAGE: ${{ needs.ios-simulator-package.result }}
         run: |
           test "$CHANGES" = success
           if [ "$REQUIRED" = true ]; then
             test "$BUILD" = success
             test "$ADMISSION" = success
             test "$TESTS" = success
+            test "$PACKAGE" = success
           fi
