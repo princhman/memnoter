@@ -245,56 +245,6 @@ private struct PdfViewStateRecord: Codable {
             window.addEventListener('error', event => reportStartupError(event.message || `Resource failed: ${event.target?.src || event.target?.href || 'unknown'}`), true);
             window.addEventListener('unhandledrejection', event => reportStartupError(event.reason));
             """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        if ProcessInfo.processInfo.arguments.contains("--ui-testing-data-id") {
-            // Temporary capture of the hosted first-tap failure; never include note contents or URLs.
-            config.userContentController.addUserScript(WKUserScript(source: """
-                (() => {
-                    let remaining = 48;
-                    const describe = node => {
-                        const element = node instanceof Element ? node : node?.parentElement;
-                        return element ? { tag: element.tagName, imageHost: !!element.closest('.note-image-host'), editor: !!element.closest('.ProseMirror') } : null;
-                    };
-                    const rect = element => {
-                        if (!element) return null;
-                        const { x, y, width, height } = element.getBoundingClientRect();
-                        return { x, y, width, height };
-                    };
-                    const report = (event, phase) => {
-                        try {
-                            if (remaining <= 0) return;
-                            const images = Array.from(document.querySelectorAll('.note-image-host img')).slice(0, 3);
-                            if (!images.length) return;
-                            const point = typeof event.clientX === 'number' ? { x: event.clientX, y: event.clientY } : null;
-                            const selection = window.getSelection();
-                            const payload = {
-                                event: event.type, phase, time: performance.now(), point,
-                                target: describe(event.target), hit: point ? describe(document.elementFromPoint(point.x, point.y)) : null,
-                                selection: selection ? { collapsed: selection.isCollapsed, anchor: describe(selection.anchorNode), focus: describe(selection.focusNode) } : null,
-                                viewport: { width: innerWidth, height: innerHeight, top: visualViewport?.offsetTop, scale: visualViewport?.scale },
-                                images: images.map(image => {
-                                    const block = image.closest('.note-image-block');
-                                    const style = getComputedStyle(image);
-                                    return { bounds: rect(image), host: rect(image.closest('.note-image-host')), block: rect(block),
-                                        complete: image.complete, naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight,
-                                        opacity: style.opacity, pointerEvents: style.pointerEvents,
-                                        loading: block?.getAttribute('data-loading'), selected: block?.getAttribute('data-selected') };
-                                })
-                            };
-                            remaining--;
-                            window.webkit.messageHandlers.memnoterDiagnostics.postMessage('[image tap] ' + JSON.stringify(payload));
-                        } catch (_) {}
-                    };
-                    for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'click', 'load', 'error']) {
-                        document.addEventListener(type, event => {
-                            if (remaining <= 0) return;
-                            if ((type === 'load' || type === 'error') && !(event.target instanceof HTMLImageElement)) return;
-                            report(event, 'capture');
-                            requestAnimationFrame(() => report(event, 'next-frame'));
-                        }, { capture: true, passive: true });
-                    }
-                })();
-                """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        }
         #endif
         // Inject decoded JSON before the shared store mounts, independent of
         // Web Storage support for our custom scheme origin.
