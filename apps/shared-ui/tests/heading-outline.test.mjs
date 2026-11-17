@@ -36,3 +36,17 @@ test('PRI-342: removing a parent promotes all branches of its section', async ()
   assert.deepEqual(await levels(), [1, 2, 1, 2, 1]);
   if (process.env.PROOF_DIR) await page.waitForTimeout(1000);
 });
+test('an empty heading gets its own section id, so numbering and sidebar sections agree', async () => {
+  await page.evaluate(() => {
+    editor.commands.setContent({ type: 'doc', content: [
+      { type: 'heading', attrs: { level: 1, 'data-toc-id': 'a' }, content: [{ type: 'text', text: 'One' }] },
+      { type: 'heading', attrs: { level: 1 } },
+      { type: 'heading', attrs: { level: 1, 'data-toc-id': 'b' } },
+      { type: 'heading', attrs: { level: 1, 'data-toc-id': 'b' }, content: [{ type: 'text', text: 'Two' }] },
+    ] });
+  });
+  const ids = await page.evaluate(() => editor.getJSON().content.filter(n => n.type === 'heading').map(n => n.attrs['data-toc-id']));
+  assert.equal(ids[0], 'a');
+  assert.equal(ids[3], 'b', 'a titled heading keeps its id when an empty one shares it');
+  assert.ok(ids[1] && ids[2] && new Set(ids).size === 4, `unique ids: ${ids}`);
+});

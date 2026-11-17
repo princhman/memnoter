@@ -3,6 +3,7 @@ import { Extension } from "@tiptap/core";
 import { EditorState, PluginKey, Plugin } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { Editor } from "@tiptap/core";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 
 export const sectionFocusKey = new PluginKey<number | null>("section-focus");
 
@@ -127,6 +128,14 @@ export const SectionFocus = Extension.create({
 
             if (currentPosition !== null && transaction.docChanged) {
               const mapping = transaction.mapping.mapResult(currentPosition, -1);
+              const range = getSectionRange(transaction.doc, mapping.pos);
+              const selected = transaction.selection.$from;
+              const heading = selected.depth === 1 ? selected.parent : null;
+              const focused = transaction.doc.nodeAt(mapping.pos);
+              if (!transaction.getMeta(ySyncPluginKey) && range &&
+                heading?.type.name === "heading" && focused?.type.name === "heading" &&
+                Number(heading.attrs.level) <= Number(focused.attrs.level) &&
+                (selected.pos < range.from || selected.pos >= range.to)) return null;
               return !mapping.deleted &&
                 isHeadingPosition(transaction.doc, mapping.pos)
                 ? mapping.pos
