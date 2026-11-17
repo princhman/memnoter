@@ -55,46 +55,13 @@ for (const [name, type] of [['WebKit', webkit], ['Chromium', chromium]]) {
     }
   }));
   test(`${name}: PRI-340 title caret and word selection diagnostic`, async () => scenario(type, async page => {
-    const events = await page.evaluateHandle(() => {
-      const events = [];
-      const record = event => {
-        const selection = getSelection();
-        events.push({ event: typeof event === 'string' ? event : event.type, at: performance.now(),
-          target: event.target?.nodeName, x: event.clientX, y: event.clientY,
-          editor: editor.state.selection.toJSON(),
-          native: { anchor: selection?.anchorNode?.textContent, anchorOffset: selection?.anchorOffset,
-            focus: selection?.focusNode?.textContent, focusOffset: selection?.focusOffset },
-          focused: document.activeElement?.outerHTML.slice(0, 200), fonts: document.fonts.status });
-      };
-      for (const event of ['mousedown', 'mouseup', 'selectionchange']) document.addEventListener(event, record);
-      editor.on('selectionUpdate', () => record('editor-selection'));
-      record('initial');
-      return events;
-    });
     await page.evaluate(() => {
       editor.commands.setContent('<h1>Memory study title</h1><p>Body here</p>');
       editor.commands.setTextSelection(editor.state.doc.content.size - 1); editor.view.focus();
     });
     const box = await page.locator('h1').boundingBox();
     await page.mouse.click(box.x + 85, box.y + box.height / 2);
-    try {
-      await page.waitForFunction(() => editor.state.selection.empty && editor.state.selection.head > 1 && editor.state.selection.head < 19);
-    } catch (error) {
-      try {
-        console.error('title caret selection failure', JSON.stringify({
-          events: await events.jsonValue(),
-          geometry: await page.evaluate(box => {
-            const x = box.x + 85, y = box.y + box.height / 2;
-            return { measured: box, current: document.querySelector('h1').getBoundingClientRect().toJSON(),
-              hit: document.elementFromPoint(x, y)?.outerHTML,
-              position: editor.view.posAtCoords({ left: x, top: y }), focused: document.hasFocus() };
-          }, box),
-        }));
-      } catch {
-        console.error('title caret diagnostics unavailable');
-      }
-      throw error;
-    }
+    await page.waitForFunction(() => editor.state.selection.empty && editor.state.selection.head > 1 && editor.state.selection.head < 19);
     await waitForEditorSelection(page);
     // A separate double-click gesture, outside the first click's native interval.
     await page.waitForTimeout(600);
