@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -12,11 +13,17 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Decides which jobs a PR needs. Pushes to main always run everything.
+  # PR merge-base diff; main push before..HEAD; manual dispatch validates everything.
   changes:
     runs-on: ubuntu-latest
     outputs:
-      code: ${{ steps.diff.outputs.code }}
+      frontend: ${{ steps.diff.outputs.frontend }}
+      rust: ${{ steps.diff.outputs.rust }}
+      browser: ${{ steps.diff.outputs.browser }}
+      benchmark: ${{ steps.diff.outputs.benchmark }}
+      web: ${{ steps.diff.outputs.web }}
+      web-shards: ${{ steps.diff.outputs.web-shards }}
+      sync: ${{ steps.diff.outputs.sync }}
       ios: ${{ steps.diff.outputs.ios }}
     steps:
       - uses: actions/checkout@v4
@@ -24,24 +31,13 @@ jobs:
           fetch-depth: 0
       - id: diff
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -z "$BASE" ]; then
-            echo "code=true" >> "$GITHUB_OUTPUT"; echo "ios=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          files=$(git diff --name-only "$BASE" HEAD)
-          echo "$files"
-          # Docs and agent config only: nothing to build or test.
-          code=$(echo "$files" | grep -vqE '(\.md$|^docs/|^scripts/agent-hooks/|^\.gitignore$)' && echo true || echo false)
-          # The iOS app bundles all of shared-ui, but its own tests exercise the
-          # native bridge; other shared-ui changes are covered by check and by main.
-          ios=$(echo "$files" | grep -qE '^(apps/ios/|apps/apple-shared/|crates/|apps/sync/|apps/shared-ui/src/editor-host/|apps/shared-ui/src/lib/(editor-host|native-)|apps/shared-ui/package\.json|scripts/(ci/|build-ios|ios-|ensure-sync|generate-bridge|sync-version)|Cargo\.(toml|lock)|pnpm-lock\.yaml|\.github/workflows/ci\.yml)' && echo true || echo false)
-          if [ "$code" = false ]; then ios=false; fi
-          echo "code=$code" >> "$GITHUB_OUTPUT"; echo "ios=$ios" >> "$GITHUB_OUTPUT"
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/ci/select-checks.py classify "$EVENT" "$BASE"
 
   frontend:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -54,6 +50,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm lint
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_ci_selection.py'
       - run: node --test scripts/tests/ios-results.test.mjs
       - run: python3 -m unittest discover -s scripts/tests -p 'test_wait_ios_artifact.py'
       - uses: actions/upload-artifact@v4
@@ -66,7 +63,7 @@ jobs:
 
   rust:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -83,14 +80,14 @@ jobs:
 
   web:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.web == 'true'
     # Keep browser dependencies on a stable base instead of latest's OS upgrades.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, benchmark]
+        shard: ${{ fromJSON(needs.changes.outputs.web-shards || '[1]') }}
     env:
       CARGO_BUILD_JOBS: 4
     steps:
@@ -129,25 +126,18 @@ jobs:
 
   # Preserve the existing required check name across the job split.
   check:
-    needs: [changes, frontend, rust, web]
+    needs: [changes, frontend, rust, web, sync-server]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - env:
-          CHANGES: ${{ needs.changes.result }}
-          CODE: ${{ needs.changes.outputs.code }}
-          FRONTEND: ${{ needs.frontend.result }}
-          RUST: ${{ needs.rust.result }}
-          WEB: ${{ needs.web.result }}
-        run: |
-          test "$CHANGES" = success
-          if [ "$CODE" = true ]; then
-            test "$FRONTEND" = success
-            test "$RUST" = success
-            test "$WEB" = success
-          fi
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-checks.py gate check
 
   sync-server:
+    needs: changes
+    if: needs.changes.outputs.sync == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -366,18 +356,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - env:
-          CHANGES: ${{ needs.changes.result }}
-          REQUIRED: ${{ needs.changes.outputs.ios }}
-          FRONTEND: ${{ needs.frontend.result }}
-          BUILD: ${{ needs.ios-build.result }}
-          ADMISSION: ${{ needs.ios-build-started.result }}
-          TESTS: ${{ needs.ios-tests.result }}
-        run: |
-          test "$CHANGES" = success
-          if [ "$REQUIRED" = true ]; then
-            test "$FRONTEND" = success
-            test "$BUILD" = success
-            test "$ADMISSION" = success
-            test "$TESTS" = success
-          fi
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-checks.py gate ios

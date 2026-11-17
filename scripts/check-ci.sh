@@ -29,6 +29,7 @@ run() {
 }
 
 # Jobs: frontend, web, rust
+run "CI selection and gates" python3 -m unittest discover -s scripts/tests -p test_ci_selection.py
 run "iOS live configuration" node --test scripts/tests/ios-live-plist.test.mjs
 run "native result gating" node --test scripts/tests/ios-results.test.mjs
 run "iOS artifact handoff" python3 -m unittest discover -s scripts/tests -p test_wait_ios_artifact.py
