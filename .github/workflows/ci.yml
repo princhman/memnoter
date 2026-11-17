@@ -224,10 +224,10 @@ jobs:
         working-directory: apps/ios
       - uses: actions/cache@v4
         with:
-          path: ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
-          key: ios-compilation-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-${{ github.sha }}
+          path: ${{ runner.temp }}/ios-build/CompilationCache.noindex
+          key: ios-compilation-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-${{ github.sha }}
           restore-keys: |
-            ios-compilation-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-
+            ios-compilation-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-
       - name: Build the iOS test bundle once
         run: |
           xcodebuild build-for-testing -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
