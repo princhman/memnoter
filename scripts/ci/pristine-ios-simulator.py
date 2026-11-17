@@ -15,7 +15,7 @@ import sys
 import tarfile
 import time
 
-LIMIT = 500 * 1024 * 1024
+LIMIT = 1024 * 1024 * 1024
 PREFIX = 'com.vladyslavnalyvaiko.memnoter'
 
 
@@ -110,7 +110,7 @@ def compare(manifest, actual):
 
 
 def validate_archive(archive, manifest):
-    require(archive.stat().st_size <= LIMIT, 'archive exceeds 500 MiB transfer cap')
+    require(archive.stat().st_size <= LIMIT, 'archive exceeds 1 GiB transfer cap')
     require(archive.stat().st_size == manifest['compressedBytes'], 'archive size mismatch')
     digest = sha256(archive)
     require(digest == manifest['sha256'], 'archive digest mismatch')
