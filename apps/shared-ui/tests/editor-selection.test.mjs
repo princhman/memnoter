@@ -80,15 +80,19 @@ for (const [name, type] of [['WebKit', webkit], ['Chromium', chromium]]) {
     try {
       await page.waitForFunction(() => editor.state.selection.empty && editor.state.selection.head > 1 && editor.state.selection.head < 19);
     } catch (error) {
-      console.error('title caret selection failure', JSON.stringify({
-        events: await events.jsonValue(),
-        geometry: await page.evaluate(box => {
-          const x = box.x + 85, y = box.y + box.height / 2;
-          return { measured: box, current: document.querySelector('h1').getBoundingClientRect().toJSON(),
-            hit: document.elementFromPoint(x, y)?.outerHTML,
-            position: editor.view.posAtCoords({ left: x, top: y }), focused: document.hasFocus() };
-        }, box),
-      }));
+      try {
+        console.error('title caret selection failure', JSON.stringify({
+          events: await events.jsonValue(),
+          geometry: await page.evaluate(box => {
+            const x = box.x + 85, y = box.y + box.height / 2;
+            return { measured: box, current: document.querySelector('h1').getBoundingClientRect().toJSON(),
+              hit: document.elementFromPoint(x, y)?.outerHTML,
+              position: editor.view.posAtCoords({ left: x, top: y }), focused: document.hasFocus() };
+          }, box),
+        }));
+      } catch {
+        console.error('title caret diagnostics unavailable');
+      }
       throw error;
     }
     await waitForEditorSelection(page);
