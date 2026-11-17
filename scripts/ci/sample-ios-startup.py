@@ -29,7 +29,7 @@ def log(message):
     print(f"{timestamp()} {message}", flush=True)
 
 
-def run(command, deadline, timeout=4):
+def run(command, deadline, timeout=15):
     """One child group at a time, including termination/reaping on cancellation."""
     remaining = min(timeout, deadline - time.monotonic() - 1)
     if STOP.is_set() or remaining <= 0:
@@ -45,6 +45,10 @@ def run(command, deadline, timeout=4):
                 while child.poll() is None:
                     if STOP.is_set() or time.monotonic() >= end:
                         log(f"command stopped executable={command[0]} pid={child.pid}")
+                        output.seek(0)
+                        progress = output.read(4096).strip()
+                        if progress:
+                            log(f"partial command output: {progress}")
                         # Signal sudo directly as well, so its monitor forwards TERM
                         # to a root-owned sample before group cleanup.
                         child.terminate()
@@ -79,21 +83,46 @@ def run(command, deadline, timeout=4):
         return None
 
 
-def snapshot(deadline):
-    output = run([PS, "-axo", "pid,ppid,uid,comm"], deadline)
-    if output is None:
-        return None
+def processes_from(output):
     processes = {}
-    log("process snapshot BEGIN (pid ppid uid full executable path; no arguments)")
     for line in output.splitlines():
         fields = line.strip().split(None, 3)
         if len(fields) != 4 or not all(field.isdigit() for field in fields[:3]):
             continue
         pid, ppid, uid = map(int, fields[:3])
         processes[pid] = (ppid, uid, fields[3])
-        log(f"process pid={pid} ppid={ppid} uid={uid} path={fields[3]}")
-    log("process snapshot END")
     return processes
+
+
+def snapshot(deadline):
+    # ucomm comes from kernel process metadata; comm reads each process's argv.
+    output = run([PS, "-axo", "pid,ppid,uid,ucomm"], deadline)
+    if output is None:
+        return None
+    processes = processes_from(output)
+    log("process snapshot BEGIN (pid ppid uid kernel name; no arguments)")
+    for pid, (ppid, uid, name) in processes.items():
+        log(f"process pid={pid} ppid={ppid} uid={uid} name={name}")
+    log("process snapshot END")
+    # The kernel name may truncate the runner; verify its full path below.
+    candidates = sorted(
+        (pid for pid, (_, _, name) in processes.items()
+         if Path(name).name in TARGETS or Path(name).name.startswith("MemnoterUITests")),
+        key=lambda pid: (not Path(processes[pid][2]).name.startswith("MemnoterUITests"), pid),
+    )
+    if not candidates:
+        return {}
+    if len(candidates) > 6:
+        log(f"omitted {len(candidates) - 6} PIDs due to discovery cap")
+    candidates = candidates[:6]
+    output = run([PS, "-p", ",".join(map(str, candidates)), "-o", "pid,ppid,uid,comm"], deadline)
+    if output is None:
+        return None
+    targets = {pid: record for pid, record in processes_from(output).items()
+               if pid in candidates and Path(record[2]).name in TARGETS}
+    for pid, (ppid, uid, path) in targets.items():
+        log(f"target pid={pid} ppid={ppid} uid={uid} path={path}")
+    return targets
 
 
 def capture(directory):
@@ -103,7 +132,7 @@ def capture(directory):
     attempts = 0
     next_snapshot = 0
     log("DIAGNOSTIC — instrumented run, no speed conclusions; remove before review merge")
-    log("limits: 240s wall, ~5s snapshots, rounds +0/+30/+75s, 6 PIDs/round, 18 samples total, serial 1s samples")
+    log("limits: 240s wall, 15s/command, ~5s snapshots, rounds +0/+30/+75s, 6 PIDs/round, 18 samples total, serial 1s samples")
     try:
         while not STOP.is_set() and time.monotonic() < deadline - 1:
             now = time.monotonic()
