@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { call, isTauri } from "@/lib/backend";
 import { useSyncedImageUrl } from "@/lib/synced-image";
-import { IS_MAC } from "@/lib/platform";
 import { bankKey, type Bank } from "@/lib/question-bank";
 import { queryClient } from "@/lib/query-client";
 import { answerKey } from "@/lib/worksheet-session";
@@ -28,7 +27,7 @@ export function WorksheetDrawings({ moduleId, attemptId, revisionId, leafPartId,
       return value && typeof value.canvasId === "string" && (value.sourceId === null || typeof value.sourceId === "string") ? value : null;
     } catch { return null; }
   });
-  const supported = !readOnly && IS_MAC && isTauri();
+  const supported = !readOnly && isTauri();
   const answerRef = useRef(answer);
   answerRef.current = answer;
   const running = useRef(false);

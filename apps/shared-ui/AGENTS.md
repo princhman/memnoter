@@ -68,3 +68,10 @@ This code ships to desktop, iPad and iPhone at once.
   nesting gaps. Keep compact leaf answers below crops in the content column.
   Pinned crops stay read-only; folding hides crops, answers and descendants
   without unmounting answer editors or losing their autosave state.
+
+- **Portable questions and worksheets.** Question bank and typed worksheets are
+  shared across desktop and iOS. Windows/Linux drawings use portable ink;
+  Mac/iOS retain native tools. Keep source and preview assets together through
+  sync, export and recovery. Version-2 portable ink is authoritative on Apple
+  import; never fall back to its native sidecar. Unsupported native masks/tools
+  must remain protected rather than flattened or partially erased ink restored.

@@ -185,7 +185,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
     };
   }, [editor, moduleId, isSuccess, setActiveEditor, insertQuote, insertTextQuote]);
 
-  const drawingFilesContext = useMemo(() => ({ ...filesContext, ...(capabilities.macDrawing && editor ? {
+  const drawingFilesContext = useMemo(() => ({ ...filesContext, ...(capabilities.drawing && editor ? {
     editDrawing: (imageId: string, sourceId: string | null) => { void launchDrawing(editor, { imageId, sourceId }); },
   } : {}) }), [filesContext, editor, launchDrawing]);
 

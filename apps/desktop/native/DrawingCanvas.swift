@@ -57,22 +57,6 @@ enum DrawingPaperStyle: String, CaseIterable {
     }
 }
 
-// Keep canonical black as on iPad; PencilKit handles the drawing appearance.
-// Normalize legacy white drafts and the old Mac near-black without changing paths.
-func canonicalInk(_ drawing: PKDrawing) -> PKDrawing {
-    PKDrawing(strokes: drawing.strokes.map { original in
-        var stroke = original
-        if let color = stroke.ink.color.usingColorSpace(.sRGB) {
-            let r = color.redComponent, g = color.greenComponent, b = color.blueComponent
-            let oldMacBlack = abs(r - 23 / 255.0) < 0.001 && abs(g - r) < 0.001 && abs(b - r) < 0.001
-            if (r < 0.001 && g < 0.001 && b < 0.001) || (r > 0.999 && g > 0.999 && b > 0.999) || oldMacBlack {
-                stroke.ink = PKInk(stroke.ink.inkType, color: NSColor.black.withAlphaComponent(color.alphaComponent))
-            }
-        }
-        return stroke
-    })
-}
-
 final class PaperView: NSView {
     let model: DrawingSession
     var drawing = PKDrawing()

@@ -792,7 +792,7 @@ fn offline_answer_replacements_converge_without_losing_either_devices_text_or_im
             let loaded = attempts::load_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone()).unwrap();
             let expected = serde_json::to_value(loaded).unwrap()["expected"].as_str().unwrap().into();
             let image = files::save_file(device.data_dir(), &device.db, module.clone(), text.as_bytes().to_vec(), "image/png".into()).unwrap().id;
-            let source = files::save_file(device.data_dir(), &device.db, module.clone(), br#"{"strokes":[]}"#.to_vec(), "application/vnd.memnoter.drawing+json".into()).unwrap().id;
+            let source = files::save_file(device.data_dir(), &device.db, module.clone(), include_bytes!("../../../../apps/ios/Tests/Fixtures/portable-drawing.json").to_vec(), "application/vnd.memnoter.drawing+json".into()).unwrap().id;
             attempts::save_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone(), answer_doc(text, Some(&image), Some(&source)), expected).unwrap();
             assert!(sync::sync_pending_uploads(&device.db, generation(device)).unwrap().contains(&source));
             image_ids.push(source);
