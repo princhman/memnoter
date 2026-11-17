@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wait for this run's producer or bundle; never allocate a Mac runner here."""
+"""Wait for this run's native/frontend artifact or native producer admission."""
 import argparse
 import datetime
 import json
@@ -14,7 +14,11 @@ def log(message):
     print(f"{datetime.datetime.now(datetime.timezone.utc).isoformat()} {message}", flush=True)
 
 
-def wait(timeout, producer_started=False):
+def wait(timeout, producer_started=False, *, frontend=False):
+    if frontend and producer_started:
+        raise ValueError('Frontend artifact and producer admission modes are mutually exclusive')
+    producer_name = 'frontend' if frontend else 'ios-build'
+    artifact_name = 'shared-ui-dist' if frontend else 'ios-test-bundle'
     api = os.environ['GITHUB_API_URL'].rstrip('/')
     repo = os.environ['GITHUB_REPOSITORY']
     run = os.environ['GITHUB_RUN_ID']
@@ -51,32 +55,32 @@ def wait(timeout, producer_started=False):
                 return
             page += 1
 
-    target = 'ios-build runner allocation' if producer_started else 'ios-test-bundle'
+    target = 'ios-build runner allocation' if producer_started else artifact_name
     log(f'Waiting up to {timeout:g}s for {target} (run {run})')
     # Four consumers share a read-only token's API quota during long builds.
     interval = 2
     while True:
         producer = next((job for job in pages(f'{base}/jobs', 'jobs')
-                         if job['name'] == 'ios-build'), None)
+                         if job['name'] == producer_name), None)
         if producer and producer['status'] == 'completed' and producer['conclusion'] != 'success':
-            raise RuntimeError(f"ios-build ended with {producer['conclusion']}")
+            raise RuntimeError(f"{producer_name} ended with {producer['conclusion']}")
         if producer_started and producer and producer['status'] in ('in_progress', 'completed'):
             log(f"ios-build has a runner or already succeeded ({producer['status']})")
             return
         if not producer_started:
             for artifact in pages(f'{base}/artifacts', 'artifacts'):
-                if artifact['name'] != 'ios-test-bundle':
+                if artifact['name'] != artifact_name:
                     continue
                 if str(artifact['workflow_run']['id']) != run:
                     raise RuntimeError('Artifact belongs to another workflow run')
                 if artifact['expired']:
-                    raise RuntimeError('ios-test-bundle has expired')
+                    raise RuntimeError(f'{artifact_name} has expired')
                 with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
                     output.write(f"artifact-id={int(artifact['id'])}\n")
-                log(f"ios-test-bundle ready (artifact {artifact['id']}); producer status {producer['status'] if producer else 'pending'}")
+                log(f"{artifact_name} ready (artifact {artifact['id']}); producer status {producer['status'] if producer else 'pending'}")
                 return
             if producer and producer['status'] == 'completed':
-                raise RuntimeError('ios-build succeeded without ios-test-bundle')
+                raise RuntimeError(f'{producer_name} succeeded without {artifact_name}')
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RuntimeError('Artifact deadline exceeded')
@@ -87,10 +91,12 @@ def wait(timeout, producer_started=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('timeout', type=float, nargs='?', default=2400)
-    parser.add_argument('--producer-started', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--producer-started', action='store_true')
+    mode.add_argument('--frontend', action='store_true', help='Wait for frontend/shared-ui-dist')
     args = parser.parse_args()
     try:
-        wait(args.timeout, args.producer_started)
+        wait(args.timeout, args.producer_started, frontend=args.frontend)
     except (RuntimeError, KeyError, ValueError) as error:
         # Schema errors name only the missing field, never the API payload.
         print(f'Artifact handoff failed: {error}', file=sys.stderr)

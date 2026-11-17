@@ -170,10 +170,13 @@ jobs:
       - run: pnpm test
 
   ios-build:
-    needs: [changes, frontend]
+    needs: changes
     if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
     env:
       CARGO_BUILD_JOBS: 4
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
@@ -204,9 +207,17 @@ jobs:
           key: ios-core-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-${{ hashFiles('crates/**', 'Cargo.lock', 'Cargo.toml', 'scripts/build-ios-core.sh') }}
       - run: ./scripts/build-ios-core.sh
         if: steps.ios-core.outputs.cache-hit != 'true'
+      # Toolchain and core preparation overlap frontend; wait only at consumption.
+      - name: Wait for this run's frontend bundle
+        id: frontend
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/wait-ios-artifact.py 900 --frontend
       - uses: actions/download-artifact@v4
         with:
-          name: shared-ui-dist
+          artifact-ids: ${{ steps.frontend.outputs.artifact-id }}
+          merge-multiple: true
           path: apps/shared-ui/dist
       - run: ./scripts/build-ios-web.sh --prebuilt
       - run: xcodegen generate
@@ -329,23 +340,7 @@ jobs:
           vm_stat
           top -l 0 -s 10 -n 15 -o cpu -stats pid,command,cpu,mem,threads,state,time > "$RUNNER_TEMP/ios-resources.log" &
           resource_monitor=$!
-          startup_monitor=
-          cleanup_monitors() {
-            native_status=$?
-            trap - EXIT
-            kill "$resource_monitor" ${startup_monitor:+"$startup_monitor"} 2>/dev/null || true
-            wait "$resource_monitor" 2>/dev/null || true
-            if [[ -n "$startup_monitor" ]]; then
-              wait "$startup_monitor" 2>/dev/null || true
-            fi
-            exit "$native_status"
-          }
-          trap cleanup_monitors EXIT
-          if [[ "$IOS_TEST_SUITE" == drawing ]]; then
-            # TEMPORARY DIAGNOSTIC — remove before review merge. No speed claims.
-            python3 scripts/ci/sample-ios-startup.py "$RUNNER_TEMP/ios-startup-samples" > "$RUNNER_TEMP/ios-startup.log" 2>&1 &
-            startup_monitor=$!
-          fi
+          trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
           bash scripts/ci/run-ios-tests.sh
       - name: Verify native tests actually ran
         if: always()
@@ -364,24 +359,24 @@ jobs:
             ${{ runner.temp }}/wrangler.log
             ${{ runner.temp }}/simulators.json
             ${{ runner.temp }}/ios-resources.log
-            ${{ runner.temp }}/ios-startup.log
-            ${{ runner.temp }}/ios-startup-samples/
 
   # Preserve the required iOS check across the build/test split.
   ios:
-    needs: [changes, ios-build, ios-build-started, ios-tests]
+    needs: [changes, frontend, ios-build, ios-build-started, ios-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - env:
           CHANGES: ${{ needs.changes.result }}
           REQUIRED: ${{ needs.changes.outputs.ios }}
+          FRONTEND: ${{ needs.frontend.result }}
           BUILD: ${{ needs.ios-build.result }}
           ADMISSION: ${{ needs.ios-build-started.result }}
           TESTS: ${{ needs.ios-tests.result }}
         run: |
           test "$CHANGES" = success
           if [ "$REQUIRED" = true ]; then
+            test "$FRONTEND" = success
             test "$BUILD" = success
             test "$ADMISSION" = success
             test "$TESTS" = success
