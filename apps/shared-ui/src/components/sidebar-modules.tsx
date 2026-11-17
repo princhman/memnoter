@@ -8,9 +8,10 @@ import { ChevronRight, Ellipsis, Folder } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { call } from '@/lib/backend';
 import { queryClient } from '@/lib/query-client';
-import { writeOperation } from '@/lib/write-lifecycle';
+import { writeOperation, MUTATIONS } from '@/lib/write-lifecycle';
 import { moveSidebarItem, sidebarLayout, type SidebarItem } from '@/lib/sidebar-layout';
 import type { Module } from '@/lib/types';
+import type { SectionSource, SectionDestination } from '@/lib/section-moves';
 import { CreateModuleButton } from './create-module';
 import { Button } from './ui/button';
 import { SidebarMenu, SidebarMenuAction, SidebarMenuButton, SidebarMenuItem } from './ui/sidebar';
@@ -46,19 +47,18 @@ function suppressNextClick() {
   setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
 }
 
-export function SidebarModules({ modules, renderModule }: { modules: Module[]; renderModule: (module: Module) => ReactNode }) {
+export function SidebarModules({ modules, renderModule, onMoveSection }: { modules: Module[]; renderModule: (module: Module) => ReactNode; onMoveSection?: (source: SectionSource, target: SectionDestination) => Promise<void> }) {
   const query = useQuery({ queryKey: sidebarKey, queryFn: () => call<SidebarItem[]>('sidebar_items') });
   const [editing, setEditing] = useState<SidebarItem | 'new' | null>(null);
   const [name, setName] = useState('');
   // The row being dragged, so a copy of it can follow the pointer.
-  const [dragging, setDragging] = useState<{ id: string; width: number }>();
+  const [dragging, setDragging] = useState<{ id: string; width: number; title: string; folder: boolean }>();
+  const sectionMove = useMutation({ mutationKey: [MUTATIONS.moveSection], mutationFn: ({ source, target }: { source: SectionSource; target: SectionDestination }) => onMoveSection!(source, target) });
   const mutation = useMutation({
     mutationFn: (items: SidebarItem[]) => writeOperation(() => call('save_sidebar_items', { items })),
     onSettled: () => queryClient.invalidateQueries({ queryKey: sidebarKey }),
   });
   const items = sidebarLayout(modules, query.data ?? []);
-  const dragged = dragging ? items.find(item => item.id === dragging.id) : undefined;
-  const draggedModule = dragged ? modules.find(module => module.id === dragged.id) : undefined;
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const save = (next: SidebarItem[], onSuccess?: () => void) => {
     next = [...items.filter(item => !next.some(entry => entry.id === item.id)), ...next];
@@ -80,7 +80,7 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
   const edit = (item: SidebarItem | 'new') => { setEditing(item); setName(item === 'new' ? '' : item.name ?? ''); };
   const row = (item: SidebarItem): ReactNode => {
     const module = modules.find(module => module.id === item.id);
-    return <SortableRow key={item.id} item={item} disabled={mutation.isPending || query.isPending || query.isError}>
+    return <SortableRow key={item.id} item={item} disabled={mutation.isPending || sectionMove.isPending || query.isPending || query.isError}>
       {item.name === null ? <SidebarMenu>{renderModule(module!)}</SidebarMenu> : <>
         <DropZone id={`folder:${item.id}`}><SidebarMenu><SidebarMenuItem>
           <SidebarMenuButton disabled={mutation.isPending} aria-expanded={!item.collapsed} onClick={() => save(items.map(entry => entry.id === item.id ? { ...entry, collapsed: !entry.collapsed } : entry))}>
@@ -101,7 +101,16 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
   return <>
     <CreateModuleButton onNewFolder={() => edit('new')} />
     {(query.error || mutation.error) && <p role="alert">{(query.error ?? mutation.error)?.message}</p>}
+    {sectionMove.error && <p role="alert" className="px-2 py-1 text-sm text-destructive">{sectionMove.error.message}</p>}
     <DndContext sensors={sensors} collisionDetection={args => {
+      if (args.active.data.current?.kind === 'section') {
+        const hits = pointerWithin(args).filter(hit => hit.id !== args.active.id);
+        const section = hits.find(hit => args.droppableContainers.find(container => container.id === hit.id)?.data.current?.kind === 'section');
+        const module = hits.find(hit => args.droppableContainers.find(container => container.id === hit.id)?.data.current?.kind === 'section-module');
+        return section ? [section] : module ? [module] : [];
+      }
+      // Section drop targets are unrelated to rearranging modules/folders.
+      args = { ...args, droppableContainers: args.droppableContainers.filter(container => !container.data.current?.kind?.startsWith('section')) };
       const active = items.find(item => item.id === args.active.id);
       if (active?.name === null && args.pointerCoordinates) {
         const all = pointerWithin(args);
@@ -128,12 +137,30 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
         const item = items.find(item => item.id === container.id);
         return item && item.id !== args.active.id && (active?.name === null || item.folder_id === null);
       }) });
-    }} onDragStart={({ active }) => setDragging({ id: String(active.id), width: document.querySelector(`[data-sidebar-item="${window.CSS.escape(String(active.id))}"]`)?.getBoundingClientRect().width ?? 0 })}
+    }} onDragStart={({ active, activatorEvent }) => {
+      sectionMove.reset();
+      const section = active.data.current?.kind === 'section';
+      const item = items.find(item => item.id === active.id);
+      const element = activatorEvent.target instanceof Element ? activatorEvent.target.closest(section ? '[data-sidebar-section]' : '[data-sidebar-item]') : null;
+      setDragging({ id: String(active.id),
+        width: element?.getBoundingClientRect().width ?? active.rect.current.initial?.width ?? 220,
+        title: section ? active.data.current!.title : item?.name ?? modules.find(module => module.id === active.id)?.name ?? '',
+        folder: !section && !!item?.name });
+    }}
     onDragCancel={() => setDragging(undefined)}
-    onDragEnd={({ active, over }) => {
+    onDragEnd={({ active, over, delta, activatorEvent }) => {
       setDragging(undefined);
       suppressNextClick();
-      if (!over || mutation.isPending) return;
+      if (!over || mutation.isPending || sectionMove.isPending) return;
+      if (active.data.current?.kind === 'section') {
+        const source = active.data.current as SectionSource;
+        const drop = over.data.current;
+        if (!onMoveSection || !drop || (drop.kind !== 'section' && drop.kind !== 'section-module')) return;
+        const pointer = activatorEvent as PointerEvent;
+        const edge = drop.kind === 'section-module' ? 'end' : pointer.clientY + delta.y < over.rect.top + over.rect.height / 2 ? 'before' : 'after';
+        sectionMove.mutate({ source: { moduleId: source.moduleId, headingId: source.headingId }, target: { moduleId: drop.moduleId, headingId: drop.headingId, edge } });
+        return;
+      }
       const target = String(over.id).replace(/:contents$/, '');
       save(moveSidebarItem(items, String(active.id), target));
     }}>
@@ -143,11 +170,9 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
       </SortableContext></DropZone>
       {/* A folder is not a slot in the list, so the row cannot preview by moving into it:
           a copy follows the pointer instead. Portalled out of the scrolling sidebar. */}
-      {createPortal(<DragOverlay dropAnimation={null}>{dragged && <div data-sidebar-drag-preview inert aria-hidden style={{ width: dragging?.width }}
-        className="floating-surface cursor-grabbing rounded-md text-sm">
-        <SidebarMenu>{dragged.name === null
-          ? (draggedModule && renderModule(draggedModule))
-          : <SidebarMenuItem><SidebarMenuButton><ChevronRight /><Folder /><span>{dragged.name}</span></SidebarMenuButton></SidebarMenuItem>}</SidebarMenu>
+      {createPortal(<DragOverlay dropAnimation={null} style={{ pointerEvents: 'none' }}>{dragging && <div data-sidebar-drag-preview inert aria-hidden style={{ width: dragging.width }}
+        className="floating-surface flex h-8 items-center gap-2 rounded-md px-2 text-sm">
+        {dragging.folder && <Folder className="size-4 shrink-0" />}<span className="truncate">{dragging.title}</span>
       </div>}</DragOverlay>, document.body)}
     </DndContext>
     <Dialog open={editing !== null} onOpenChange={open => { if (!open) setEditing(null); }}><DialogContent>

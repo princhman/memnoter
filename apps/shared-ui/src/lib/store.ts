@@ -30,6 +30,7 @@ type appState = {
   skipCardsCreatedToday: boolean;
   // List foldable block titles under their heading in the outline popup.
   foldableBlocksInOutline: boolean;
+  sidebarSections: boolean;
 };
 
 declare global {
@@ -50,6 +51,7 @@ const defaultState: appState = {
   learnAhead: false,
   skipCardsCreatedToday: false,
   foldableBlocksInOutline: false,
+  sidebarSections: false,
 };
 
 function normalizeState(value: Partial<appState> | null): appState {
@@ -170,6 +172,10 @@ export function setSidebarOpen(open: boolean) {
 
 export function setFoldableBlocksInOutline(foldableBlocksInOutline: boolean) {
   appStore.setState((state) => ({ ...state, foldableBlocksInOutline }));
+}
+
+export function setSidebarSections(sidebarSections: boolean) {
+  appStore.setState((state) => ({ ...state, sidebarSections }));
 }
 
 export function setLearnAhead(learnAhead: boolean) {

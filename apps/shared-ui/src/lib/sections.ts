@@ -1,8 +1,8 @@
 import { action } from "./shortcuts.ts";
-import { outline } from "./outline.ts";
+import { outline, TOC_ID_ATTRIBUTE } from "./outline.ts";
 import { Extension } from "@tiptap/core";
 import type { EditorState } from "@tiptap/pm/state";
-import { TextSelection } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { getSectionRange, sectionFocusKey } from "./section-focus.ts";
 
 export type SectionKind = "sibling" | "subsection";
@@ -78,12 +78,13 @@ export const Sections = Extension.create({
           if (!dispatch) return true;
           tr.scrollIntoView();
 
-          // A section outside the focused one would be hidden; focus it instead.
+          // A sibling belongs outside the focused section: reveal the note and
+          // keep the caret in the new heading rather than silently refocusing.
           const focusedPos = sectionFocusKey.getState(state);
           if (focusedPos != null) {
             const range = getSectionRange(tr.doc, tr.mapping.map(focusedPos));
             if (!range || headingPos < range.from || headingPos >= range.to) {
-              commands.showSection(headingPos);
+              commands.showDocument();
             }
           }
           return true;
@@ -97,4 +98,47 @@ export const Sections = Extension.create({
       [action("section.child").keys]: () => this.editor.commands.insertSection("subsection"),
     };
   },
+
+  addProseMirrorPlugins() {
+    const editor = this.editor;
+    return [new Plugin({
+      key: new PluginKey("empty-heading-ids"),
+      appendTransaction(transactions, _old, state) {
+        if (!editor.isEditable || !transactions.some(tr => tr.docChanged) ||
+          transactions.some(tr => tr.getMeta("composition"))) return null;
+        return emptyHeadingIds(state);
+      },
+      // A note becomes editable only after it loads, without a content change.
+      view: () => ({
+        update(view) {
+          if (!editor.isEditable || view.composing) return;
+          const tr = emptyHeadingIds(view.state);
+          if (tr) queueMicrotask(() => {
+            const next = !view.isDestroyed && editor.isEditable ? emptyHeadingIds(view.state) : null;
+            if (next) view.dispatch(next);
+          });
+        },
+      }),
+    })];
+  },
 });
+
+// TableOfContents only identifies headings with text. An empty heading still
+// bounds a section and takes a chapter number, so the sidebar and section moves
+// need its id too. Splitting at a heading's start can also leave the empty half
+// with its neighbour's id; the titled heading keeps it.
+function emptyHeadingIds(state: EditorState) {
+  const titled = new Set<string>();
+  state.doc.forEach(node => { if (node.type.name === "heading" && node.textContent) titled.add(node.attrs[TOC_ID_ATTRIBUTE]); });
+  const seen = new Set<string>();
+  const tr = state.tr;
+  state.doc.forEach((node, pos) => {
+    if (node.type.name !== "heading" || node.textContent) return;
+    const id = node.attrs[TOC_ID_ATTRIBUTE];
+    if (typeof id === "string" && id && !titled.has(id) && !seen.has(id)) { seen.add(id); return; }
+    const fresh = crypto.randomUUID();
+    seen.add(fresh);
+    tr.setNodeMarkup(pos, undefined, { ...node.attrs, [TOC_ID_ATTRIBUTE]: fresh, id: fresh });
+  });
+  return tr.docChanged ? tr.setMeta("addToHistory", false) : null;
+}
