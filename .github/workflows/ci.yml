@@ -329,7 +329,23 @@ jobs:
           vm_stat
           top -l 0 -s 10 -n 15 -o cpu -stats pid,command,cpu,mem,threads,state,time > "$RUNNER_TEMP/ios-resources.log" &
           resource_monitor=$!
-          trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
+          startup_monitor=
+          cleanup_monitors() {
+            native_status=$?
+            trap - EXIT
+            kill "$resource_monitor" ${startup_monitor:+"$startup_monitor"} 2>/dev/null || true
+            wait "$resource_monitor" 2>/dev/null || true
+            if [[ -n "$startup_monitor" ]]; then
+              wait "$startup_monitor" 2>/dev/null || true
+            fi
+            exit "$native_status"
+          }
+          trap cleanup_monitors EXIT
+          if [[ "$IOS_TEST_SUITE" == drawing ]]; then
+            # TEMPORARY DIAGNOSTIC — remove before review merge. No speed claims.
+            python3 scripts/ci/sample-ios-startup.py "$RUNNER_TEMP/ios-startup-samples" > "$RUNNER_TEMP/ios-startup.log" 2>&1 &
+            startup_monitor=$!
+          fi
           bash scripts/ci/run-ios-tests.sh
       - name: Verify native tests actually ran
         if: always()
@@ -348,6 +364,8 @@ jobs:
             ${{ runner.temp }}/wrangler.log
             ${{ runner.temp }}/simulators.json
             ${{ runner.temp }}/ios-resources.log
+            ${{ runner.temp }}/ios-startup.log
+            ${{ runner.temp }}/ios-startup-samples/
 
   # Preserve the required iOS check across the build/test split.
   ios:
