@@ -57,9 +57,9 @@ This code ships to desktop, iPad and iPhone at once.
   notes. Do not build a separate LaTeX parser or Write/Preview editor.
   Keep the answer field compact with a subtle border and an empty-state typing
   and drawing hint, so the editable area is visible beneath each question.
-  On desktop the field is a read-only preview; clicking it opens the answer in
-  a modal with the part's crops (no inline answer editing). iPad/iPhone keep
-  inline answers. Desktop mirrors the iPad toolbar in the window header: the
+  Answers are edited inline under their question on every platform, so the
+  whole question stays in view; no answer modal or click-to-answer preview.
+  Desktop mirrors the iPad toolbar in the window header: the
   breadcrumb becomes a back chevron and the worksheet title; the top right
   holds previous/next with question pills (menu above 3) and a purple Finish
   pill. No in-page title, footer, module heading or "Saved" line.
