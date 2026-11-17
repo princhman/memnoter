@@ -244,22 +244,6 @@ body {
     border-radius: 0.5rem;
 }
 
-.worksheet-answer-preview .tiptap.worksheet-answer-input {
-    transition: border-color 120ms ease-out;
-}
-
-.worksheet-answer-preview[role="button"]:is(:hover, :focus-visible) .tiptap.worksheet-answer-input {
-    border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
-}
-
-.worksheet-answer-preview[role="button"] .tiptap {
-    cursor: pointer;
-}
-
-.worksheet-answer-preview[role="button"]:focus-visible {
-    outline: none;
-}
-
 .tiptap.worksheet-answer-input:focus-within {
     border-color: var(--primary);
 }
