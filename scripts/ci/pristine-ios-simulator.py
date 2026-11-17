@@ -123,12 +123,11 @@ def validate_archive(archive, manifest):
             parts = PurePosixPath(name).parts
             require(name and not name.startswith('/') and '..' not in parts and
                     name == '/'.join(parts), f'unsafe archive path: {name}')
-            if not (parts == (uuid,) or parts[:2] == (uuid, 'data') or parts == (uuid, 'device.plist')):
-                # BSD tar stores macOS metadata in regular AppleDouble siblings.
-                target = str(PurePosixPath(name).with_name(parts[-1][2:])) if parts[-1].startswith('._') else ''
-                require(member.isfile() and target in (uuid, f'{uuid}/data', f'{uuid}/device.plist'),
+            if parts[0] != uuid:
+                # BSD tar stores root metadata in a regular AppleDouble sibling.
+                require(member.isfile() and name == f'._{uuid}',
                         f'archive outside selected device: {name}')
-                sidecars[name] = target
+                sidecars[name] = uuid
             require(name not in paths, f'duplicate archive path: {name}')
             require(member.isfile() or member.isdir() or member.issym() or member.islnk(),
                     f'unsupported archive entry: {name}')
@@ -175,10 +174,11 @@ def capture(output):
         require(time.monotonic() < deadline, 'selected simulator did not shut down')
         time.sleep(1)  # Poll selected shutdown state; no warmup delay.
     write_json(output / 'shutdown.json', devices)
-    original = sum(int(line.split()[0]) * 1024 for line in
-                   run('du', '-sk', str(folder / 'device.plist'), str(folder / 'data')).decode().splitlines())
-    require({p.name for p in folder.iterdir()} == {'device.plist', 'data'},
-            'device folder has unexpected entries; refusing broader archive')
+    original = int(run('du', '-sk', str(folder)).decode().split()[0]) * 1024
+    # Preserve OS metadata beside data/plist while bounding the archive to one UUID.
+    # CoreSimulator's real device folder has more entries than a minimal fixture.
+    write_json(output / 'layout.json', dict(entries=sorted(p.name for p in folder.iterdir()),
+                                           originalAllocatedBytes=original))
     archive = output / 'device.tar.gz'
     archive_started = time.monotonic()
     run('tar', '-czpf', str(archive), '-C', str(folder.parent),

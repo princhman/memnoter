@@ -250,6 +250,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Boot a blank iPad with the stock selector
+        shell: bash
         timeout-minutes: 5
         run: |
           mkdir -p "$RUNNER_TEMP/ios-pristine-baseline"
@@ -257,14 +258,19 @@ jobs:
           date -u '+%FT%TZ pristine boot starting' | tee "$RUNNER_TEMP/ios-pristine-baseline/bootstrap.log"
           bash scripts/ci/boot-ios-simulator.sh iPad 2>&1 | tee -a "$RUNNER_TEMP/ios-pristine-baseline/bootstrap.log"
       - name: Complete initial OS migration
+        shell: bash
         timeout-minutes: 5
         run: |
           xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b 2>&1 | tee -a "$RUNNER_TEMP/ios-pristine-baseline/bootstrap.log"
           date -u '+%FT%TZ pristine initial migration complete' | tee -a "$RUNNER_TEMP/ios-pristine-baseline/bootstrap.log"
       - name: Verify blank inventory, shut down and archive only the iPad
+        shell: bash
         timeout-minutes: 4
         run: |
           python3 scripts/ci/pristine-ios-simulator.py capture "$RUNNER_TEMP/ios-pristine-baseline" 2>&1 | tee -a "$RUNNER_TEMP/ios-pristine-baseline/bootstrap.log"
+          test -s "$RUNNER_TEMP/ios-pristine-baseline/device.tar.gz"
+          test -s "$RUNNER_TEMP/ios-pristine-baseline/manifest.json"
+          test -s "$RUNNER_TEMP/ios-pristine-baseline/device.sha256"
       - uses: actions/upload-artifact@v4
         timeout-minutes: 3
         with:
@@ -346,11 +352,13 @@ jobs:
           name: ios-pristine-baseline
           path: ${{ runner.temp }}/ios-pristine-baseline
       - name: Validate and restore the same registered iPad identity
+        shell: bash
         if: matrix.simulator == 'restored'
         timeout-minutes: 5
         run: |
           mkdir -p "$RUNNER_TEMP/ios-pristine-restore"
           python3 scripts/ci/pristine-ios-simulator.py restore "$RUNNER_TEMP/ios-pristine-restore" 2>&1 | tee "$RUNNER_TEMP/ios-pristine-restore/restore.log"
+          test -s "$RUNNER_TEMP/ios-pristine-restore/restore.json"
       # Finish Worker dependency setup before simulator first boot.
       # Boot on this VM while ios-build runs on its separate VM.
       - name: Start the iOS simulator
