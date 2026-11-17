@@ -28,6 +28,10 @@ def selection(event, base):
                 'AGENTS.md', 'CLAUDE.md', 'README.md', 'LICENSE', '.gitignore',
             ):
                 continue
+            # These fixtures are also direct inputs to Rust code/tests.
+            if path in ('apps/shared-ui/tests/fixtures/shared-images-yjs.json',
+                        'apps/sync/test/fixtures/protocol.json'):
+                selected.add('rust')
             if path.startswith('apps/shared-ui/tests/'):
                 if path.endswith('.test.mjs'):
                     selected.add('browser')
