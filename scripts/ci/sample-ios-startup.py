@@ -115,8 +115,9 @@ def capture(directory):
             if processes is None:
                 continue
             targets = sorted(
-                (pid, *record) for pid, record in processes.items()
-                if Path(record[2]).name in TARGETS
+                ((pid, *record) for pid, record in processes.items()
+                 if Path(record[2]).name in TARGETS),
+                key=lambda row: (Path(row[3]).name != "MemnoterUITests-Runner", row[0]),
             )
             if first_runner is None and any(
                 Path(path).name == "MemnoterUITests-Runner"
@@ -124,7 +125,7 @@ def capture(directory):
             ):
                 first_runner = time.monotonic()
                 log("first UITest runner observed; phase clock starts (discovery precision ~5s)")
-            if first_runner is None or phase == len(PHASES):
+            if first_runner is None:
                 continue
             due = first_runner + PHASES[phase]
             if time.monotonic() < due:
@@ -150,8 +151,9 @@ def capture(directory):
                     command = [SUDO, "-n", *command]
                 result = run(command, deadline)
                 log(f"sample END pid={pid} status={'completed' if result is not None else 'failed/stopped'} file_exists={destination.exists()}")
-            if phase < len(PHASES):
-                next_snapshot = min(next_snapshot, first_runner + PHASES[phase])
+            if phase == len(PHASES):
+                break
+            next_snapshot = min(next_snapshot, first_runner + PHASES[phase])
     finally:
         if first_runner is None:
             log("missed all phases: UITest runner never observed")
