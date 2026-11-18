@@ -335,11 +335,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_ID: ${{ steps.bundle.outputs.artifact-id }}
         run: |
+          read_artifact() {
+            local destination="$1" attempt status
+            shift
+            for attempt in 1 2; do
+              if gh api "$@" > "$destination"; then
+                return 0
+              else
+                status=$?
+              fi
+              if [[ "$attempt" == 2 ]]; then
+                return "$status"
+              fi
+              echo "Artifact read failed; retrying (attempt 2/2)" >&2
+              sleep 2
+            done
+          }
           artifact="repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID"
-          digest=$(gh api "$artifact" --jq '.digest')
+          read_artifact "$RUNNER_TEMP/ios-test-bundle.digest" "$artifact" --jq '.digest'
+          digest=$(cat "$RUNNER_TEMP/ios-test-bundle.digest")
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           archive="$RUNNER_TEMP/ios-test-bundle.zip"
-          gh api "$artifact/zip" > "$archive"
+          read_artifact "$archive" "$artifact/zip"
           printf '%s  %s\n' "${digest#sha256:}" "$archive" | shasum -a 256 --check
       - name: Unpack the test bundle
         timeout-minutes: 2
