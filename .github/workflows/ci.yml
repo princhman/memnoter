@@ -120,7 +120,9 @@ jobs:
           uri = re.compile(rb"(?<!\S)" + cloud_uri)
           legacy = re.compile(rb"^([ \t]*deb(?:-src)?[ \t]+(?:\[[^\]\r\n]*\][ \t]+)?)" + cloud_uri)
           canonical = b"https://archive.ubuntu.com/ubuntu"
-          for path in (Path("/etc/apt/sources.list.d/ubuntu.sources"), Path("/etc/apt/sources.list")):
+          source_parts = Path("/etc/apt/sources.list.d")
+          paths = [Path("/etc/apt/sources.list"), *sorted(source_parts.glob("*.list")), *sorted(source_parts.glob("*.sources"))]
+          for path in paths:
               if not path.exists():
                   continue
               original = path.read_bytes()
@@ -138,6 +140,9 @@ jobs:
               normalized = b"".join(lines)
               if normalized != original:
                   path.write_bytes(normalized)
+                  print(f"Normalized Ubuntu cloud archive in {path}")
+              else:
+                  print(f"Inspected APT source {path}: unchanged")
           PY
       - run: pnpm --filter memnoter-shared-ui exec playwright install --with-deps webkit chromium
         if: matrix.shard != 'benchmark'
