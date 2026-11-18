@@ -35,29 +35,30 @@ struct ReviewView: View {
             if #available(iOS 26.0, *), horizontalSizeClass != .compact {
                 ToolbarSpacer(.fixed, placement: .topBarLeading)
             }
-            ToolbarItemGroup(placement: horizontalSizeClass == .compact ? .topBarTrailing : .topBarLeading) {
-                Button("Undo", systemImage: "arrow.uturn.backward") { undo() }
-                    .disabled(!state.canUndo || busy).keyboardShortcut("z")
-                    .padding(.leading, legacyToolbarSpacing)
-                Button("Redo", systemImage: "arrow.uturn.forward") { redo() }
-                    .disabled(!state.canRedo || busy).keyboardShortcut("z", modifiers: [.command, .shift])
-                if toolbarWidth < 700 {
-                    Menu { cardActions } label: { Label("Card actions", systemImage: "ellipsis") }
-                        .disabled(!state.hasCard || busy)
-                } else {
-                    cardActions
+            if horizontalSizeClass == .compact {
+                countsToolbar
+                if #available(iOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 }
             }
-            if #available(iOS 26.0, *), horizontalSizeClass == .compact {
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+            ToolbarItemGroup(placement: horizontalSizeClass == .compact ? .topBarTrailing : .topBarLeading) {
+                if horizontalSizeClass == .compact {
+                    Menu {
+                        historyActions
+                        cardActions
+                    } label: { Image(systemName: "ellipsis") }
+                        .accessibilityLabel("Review actions")
+                } else {
+                    historyActions
+                    if toolbarWidth < 700 {
+                        Menu { cardActions } label: { Label("Card actions", systemImage: "ellipsis") }
+                            .disabled(!state.hasCard || busy)
+                    } else {
+                        cardActions
+                    }
+                }
             }
-            if #available(iOS 26.0, *) {
-                // Plain numbers, without the glass capsule toolbar items get by default.
-                ToolbarItem(placement: .topBarTrailing) { countsLabel }
-                    .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .topBarTrailing) { countsLabel }
-            }
+            if horizontalSizeClass != .compact { countsToolbar }
         }
         .task {
             let web = WebSession(client: client, directory: directory, entry: BridgeProtocol.reviewEntry, preferences: preferences)
@@ -68,9 +69,25 @@ struct ReviewView: View {
         .onChange(of: moduleId) { _, _ in command(.load, ["scope": moduleId as Any? ?? NSNull()], parameters: ["scope"]) }
         .onDisappear { session?.dispose() }
     }
+    @ToolbarContentBuilder private var countsToolbar: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            // Plain numbers, without the glass capsule toolbar items get by default.
+            ToolbarItem(placement: .topBarTrailing) { countsLabel }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarTrailing) { countsLabel }
+        }
+    }
     private var legacyToolbarSpacing: CGFloat {
         if #available(iOS 26.0, *) { return 0 }
         return 16 // Older navigation bars have no shared glass; leave a visible gap.
+    }
+    @ViewBuilder private var historyActions: some View {
+        Button("Undo", systemImage: "arrow.uturn.backward") { undo() }
+            .disabled(!state.canUndo || busy).keyboardShortcut("z")
+            .padding(.leading, legacyToolbarSpacing)
+        Button("Redo", systemImage: "arrow.uturn.forward") { redo() }
+            .disabled(!state.canRedo || busy).keyboardShortcut("z", modifiers: [.command, .shift])
     }
     @ViewBuilder private var cardActions: some View {
         Button("Go to card in note", systemImage: "scope", action: editCurrentCard).disabled(!state.hasCard || busy)

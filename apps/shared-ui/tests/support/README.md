@@ -5,7 +5,9 @@ WebKit launcher and cleanup. Always close the server in `after` or `finally`;
 closing it also closes any remaining browsers and removes its cache. Dependency
 scanning includes the browser fixtures as well as the application's HTML entry
 points before a test navigates. The package test command limits file concurrency
-to two to avoid exhausting WebKit processes on developer machines and CI.
+to two to avoid exhausting WebKit processes. CI distributes the suite across
+sixteen runners and runs the copy benchmark separately. Local `test:ci` still
+runs both; `--skip-benchmark` is used only by the CI file shards.
 
 Pages and contexts created through the harness receive `installTestBridge`.
 Pass `{ tauri: { invoke } }` or `{ native: postMessage }` from an init script;

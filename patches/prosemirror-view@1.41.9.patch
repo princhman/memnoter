@@ -1,0 +1,45 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 9afb866379c2a9f23fa49596af33cb10de933c8d..98f81e7b1669889f61973bcc63ee9b8e518114b3 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -3633,8 +3633,9 @@ handlers.focus = function (view) {
+     view.dom.classList.add("ProseMirror-focused");
+     view.domObserver.start();
+     view.focused = true;
++    var lastClick = view.input.lastClick;
+     setTimeout(function () {
+-      if (view.docView && view.hasFocus() && !view.domObserver.currentSelection.eq(view.domSelectionRange())) selectionToDOM(view);
++      if (view.docView && view.hasFocus() && view.input.lastClick == lastClick && !view.domObserver.currentSelection.eq(view.domSelectionRange())) selectionToDOM(view);
+     }, 20);
+   }
+ };
+diff --git a/dist/index.js b/dist/index.js
+index aee1aafefa84d45c473e962f6279246bb46b8224..c897a8d7ff45a8795cb05b728ba55cd2a9dc87ec 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -3862,8 +3862,9 @@ handlers.focus = view => {
+         view.dom.classList.add("ProseMirror-focused");
+         view.domObserver.start();
+         view.focused = true;
++        const lastClick = view.input.lastClick;
+         setTimeout(() => {
+-            if (view.docView && view.hasFocus() && !view.domObserver.currentSelection.eq(view.domSelectionRange()))
++            if (view.docView && view.hasFocus() && view.input.lastClick == lastClick && !view.domObserver.currentSelection.eq(view.domSelectionRange()))
+                 selectionToDOM(view);
+         }, 20);
+     }
+diff --git a/src/input.ts b/src/input.ts
+index 3813a3b0d093e135e351062a573c7b563ccbfc9e..c37e4ca38e371ffa5f71b3c0452541c3034632db 100644
+--- a/src/input.ts
++++ b/src/input.ts
+@@ -839,8 +839,9 @@ handlers.focus = view => {
+     view.dom.classList.add("ProseMirror-focused")
+     view.domObserver.start()
+     view.focused = true
++    const lastClick = view.input.lastClick
+     setTimeout(() => {
+-      if (view.docView && view.hasFocus() && !view.domObserver.currentSelection.eq(view.domSelectionRange()))
++      if (view.docView && view.hasFocus() && view.input.lastClick == lastClick && !view.domObserver.currentSelection.eq(view.domSelectionRange()))
+         selectionToDOM(view)
+     }, 20)
+   }

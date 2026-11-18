@@ -2,7 +2,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { IMAGE_TYPES } from "@/lib/editor-schema/images";
 import { surfaceClass } from "./ui/surface";
 import { action, formatKeys } from "@/lib/shortcuts";
-import { forwardRef, Fragment, useEffect, useId, useImperativeHandle, useRef, useState, type RefObject, type ReactNode } from "react";
+import { forwardRef, Fragment, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type RefObject, type ReactNode } from "react";
 import type { Editor, Range } from "@tiptap/core";
 import { capabilities } from "@/lib/backend";
 import { cn } from "@/lib/utils";
@@ -245,7 +245,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
     const optionId = (index: number) => `${listboxId}-${index}`;
     useActiveDescendant(editor, listboxId, items.length ? optionId(selected) : null, focusTarget);
 
-    useEffect(() => setSelected(0), [items]);
+    useLayoutEffect(() => setSelected(0), [items]);
 
     useEffect(() => {
       const list = listRef.current;
