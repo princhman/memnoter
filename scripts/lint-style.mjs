@@ -14,9 +14,13 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
 
-const CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html|swift|ya?ml|sh)$/;
+const CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html|swift|ya?ml|sh)$|(^|\/)package\.json$/;
 const STYLE_CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html|swift)$/;
-const MANUAL_DEPLOY = /wrangler(?:@[\w.]+)?\s+deploy\b|wrangler-action|cloudflare\/wrangler-action/;
+const MANUAL_DEPLOY = /(?<![\w-])wrangler(?:@[\w.]+)?["']?\s+deploy\b|(?<![\w-])wrangler-action\b/;
+// A workflow running a package's deploy script deploys by hand too.
+const WORKFLOW_DEPLOY = /\b(?:pnpm|npm|yarn)\b.*\bdeploy\b/;
+// Kept until the Cloudflare dashboard's deploy command is confirmed not to use it.
+const ALLOWED_DEPLOY = { file: "apps/sync/package.json", text: '"deploy": "wrangler deploy"' };
 const SKIPPED = /(^|\/)(node_modules|dist|target)\/|routeTree\.gen\.ts$|pnpm-lock/;
 // The shared marker identifies surfaces independently of component names.
 const SURFACE = /\.floating-surface(?![\w-])/;
@@ -51,7 +55,8 @@ for (const file of files) {
   lines.set(file, source.split("\n"));
 
   lines.get(file).forEach((text, index) => {
-    if (MANUAL_DEPLOY.test(text)) {
+    const allowed = file === ALLOWED_DEPLOY.file && text.trim().startsWith(ALLOWED_DEPLOY.text);
+    if (!allowed && (MANUAL_DEPLOY.test(text) || (file.startsWith(".github/") && WORKFLOW_DEPLOY.test(text)))) {
       report(file, index + 1, "manual-deploy", "Cloudflare apps deploy from main; never by hand or from a workflow");
     }
     if (!STYLE_CHECKED.test(file)) return;

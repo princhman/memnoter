@@ -76,8 +76,8 @@ Each rule records the user's words and the date in a comment.
   <!-- 2026-11-17: "remove the modal, go back to inline"; 2026-11-21: "make the input field modal, when additional context from the screen is not needed" -->
 - **Desktop list reorder: drag from the row itself, no grip.** The row preview
   follows the pointer, also over folders and other containers. The drop never
-  snaps back while saving. A folded row opens after 2 s of hover over a valid
-  drop target (`sidebar-modules.tsx` is the reference).
+  snaps back while saving (`sidebar-modules.tsx`). A folded row opens after
+  2 s of hover over a valid drop target (`question-bank.tsx`).
   Why: a dedicated grip "is a lot of space waste".
   <!-- 2026-11-08: "can you preview the row the same way"; 2026-11-14: "no need for dragging icon"; 2026-11-16: "open after 2 seconds hover" -->
 - **Section pickers go one level at a time.** Opening a module shows top-level

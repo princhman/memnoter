@@ -148,8 +148,8 @@ Don't restate the stack, commands or rules; the delegate already has them.
 The skills are general; the per-platform details below are what they look up.
 
 Handoff in this repo: Linear team I build (PRI). An agent waiting on the user
-comments on the issue, adds the `Needs input` label and watches the issue
-(`issue_watch`); it removes the label when it picks the issue up again. Each
+comments on the issue, adds the `Needs input` label (see Linear above) and
+watches the issue (`issue_watch`). Each
 issue gets its own branch in the main checkout, but PRs are batched (Ship flow
 step 3), not one per issue; add a worktree only to work issues in parallel, and remove it once the
 branch is pushed.

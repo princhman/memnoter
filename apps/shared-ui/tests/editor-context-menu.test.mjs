@@ -105,7 +105,7 @@ test("right click offers the same insert commands as the slash menu", async () =
   await page.getByRole("option").first().waitFor();
   const slashItems = await options();
   await page.keyboard.press("Escape");
-  assert.ok(slashItems.length > 5, JSON.stringify(slashItems));
+  assert.ok(slashItems.some(item => item.startsWith("Drawing")), JSON.stringify(slashItems));
   assert.deepEqual([...contextItems].sort(), [...slashItems].sort());
 });
 

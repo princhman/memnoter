@@ -13,10 +13,11 @@ This code ships to desktop, iPad and iPhone at once.
   violet or new purple shades. Primary buttons are purple.
 - **No decorative chrome.** No borders, dividers or outlines unless contrast
   needs them. Don't re-add one that was removed. Floating panels separate with
-  `.floating-surface` and `--floating-shadow` only; opening a neighbouring pane
+  their shadow only (`surfaceClass` in `src/components/ui/surface`); opening a neighbouring pane
   or changing state never adds an edge or line behind controls.
-- **Insert commands.** Every insert command appears in both the slash menu and
-  the right-click Insert menu, from the one list in `components/insert-menu.tsx`.
+- **Insert commands.** On desktop, every insert command in the slash menu also
+  appears in the right-click Insert menu, from the one list in
+  `src/components/insert-menu.tsx` (iOS keeps its native menu).
   `tests/editor-context-menu.test.mjs` checks they match.
 - **Question bank controls.** Crop editing belongs in one ellipsis menu over
   the image, styled like regular saved images; don't add side action rails.

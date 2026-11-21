@@ -9,11 +9,11 @@ import { LatexSuggest } from "@/components/latex-menu";
 // Visible fixtures use the same node views and menus as Tiptap.
 export function visibleNoteExtensions(
   options: Parameters<typeof noteExtensions>[0],
-  { insertImages }: { insertImages?: (editor: Editor, files: File[], position: number) => void } = {},
+  menuOptions: { insertImages?: (editor: Editor, files: File[], position: number) => void; insertDrawing?: (editor: Editor) => void; nativeDrawing?: boolean } = {},
 ) {
   return noteExtensions({ ...options, ui: {
     inlineMath: InlineMathView, mathBlock: MathBlockView,
     savedImage: SavedImage, inlineImage: InlineImage,
-    menus: [insertImages ? SlashCommand.configure({ insertImages }) : SlashCommand, LatexSuggest],
+    menus: [Object.keys(menuOptions).length ? SlashCommand.configure(menuOptions) : SlashCommand, LatexSuggest],
   } });
 }

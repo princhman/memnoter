@@ -17,11 +17,13 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/App.css";
 
 const document = new Y.Doc();
-Object.assign(window, { pickedImages: [] });
+Object.assign(window, { pickedImages: [], drawingsInserted: 0 });
 function TablesEditor() {
   // Records /image picks; uploads belong to the app shell.
   const insertImages = (_editor: unknown, files: File[]) => { (window as unknown as { pickedImages: string[] }).pickedImages.push(...files.map(file => file.name)); };
-  const editor = useEditor({ extensions: visibleNoteExtensions({ document }, { insertImages }), onCreate: ({ editor }) => {
+  // Records Drawing picks; the drawing editor belongs to the app shell.
+  const insertDrawing = () => { (window as unknown as { drawingsInserted: number }).drawingsInserted++; };
+  const editor = useEditor({ extensions: visibleNoteExtensions({ document }, { insertImages, insertDrawing, nativeDrawing: true }), onCreate: ({ editor }) => {
     Object.assign(window, {
       loadImported: async (saved: Parameters<typeof applySavedContent>[1]) => {
         const doc = new Y.Doc(); applySavedContent(doc, saved);
