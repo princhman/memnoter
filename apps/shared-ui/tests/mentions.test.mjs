@@ -89,14 +89,42 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     await page.getByRole('option', { name: 'Biology', exact: true }).waitFor();
     assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf']);
     assert.equal(await paragraph.innerText(), 'See @');
-    // Enter inside a level references the highlighted section.
-    await page.keyboard.press('ArrowDown'); await page.keyboard.press('Tab');
-    await page.getByRole('option', { name: 'Cells', exact: true }).waitFor();
-    await page.keyboard.press('Enter');
-    await page.getByRole('button', { name: '@Biology › Cells', exact: true }).waitFor();
-    await page.keyboard.press('Backspace'); await page.keyboard.press('Backspace');
-    await page.waitForFunction(() => !document.querySelector('.mention-chip'));
-    await page.keyboard.type('@');
+    // Enter must work as soon as the next level appears, as well as after a normal key press.
+    for (const immediate of [true, false]) {
+      if (immediate) {
+        await page.evaluate(() => {
+          window.mentionHandoff = null;
+          const observer = new MutationObserver(() => {
+            const options = [...document.querySelectorAll('[role="option"]')];
+            if (document.querySelector('[data-menu-header]')?.textContent !== 'Biology' || options[0]?.textContent?.replace(/Tab$/, '') !== 'Cells') return;
+            observer.disconnect();
+            const focused = document.activeElement;
+            window.mentionHandoff = {
+              options: options.map(option => ({ text: option.textContent?.replace(/Tab$/, ''), selected: option.getAttribute('aria-selected') })),
+              editorFocused: focused?.matches('.tiptap[contenteditable=true]'),
+              activeDescendantSelected: focused?.getAttribute('aria-activedescendant') === options[0].id,
+            };
+            focused?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+          });
+          observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+        });
+      }
+      await page.keyboard.press('ArrowDown'); await page.keyboard.press('Tab');
+      if (immediate) {
+        await page.waitForFunction(() => window.mentionHandoff !== null);
+        assert.deepEqual(await page.evaluate(() => window.mentionHandoff), {
+          options: [{ text: 'Cells', selected: 'true' }], editorFocused: true, activeDescendantSelected: true,
+        }, 'the first nested option must be selected when it appears');
+      } else {
+        await page.getByRole('option', { name: 'Cells', exact: true }).waitFor();
+        await page.keyboard.press('Enter');
+      }
+      await page.getByRole('button', { name: '@Biology › Cells', exact: true }).waitFor();
+      await page.keyboard.press('Backspace'); await page.keyboard.press('Backspace');
+      await page.waitForFunction(() => !document.querySelector('.mention-chip'));
+      await page.keyboard.type('@');
+      await page.getByRole('option', { name: 'Biology', exact: true }).waitFor();
+    }
     // Searching matches the full path and shows where each section lives.
     await page.keyboard.type('biology organelles');
     await page.getByRole('option', { name: 'Organelles Biology / Cells', exact: true }).waitFor();
