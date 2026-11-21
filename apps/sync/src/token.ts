@@ -42,7 +42,7 @@ export async function verifyToken(token: string, secret: string): Promise<Claims
     );
     if (!valid) return null;
     const claims = JSON.parse(new TextDecoder().decode(fromBase64url(body))) as Claims;
-    if (typeof claims.sub !== "string" || typeof claims.iat !== "number" || typeof claims.exp !== "number" || claims.exp < Date.now()) return null;
+    if (typeof claims.sub !== "string" || typeof claims.email !== "string" || typeof claims.iat !== "number" || typeof claims.exp !== "number" || claims.exp < Date.now()) return null;
     return claims;
   } catch {
     return null;

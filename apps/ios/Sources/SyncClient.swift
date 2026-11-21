@@ -119,6 +119,7 @@ struct SyncKeychain {
     private var generation = UUID()
     private var suspended = false
     private var fatal = false
+    private var deletingAccount = false
     init(core: CoreClient, session: URLSession = .shared, keychain: SyncKeychain = SyncKeychain()) {
         self.core = core; self.session = session; self.keychain = keychain
         transfers = SyncTransferWorker(pass: { [weak self] in
@@ -229,6 +230,19 @@ struct SyncKeychain {
         stop(); try keychain.delete(); account = nil
         _ = try await command("sync_disable"); pending = 0; lastSynced = nil; status = "Not running."
     }
+    func deleteAccount() async throws {
+        guard let account else { throw SyncFailure(message: "Sign in again") }
+        // Preserve the credentials for a retry if the server cannot finish.
+        deletingAccount = true
+        stop()
+        defer {
+            deletingAccount = false
+            if !suspended { resume() }
+        }
+        _ = try await request(server: account.server, path: SyncConfiguration.path("account"), token: account.token, method: "DELETE")
+        try await signOut()
+        error = nil
+    }
     func stop() {
         generation = UUID(); connection?.cancel(); ticker?.cancel(); fileRetryTask?.cancel(); transfers.cancel()
         finishPushWaiters(false)
@@ -238,7 +252,7 @@ struct SyncKeychain {
     func pause() { suspended = true; stop() }
     func resume() {
         suspended = false
-        guard !fatal else { return }
+        guard !fatal, !deletingAccount else { return }
         guard account != nil, connection == nil else { nudge(); return }
         let owner = generation
         connection = Task { [weak self] in

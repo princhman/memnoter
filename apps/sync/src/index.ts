@@ -8,7 +8,7 @@ import {
   AUTH_PROTOCOL_PREFIX,
   MAX_FILE_BYTES,
   MAX_LARGE_BLOB_BYTES,
-  SYNC_PROTOCOL,
+  SYNC_PROTOCOL, SYNC_CONTRACT,
   isValidBlobId,
   isValidFileId,
 } from "../../shared-ui/src/lib/sync/protocol";
@@ -56,6 +56,12 @@ async function route(request: Request, env: Env): Promise<Response> {
   const claims = await authenticate(request, env);
   if (!claims) return json({ error: "Sign in again" }, 401);
   const vault = env.VAULT.getByName(claims.sub);
+  if (pathname === SYNC_CONTRACT.paths.account && method === "DELETE") {
+    // A signed token can retry its own deletion even after the vault has closed.
+    if (!(await vault.deleteAccount(claims.sub, claims.iat))) return json({ error: "Sign in again" }, 401);
+    await env.ACCOUNT.getByName(claims.email).deleteIfMatches(claims.sub);
+    return json({ ok: true });
+  }
   if (!(await vault.authorize(claims.sub, claims.iat))) return json({ error: "Sign in again" }, 401);
 
   if (pathname === "/v1/key" && method === "GET") {
@@ -64,10 +70,11 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (pathname === "/v1/key" && method === "PUT") {
     const body = await readJson<Partial<KeyInfo>>(request);
     if (!isKeyInfo(body)) return json({ error: "Invalid key info" }, 400);
-    return json({ key: await vault.setKeyInfo(body) });
+    const key = await vault.setKeyInfo(body, claims.iat);
+    return key ? json({ key }) : json({ error: "Sign in again" }, 401);
   }
   if (pathname === "/v1/vault" && method === "DELETE") {
-    await vault.wipe();
+    if (!(await vault.wipe(claims.iat))) return json({ error: "Sign in again" }, 401);
     return json({ ok: true });
   }
 
@@ -78,21 +85,17 @@ async function route(request: Request, env: Env): Promise<Response> {
     const valid = kind === "files" ? isValidFileId(id) : isValidBlobId(id);
     if (!valid) return json({ error: "Invalid id" }, 400);
     const key = kind === "files" ? fileKey(claims.sub, id) : blobKey(claims.sub, id);
-    if (kind === "files" && method === "DELETE") {
+    const marker = kind === "files" ? goneKey(claims.sub, id) : null;
+    if (marker && method === "DELETE") {
       // Headerless v0.1.5 uses protocol 1. Keep this fixed when the server
       // protocol advances: legacy clients must then lose deletion access too.
       const version = request.headers.get(PROTOCOL_HEADER) ?? "1";
       if (version !== String(PROTOCOL_VERSION)) return json({ error: UPDATE_REQUIRED_MESSAGE }, 426);
-      // Publish permanence before removing bytes, including when deletion is retried.
-      await env.FILES.put(goneKey(claims.sub, id), new Uint8Array());
-      await env.FILES.delete(key);
-      return json({ ok: true });
+      return vault.deleteFile(key, marker, claims.iat);
     }
-    if (kind === "files" && (method === "GET" || method === "PUT") && await env.FILES.head(goneKey(claims.sub, id))) {
-      return json({ error: "File permanently deleted" }, 410);
-    }
-    if (method === "PUT") return putObject(request, env, key, kind === "files" ? MAX_FILE_BYTES : MAX_LARGE_BLOB_BYTES);
+    if (method === "PUT") return vault.putObject(key, marker, request, kind === "files" ? MAX_FILE_BYTES : MAX_LARGE_BLOB_BYTES, claims.iat);
     if (method === "GET") {
+      if (marker && await env.FILES.head(marker)) return json({ error: "File permanently deleted" }, 410);
       const stored = await env.FILES.get(key);
       if (!stored) return json({ error: "Not found" }, 404);
       return new Response(stored.body, {
@@ -101,15 +104,6 @@ async function route(request: Request, env: Env): Promise<Response> {
     }
   }
   return json({ error: "Not found" }, 404);
-}
-
-async function putObject(request: Request, env: Env, key: string, maxBytes: number) {
-  const length = Number(request.headers.get("Content-Length"));
-  if (!Number.isFinite(length) || length <= 0) return json({ error: "Content-Length is required" }, 411);
-  if (length > maxBytes) return json({ error: "Too large" }, 413);
-  if (!request.body) return json({ error: "Empty body" }, 400);
-  await env.FILES.put(key, request.body);
-  return json({ ok: true });
 }
 
 async function withinAuthLimit(request: Request, env: Env) {
