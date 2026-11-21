@@ -17,7 +17,8 @@ being asked each time:
    the loop; don't ask delegates on visual work to run one first.
 3. Batch: merge the round's ready branches into one
    `batch/<yyyy-mm-dd>-<topic>` branch, `pnpm check:ci` once, and open one PR
-   listing `Fixes PRI-<n>` for each issue. Every PR and every merge to main runs
+   listing `Fixes PRI-<n>` for each issue it finishes (`Refs` for the rest), plus
+   the `Acceptance:` and `Evidence:` lines from the PR template. Every PR and every merge to main runs
    CI (main runs everything, iOS included), so no PR for a single small fix.
    Keep visual and behaviour-only work in separate batches only if one would
    hold the other up; one preview branch then covers all the visual changes.
@@ -46,8 +47,38 @@ being asked each time:
 delegates fix only: no tests, no sol loop, no CI waits, no builds while
 `pnpm dev:copy` is running. Install on the device only when the user is testing
 there, and install straight to it: no simulator checks, the user is the
-tester. The editor scroll/caret exception in
+tester. One cheap check stays: before handing over a build, take one
+screenshot of the exact state the user reported, on that build. It should take a
+minute or two; if it would take longer, skip it and say so. Batch related fixes
+into one build. The editor scroll/caret exception in
 `apps/shared-ui/AGENTS.md` still applies.
+
+## Ownership
+
+Collisions cost the user more than slow work: two orchestrators on one issue,
+two agents editing `RootView.swift` in one checkout, builds of a checkout with
+someone's half-finished edits.
+
+- One owner per issue and per area of code at a time. Give each delegate its own
+  worktree; in a shared checkout, don't hand two delegates the same files.
+- Before another thread takes over an issue, stop the old one first and say so
+  in both.
+- One build operator per device or simulator. It builds a named commit (a branch
+  or a merge of finished branches), never a dirty shared checkout, and reports
+  the build stamp.
+
+## Threads
+
+The orchestrator decides how work splits; the user doesn't have to.
+
+- One thread per outcome, titled after it. Its first message states the outcome,
+  the baseline (where things are now, measured if it's a number) and the stop
+  condition.
+- A bug found along the way gets its own branch and thread, not the current
+  PR. Tell the user it was split off.
+- Experiments get a timebox and a fail-closed result: no receipt (numbers,
+  logs) means it didn't work. Report when the goal looks unreachable instead of
+  continuing.
 
 ## Linear
 
@@ -93,8 +124,9 @@ tester. The editor scroll/caret exception in
 A brief only needs:
 
 1. **Task** and why, quoting the user's complaint where possible.
-2. **Done means**: what the user should see, and on which platform. Name one
-   platform until the user has approved the feature; porting is a later brief.
+2. **Done means**: copied from the Linear issue, or the user's words if there is
+   none, with the platform and evidence level. Name one platform until the user
+   has approved the feature; porting is a later brief.
 3. **Where**: checkout or branch, and whether to commit.
 4. **Mode**: normal, or "fix only, don't test, don't wait for CI".
 5. Anything that **overrides** `AGENTS.md`.
@@ -112,9 +144,12 @@ Don't restate the stack, commands or rules; the delegate already has them.
 
 ## Keeping the guides current
 
-- When the user repeats a direction or corrects how agents work, add it to the
-  narrowest guide that needs it (`apps/*/AGENTS.md` before the root file, this
-  file for orchestration only), in the same change. Memory alone doesn't reach
+- When the user repeats a direction or corrects how agents work, add it to a
+  guide. Only rules the user stated or approved: never
+  write an agent's own interpretation or an experiment into a guide. What a
+  feature does goes in its Linear issue's Decisions, not a guide. Put the rule
+  in the narrowest guide (`apps/*/AGENTS.md` before the root file, this file for
+  orchestration only), in the same change. Memory alone doesn't reach
   delegates.
 - Keep the guides short. Remove a rule when it stops being true.
 - READMEs describe how to build, run and test, plus a short architecture note.

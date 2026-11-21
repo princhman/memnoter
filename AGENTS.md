@@ -23,7 +23,7 @@ and profiling details.
 
 | Command | Use |
 | --- | --- |
-| `pnpm check:ci` | Everything CI runs. Run before a PR; `--quick` skips the iOS build. |
+| `pnpm check:ci` | What CI runs, except the iOS build on Linux (minipc). Run before a PR; `--quick` skips the iOS build. |
 | `pnpm test` | shared-ui tests. One file: `node --experimental-strip-types --import ./tests/support/register.mjs --test tests/<name>.test.mjs` in `apps/shared-ui`. |
 | `cargo test -p memnoter-core` | Core tests. |
 | `pnpm dev:device` | LAN shared-ui server for `scripts/ios-install.sh --live` Debug installs. |
@@ -50,10 +50,42 @@ it to, or polish it for, the other platforms until the user says it's right.
 Then port it and check every platform: Mac, Windows (Chromium), iPad and
 iPhone. If the brief doesn't name a platform, ask which one to start on.
 
+## Issues and decisions
+
+The Linear issue description is the spec. Its sections are **Done means** (one
+concrete scenario), **First platform**, **Evidence required** and **Decisions**.
+
+- Read the description before starting. If it has no "Done means", ask on the
+  issue (see the `agentline-linear` skill) instead of guessing the outcome.
+- When the user answers a question or approves a behaviour, append it to
+  **Decisions** with `issue_update`, dated and in their words, in the same turn
+  you act on it. A comment or chat message alone gets lost.
+- Product and UI behaviour belongs in the issue, never in an `AGENTS.md`.
+  The guides hold how to work, not what a feature does.
+- Create issues only when the user asks; use the same sections.
+
+## Evidence
+
+Every handback and PR says which level it reached, and on which platform:
+
+| Level | Means |
+| --- | --- |
+| L1 | Tests, checks or a browser run of shared-ui. |
+| L2 | A recording or screenshot of the real app (see "Demo recordings"). |
+| L3 | On a named native device or simulator, with the build stamp from Settings → About. |
+| L4 | Working live across devices (sync, or one device's edit shown on another). |
+
+"Built", "installed", "launched", "registered" and "green CI" are not levels.
+Say what you saw, not what you ran. If the issue asks for a level you couldn't
+reach, say so and why.
+
 ## Shared checkout
 
 Other agents often have uncommitted work in the same checkout.
 
+- The session-start hook warns when the checkout is behind `origin/main`. Don't
+  build, demo or branch from a stale checkout: update a clean `main` with
+  `git pull --ff-only`, or work in a worktree from `origin/main`.
 - Commit only your own changes. Never stage, stash, reset or revert anyone else's.
 - No `git stash` / `reset` / `checkout --` here. If it happened anyway, `touch`
   changed Rust sources before rebuilding: cargo uses mtimes and reuses stale builds.
@@ -113,5 +145,6 @@ an issue you didn't fix (not reproduced, waiting on the user), write
 Once the branch is pushed and its proof is on the issue, move the issue to
 **In Review** in Linear, whether the fix is visual or behaviour-only.
 Don't wait for GitHub CI: push, report, and stop.
-End with: commit SHA (or "uncommitted"), what you verified, what you didn't.
+End with: commit SHA (or "uncommitted"), the evidence level reached and on
+which platform, what you verified, what you didn't.
 Never end on any other pending wait; finish waiting first.

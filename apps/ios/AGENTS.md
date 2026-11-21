@@ -10,10 +10,7 @@
   `scripts/ios-install.sh` (`--iphone`, `--all`; `--core` after `crates/`
   changes). It prints the build stamp that Settings → About shows. If the user
   says "nothing changed", compare those first.
-- **Worksheet drawings.** Keep the actual question visible above the embedded
-  PencilKit pane. Publish through the shared answer editor and retain native
-  drafts until its durable save acknowledgement; never use note publication or
-  a separate drawing window for worksheet answers.
+- **Worksheet drawings.** See the Decisions in Linear PRI-324.
 - **Simulators.** Use T3 device tools. Never close or reuse another agent's
   device session; on `DEVICE_IN_USE`, wait or report. Release your own with
   `device_close` when done. Retained simulator ids are in `README.md`.
