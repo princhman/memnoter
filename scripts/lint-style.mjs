@@ -18,7 +18,7 @@ const CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html|swift|ya?ml|sh)$|(^|\/)package\
 const STYLE_CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html|swift)$/;
 const MANUAL_DEPLOY = /(?<![\w-])wrangler(?:@[\w.]+)?["']?\s+deploy\b|(?<![\w-])wrangler-action\b/;
 // A workflow running a package's deploy script deploys by hand too.
-const WORKFLOW_DEPLOY = /\b(?:pnpm|npm|yarn)(?:\s+-{1,2}[\w-]+(?:[ =][^\s#-][^\s#]*)?)*\s+(?:run\s+)?deploy(?![\w-])/;
+const WORKFLOW_DEPLOY = /\b(?:pnpm|npm|yarn)(?:\s+-{1,2}[\w-]+(?:[ =][^\s#-][^\s#]*)?)*\s+(?:run\s+)?(["']?)deploy\1(?![\w-])/;
 // Kept until the Cloudflare dashboard's deploy command is confirmed not to use it.
 const ALLOWED_DEPLOY = { file: "apps/sync/package.json", line: /^"deploy": "wrangler deploy",?$/ };
 const SKIPPED = /(^|\/)(node_modules|dist|target)\/|routeTree\.gen\.ts$|pnpm-lock/;
