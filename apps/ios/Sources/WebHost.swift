@@ -134,7 +134,7 @@ private struct PdfViewStateRecord: Codable {
         liveWatchdog?.cancel()
         web.load(URLRequest(url: bundledURL))
         let label = UILabel()
-        label.text = "Live editor unavailable · using bundle"
+        label.text = "Live editor unavailable, using bundle"
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabel
         label.backgroundColor = .systemBackground

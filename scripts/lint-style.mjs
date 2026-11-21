@@ -6,13 +6,17 @@
 //                  buttons: their shadow or background sets them apart in light mode.
 //                  Dark floating surfaces rely on fill plus a stronger shadow.
 //                  Dividers inside them are fine.
+//   manual-deploy  no hand deploys or deploy workflows for Cloudflare apps:
+//                  apps/sync and apps/marketing deploy from main via the dashboard.
 // A line containing `lint-allow: <rule>` is exempt, for text that has to show
 // the character itself.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
 
-const CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html)$/;
+const CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html|swift|ya?ml|sh)$/;
+const STYLE_CHECKED = /\.(ts|tsx|mjs|js|css|md|rs|html|swift)$/;
+const MANUAL_DEPLOY = /wrangler(?:@[\w.]+)?\s+deploy\b|wrangler-action|cloudflare\/wrangler-action/;
 const SKIPPED = /(^|\/)(node_modules|dist|target)\/|routeTree\.gen\.ts$|pnpm-lock/;
 // The shared marker identifies surfaces independently of component names.
 const SURFACE = /\.floating-surface(?![\w-])/;
@@ -47,6 +51,10 @@ for (const file of files) {
   lines.set(file, source.split("\n"));
 
   lines.get(file).forEach((text, index) => {
+    if (MANUAL_DEPLOY.test(text)) {
+      report(file, index + 1, "manual-deploy", "Cloudflare apps deploy from main; never by hand or from a workflow");
+    }
+    if (!STYLE_CHECKED.test(file)) return;
     if (text.includes("\u2014")) report(file, index + 1, "em-dash", "use a comma, colon or full stop");
     if (/[·•⋅]/.test(text)) {
       report(file, index + 1, "middle-dot", "write the parts as words, or split them");

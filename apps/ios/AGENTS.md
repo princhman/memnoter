@@ -2,6 +2,9 @@
 
 - **Native feel.** System navigation patterns and glass materials, not web-style
   bars. Toolbars scroll horizontally rather than hiding or reshuffling buttons.
+  One glass treatment per toolbar group (`TabletGlassRow` / `TabletGlassPill`):
+  never an opaque backing or a second capsule inside a glass pill, and toolbars
+  that content scrolls under use the transparent host.
   Accent colour is `Color("BrandAccent")`.
 - **Update notices.** Use native on-screen update dialogs, not persistent banners.
   Offer Open TestFlight and Later so local notes remain accessible; required
