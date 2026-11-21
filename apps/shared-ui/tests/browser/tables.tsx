@@ -21,7 +21,9 @@ Object.assign(window, { pickedImages: [] });
 function TablesEditor() {
   // Records /image picks; uploads belong to the app shell.
   const insertImages = (_editor: unknown, files: File[]) => { (window as unknown as { pickedImages: string[] }).pickedImages.push(...files.map(file => file.name)); };
-  const editor = useEditor({ extensions: visibleNoteExtensions({ document }, { insertImages }), onCreate: ({ editor }) => {
+  // Makes Drawing available in the menus; the drawing editor belongs to the app shell.
+  const insertDrawing = () => {};
+  const editor = useEditor({ extensions: visibleNoteExtensions({ document }, { insertImages, insertDrawing, nativeDrawing: true }), onCreate: ({ editor }) => {
     Object.assign(window, {
       loadImported: async (saved: Parameters<typeof applySavedContent>[1]) => {
         const doc = new Y.Doc(); applySavedContent(doc, saved);

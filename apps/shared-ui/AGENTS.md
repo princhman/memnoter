@@ -12,7 +12,13 @@ This code ships to desktop, iPad and iPhone at once.
 - **Colour.** The accent is `--primary` in `src/App.css`. No default blue,
   violet or new purple shades. Primary buttons are purple.
 - **No decorative chrome.** No borders, dividers or outlines unless contrast
-  needs them. Don't re-add one that was removed.
+  needs them. Don't re-add one that was removed. Floating panels separate with
+  their shadow only (`surfaceClass` in `src/components/ui/surface`); opening a neighbouring pane
+  or changing state never adds an edge or line behind controls.
+- **Insert commands.** On desktop, every insert command in the slash menu also
+  appears in the right-click Insert menu, from the one list in
+  `src/components/insert-menu.tsx` (iOS keeps its native menu).
+  `tests/editor-context-menu.test.mjs` checks they match.
 - **Question bank controls.** Crop editing belongs in one ellipsis menu over
   the image, styled like regular saved images; don't add side action rails.
   Question and part rename/move/delete actions belong only in context menus,
@@ -42,7 +48,9 @@ This code ships to desktop, iPad and iPhone at once.
   flow; don't reserve large blank gaps to hide movement. This keeps the reading
   position and pointer target stable while moving between reading and editing.
 - **Contrast.** Check light and dark mode; selected and highlighted states must
-  be easy to read.
+  be easy to read. Check text against the actual hover, pressed and highlight
+  fill (`--accent-foreground` on `--accent`); note highlights (`--highlight-*`)
+  must stand out clearly in dark mode.
 - **Section navigation.** Put keyboard hints in hover tooltips, not permanent
   sidebar or menu badges. Highlight selected module/section menu rows instead
   of showing checkmarks. Use Option-N/F/Q/R for the current scope and

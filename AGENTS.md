@@ -2,7 +2,8 @@
 
 Memnoter: a local-first notes app with spaced-repetition flashcards. This file
 is what every agent needs. Folder-specific rules live in `apps/shared-ui/AGENTS.md`
-and `apps/ios/AGENTS.md`. If you coordinate other agents or talk to the user
+and `apps/ios/AGENTS.md`. Before building or changing UI, read `DESIGN.md`.
+If you coordinate other agents or talk to the user
 directly (not as a delegate), also read `docs/agents/orchestrating.md`.
 When you use the `pair-fix`, `handoff` or `perf-investigate` skill, read the
 Flows and Platforms sections of that file: they hold this repo's tracker, proof
@@ -48,7 +49,12 @@ Never run a dev server in the foreground of a tool call.
 Build and check a feature on the one platform the user is testing. Don't port
 it to, or polish it for, the other platforms until the user says it's right.
 Then port it and check every platform: Mac, Windows (Chromium), iPad and
-iPhone. If the brief doesn't name a platform, ask which one to start on.
+iPhone, plus any other target the brief names. If a platform deliberately
+lacks the feature, say so and get the user's agreement before calling it done.
+If the brief doesn't name a platform, ask which one to start on.
+
+Every report names which platforms a shared change reaches (a phone fix in
+shared-ui also changes iPad and desktop) and which one you actually checked.
 
 ## Shared checkout
 
@@ -78,6 +84,9 @@ Other agents often have uncommitted work in the same checkout.
 
 ## Demo recordings
 
+- Never use computer use (an agent driving the Mac's mouse and keyboard) unless
+  the user explicitly allows it for that task: they are working on that screen.
+  Passive recording with `screencapture` is not computer use and is fine.
 - Record the app itself, the way the user sees it: the desktop app on the Mac
   (`pnpm dev:copy`), the app in the simulator, or on minipc the app's own entry
   page served by Vite with `installTestBridge`. Never record a test fixture, a
@@ -86,6 +95,8 @@ Other agents often have uncommitted work in the same checkout.
   fills), pause about a second after each step so its result is visible, and
   cut idle time. Keep each scenario under about 30 seconds. Use a normal window
   size and zoom, so text is readable.
+- Watch it back once at normal speed before posting. Each pickup, drop target
+  and result must be readable; re-record anything that goes by too fast.
 
 ## Data safety
 
@@ -93,6 +104,9 @@ Other agents often have uncommitted work in the same checkout.
   there stops the installed app from starting. Use `pnpm dev:copy`.
 - Older builds delete Yjs nodes, marks and attributes they don't know, and the
   deletion syncs. If you add one, say so in your report.
+- `apps/sync` and `apps/marketing` deploy from `main` through the Cloudflare
+  dashboard. Never deploy them by hand or add a deploy workflow;
+  `pnpm lint` rejects both.
 
 ## Tests
 
@@ -100,6 +114,13 @@ Other agents often have uncommitted work in the same checkout.
   an existing file. No tests for one-off visual tweaks.
 - Browser suites are timing-sensitive. Rerun a failure alone before blaming your
   change, and say which you did.
+- A flaky test gets fixed or merged into a reliable one. Skip it on CI only
+  when the user says so, only that case, and keep it runnable locally.
+- "Verified" means you performed the reported action through the app's real
+  entry point (a real pointer drag for a drag bug). A launch or a synthetic
+  event doesn't count; say which you did.
+- A fix changes only the reported defect. Ask before changing how anything
+  next to it looks or behaves, unless you are certain the user would accept it.
 - If the brief says "fix only, don't test", make the change visible (see
   "Seeing a change") and stop.
 
