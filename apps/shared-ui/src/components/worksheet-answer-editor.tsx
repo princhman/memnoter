@@ -1,5 +1,7 @@
 import { registerWorksheetEditor } from "@/editor-host/worksheet-editor";
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { MODULE_CONTENT_SYNCED_EVENT } from "@/lib/sync/apply-remote";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import * as Y from "yjs";
 import { noteExtensions, isNoteFromNewerVersion } from "@/lib/editor-schema";
@@ -249,16 +251,17 @@ export function answerHasContent(fragment: Y.XmlFragment): boolean {
   return fragment.toArray().some(node => node instanceof Y.XmlText ? node.toDelta().some((delta: { insert?: unknown }) => typeof delta.insert === "string" && delta.insert.trim().length > 0)
     : node instanceof Y.XmlElement && (["image", "inlineImage", "horizontalRule", "mention", "pdfTextQuote"].includes(node.nodeName) || answerHasContent(node)));
 }
-export function WorksheetAnswerEditor({ label, load, save, flush, autoFocus, placeholder, ...owner }: AnswerOwner & {
+export function WorksheetAnswerEditor({ label, load, refresh, save, flush, autoFocus, placeholder, ...owner }: AnswerOwner & {
   label: string;
   autoFocus?: boolean;
   placeholder?: string;
   load: () => Promise<AnswerDocument & { legacyDraft?: string }>;
+  refresh?: (expected: string, isCurrent: () => boolean, apply: (loaded: AnswerDocument) => void) => Promise<void>;
   save: (document: number[], expected: string, text: string, hasContent: boolean) => void;
   flush: () => void;
 }) {
-  const callbacks = useRef({ load, save, flush });
-  callbacks.current = { load, save, flush };
+  const callbacks = useRef({ load, refresh, save, flush, readOnly: owner.readOnly });
+  callbacks.current = { load, refresh, save, flush, readOnly: owner.readOnly };
   const [doc, setDoc] = useState<Y.Doc | null>(null);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -267,8 +270,11 @@ export function WorksheetAnswerEditor({ label, load, save, flush, autoFocus, pla
     let document: Y.Doc | undefined;
     let changed: (() => void) | undefined;
     setError("");
-    void callbacks.current.load().then(loaded => {
-      if (!active) return;
+    let expected: string | undefined;
+    let remoteVersion = 0;
+    const install = (loaded: AnswerDocument & { legacyDraft?: string }, fromSync = false) => {
+      if (document && changed) document.off("update", changed);
+      expected = loaded.expected;
       document = new Y.Doc();
       Y.applyUpdate(document, new Uint8Array(loaded.document));
       const fragment = document.getXmlFragment("default");
@@ -285,23 +291,42 @@ export function WorksheetAnswerEditor({ label, load, save, flush, autoFocus, pla
       }
       const current = document;
       changed = () => {
-        if (owner.readOnly || isNoteFromNewerVersion(current)) return;
+        if (callbacks.current.readOnly || isNoteFromNewerVersion(current)) return;
         callbacks.current.save(Array.from(Y.encodeStateAsUpdate(current)), loaded.expected, fragment.toString(), answerHasContent(fragment));
       };
       // Quarantine before y-tiptap gets a chance to normalize unknown content.
-      if (!owner.readOnly && !isNoteFromNewerVersion(current)) {
+      if (!isNoteFromNewerVersion(current)) {
         current.on("update", changed);
-        if (loaded.plainText !== null && (loaded.legacyDraft !== undefined || loaded.plainText.length > 0)) changed();
+        if (!fromSync && loaded.plainText !== null && (loaded.legacyDraft !== undefined || loaded.plainText.length > 0)) changed();
       }
-      setDoc(current);
+      // Swap the editor before another input can reach the retired document.
+      if (fromSync) flushSync(() => setDoc(current));
+      else setDoc(current);
+    };
+    const refreshDocument = () => {
+      if (expected === undefined) return;
+      const version = remoteVersion;
+      void callbacks.current.refresh?.(expected, () => active && version === remoteVersion, loaded => install(loaded, true)).catch(cause => console.error("Could not refresh synced worksheet answer:", cause));
+    };
+    const onRemote = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== owner.moduleId) return;
+      remoteVersion++;
+      refreshDocument();
+    };
+    window.addEventListener(MODULE_CONTENT_SYNCED_EVENT, onRemote);
+    void callbacks.current.load().then(loaded => {
+      if (!active) return;
+      install(loaded);
+      if (remoteVersion) refreshDocument();
     }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
     return () => {
       active = false;
+      window.removeEventListener(MODULE_CONTENT_SYNCED_EVENT, onRemote);
       if (document && changed) document.off("update", changed);
       callbacks.current.flush();
-      // TipTap owns its binding cleanup; this private doc has no external feeds.
+      // TipTap owns its binding cleanup; this answer document is private to this editor.
     };
-  }, [retry]);
+  }, [retry, owner.moduleId]);
   if (error) return <div role="alert" className="text-sm text-destructive">{error} <Button size="sm" variant="ghost" onClick={() => setRetry(value => value + 1)}>Retry opening answer</Button></div>;
   return doc ? <AnswerEditor doc={doc} label={label} owner={owner} autoFocus={autoFocus} placeholder={placeholder} flush={() => callbacks.current.flush()} /> : <p role="status">Loading answer…</p>;
 }

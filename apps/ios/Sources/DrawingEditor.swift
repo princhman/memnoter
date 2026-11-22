@@ -66,13 +66,18 @@ actor DrawingDraftStore {
     }
     // Matching the current immutable source is causal freshness: this draft
     // was made after that saved revision, rather than before a newer sync/save.
-    func worksheetDraft(sourceId: String?, saved: DrawingDocument?) throws -> DrawingLocalDraft? {
+    func worksheetDraft(sourceId: String?, saved: DrawingDocument?, fallbackPaper: String) throws -> DrawingLocalDraft? {
         guard let draft = try loadDraft(), draft.baseSourceId == sourceId else { return nil }
         let ink = try decodeDrawing(draft.document)
-        // Old close/appearance checkpoints could contain an empty canvas.
-        // Never recover those over ink (or offer an empty new draft to resume).
-        guard !ink.strokes.isEmpty else { return nil }
-        if let saved, try worksheetInkFingerprint(ink) == worksheetInkFingerprint(decodeDrawing(saved)) { return nil }
+        let savedInk = try saved.map { try decodeDrawing($0) } ?? PKDrawing()
+        let draftPaper = draft.document.paperStyle?.rawValue ?? fallbackPaper
+        let savedPaper = saved?.paperStyle?.rawValue ?? fallbackPaper
+        // Preserve an intentional paper-only draft on an empty page, while
+        // rejecting unexplained empty checkpoints over existing ink.
+        if ink.strokes.isEmpty {
+            guard savedInk.strokes.isEmpty, draftPaper != savedPaper else { return nil }
+        } else if saved != nil, draftPaper == savedPaper,
+                  try worksheetInkFingerprint(ink) == worksheetInkFingerprint(savedInk) { return nil }
         return draft
     }
     func decodeDocument(_ bytes: Data) throws -> DrawingDocument {
@@ -302,6 +307,7 @@ final class DrawingCanvas: PKCanvasView {
     private var revision = 0
     private var baseSourceId: String?
     private var savedInkFingerprint: Data?
+    private var savedPaperStyle = "blank"
     private var savedHadInk = false
     private var worksheetToolUsed = false
     private var loading = false
@@ -323,7 +329,13 @@ final class DrawingCanvas: PKCanvasView {
     }
     var activeWidthRange: ClosedRange<CGFloat> { tool == .eraser ? 4...80 : 1...10 }
     var paperStyle = "blank" {
-        didSet { canvas.paperStyle = paperStyle; preferences.set(paperStyle, forKey: "drawing.paper") }
+        didSet {
+            canvas.paperStyle = paperStyle
+            guard loaded, paperStyle != oldValue else { return }
+            revision += 1; hasLocalEdits = true
+            status = "Unsaved changes"
+            scheduleSave()
+        }
     }
     var showInkOptions = false
     var loaded = false
@@ -357,7 +369,7 @@ final class DrawingCanvas: PKCanvasView {
         drafts = DrawingDraftStore(directory: directory, moduleId: request.storageId)
         prototype = DrawingDraftStore(directory: directory, moduleId: request.module.id)
         super.init()
-        paperStyle = preferences.string(forKey: "drawing.paper") ?? "blank"
+        paperStyle = DrawingPaperStyle(rawValue: preferences.string(forKey: "drawing.paper") ?? "")?.rawValue ?? "blank"
         canvas.paperStyle = paperStyle
         canvas.adaptiveWorksheetInk = true
         canvas.isOpaque = true
@@ -401,7 +413,8 @@ final class DrawingCanvas: PKCanvasView {
                 else { savedInk = PKDrawing() }
                 savedInkFingerprint = try worksheetInkFingerprint(savedInk)
                 savedHadInk = !savedInk.strokes.isEmpty
-                let recovered = try? await drafts.worksheetDraft(sourceId: request.sourceId, saved: saved)
+                savedPaperStyle = saved?.paperStyle?.rawValue ?? paperStyle
+                let recovered = try? await drafts.worksheetDraft(sourceId: request.sourceId, saved: saved, fallbackPaper: paperStyle)
                 document = recovered?.document ?? saved
                 hasLocalEdits = recovered != nil
             } else if let draft = try await drafts.loadDraft() {
@@ -422,6 +435,7 @@ final class DrawingCanvas: PKCanvasView {
             if let document {
                 let drawing = try await drafts.decodeDrawing(document)
                 guard !retired else { return }
+                if let style = document.paperStyle { paperStyle = style.rawValue }
                 canvas.drawing = drawing
                 canvas.restoreSize(CGSize(width: document.width, height: document.height))
             }
@@ -512,7 +526,7 @@ final class DrawingCanvas: PKCanvasView {
     func flush() async throws {
         guard loaded, hasLocalEdits, !retired else { return }
         if request.answer != nil {
-            hasLocalEdits = try worksheetInkFingerprint(canvas.drawing) != savedInkFingerprint
+            hasLocalEdits = try worksheetInkFingerprint(canvas.drawing) != savedInkFingerprint || paperStyle != savedPaperStyle
             guard hasLocalEdits else { return }
             // Programmatic canvas/appearance callbacks are not an intentional
             // erase. Refuse to checkpoint an unexplained empty saved canvas.

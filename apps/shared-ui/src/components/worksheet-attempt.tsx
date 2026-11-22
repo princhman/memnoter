@@ -131,7 +131,9 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
     const key = answerKey(attemptId, pin!.revisionId, partId);
     return <WorksheetAnswerEditor readOnly={finished || finishing} moduleId={moduleId} attemptId={attemptId} revisionId={pin!.revisionId} leafPartId={partId} answer={bank.answers[key]}
       flushDurable={() => answers.flushDurable(pin!.revisionId, partId)} key={`${moduleId}:${key}:text:${answers.resets[key] || 0}`} label={partLabel}
-      load={() => answers.loadDocument(pin!.revisionId, partId)} save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
+      load={() => answers.loadDocument(pin!.revisionId, partId)}
+      refresh={(...args) => answers.refreshDocument(pin!.revisionId, partId, ...args)}
+      save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
   };
   return <section aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
     <Dialog open={confirmFinish} onOpenChange={open => { if (!finishing) setConfirmFinish(open); }}>

@@ -53,25 +53,25 @@ actor DrawingStorage {
     private var discarded = false
     init(_ request: DrawingSessionRequest) { self.request = request }
 
-    func load() throws -> (PKDrawing, Double, Double, String?, Bool) {
+    func load() throws -> (PKDrawing, Double, Double, String?, Bool, DrawingPaperStyle?) {
         let draftURL = URL(fileURLWithPath: request.draftPath)
         if FileManager.default.fileExists(atPath: draftURL.path) {
             let draft = try JSONDecoder().decode(LocalDraft.self, from: Data(contentsOf: draftURL))
             try draft.document.validate()
-            return (try draft.document.drawing(), draft.document.width, draft.document.height, draft.baseSourceId, true)
+            return (try draft.document.drawing(), draft.document.width, draft.document.height, draft.baseSourceId, true, draft.document.paperStyle)
         }
         if let sourcePath = request.sourcePath {
             let document = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: URL(fileURLWithPath: sourcePath)))
             try document.validate()
-            return (try document.drawing(), document.width, document.height, request.sourceId, false)
+            return (try document.drawing(), document.width, document.height, request.sourceId, false, document.paperStyle)
         }
         guard request.sourceId == nil else { throw NSError(domain: "Drawing", code: 1, userInfo: [NSLocalizedDescriptionKey: "The drawing source has not downloaded yet. Close and try again after sync finishes."]) }
-        return (PKDrawing(), 1024, 1440, nil, false)
+        return (PKDrawing(), 1024, 1440, nil, false, nil)
     }
 
-    func checkpoint(_ drawing: PKDrawing, width: Double, height: Double, base: String?, revision: Int) throws {
+    func checkpoint(_ drawing: PKDrawing, width: Double, height: Double, paperStyle: DrawingPaperStyle, base: String?, revision: Int) throws {
         guard !discarded, revision >= self.revision else { return }
-        let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: width, height: height, geometry: nil)
+        let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: width, height: height, geometry: nil, paperStyle: paperStyle)
         try document.validate()
         let url = URL(fileURLWithPath: request.draftPath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -86,7 +86,7 @@ actor DrawingStorage {
     }
 
     func publication(_ drawing: PKDrawing, width: Double, height: Double, paperStyle: DrawingPaperStyle) throws -> (String, String) {
-        let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: width, height: height, geometry: nil, portable: PortableInk.exporting(drawing))
+        let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: width, height: height, geometry: nil, portable: PortableInk.exporting(drawing), paperStyle: paperStyle)
         try document.validate()
         guard drawing.requiredContentVersion.rawValue <= PKContentVersion.version2.rawValue else {
             throw NSError(domain: "Drawing", code: 2, userInfo: [NSLocalizedDescriptionKey: "This ink requires a newer iPad version. Your Mac draft is safe."])
@@ -145,12 +145,22 @@ actor DrawingStorage {
         didSet { if !usingTool && closeRequested { closeRequested = false; close() } }
     }
     @Published var error: String?
-    @Published var tool: InkTool = .pen { didSet { preferences.set(tool.rawValue, forKey: "tool") } }
+    @Published var tool: InkTool = .pen {
+        didSet {
+            preferences.set(tool.rawValue, forKey: "tool")
+            if tool.usesInk { lastPen = tool }
+        }
+    }
+    private(set) var lastPen: InkTool = .pen
+    @Published var eraserMode: EraserMode = .object {
+        didSet { preferences.set(eraserMode.rawValue, forKey: "eraserMode") }
+    }
+    @Published var eraserSize = 24.0
     @Published var color: InkColor = .black { didSet { preferences.set(color.rawValue, forKey: "color") } }
     @Published var paperStyle: DrawingPaperStyle = .blank {
         didSet {
-            preferences.set(paperStyle.rawValue, forKey: "drawing.paper")
-            if loaded && paperStyle != oldValue { changed() }
+            guard loaded, paperStyle != oldValue else { return }
+            changed()
         }
     }
     @Published var width: Double = 3 { didSet { preferences.set(width, forKey: "width") } }
@@ -183,6 +193,8 @@ actor DrawingStorage {
         preferences = UserDefaults(suiteName: "com.memnoter.mac.drawing.\(request.preferencesScope)")!
         super.init()
         tool = InkTool(rawValue: preferences.string(forKey: "tool") ?? "") ?? .pen
+        if tool.usesInk { lastPen = tool }
+        eraserMode = EraserMode(rawValue: preferences.string(forKey: "eraserMode") ?? "") ?? .object
         color = InkColor(rawValue: preferences.string(forKey: "color") ?? "") ?? .black
         paperStyle = DrawingPaperStyle(rawValue: preferences.string(forKey: "drawing.paper") ?? "") ?? .blank
         let savedWidth = preferences.object(forKey: "width") as? Double ?? 3
@@ -195,6 +207,7 @@ actor DrawingStorage {
             let result = try await storage.load()
             drawing = result.0; paperWidth = result.1; paperHeight = max(result.2, scrollTop + 1440)
             baseSourceId = result.3; hasChanges = result.4
+            if let style = result.5 { paperStyle = style }
             revision += 1 // Invalidate the surface's initial empty snapshot after loading.
             loaded = true
         } catch { self.error = error.localizedDescription }
@@ -224,7 +237,7 @@ actor DrawingStorage {
     }
     func flush() async throws {
         preferences.set(scrollTop, forKey: viewKey)
-        if hasChanges { try await storage.checkpoint(drawing, width: paperWidth, height: paperHeight, base: baseSourceId, revision: revision) }
+        if hasChanges { try await storage.checkpoint(drawing, width: paperWidth, height: paperHeight, paperStyle: paperStyle, base: baseSourceId, revision: revision) }
     }
     func done(copy: Bool = false) {
         guard loaded, !saving, !usingTool else { return }

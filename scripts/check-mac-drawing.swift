@@ -78,14 +78,18 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         let basis = try PKDrawing(data: archive)
         let exported = PortableInk.exporting(basis)!
         precondition(exported.version == 2 && exported.strokes.count == 3)
-        precondition(exported.strokes[1].tool == PKInk.InkType.pencil.rawValue)
+        precondition(exported.strokes[1].tool == "pencil")
         precondition(exported.strokes[1].mask != nil && exported.strokes[1].maskUsesEvenOddFillRule == (basis.strokes[1].mask?.windingRule == .evenOdd))
-        let web = PortableInk.Stroke(tool: "pen", color: "#202020", width: 4,
+        let web = PortableInk.Stroke(tool: "pencil", color: "#202020", width: 4,
             points: [.init(x: 100, y: 120, pressure: 0.8), .init(x: 140, y: 160, pressure: 1)])
         // Reorder and erase: index zero must never return from the full archive.
         let selection = PortableInk(version: 2, strokes: [exported.strokes[2], exported.strokes[1], web])
-        let document = DrawingDocument(version: 2, nativeData: archive, width: 1024, height: 40_000, geometry: nil, portable: selection)
+        let document = DrawingDocument(version: 2, nativeData: archive, width: 1024, height: 40_000, geometry: nil, portable: selection, paperStyle: .grid)
         let decoded = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(document))
+        var unknownStyle = try JSONEncoder().encode(document)
+        unknownStyle = Data(String(decoding: unknownStyle, as: UTF8.self).replacingOccurrences(of: "\"grid\"", with: "\"future\"").utf8)
+        let unknown = try JSONDecoder().decode(DrawingDocument.self, from: unknownStyle)
+        precondition(unknown.paperStyle == nil)
         let restored = try decoded.drawing()
         precondition(restored.strokes.count == 3)
         for (output, input) in [(0, 2), (1, 1)] {
@@ -95,6 +99,7 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
             precondition(got.path.first?.size == expected.path.first?.size)
             precondition(got.path.first?.opacity == expected.path.first?.opacity)
         }
+        precondition(restored.strokes[2].ink.inkType == .pencil)
         precondition(restored.strokes[2].path.first?.location == CGPoint(x: 100, y: 120))
         let sourcePath = folder.appendingPathComponent("indexed-source.json")
         try JSONEncoder().encode(document).write(to: sourcePath)
@@ -102,12 +107,14 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
             sourcePath: sourcePath.path, draftPath: folder.appendingPathComponent("indexed-draft.json").path,
             resultPath: folder.appendingPathComponent("indexed-result.json").path,
             maximumBytes: 50 * 1024 * 1024 - 29, preferencesScope: scope)
-        let storage = DrawingStorage(request)
-        let loadedState = try await storage.load()
-        let loaded = loadedState.0
+        let session = DrawingSession(request)
+        await session.load()
+        precondition(session.loaded && session.paperStyle == .grid && !session.hasChanges)
+        let loaded = session.drawing
         precondition(loaded.strokes[0].ink.inkType == basis.strokes[2].ink.inkType && loaded.strokes[0].ink.color == basis.strokes[2].ink.color, "Native load must preserve white ink")
-        let files = try await storage.publication(loaded, width: 1024, height: 40_000, paperStyle: .blank)
+        let files = try await session.storage.publication(loaded, width: 1024, height: 40_000, paperStyle: session.paperStyle)
         let published = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: URL(fileURLWithPath: files.0)))
+        precondition(published.paperStyle == .grid && published.portable?.strokes.last?.tool == "pencil")
         precondition(published.version == 1 && published.portable?.strokes.map(\.nativeIndex) == [0, 1, 2])
         let publishedDrawing = try published.drawing()
         precondition(publishedDrawing.strokes[0].ink.inkType == basis.strokes[2].ink.inkType && publishedDrawing.strokes[0].ink.color == basis.strokes[2].ink.color)
@@ -117,6 +124,44 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
             geometry: nil, portable: PortableInk(version: 2, strokes: [next.strokes[1]]))
         let final = try nextDocument.drawing()
         precondition(final.strokes.count == 1 && final.strokes[0].ink.inkType == .pencil)
+        let editedPath = folder.appendingPathComponent("web-edited.json")
+        let webEdit = Process()
+        webEdit.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        webEdit.arguments = ["node", "--experimental-strip-types", "--input-type=module", "-e", """
+            import { readFileSync, writeFileSync } from 'node:fs';
+            import { parseInk, translateInk, eraseInkPixels } from './apps/shared-ui/src/lib/portable-ink.ts';
+            const document = parseInk(JSON.parse(readFileSync(process.argv[1], 'utf8')));
+            const moved = translateInk(document.portable.strokes[1], 100, 20);
+            for (const element of moved.mask) {
+                for (let i = 0; i < element.coordinates.length; i += 2) {
+                    element.coordinates[i] = Math.min(25, element.coordinates[i]);
+                }
+            }
+            const [cut] = eraseInkPixels(moved, {x:132,y:75}, {x:132,y:125}, 4);
+            const [overlap] = eraseInkPixels(cut, {x:133,y:75}, {x:133,y:125}, 4);
+            document.portable.strokes = [translateInk(overlap, 15, 5)];
+            writeFileSync(process.argv[2], JSON.stringify(document));
+            """, sourcePath.path, editedPath.path]
+        try webEdit.run()
+        webEdit.waitUntilExit()
+        precondition(webEdit.terminationStatus == 0)
+        let edited = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: editedPath))
+        let editedDrawing = try edited.drawing()
+        precondition(editedDrawing.strokes.count == 1)
+        let editedStroke = editedDrawing.strokes[0]
+        precondition(editedStroke.transform == CGAffineTransform(translationX: 145, y: 65))
+        precondition(editedStroke.randomSeed == basis.strokes[1].randomSeed)
+        func checkPixels(_ drawing: PKDrawing) {
+            let image = drawing.image(from: CGRect(x: 0, y: 0, width: 250, height: 200), scale: 1)
+            let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
+            func inkAlpha(_ x: Int) -> CGFloat { bitmap.colorAt(x: x, y: 115)!.alphaComponent }
+            precondition(inkAlpha(139) > 0 && inkAlpha(160) > 0, "Ink survives on both sides of the moved cut")
+            precondition(inkAlpha(148) == 0, "Overlapping cuts remain erased")
+            precondition(inkAlpha(180) == 0, "The edited mask overrides the archive and follows the moved stroke")
+        }
+        checkPixels(editedDrawing)
+        checkPixels(try PKDrawing(data: editedDrawing.dataRepresentation()))
+        print("Portable v2: Swift → TypeScript move, overlapping pixel cuts and move → PencilKit archive passed.")
         var invalid = exported.strokes[0]; invalid.nativeIndex = 10
         for data in [archive, Data()] {
             let bad = DrawingDocument(version: 2, nativeData: data, width: 1024, height: 1440,
@@ -145,7 +190,7 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         session.redo(); precondition(session.drawing.strokes.isEmpty)
         try await session.flush()
         // Out-of-order checkpoints must not replace a newer snapshot.
-        try await session.storage.checkpoint(drawing, width: 1024, height: 1440, base: "wrong", revision: 0)
+        try await session.storage.checkpoint(drawing, width: 1024, height: 1440, paperStyle: .blank, base: "wrong", revision: 0)
         let recovered = DrawingSession(request); await recovered.load()
         precondition(recovered.hasChanges && !recovered.requiresCopy && recovered.drawing.strokes.isEmpty)
         let newer = DrawingSessionRequest(owner: owner, sourceId: "newer-source", sourcePath: request.sourcePath,
@@ -295,7 +340,7 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         try await wait("Discard did not return to the note") { PresentationReceipts.values[3] == 0 }
         let discarded = try JSONDecoder().decode(EditorResult.self, from: Data(contentsOf: URL(fileURLWithPath: request.resultPath)))
         precondition(discarded.status == "discarded")
-        try await stale.storage.checkpoint(stale.drawing, width: 1024, height: 1440, base: "old-source", revision: 999)
+        try await stale.storage.checkpoint(stale.drawing, width: 1024, height: 1440, paperStyle: .blank, base: "old-source", revision: 999)
         precondition(!FileManager.default.fileExists(atPath: request.draftPath), "A late checkpoint must not resurrect discarded work")
         let unchangedPublishedBytes = try Data(contentsOf: publishedURL)
         precondition(unchangedPublishedBytes == publishedBytes, "Discard must not change the published drawing")

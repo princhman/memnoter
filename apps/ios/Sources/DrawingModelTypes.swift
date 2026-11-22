@@ -10,7 +10,8 @@ struct DrawingSnapshot: Sendable {
     func document(includeGeometry: Bool) throws -> DrawingDocument {
         let document = DrawingDocument(version: 1, nativeData: drawing.dataRepresentation(), width: size.width, height: size.height,
                                        geometry: includeGeometry ? try JSONEncoder().encode(DrawingStrokeExport(drawing: drawing, page: size)) : nil,
-                                       portable: includeGeometry ? PortableInk.exporting(drawing) : nil)
+                                       portable: includeGeometry ? PortableInk.exporting(drawing) : nil,
+                                       paperStyle: DrawingPaperStyle(rawValue: paperStyle) ?? .blank)
         try document.validate()
         return document
     }

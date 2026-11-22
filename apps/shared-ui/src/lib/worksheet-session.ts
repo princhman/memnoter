@@ -130,6 +130,17 @@ export function useWorksheetAnswers(moduleId: string, attemptId: string) {
       publish(session, { values });
       return loaded;
     },
+    async refreshDocument(revisionId: string, leafPartId: string, expected: string, isCurrent: () => boolean, apply: (loaded: AnswerDocument) => void) {
+      const key = answerKey(attemptId, revisionId, leafPartId);
+      if (session.snapshot.drafts[key]) return;
+      const value = session.snapshot.values[key];
+      const loaded = await call<AnswerDocument>("worksheet_answer_document_load", { moduleId, attemptId, revisionId, leafPartId });
+      // Typing or a save acknowledgement may race the backend read.
+      if (!isCurrent() || session.snapshot.drafts[key] || session.snapshot.values[key] !== value || loaded.expected === (value?.expected ?? expected)) return;
+      const values = { ...session.snapshot.values }; delete values[key];
+      publish(session, { values });
+      apply(loaded);
+    },
     setDocument(revisionId: string, leafPartId: string, document: number[], expected: string, text: string, hasContent: boolean) {
       const key = answerKey(attemptId, revisionId, leafPartId);
       // Prefer the last ack's base when this mounted editor still has an old base.

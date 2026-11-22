@@ -141,3 +141,80 @@ test('Linux worksheet drawing publishes editable assets only after durable answe
   assert.equal(await page.evaluate(()=>window.legacyReceipt.canvasId),'legacy');
   await page.evaluate(()=>window.answerRoot.unmount());
 });
+
+test('remote sync refreshes an open worksheet and keeps conflicting local typing', async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.addInitScript(() => {
+    localStorage.setItem('worksheet-open:sync-test', 'a');
+    window.installTestBridge({ tauri: { invoke: async (command, args) => {
+      if (command === 'question_bank_get' && args.moduleId === 'sync-test') return window.bank;
+      if (command === 'worksheet_answer_document_load') return window.savedAnswer;
+      if (command === 'worksheet_answer_document_save') {
+        window.lastExpected = args.expected;
+        throw new Error('This answer changed elsewhere');
+      }
+      if (command === 'resolve_card_image') return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      if (command.startsWith('plugin:')) return 1;
+      if (['modules', 'documents', 'list_documents', 'unindexed_modules', 'unindexed_card_modules'].includes(command)) return [];
+      if (command === 'sync_status') return { enabled: false, account: null };
+      return null;
+    } } });
+  });
+  await page.goto(url);
+  await page.evaluate(async cacheDir => {
+    const { default: React } = await import(`/@fs/${cacheDir}/deps/react.js`);
+    const { default: { createRoot } } = await import(`/@fs/${cacheDir}/deps/react-dom_client.js`);
+    const Y = await import(`/@fs/${cacheDir}/deps/yjs.js`);
+    const { QueryClientProvider } = await import('/worksheet-test-provider');
+    const { queryClient } = await import('/src/lib/query-client.ts');
+    const { QuestionBank } = await import('/src/components/question-bank.tsx');
+    const { onRemote } = await import('/src/lib/sync/manager.ts');
+    const setSaved = (questionTitle, text, drawing) => {
+      const doc = new Y.Doc();
+      const paragraph = new Y.XmlElement('paragraph');
+      const content = new Y.XmlText();
+      content.insert(0, text);
+      paragraph.insert(0, [content]);
+      const fragment = doc.getXmlFragment('default');
+      fragment.insert(0, [paragraph]);
+      if (drawing) {
+        const image = new Y.XmlElement('image');
+        image.setAttribute('imageId', 'ink');
+        image.setAttribute('drawing', { version: 1, sourceId: 'ink-source', previewId: 'ink-preview' });
+        fragment.insert(1, [image]);
+      }
+      window.savedAnswer = { document: Array.from(Y.encodeStateAsUpdate(doc)), expected: text, plainText: null };
+      window.bank = {
+        questions: { q: { title: questionTitle, order: 0, revisionId: 'r' } },
+        revisions: { r: { questionId: 'q', rootPartId: 'p', parts: { p: { label: '', cropIds: [] } } } },
+        crops: {},
+        attempts: { a: { title: 'Sync worksheet', questions: [{ questionId: 'q', revisionId: 'r' }] } },
+        answers: { [JSON.stringify(['a', 'r', 'p'])]: { text, canvases: {}, canvasOrder: [] } },
+      };
+      doc.destroy();
+    };
+    let sequence = 0;
+    window.applyRemote = (...args) => {
+      setSaved(...args);
+      onRemote({ updates: [{ moduleId: 'sync-test', update: { id: ++sequence, bytes: [0, 0] } }],
+        deleted: [], modulesChanged: false, reviewsChanged: false, filesChanged: false });
+    };
+    setSaved('Original question', 'Original answer', false);
+    const root = createRoot(document.body.appendChild(document.createElement('div')));
+    root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(QuestionBank, { moduleId: 'sync-test' })));
+  }, server.config.cacheDir);
+  const answer = page.locator('.worksheet-answer-input');
+  await answer.getByText('Original answer', { exact: true }).waitFor();
+  await page.evaluate(() => window.applyRemote('Renamed question', 'Synced answer', true));
+  await page.getByRole('article', { name: 'Question Renamed question' }).waitFor();
+  await answer.getByText('Synced answer', { exact: true }).waitFor();
+  await answer.locator('.note-image-host img').waitFor();
+
+  await answer.fill('Synced answer my draft');
+  await page.evaluate(() => window.applyRemote('Renamed again', 'Conflicting answer', false));
+  await page.getByRole('article', { name: 'Question Renamed again' }).waitFor();
+  await page.getByRole('alert').filter({ hasText: /^This answer changed elsewhere Your draft is retained\.$/ }).waitFor();
+  assert.match(await answer.innerText(), /Synced answer my draft/);
+  assert.equal(await page.evaluate(() => window.lastExpected), 'Synced answer');
+});

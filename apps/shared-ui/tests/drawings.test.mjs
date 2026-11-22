@@ -221,7 +221,7 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
     await server.listen(); browser = await webkit.launch();
     const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
     await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64' }); Object.defineProperty(navigator, 'userAgent', { value: 'Linux browser' }); window.assets = {};
+      Object.defineProperty(navigator, 'platform', { value: 'Win32' }); Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }); window.assets = {};
       window.installTestBridge({ tauri: { invoke: async (cmd, args) => {
         if (cmd === 'save_file') { const id = crypto.randomUUID(); window.assets[id] = args.bytes; return { id, path: id, file_type: args.mimeType }; }
         if (cmd === 'read_file') { if (!window.assets[args.fileId]) throw new Error('Source not downloaded'); return { bytes: window.assets[args.fileId] }; }
@@ -236,16 +236,36 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
     });
     const paper = page.getByLabel('Drawing paper'); await paper.waitFor(); const box = await paper.boundingBox();
     const draw = async y => { await page.mouse.move(box.x+40,box.y+y); await page.mouse.down(); await page.mouse.move(box.x+160,box.y+y+40,{steps:8}); await page.mouse.up(); };
+    const options = page.getByRole('button', {name:'Drawing options'});
+    await options.click();
+    await page.getByRole('menuitemradio', {name:'Grid'}).click();
+    await page.getByRole('button', {name:'Pen',exact:true}).click();
+    await page.getByLabel('Pen variants').getByRole('button', {name:'Pencil',exact:true}).click();
     await draw(40); await page.getByRole('button', { name: 'Close', exact: true }).click(); await page.waitForFunction(() => window.result?.status === 'cancel');
     assert.equal(await page.evaluate(() => window.result.hasChanges), true);
     await page.evaluate(() => window.openInk(null)); await paper.waitFor(); await page.getByText(/Recovered local draft/).waitFor();
     await page.getByRole('button', { name: 'Done', exact: true }).click(); await page.waitForFunction(() => window.result?.status === 'save');
     const first = await page.evaluate(() => ({ result: window.result, doc: JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets[window.result.source.id]))) }));
     assert.equal(first.doc.version, 2); assert.equal(first.doc.portable.strokes.length, 1); assert.ok(first.doc.portable.strokes[0].points.length >= 8);
+    assert.equal(first.doc.paperStyle, 'grid');
+    assert.equal(first.doc.portable.strokes[0].tool, 'pencil');
+    const preview = await page.evaluate(async id => {
+      const bitmap = await createImageBitmap(new Blob([new Uint8Array(window.assets[id])], {type:'image/png'}));
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width; canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0);
+      return {width:bitmap.width, height:bitmap.height, ruled:ctx.getImageData(56, 10, 1, 1).data[0] < 255};
+    }, first.result.preview.id);
+    assert.equal(preview.width, first.doc.width * 2);
+    assert.ok(preview.height < 480 && preview.ruled);
     assert.equal(first.result.source.file_type, 'application/vnd.memnoter.drawing+json');
     assert.ok(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('portable-ink:'))));
     await page.evaluate(async source => { const { call } = await import('/src/lib/backend.ts'); await call('drawing_committed', { moduleId:'m',imageId:'canvas' }); window.openInk(source); }, first.result.source.id);
     await paper.waitFor();
+    await options.click();
+    await page.getByRole('menuitemradio', {name:'Grid',checked:true}).waitFor();
+    await page.keyboard.press('Escape');
     await page.mouse.move(box.x+50,box.y+50); await page.mouse.down();
     await paper.dispatchEvent('pointercancel', {pointerId:1,pointerType:'mouse'}); await page.mouse.up();
     if (process.env.BROWSER === 'chromium') {
@@ -255,6 +275,7 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
       await cdp.send('Input.dispatchMouseEvent', {type:'mouseReleased',x:box.x+90,y:box.y+90,button:'left',buttons:0,clickCount:1,pointerType:'pen'});
       assert.ok(await page.evaluate(() => Object.keys(localStorage).filter(k=>k.startsWith('portable-ink:')).some(k=>JSON.parse(localStorage[k]).document.portable.strokes.some(s=>s.points.some(p=>Math.abs(p.pressure-.4)<.01)))));
       await page.getByRole('button',{name:'Undo',exact:true}).click();
+      await page.getByRole('button', {name:'Drawing options'}).click();
       await page.getByLabel('Touch drawing').check();
       await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5});
       await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:box.x+200,y:box.y+200,radiusX:2,radiusY:2,force:.6}]});
@@ -262,8 +283,10 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
       await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
       assert.equal(await page.evaluate(()=>JSON.parse(localStorage[Object.keys(localStorage).find(k=>k.startsWith('portable-ink:'))]).document.portable.strokes.length),2);
       await page.getByRole('button',{name:'Undo',exact:true}).click();
+      await page.getByRole('button', {name:'Drawing options'}).click();
       await page.getByLabel('Touch drawing').uncheck(); await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:false}); await cdp.detach();
     }
+    await page.getByRole('button', {name:'Pen',exact:true}).click();
     await page.getByRole('button', {name:'Marker',exact:true}).click(); await draw(140);
     await page.getByRole('button',{name:'Eraser',exact:true}).click(); await page.mouse.click(box.x+40,box.y+40);
     assert.equal(await page.evaluate(()=>JSON.parse(localStorage[Object.keys(localStorage).find(k=>k.startsWith('portable-ink:'))]).document.portable.strokes.length),1);
@@ -272,6 +295,20 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
     await page.getByRole('button', {name:'Done',exact:true}).click(); await page.waitForFunction(() => window.result?.status === 'save');
     assert.equal(await page.evaluate(() => JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets[window.result.source.id]))).portable.strokes.length), 2);
     assert.equal(await page.evaluate(id => JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets[id]))).portable.strokes.length, first.result.source.id), 1);
+    const secondSource = await page.evaluate(() => window.result.source.id);
+    await page.evaluate(id => window.openInk(id), secondSource);
+    await page.getByText('This drawing changed elsewhere.').waitFor();
+    await page.getByRole('button', {name:'Save a copy',exact:true}).click();
+    await page.waitForFunction(() => window.result?.status === 'save');
+    assert.equal(await page.evaluate(() => window.result.asCopy), true);
+    await page.evaluate(id => window.openInk(id), secondSource);
+    await page.getByRole('button', {name:'Discard local changes',exact:true}).click();
+    const confirmation = page.getByRole('alertdialog', {name:'Discard local changes?'});
+    await confirmation.getByText('This removes the local draft and returns to the note. The drawing saved in the note is kept.').waitFor();
+    await confirmation.getByRole('button', {name:'Discard local changes',exact:true}).click();
+    await page.waitForFunction(() => window.result?.status === 'cancel');
+    assert.equal(await page.evaluate(() => window.result.hasChanges), false);
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('portable-ink:'))), false);
     await page.evaluate(async () => {
       const { call } = await import('/src/lib/backend.ts'); await call('drawing_committed', {moduleId:'m',imageId:'canvas'});
       try { await call('edit_drawing', {moduleId:'m',imageId:'missing',sourceId:'missing'}); } catch(e) { window.missingError=String(e); }
@@ -296,13 +333,6 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
       const {parseInk, paintInk, hitInk} = await import('/src/lib/portable-ink.ts');
       const doc = parseInk(JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets.native))));
       doc.portable.strokes[0].transform = [0,1,-1,0,200,100];
-      // Masks follow drawing coordinates, independently of the stroke transform.
-      for (const command of doc.portable.strokes[0].mask) {
-        for (let i=0;i<command.coordinates.length;i+=2) {
-          const [x,y] = command.coordinates.slice(i,i+2);
-          command.coordinates[i]=280-y; command.coordinates[i+1]=x;
-        }
-      }
       const copy = document.createElement('canvas'); copy.width=c.width; copy.height=c.height;
       paintInk(copy,doc);
       return { visible:copy.getContext('2d').getImageData(150,130,1,1).data[0],
@@ -311,7 +341,22 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
     });
     assert.ok(rotated.visible<255); assert.equal(rotated.clipped,255);
     assert.equal(rotated.hit,true); assert.equal(rotated.miss,false);
+    const eraserButton = page.getByRole('button', {name:'Eraser', exact:true});
+    await eraserButton.click();
+    await eraserButton.click();
+    await page.getByRole('button', {name:'Pixel eraser', exact:true}).click();
+    await page.mouse.move(box.x+133, box.y+110);
+    await page.mouse.down();
+    await page.mouse.move(box.x+133, box.y+150);
+    await page.mouse.up();
+    const erasedPixels = await paper.evaluate(c => [110,133,153,190].map(x =>
+      c.getContext('2d').getImageData(x,130,1,1).data[0]));
+    assert.ok(erasedPixels[0] < 255 && erasedPixels[2] < 255, 'native ink survives on both sides');
+    assert.equal(erasedPixels[1], 255, 'sweeping between pointer samples removes pixels');
+    assert.equal(erasedPixels[3], 255, 'existing clipped ink stays hidden');
+    await page.getByRole('button', {name:'Undo', exact:true}).click();
     await page.getByRole('button',{name:'Eraser',exact:true}).click();
+    await page.getByRole('button', {name:'Object eraser', exact:true}).click();
     await page.mouse.click(box.x+190, box.y+130);
     const draftInk = () => page.evaluate(() => JSON.parse(localStorage[Object.keys(localStorage).find(k=>k.startsWith('portable-ink:'))]).document);
     assert.equal((await draftInk()).portable.strokes.length, 1, 'clipped area must not hit hidden ink');
@@ -357,6 +402,9 @@ test('portable Apple round-trip fixture retains authoritative ink and rejects un
   const { parseInk } = await import('../src/lib/portable-ink.ts');
   const fixture = JSON.parse(await readFile(new URL('../../ios/Tests/Fixtures/portable-drawing.json', import.meta.url), 'utf8'));
   const ink = parseInk(fixture);
+  const { paperStyle: _paperStyle, ...legacy } = fixture;
+  assert.equal(parseInk(legacy).paperStyle, 'blank');
+  assert.equal(parseInk({...legacy, paperStyle:'unknown'}).paperStyle, 'blank');
   assert.equal(ink.nativeData, 'AQID');
   assert.deepEqual(ink.portable.strokes[0].points, [{x:30,y:40,pressure:1},{x:70,y:80,pressure:.5}]);
   assert.throws(() => parseInk({...fixture, portable:{version:3,strokes:[]}}), /unsupported/);

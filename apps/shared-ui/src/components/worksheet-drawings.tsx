@@ -85,7 +85,8 @@ export function WorksheetDrawings({ moduleId, attemptId, revisionId, leafPartId,
   };
   const open = (draft: Pending) => run(async () => {
     if (wasRemoved(draft)) { forgetRemoved(draft); return; }
-    draft = { ...draft, attached: draft.attached ?? !!answerRef.current?.canvases[draft.canvasId] };
+    const canvas = answerRef.current?.canvases[draft.canvasId];
+    draft = { ...draft, sourceId: canvas ? canvas.revision?.sourceId ?? null : draft.sourceId, attached: draft.attached ?? !!canvas };
     retain(draft);
     await writeOperation(async permit => {
       assertWritable(permit);
