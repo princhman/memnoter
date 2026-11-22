@@ -47,6 +47,8 @@ type Cut = {
 
 // The clipboard carries a nonce. Only this session can claim the original ids.
 let latestCut: Cut | undefined;
+// A spent cut still pastes as whole blocks, so it never splits a card.
+let lastCut: Cut | undefined;
 const cutAttribute = "data-memnoter-cloze-cut";
 
 function hasCutToken(cut: Cut, html: string) {
@@ -66,8 +68,10 @@ export function consumePlainClozeCut(html: string, text: string) {
   }
 }
 
+type Paste = { cut: Cut; claim: boolean };
+
 export function clozeClipboard(options: CutClozeOptions) {
-  let paste: Cut | undefined;
+  let paste: Paste | undefined;
 
   return {
     copy(view: EditorView, event: ClipboardEvent) {
@@ -112,38 +116,37 @@ export function clozeClipboard(options: CutClozeOptions) {
       history?.stopCapturing();
       view.dispatch(tr.scrollIntoView().setMeta("uiEvent", "cut"));
       history?.stopCapturing();
-      latestCut = { token, text: clipboard.text, source: options.moduleId, cardIds: moved.map(card => card.id), blockIds };
+      latestCut = lastCut = { token, text: clipboard.text, source: options.moduleId, cardIds: moved.map(card => card.id), blockIds };
       return true;
     },
 
     startPaste(view: EditorView, event: ClipboardEvent) {
-      const cut = latestCut;
+      const cut = lastCut;
       const data = event.clipboardData;
       if (!cut || !data || !view.editable || view.composing) return false;
       const html = data.getData("text/html");
-      const plain = !html;
-      if (plain ? !matchesPlainCut(cut, data.getData("text/plain")) : !hasCutToken(cut, html)) return false;
-      if (plain) {
-        latestCut = undefined;
+      if (!html) {
+        if (cut === latestCut && matchesPlainCut(cut, data.getData("text/plain"))) latestCut = undefined;
         return false;
       }
-      paste = cut;
+      if (!hasCutToken(cut, html)) return false;
+      paste = { cut, claim: cut === latestCut };
       queueMicrotask(() => { paste = undefined; });
       return false;
     },
 
+    // ProseMirror pastes rich HTML as text only inside code and math. That
+    // edits the formula like any paste, but it never spends the claim.
     blocksForPaste(plain: boolean) {
-      if (plain && paste) {
-        if (latestCut === paste) latestCut = undefined;
-        paste = undefined;
-      }
-      return paste?.blockIds;
+      if (plain) paste = undefined;
+      return paste?.cut.blockIds;
     },
 
     handlePaste(view: EditorView, _event: ClipboardEvent, slice: Slice) {
-      const cut = paste;
-      if (!cut) return false;
+      const current = paste;
+      if (!current) return false;
       paste = undefined;
+      const { cut, claim } = current;
 
       const { state } = view;
       const { from, to, $from } = state.selection;
@@ -157,7 +160,7 @@ export function clozeClipboard(options: CutClozeOptions) {
       const sameNote = cut.source === options.moduleId;
       const present = new Set(extractCards(state.doc).map(card => card.id));
       // Undo may have restored the original before the user pasted.
-      const keepHistory = sameNote && !cut.cardIds.some(id => present.has(id));
+      const keepHistory = claim && sameNote && !cut.cardIds.some(id => present.has(id));
       const adjacentNotes = sameNote
         ? clozeNotesOf(state.doc).filter(note => note.from <= (afterCard ?? to) && note.to >= (afterCard ?? from))
         : [];
@@ -171,6 +174,14 @@ export function clozeClipboard(options: CutClozeOptions) {
       }
       const pasted = new Slice(content, openStart, openEnd);
       const tr = state.tr;
+      // Undoing the cut and then deleting the text can leave an empty block
+      // holding the id. It has no cards left, so the paste takes the id back.
+      if (keepHistory) state.doc.descendants((node, pos) => {
+        if (!cut.blockIds.has(node.attrs.cardId) || parseBlock(node).cards.length) return;
+        tr.setNodeAttribute(pos, "cardId", null);
+        tr.setNodeAttribute(pos, "clozeIds", null);
+        tr.setNodeAttribute(pos, "clozeGroups", null);
+      });
       if (afterCard === undefined) {
         tr.replaceSelection(pasted);
       } else {
@@ -184,7 +195,7 @@ export function clozeClipboard(options: CutClozeOptions) {
       }
 
       const history = yUndoPluginKey.getState(state)?.undoManager;
-      latestCut = undefined;
+      if (claim) latestCut = undefined;
       history?.stopCapturing();
       view.dispatch(tr.scrollIntoView().setMeta("uiEvent", "paste"));
       history?.stopCapturing();

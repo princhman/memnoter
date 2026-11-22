@@ -371,6 +371,81 @@ test("cloze clipboard through the desktop editor", async t => {
         assert.equal(copied.reps, 0);
       });
     }
+
+    await t.test("a spent cut still pastes beside a card instead of splitting it", async subtest => {
+      const id = "spent:c1";
+      const target = "{{London}} and {{Berlin}}";
+      const ids = ["spent-target:c1", "spent-target:c2"];
+      const { source, page, editor } = await openEditor(
+        subtest, "Spent cut", [paragraphWithClozes(cloze, "spent", "Paris"), "Destination", paragraphWithClozes(target, "spent-target", "London", "Berlin")], [id, ...ids],
+      );
+      await select(editor, cloze);
+      await page.keyboard.press("Control+x");
+      await waitForCards(editor, source, cards => cards.length === 2);
+      await pasteBelow(editor, "Destination");
+      await waitForCards(editor, source, cards => cards.length === 3 && cards.some(card => card.id === id));
+      await select(editor, target, "", 20);
+      await page.keyboard.press("Control+v");
+      await waitForCards(editor, source, cards => cards.length === 4);
+      const cards = await dueCards(source);
+      for (const kept of [id, ...ids]) assert.equal(cards.find(card => card.id === kept)?.reps, 1, kept);
+      assert.equal(cards.filter(card => card.reps === 0).length, 1);
+    });
+
+    await t.test("pasting into code does not spend the cut claim", async subtest => {
+      const id = "code:c1";
+      const source = await call("create_module", { name: "Paste into code" });
+      const doc = new Y.Doc();
+      const block = new Y.XmlElement("codeBlock");
+      doc.getXmlFragment("default").push([block]);
+      const text = new Y.XmlText();
+      block.push([text]);
+      text.insert(0, "E = mc^2");
+      await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc)) });
+      doc.destroy();
+      await seedNote(source, [paragraphWithClozes(cloze, "code", "Paris"), { content: "Destination" }]);
+      await review(source, id);
+      const page = await open(subtest, source);
+      const editor = page.locator(".tiptap[contenteditable=true]");
+      await select(editor, cloze);
+      await page.keyboard.press("Control+x");
+      await waitForCards(editor, source, cards => cards.length === 0);
+      await editor.evaluate(el => {
+        const tiptap = el.editor;
+        tiptap.state.doc.descendants((node, pos) => {
+          if (node.type.name === "codeBlock") {
+            tiptap.view.focus();
+            tiptap.commands.setTextSelection(pos + 2);
+            return false;
+          }
+        });
+      });
+      await page.keyboard.press("Control+v");
+      await editor.locator("pre").filter({ hasText: "Paris" }).waitFor();
+      await pasteBelow(editor, "Destination");
+      await waitForCards(editor, source, cards => cards.length === 1 && cards[0].id === id);
+      const [card] = await dueCards(source);
+      assert.equal(card.reps, 1);
+    });
+
+    await t.test("undoing a cut and deleting the restored text still lets the cut paste", async subtest => {
+      const id = "undo-delete:c1";
+      const { source, page, editor } = await openEditor(
+        subtest, "Undo then delete", [paragraphWithClozes(cloze, "undo-delete", "Paris"), "Destination"], [id],
+      );
+      await select(editor, cloze);
+      await page.keyboard.press("Control+x");
+      await waitForCards(editor, source, cards => cards.length === 0);
+      await page.keyboard.press("Control+z");
+      await waitForCards(editor, source, cards => cards.length === 1 && cards[0].id === id);
+      await select(editor, cloze);
+      await page.keyboard.press("Backspace");
+      await waitForCards(editor, source, cards => cards.length === 0);
+      await pasteBelow(editor, "Destination");
+      await waitForCards(editor, source, cards => cards.length === 1 && cards[0].id === id);
+      const [card] = await dueCards(source);
+      assert.equal(card.reps, 1);
+    });
   } finally {
     await browser?.close();
     await server?.close();
