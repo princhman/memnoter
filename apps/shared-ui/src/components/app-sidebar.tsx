@@ -131,7 +131,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
 
 function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }) {
   const [expanded, setExpanded] = useState(isActive);
-  const { sections, focusedId, loading, error } = useSidebarSections(module.id, expanded);
+  const { sections, focusedKey, canReorder, loading, error } = useSidebarSections(module.id, expanded);
   const navigate = useNavigate();
   const sectionsId = `sidebar-sections-${module.id}`;
   useEffect(() => { if (isActive) setExpanded(true); }, [isActive]);
@@ -145,11 +145,11 @@ function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }
       onClick={() => setExpanded(value => !value)}>
       <ChevronRight className={`size-3.5 ${expanded ? "rotate-90" : ""}`} />
     </button>
-    <SidebarMenuButton className="pl-7" isActive={isActive && !focusedId}
+    <SidebarMenuButton className="pl-7" isActive={isActive && !focusedKey}
       render={<Link to="/$moduleId" params={{ moduleId: module.id }} />}
       onClick={event => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        openSidebarSection(module.id, null);
+        openSidebarSection(module.id, { kind: "document" });
       }}>
       <MiddleTruncate text={module.name} />
     </SidebarMenuButton>
@@ -160,11 +160,11 @@ function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }
       {error && <li className="px-2 py-1 text-xs text-muted-foreground" role="alert">Could not load sections.</li>}
       {!loading && !error && !sections.length && <li className="px-2 py-1 text-xs text-muted-foreground">No H1 sections</li>}
       {sections.map(section => <SidebarSectionRow key={section.key}
-          moduleId={module.id} headingId={section.id} title={section.title}
+          moduleId={module.id} headingId={section.target.kind === "heading" ? section.target.id : null} title={section.title}
           number={module.heading_numbering ? section.number : undefined}
-          selected={isActive && focusedId === section.id}
+          selected={isActive && focusedKey === section.key} canReorder={canReorder}
           onClick={() => {
-            openSidebarSection(module.id, section.id);
+            openSidebarSection(module.id, section.target);
             void navigate({ to: "/$moduleId", params: { moduleId: module.id } });
           }}
         />)}

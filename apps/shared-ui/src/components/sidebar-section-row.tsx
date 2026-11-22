@@ -21,15 +21,14 @@ export function SidebarSectionLabel({ title, number }: { title: string; number?:
   </>;
 }
 
-export function SidebarSectionRow({ moduleId, headingId, title, number, selected, onClick }: {
-  moduleId: string; headingId: string | null; title: string; number?: string; selected: boolean; onClick: () => void;
+export function SidebarSectionRow({ moduleId, headingId, title, number, selected, canReorder, onClick }: {
+  moduleId: string; headingId: string | null; title: string; number?: string; selected: boolean; canReorder: boolean; onClick: () => void;
 }) {
-  // A closed note's empty H1 saved without an id is listed for its number,
-  // but cannot be dragged or targeted until opening the note gives it an id.
+  const draggable = canReorder && !!headingId;
   const id = `section:${moduleId}:${headingId ?? `untitled-${title}-${number}`}`;
   const data: SectionDrag = { kind: "section", moduleId, headingId: headingId ?? "", title, number };
-  const drag = useDraggable({ id, disabled: !headingId, data });
-  const drop = useDroppable({ id, disabled: !headingId, data });
+  const drag = useDraggable({ id, disabled: !draggable, data });
+  const drop = useDroppable({ id, disabled: !draggable, data });
   const [pointerY, setPointerY] = useState(0);
   useDndMonitor({
     onDragMove: ({ over, activatorEvent, delta }) => {
@@ -47,7 +46,7 @@ export function SidebarSectionRow({ moduleId, headingId, title, number, selected
     {drop.isOver && <span aria-hidden="true" className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 bg-primary ${after ? "-bottom-px" : "-top-px"}`} />}
     <SidebarMenuButton isActive={selected} aria-current={selected ? "location" : undefined}
       title={number ? `${number} ${title}` : title}
-      className={headingId ? "cursor-grab active:cursor-grabbing" : undefined}
+      className={draggable ? "cursor-grab active:cursor-grabbing" : undefined}
       onPointerDown={event => drag.listeners?.onPointerDown?.(event)} onClick={onClick}>
       <SidebarSectionLabel title={title} number={number} />
     </SidebarMenuButton>

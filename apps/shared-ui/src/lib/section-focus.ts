@@ -1,6 +1,7 @@
 import { outline } from "./outline.ts";
 import { Extension, isiOS, isMacOS } from "@tiptap/core";
-import { EditorState, PluginKey, Plugin } from "@tiptap/pm/state";
+import { AllSelection, EditorState, PluginKey, Plugin, Selection, TextSelection } from "@tiptap/pm/state";
+import { StepMap } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { Editor } from "@tiptap/core";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
@@ -52,6 +53,7 @@ export function getSectionRange(
   doc: EditorState["doc"],
   headingPos: unknown,
 ): { from: number; to: number } | null {
+  if (typeof headingPos !== "number") return null;
   const heading = outline(doc).find(item => item.pos === headingPos);
   return heading ? { from: heading.pos, to: heading.end } : null;
 }
@@ -153,6 +155,39 @@ export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boo
     return [
       new Plugin<number | null>({
         key: sectionFocusKey,
+        filterTransaction(transaction, state) {
+          const action = transaction.getMeta(sectionFocusKey);
+          if (!transaction.docChanged || action?.type === "show" || action?.type === "clear" ||
+            transaction.getMeta(ySyncPluginKey)?.isChangeOrigin) return true;
+
+          const range = getFocusedSectionRange(state);
+          if (!range) return true;
+          let { from, to } = range;
+          for (const [index, step] of transaction.steps.entries()) {
+            const map = step.getMap();
+            let outside = false;
+            if (map === StepMap.empty) {
+              // Marks and attributes can change without moving any positions.
+              const before = transaction.docs[index].content;
+              const after = (transaction.docs[index + 1] ?? transaction.doc).content;
+              const start = before.findDiffStart(after);
+              outside = start != null && (start < from || (before.findDiffEnd(after)?.a ?? start) > to);
+            } else {
+              map.forEach((start, end) => { if (start < from || end > to) outside = true; });
+            }
+            if (outside) return false;
+            from = map.map(from, -1);
+            to = map.map(to, 1);
+          }
+          return true;
+        },
+        appendTransaction(_transactions, _old, state) {
+          if (!(state.selection instanceof AllSelection)) return null;
+          const range = getFocusedSectionRange(state);
+          if (!range) return null;
+          const end = Selection.findFrom(state.doc.resolve(range.to), -1, true);
+          return state.tr.setSelection(TextSelection.create(state.doc, range.from + 1, end?.to ?? range.from + 1));
+        },
         state: {
           init: () => null,
           apply(transaction, currentPosition) {

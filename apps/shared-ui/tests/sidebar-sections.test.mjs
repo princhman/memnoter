@@ -167,11 +167,6 @@ test("numbered chapters match in the sidebar and editor after reordering within 
     await page.mouse.move(box.x + box.width / 2, box.y + box.height * fraction, { steps: 12 });
     await frames();
   }
-  async function openModule(name) {
-    await module(name).click({ delay: 60 });
-    await page.locator(".tiptap[contenteditable=true]").waitFor();
-  }
-
   try {
     await checkNumbers(computing, initial);
     const chapter = name => computing.getByRole("button", { name, exact: true });
@@ -208,30 +203,152 @@ test("numbered chapters match in the sidebar and editor after reordering within 
     assert.deepEqual(await archived.getByRole("button").allTextContents(), ["1Reference", "2Appendix"]);
     assert.deepEqual(await call("get_content", { moduleId: archive }), archiveBefore, "a rejected drop leaves the other note untouched");
 
-    await pickUp(reference);
-    await hoverRow(archived.getByRole("button", { name: "2 Appendix", exact: true }), 0.8);
-    await page.mouse.up();
-    await archived.getByRole("button", { name: "2 Reference", exact: true }).waitFor();
-    assert.equal(new URL(page.url()).pathname, `/${course}`, "reordering a closed note leaves the active note open");
-    const saved = await call("get_content", { moduleId: archive });
-    const doc = new Y.Doc();
-    try {
-      Y.applyUpdate(doc, Uint8Array.from(saved.state));
-      for (const update of saved.updates) Y.applyUpdate(doc, Uint8Array.from(update.bytes));
-      assert.deepEqual(doc.getXmlFragment("default").toArray()
-        .filter(node => node.nodeName === "heading").map(node => node.get(0).toString()), ["Appendix", "Reference"]);
-    } finally {
-      doc.destroy();
-    }
-    await openModule("Archive");
-    await checkNumbers(archived, ["1 Appendix", "2 Reference"]);
-
     await chapter("3 Algorithms").click();
     assert.deepEqual(await renderedHeadings.filter({ visible: true }).allTextContents(), ["3\u00a0Algorithms"]);
+    await pickUp(chapter("3 Algorithms"));
+    await hoverRow(chapter("2 Untitled section"), 0.2);
+    await page.mouse.up();
+    await chapter("2 Algorithms").waitFor();
+    assert.deepEqual(await renderedHeadings.filter({ visible: true }).allTextContents(), ["2\u00a0Algorithms"]);
+    await page.locator(".tiptap > .section-focus-start").click();
+    await page.keyboard.press("Meta+z");
+    await chapter("3 Algorithms").waitFor();
+    await chapter("3 Algorithms").click();
     await module("Computing").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Add section", exact: true }).click();
     await page.keyboard.type("Networks");
     await checkNumbers(computing, [...initial, "6 Networks"]);
+  } finally {
+    await page.close();
+  }
+});
+
+test("a closed section cannot be dragged until its note is open", async () => {
+  const page = await openNote(course, { sections: true });
+  const disclosure = page.getByRole("button", { name: "Expand sections of Archive" });
+  const rows = page.getByRole("list", { name: "Sections of Archive" }).getByRole("button");
+  const original = await call("get_content", { moduleId: archive });
+  const moveTo = async (row, fraction) => {
+    const box = await row.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height * fraction, { steps: 15 });
+  };
+  try {
+    await disclosure.click();
+    await rows.last().waitFor();
+    await moveTo(rows.first(), 0.5);
+    await page.mouse.down();
+    await moveTo(rows.last(), 0.8);
+    assert.equal(await page.locator("[data-sidebar-drag-preview]").count(), 0);
+    await page.mouse.up();
+    assert.deepEqual(await call("get_content", { moduleId: archive }), original);
+    assert.equal(new URL(page.url()).pathname, `/${course}`);
+
+    await page.getByRole("link", { name: "Archive", exact: true }).click();
+    await page.locator(".tiptap > h1").filter({ hasText: "Appendix" }).waitFor();
+    await page.locator(".tiptap[contenteditable=true]").waitFor();
+    await moveTo(rows.first(), 0.5);
+    await page.mouse.down();
+    await moveTo(rows.last(), 0.8);
+    await page.locator("[data-sidebar-drag-preview]").waitFor();
+    await page.mouse.up();
+    await rows.first().filter({ hasText: "Appendix" }).waitFor();
+  } finally {
+    await page.close();
+  }
+});
+
+test("opening a note after expanding its sidebar sections still cleans up orphan attachments", async () => {
+  const moduleId = await createModule("Attachments", ["First", "Last"]);
+  const file = await call("save_file", { moduleId, bytes: [1, 2, 3], mimeType: "image/png" });
+  const page = await openNote(course, { sections: true });
+  try {
+    await page.getByRole("button", { name: "Expand sections of Attachments" }).click();
+    const rows = page.getByRole("list", { name: "Sections of Attachments" });
+    await rows.getByRole("button", { name: "2 Last", exact: true }).waitFor();
+    assert.deepEqual((await call("get_content", { moduleId })).files.map(item => item.id), [file.id]);
+    await page.getByRole("link", { name: "Attachments", exact: true }).click();
+    const editor = page.locator(".tiptap[contenteditable=true]");
+    await editor.getByText("Notes for Last.", { exact: true }).waitFor();
+    assert.deepEqual((await call("get_content", { moduleId })).files, []);
+  } finally {
+    await page.close();
+  }
+});
+
+test("a closed note's legacy untitled section opens in section focus", async () => {
+  const moduleId = await createModule("Untitled chapters", ["First", "", "Last"]);
+  const page = await openNote(course, { sections: true });
+  try {
+    await page.getByRole("button", { name: "Expand sections of Untitled chapters" }).click();
+    const rows = page.getByRole("list", { name: "Sections of Untitled chapters" });
+    await rows.getByRole("button", { name: "2 Untitled section", exact: true }).click();
+    assert.equal(new URL(page.url()).pathname, `/${moduleId}`);
+    await page.locator(".tiptap > .section-focus-start").waitFor({ timeout: 3000 });
+    assert.deepEqual(await page.locator(".tiptap > h1").filter({ visible: true }).allTextContents(), ["2\u00a0"]);
+    await page.getByRole("link", { name: "Untitled chapters", exact: true }).click();
+    await page.locator(".tiptap.section-focused").waitFor({ state: "detached" });
+    assert.equal(await page.locator(".tiptap > h1").filter({ visible: true }).count(), 3);
+  } finally {
+    await page.close();
+  }
+});
+
+async function focusMiddleSection(page) {
+  const contents = page.getByRole("navigation", { name: "Table of contents" });
+  await contents.getByRole("button", { name: "2 Middle", exact: true }).hover();
+  await contents.getByRole("button", { name: "Focus on Middle", exact: true }).press("Enter");
+  await page.locator(".tiptap > p").filter({ hasText: "Notes for Middle." }).click();
+}
+
+test("Select All selects only the focused section and restores whole-note selection after clearing focus", async () => {
+  const moduleId = await createModule("Selection", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  const selectedText = () => page.locator(".tiptap").evaluate(({ editor }) => {
+    const { doc, selection } = editor.state;
+    return doc.textBetween(selection.from, selection.to, "\n");
+  });
+  try {
+    await focusMiddleSection(page);
+    await page.keyboard.press("Meta+a");
+    assert.equal(await selectedText(), "Middle\nNotes for Middle.");
+    await page.locator(".tiptap").evaluate(({ editor }) => editor.commands.showDocument());
+    await page.keyboard.press("Meta+a");
+    assert.equal(await selectedText(), "Before\nNotes for Before.\nMiddle\nNotes for Middle.\nAfter\nNotes for After.");
+  } finally {
+    await page.close();
+  }
+});
+
+test("section focus rejects a composing Delete across hidden sections before it reaches Yjs", async () => {
+  const moduleId = await createModule("Composition", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  try {
+    await focusMiddleSection(page);
+    const editor = page.locator(".tiptap");
+    const snapshot = () => editor.evaluate(({ editor }) => {
+      const collaboration = editor.extensionManager.extensions.find(ext => ext.name === "collaboration");
+      return {
+        content: editor.getJSON(),
+        shared: collaboration.options.document.getXmlFragment("default").toJSON(),
+      };
+    });
+    const before = await snapshot();
+    // A native selection can escape the focused range independently of the
+    // app's Select All shortcut. Establish it before the composing keydown.
+    const composing = await editor.evaluate(node => {
+      const { editor } = node;
+      const first = editor.state.doc.firstChild;
+      editor.commands.setTextSelection({ from: first.nodeSize - 2, to: editor.state.doc.content.size - 2 });
+      node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      return editor.view.composing;
+    });
+    assert.equal(composing, true);
+    await page.keyboard.press("Delete");
+    await editor.evaluate(async node => {
+      node.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    });
+    assert.deepEqual(await snapshot(), before);
   } finally {
     await page.close();
   }
