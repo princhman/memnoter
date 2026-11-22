@@ -277,12 +277,9 @@ function AnswerEditor({ doc, label, save, flush, owner, autoFocus, placeholder }
         <TextBubbleMenu editor={editor} flashcards={false} />
         <LinkMenu editor={editor} />
       </>}
-      {/* On iPad, opening the drawing again resumes its unsaved draft (unless a newer save replaced it),
-          so no resume row appears and shifts the page; only a failed save offers a retry. */}
-      {!owner.readOnly && pending && (!isNativeHost() || (recoverable && pending.result)) && !drawingBusy && capabilities.worksheetDrawing && <div className="flex gap-1">
-        {pending.result && <Button size="sm" variant="ghost" onClick={() => { if (editor) void runDrawing(editor, pending, true); }}>Retry drawing save</Button>}
-        {!isNativeHost() && <Button size="sm" variant="ghost" onClick={() => { if (editor) void runDrawing(editor, { ...pending, result: undefined, copyId: undefined }); }}>Reopen local drawing</Button>}
-      </div>}
+      {/* Open the drawing itself to resume. A failed publication keeps its retry action. */}
+      {!owner.readOnly && pending?.result && (!isNativeHost() || recoverable) && !drawingBusy && capabilities.worksheetDrawing &&
+        <Button size="sm" variant="ghost" onClick={() => { if (editor) void runDrawing(editor, pending, true); }}>Retry drawing save</Button>}
       {drawingError && <p role="alert" className="text-sm text-destructive">{drawingError}</p>}
       <WorksheetDrawings {...owner} inlineSources={inlineSources} />
     </div>

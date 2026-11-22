@@ -173,6 +173,8 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
   const page = await browser.newPage();
   t.after(() => page.close());
   await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel' });
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mac browser' });
     localStorage.setItem('worksheet-open:sync-test', 'a');
     window.installTestBridge({ tauri: { invoke: async (command, args) => {
       if (command === 'question_bank_get' && args.moduleId === 'sync-test') return window.bank;
@@ -187,6 +189,10 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
           });
         }
         throw new Error('This answer changed elsewhere');
+      }
+      if (command === 'read_file' && window.previews?.[args.fileId]) {
+        const data = await fetch(window.previews[args.fileId]);
+        return { bytes: [...new Uint8Array(await data.arrayBuffer())], file_type: 'image/png' };
       }
       if (command === 'resolve_card_image') {
         if (args.fileId === 'ink-preview-2') return new Promise(resolve => {
@@ -214,6 +220,11 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = 100;
+      const context = canvas.getContext('2d');
+      context.fillStyle = 'white';
+      context.fillRect(0, 0, width, 100);
+      context.fillStyle = 'black';
+      context.fillRect(10, 10, 10, 10);
       window.previews['ink-preview-' + revision] = canvas.toDataURL();
     }
     const setSaved = (questionTitle, text, drawing) => {
@@ -247,7 +258,9 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
         deleted: [], modulesChanged: false, reviewsChanged: false, filesChanged: false });
     };
     setSaved('Original question', 'Original answer', false);
-    const root = createRoot(document.body.appendChild(document.createElement('div')));
+    const host = document.body.appendChild(document.createElement('div'));
+    host.style.cssText = 'position:fixed;inset:80px 100px;overflow:auto;z-index:40;background:var(--background)';
+    const root = createRoot(host);
     root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(QuestionBank, { moduleId: 'sync-test' })));
   }, server.config.cacheDir);
   const answer = page.locator('.worksheet-answer-input');
@@ -257,6 +270,16 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
   await answer.getByText('Synced answer', { exact: true }).waitFor();
   await page.waitForFunction(() => document.querySelector('.worksheet-answer-input .note-image-host img')?.naturalWidth === 200);
   const preview = answer.locator('.note-image-host img').first();
+  await page.evaluate(() => document.documentElement.classList.add('dark'));
+  await page.waitForFunction(() => {
+    const img = document.querySelector('.worksheet-answer-input .note-image-host img');
+    if (!img?.complete || !img.naturalWidth) return false;
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    context.drawImage(img, 0, 0);
+    return context.getImageData(0, 0, 1, 1).data[3] === 0
+      && context.getImageData(15, 15, 1, 1).data[0] > 240;
+  });
   const oldWidth = await preview.evaluate(img => img.getBoundingClientRect().width);
 
   await page.evaluate(() => window.applyRemote('Renamed question', 'Synced ink revision', 2));

@@ -58,15 +58,29 @@ actor DrawingStorage {
         if FileManager.default.fileExists(atPath: draftURL.path) {
             let draft = try JSONDecoder().decode(LocalDraft.self, from: Data(contentsOf: draftURL))
             try draft.document.validate()
-            return (try draft.document.drawing(), draft.document.width, draft.document.height, draft.baseSourceId, true, draft.document.paperStyle)
+            return (try restore(draft.document), draft.document.width, draft.document.height, draft.baseSourceId, true, draft.document.paperStyle)
         }
         if let sourcePath = request.sourcePath {
             let document = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: URL(fileURLWithPath: sourcePath)))
             try document.validate()
-            return (try document.drawing(), document.width, document.height, request.sourceId, false, document.paperStyle)
+            return (try restore(document), document.width, document.height, request.sourceId, false, document.paperStyle)
         }
         guard request.sourceId == nil else { throw NSError(domain: "Drawing", code: 1, userInfo: [NSLocalizedDescriptionKey: "The drawing source has not downloaded yet. Close and try again after sync finishes."]) }
         return (PKDrawing(), 1024, 1440, nil, false, nil)
+    }
+
+    private func restore(_ document: DrawingDocument) throws -> PKDrawing {
+        let drawing = try document.drawing()
+        var strokes = drawing.strokes
+        var repaired = false
+        for (i, stroke) in strokes.enumerated() {
+            guard stroke.mask == nil, stroke.path.count > 1, let point = stroke.path.first,
+                  stroke.path.allSatisfy({ $0.location == point.location }) else { continue }
+            let path = PKStrokePath(controlPoints: [point], creationDate: stroke.path.creationDate)
+            strokes[i] = PKStroke(ink: stroke.ink, path: path, transform: stroke.transform, mask: nil, randomSeed: stroke.randomSeed)
+            repaired = true
+        }
+        return repaired ? PKDrawing(strokes: strokes) : drawing
     }
 
     func checkpoint(_ drawing: PKDrawing, width: Double, height: Double, paperStyle: DrawingPaperStyle, base: String?, revision: Int) throws {
@@ -93,12 +107,9 @@ actor DrawingStorage {
         }
         let source = try JSONEncoder().encode(document)
         guard source.count <= request.maximumBytes else { throw CocoaError(.fileWriteOutOfSpace) }
-        let bounds = drawing.bounds
-        // Keep page width so the image host does not magnify a small sketch.
-        let top = bounds.isNull || bounds.isEmpty ? 0 : max(0, bounds.minY - 24)
-        let rect = CGRect(x: 0, y: top, width: width,
-                          height: bounds.isNull || bounds.isEmpty ? 240 : bounds.maxY + 24 - top)
         let scale: CGFloat = 2
+        let previewInk = try Self.cropPreviewInk(drawing, width: width, height: height, scale: scale)
+        let rect = previewInk?.rect ?? CGRect(x: 0, y: 0, width: width, height: min(height, 240))
         let pixelSize = CGSize(width: max(1, ceil(rect.width * scale)), height: max(1, ceil(rect.height * scale)))
         // Retain retina resolution rather than silently reducing ink quality.
         // Bound allocation for the document format's very large page limits.
@@ -119,8 +130,10 @@ actor DrawingStorage {
             transform.concat()
             paperStyle.draw(in: rect, export: true)
             NSGraphicsContext.restoreGraphicsState()
-            drawing.image(from: rect, scale: scale)
-                .draw(in: CGRect(origin: .zero, size: pixelSize))
+            if let ink = previewInk?.image {
+                let image = NSImage(cgImage: ink, size: rect.size)
+                image.draw(in: CGRect(origin: .zero, size: pixelSize))
+            }
         }
         NSGraphicsContext.restoreGraphicsState()
         guard let preview = bitmap.representation(using: .png, properties: [:]), preview.count <= request.maximumBytes else { throw CocoaError(.fileWriteOutOfSpace) }
@@ -130,6 +143,47 @@ actor DrawingStorage {
         try source.write(to: sourceURL, options: .atomic)
         try preview.write(to: previewURL, options: .atomic)
         return (sourceURL.path, previewURL.path)
+    }
+
+    private static func cropPreviewInk(_ drawing: PKDrawing, width: CGFloat, height: CGFloat, scale: CGFloat)
+        throws -> (rect: CGRect, image: CGImage)? {
+        let bounds = drawing.bounds
+        guard !bounds.isEmpty else { return nil }
+        let margin: CGFloat = 24
+        let top = floor(max(0, bounds.minY - margin) * scale) / scale
+        let bottom = ceil(min(height, bounds.maxY + margin) * scale) / scale
+        guard bottom > top else { return nil }
+        let sample = CGRect(x: 0, y: top, width: width, height: bottom - top)
+        guard ceil(sample.width * scale) * ceil(sample.height * scale) <= 64 * 1024 * 1024 else {
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
+
+        // PencilKit bounds can include fully masked strokes. Crop using only
+        // the rendered ink, before laying down the paper and its ruling.
+        var image: CGImage?
+        NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance {
+            image = drawing.image(from: sample, scale: scale).cgImage(forProposedRect: nil, context: nil, hints: nil)
+        }
+        guard let image,
+              let alpha = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                                    bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+              let data = alpha.data else { throw CocoaError(.fileWriteUnknown) }
+        alpha.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let pixels = data.assumingMemoryBound(to: UInt8.self)
+        func hasInk(_ row: Int) -> Bool {
+            let start = row * alpha.bytesPerRow
+            return stride(from: start + 3, to: start + image.width * 4, by: 4).contains { pixels[$0] != 0 }
+        }
+        let rows = 0..<image.height
+        guard let first = rows.first(where: hasInk), let last = rows.last(where: hasInk) else { return nil }
+        let padding = Int(margin * scale)
+        let firstRow = max(0, first - padding)
+        let rowCount = min(image.height, last + 1 + padding) - firstRow
+        guard let cropped = image.cropping(to: CGRect(x: 0, y: firstRow, width: image.width, height: rowCount)) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return (CGRect(x: 0, y: top + CGFloat(firstRow) / scale, width: width, height: CGFloat(rowCount) / scale), cropped)
     }
 }
 

@@ -209,12 +209,43 @@ extension DrawingDocument {
             case "pencil": .pencil
             default: .pen
             }
-            return PKStroke(ink: PKInk(tool, color: color),
-                path: PKStrokePath(controlPoints: points, creationDate: Date()), transform: .identity, mask: nil)
+            #if canImport(AppKit)
+            let path = PKStrokePath.macInputPath(points, creationDate: Date())
+            #else
+            let path = PKStrokePath(controlPoints: points, creationDate: Date())
+            #endif
+            return PKStroke(ink: PKInk(tool, color: color), path: path, transform: .identity, mask: nil)
         }
         return PKDrawing(strokes: strokes)
     }
 }
+
+#if canImport(AppKit)
+extension PKStrokePath {
+    static func macInputPath(_ samples: [PKStrokePoint], creationDate: Date) -> PKStrokePath {
+        var points: [PKStrokePoint] = []
+        for sample in samples where points.last?.location != sample.location {
+            points.append(sample)
+        }
+        guard points.count > 2 else { return PKStrokePath(controlPoints: points, creationDate: creationDate) }
+        var controls = [points[0]]
+        for i in 1..<(points.count - 1) {
+            let point = points[i]
+            let before = points[i - 1].location, after = points[i + 1].location
+            let dx = point.location.x - before.x, dy = point.location.y - before.y
+            let nextX = after.x - point.location.x, nextY = after.y - point.location.y
+            controls.append(point)
+            // Repeated controls pin a sharp turn in PencilKit's spline.
+            if dx * nextX + dy * nextY <= 0.5 * hypot(dx, dy) * hypot(nextX, nextY) {
+                controls.append(point)
+                controls.append(point)
+            }
+        }
+        controls.append(points[points.count - 1])
+        return PKStrokePath(controlPoints: controls, creationDate: creationDate)
+    }
+}
+#endif
 
 extension PortableInk {
     // Descriptors are sampled rendering approximations; original PKStrokes are

@@ -119,7 +119,7 @@ final class PaperView: NSView {
 
     private var liveStroke: PKStroke? {
         guard !points.isEmpty else { return nil }
-        return PKStroke(ink: model.ink, path: PKStrokePath(controlPoints: points, creationDate: strokeDate),
+        return PKStroke(ink: model.ink, path: .macInputPath(points, creationDate: strokeDate),
                         transform: .identity, mask: nil, randomSeed: strokeSeed)
     }
 

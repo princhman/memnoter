@@ -57,6 +57,30 @@ private func presentationFinished(_ context: UInt64, _ status: Int32) {
         try await checkPortableSelection(folder: folder, scope: scope)
         try await checkEmbeddedPresentation(folder: folder, scope: scope)
         try await checkAnswerSession(folder: folder, scope: scope, drawing: model.drawing)
+        model.tool = .pen
+        let dot = CGPoint(x: 220, y: 100)
+        view.mouseDown(with: event(.leftMouseDown, dot, 3))
+        view.mouseUp(with: event(.leftMouseUp, dot, 3.1))
+        view.mouseDown(with: event(.leftMouseDown, CGPoint(x: 300, y: 65), 4))
+        view.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: 340, y: 65), 4.1))
+        view.mouseUp(with: event(.leftMouseUp, CGPoint(x: 340, y: 105), 4.2))
+        let ink = model.drawing
+        precondition(ink.strokes.count == 3 && ink.strokes[1].path.count == 1)
+        let corner = CGPoint(x: 340, y: 65)
+        precondition(ink.strokes[2].path.interpolatedPoints(by: .distance(0.5)).contains {
+            hypot($0.location.x - corner.x, $0.location.y - corner.y) < 1
+        }, "The sharp turn must survive PencilKit interpolation")
+        let masked = PKStroke(ink: ink.strokes[0].ink, path: ink.strokes[0].path,
+                              mask: NSBezierPath(rect: CGRect(x: 50, y: 500, width: 10, height: 350)))
+        let drawing = ink.appending(PKDrawing(strokes: [masked]))
+        precondition(drawing.bounds.maxY > ink.bounds.maxY)
+        let (_, compactPath) = try await model.storage.publication(drawing, width: model.paperWidth, height: model.paperHeight, paperStyle: .blank)
+        let compact = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: compactPath)))!
+        precondition(compact.pixelsWide == Int(model.paperWidth) * 2 && compact.pixelsHigh < 300,
+                     "Fully masked ink must not extend the preview")
+        precondition((0..<compact.pixelsHigh).contains { row in
+            (438...442).contains { column in compact.colorAt(x: column, y: row)!.redComponent < 0.8 }
+        }, "A stationary tap must survive PNG publication")
         print("Mac canvas: mouse stroke, undo/redo, stroke erasing, local recovery and PNG/source publication passed. Archive written for the iPad test.")
     }
 

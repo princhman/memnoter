@@ -17,7 +17,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
-import { call as invoke, fileUrl as convertFileSrc, postNativeEvent } from "../lib/backend.ts";
+import { call as invoke, fileUrl as convertFileSrc, isTauri, postNativeEvent } from "../lib/backend.ts";
 import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Scan, Scaling, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
@@ -29,6 +29,7 @@ import { useSelector } from "@tanstack/react-store";
 import { requestSyncedFile, syncedFilesStore } from "@/lib/sync/file-requests";
 import { isLocallyPublishedPreview } from "@/editor-host/drawings";
 import { drawingReference } from "@/lib/drawing";
+import { IS_MAC } from "@/lib/platform";
 import { ImageControlsLayer } from "./image-controls-layer";
 import "./saved-image.css";
 
@@ -66,6 +67,8 @@ export function SavedImageView(props: NodeViewProps) {
   });
   const { files, saveImage, readImage, moduleId, editDrawing, unsavedDrawingId, flashcards = true, worksheet = false } = useContext(FilesContext);
   const drawing = drawingReference(node.attrs.drawing);
+  const macDrawing = !!drawing && IS_MAC && isTauri();
+  const drawingAdapts = !!drawing && (environment.isNative || macDrawing);
   const canEditDrawing = !!drawing && (environment.isNative || !!editDrawing);
   const previewId = drawing?.previewId ?? node.attrs.fileId;
   const file = files.get(previewId);
@@ -94,16 +97,16 @@ export function SavedImageView(props: NodeViewProps) {
   const height = showingPrevious ? picture.height : node.attrs.height;
   const src = currentSrc || (drawingPreviewId ? picture?.src : null);
   const [failedSource, setFailedSource] = useState<string | null>(null);
-  const failed = !!currentSrc && failedSource === currentSrc && !showingPrevious;
+  const failed = !!currentSrc && failedSource === currentSrc;
   const waitingForPicture = !!drawingPreviewId && !picture && !failed;
-  const loading = waitingForPicture || (showingPrevious && !worksheet && !currentSrc && !isLocallyPublishedPreview(drawingPreviewId));
+  const loading = waitingForPicture || (showingPrevious && !failed && !worksheet && !isLocallyPublishedPreview(drawingPreviewId));
   const rememberPicture = (source: string, naturalWidth: number, naturalHeight: number) => {
     if (!drawingPreviewId) return;
     if (worksheet && naturalWidth && naturalHeight) {
       rememberPreview(worksheetPreviewSizes, drawingPreviewId, { width: naturalWidth, height: naturalHeight });
     }
     const attrs = latest.current.node.attrs;
-    setPicture({ src: source, previewId: drawingPreviewId, width: attrs.width, height: attrs.height });
+    setPicture({ src: source, previewId: drawingPreviewId, width: attrs.width, height: attrs.height, naturalWidth, naturalHeight });
   };
   const isInline = node.type.isInline;
   const host = useRef<HTMLElement>(null);
@@ -186,7 +189,7 @@ export function SavedImageView(props: NodeViewProps) {
   const [displayedImage, setDisplayedImage] = useState<{ source: string; url: string } | null>(null);
   const [describing, setDescribing] = useState(false);
   const dark = useDarkTheme();
-  const adaptive = Boolean(node.attrs.adaptive) || (environment.isNative && !!drawing);
+  const adaptive = drawingAdapts || Boolean(node.attrs.adaptive);
 
   // The image's cards get the dot text cards have: due state and schedule on
   // hover, and a way into the mask editor.
@@ -273,10 +276,11 @@ export function SavedImageView(props: NodeViewProps) {
     // Retain the decoded old preview until the source effect below swaps it.
     if (!img.getAttribute("src") && picture) {
       // The source effect below crossfades to the new preview once it decodes.
-      img.src = cachedAdaptedUrl(picture.previewId, dark) ?? picture.src;
+      if (macDrawing) img.loading = "eager";
+      img.src = (adaptive && cachedAdaptedUrl(picture.previewId, dark)) || picture.src;
       setDisplayedImage({ source: picture.src, url: img.src });
     } else if (!img.getAttribute("src")) {
-      if (latest.current.node.attrs.adaptive || (environment.isNative && drawing)) {
+      if (adaptive) {
         // Hide the original until its recolored copy is ready.
         const cached = cachedAdaptedUrl(previewId ?? src, dark);
         if (cached) img.src = cached;
@@ -296,7 +300,7 @@ export function SavedImageView(props: NodeViewProps) {
       }
     };
     return () => { img.onload = null; img.onerror = null; };
-  }, [src, currentSrc, drawingPreviewId, dark]);
+  }, [src, currentSrc, drawingPreviewId, dark, adaptive, macDrawing]);
 
   useLayoutEffect(() => {
     if (picture && picture.previewId === drawingPreviewId) {
@@ -311,10 +315,12 @@ export function SavedImageView(props: NodeViewProps) {
     if (!image.current) return;
     image.current.alt = node.attrs.alt ?? "";
     image.current.title = node.attrs.title ?? "";
-    image.current.style.width = width ? `${width}px` : "";
+    const previewWidth = width || (macDrawing && picture?.naturalWidth);
+    const previewHeight = height || (macDrawing && picture?.naturalHeight);
+    image.current.style.width = previewWidth ? `${previewWidth}px` : "";
     image.current.style.height = "auto";
-    image.current.style.aspectRatio = width > 0 && height > 0 ? `${width} / ${height}` : "";
-  }, [src, node.attrs.alt, node.attrs.title, width, height]);
+    image.current.style.aspectRatio = previewWidth && previewHeight ? `${previewWidth} / ${previewHeight}` : "";
+  }, [src, node.attrs.alt, node.attrs.title, width, height, macDrawing, picture?.naturalWidth, picture?.naturalHeight]);
 
   // Recolored on the fly rather than saved, so it follows theme changes.
   useEffect(() => {
@@ -352,7 +358,8 @@ export function SavedImageView(props: NodeViewProps) {
       probe.src = next;
       await probe.decode();
       if (!cancelled) {
-        swapImage(img, next);
+        await swapImage(img, next, macDrawing ? () => !cancelled : undefined);
+        if (cancelled) return;
         setDisplayedImage({ source: src, url: next });
         rememberPicture(src, probe.naturalWidth, probe.naturalHeight);
       }
@@ -372,7 +379,7 @@ export function SavedImageView(props: NodeViewProps) {
       stopWaiting?.();
       release?.();
     };
-  }, [currentSrc, adaptive, dark, previewId, readImage]);
+  }, [currentSrc, adaptive, dark, previewId, readImage, macDrawing]);
 
   const resizeTo = (fraction: number) => {
     const img = image.current;
@@ -556,7 +563,7 @@ export function SavedImageView(props: NodeViewProps) {
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </Menu.SubmenuRoot>}
-              {!(environment.isNative && drawing) && (!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>}
+              {!drawingAdapts && (!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>}
               {!isNativeTablet && <DropdownMenuSeparator />}
               {flashcards && (!isNativeTablet || canCrop) && <DropdownMenuItem disabled={!canCrop} onClick={() => setOcclusionOpen(true)}><Scan />Occlusion ({validMasks(node.attrs.masks).length})</DropdownMenuItem>}
               {(!isNativeTablet || canCrop) && <DropdownMenuItem disabled={!canCrop} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop />Crop</DropdownMenuItem>}
@@ -594,7 +601,7 @@ export function SavedImageView(props: NodeViewProps) {
 
 const SWAP_FADE_MS = 220;
 // Last loaded preview per drawing (imageId), so a remounted view never blanks.
-const lastDrawingPicture = new Map<string, { src: string; previewId: string; width: number | null; height: number | null }>();
+const lastDrawingPicture = new Map<string, { src: string; previewId: string; width: number | null; height: number | null; naturalWidth: number; naturalHeight: number }>();
 
 function rememberPreview<T>(cache: Map<string, T>, id: string, value: T) {
   cache.delete(id);
@@ -607,13 +614,14 @@ function rememberPreview<T>(cache: Map<string, T>, id: string, value: T) {
 
 // Shows `next` in place of the image's current picture: fades in a hidden
 // image, otherwise crossfades by fading a copy of the old picture out on top.
-function swapImage(img: HTMLImageElement, next: string) {
+async function swapImage(img: HTMLImageElement, next: string, stillCurrent?: () => boolean) {
   const hidden = img.style.opacity === "0";
   img.style.opacity = "";
   if (img.src === next) return;
   // Nothing on screen yet (still loading or failed): no crossfade, and no
   // offset reads, which force a layout of the whole note per image on open.
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !img.isConnected || !img.complete || !img.naturalWidth) {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if ((reduceMotion && (!stillCurrent || hidden)) || !img.isConnected || !img.complete || !img.naturalWidth) {
     img.src = next;
     return;
   }
@@ -635,8 +643,22 @@ function swapImage(img: HTMLImageElement, next: string) {
     pointerEvents: "none",
   });
   ghost.removeAttribute("loading");
+  if (stillCurrent) {
+    // The Mac WKWebView can briefly clear an image during a source change.
+    // Decode the overlay before replacing the visible source.
+    await ghost.decode().catch(() => {});
+    if (!stillCurrent() || !img.isConnected) return;
+  }
   img.insertAdjacentElement("afterend", ghost);
   img.src = next;
+  if (stillCurrent) {
+    await img.decode().catch(() => {});
+    if (reduceMotion || !stillCurrent()) {
+      ghost.remove();
+      scheduleTrim();
+      return;
+    }
+  }
   ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SWAP_FADE_MS, easing: "ease-in-out" })
     .finished.finally(() => {
       ghost.remove();
