@@ -4,7 +4,7 @@ import type { Env } from "./env";
 import type { KeyInfo } from "./vault";
 import { blobKey, fileKey, goneKey } from "./storage";
 import {
-  PROTOCOL_VERSION, PROTOCOL_HEADER, UPDATE_REQUIRED_MESSAGE,
+  PROTOCOL_HEADER, UPDATE_REQUIRED_MESSAGE, isSupportedProtocol,
   AUTH_PROTOCOL_PREFIX,
   MAX_FILE_BYTES,
   MAX_LARGE_BLOB_BYTES,
@@ -87,10 +87,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     const key = kind === "files" ? fileKey(claims.sub, id) : blobKey(claims.sub, id);
     const marker = kind === "files" ? goneKey(claims.sub, id) : null;
     if (marker && method === "DELETE") {
-      // Headerless v0.1.5 uses protocol 1. Keep this fixed when the server
-      // protocol advances: legacy clients must then lose deletion access too.
+      // Headerless v0.1.5 uses protocol 1, older than any supported version,
+      // so it has no deletion access.
       const version = request.headers.get(PROTOCOL_HEADER) ?? "1";
-      if (version !== String(PROTOCOL_VERSION)) return json({ error: UPDATE_REQUIRED_MESSAGE }, 426);
+      if (!isSupportedProtocol(version)) return json({ error: UPDATE_REQUIRED_MESSAGE }, 426);
       return vault.deleteFile(key, marker, claims.iat);
     }
     if (method === "PUT") return vault.putObject(key, marker, request, kind === "files" ? MAX_FILE_BYTES : MAX_LARGE_BLOB_BYTES, claims.iat);

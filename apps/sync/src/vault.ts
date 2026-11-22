@@ -6,7 +6,7 @@ import {
   MAX_FRAME_BYTES,
   PING,
   PONG,
-  PROTOCOL_VERSION,
+  isSupportedProtocol,
   fromBase64,
   isValidDocId,
   readBlobRef,
@@ -137,7 +137,7 @@ export class Vault extends DurableObject<Env> {
   // awaiting, so no push can land in the middle: once a socket is ready it has
   // every entry up to head, and later entries reach it as broadcasts, in order.
   private hello(ws: WebSocket, cursor: unknown, version: unknown) {
-    if (version !== PROTOCOL_VERSION) {
+    if (!isSupportedProtocol(version)) {
       return this.fail(ws, "Please update Memnoter to keep syncing", true);
     }
     const after = typeof cursor === "number" && Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0;
@@ -164,7 +164,7 @@ export class Vault extends DurableObject<Env> {
       }
     }
     if (frame.length > 0) this.send(ws, { t: "entries", entries: frame });
-    ws.serializeAttachment({ ready: true, version: PROTOCOL_VERSION } satisfies Attachment);
+    ws.serializeAttachment({ ready: true, version: version as number } satisfies Attachment);
     this.send(ws, { t: "ready", head: Math.max(head, this.head()) });
     this.hintCompaction(ws);
   }
@@ -298,7 +298,7 @@ export class Vault extends DurableObject<Env> {
     const attachment = ws.deserializeAttachment() as Attachment | null;
     // Hibernating sockets may have said hello before a worker deployment.
     // Never let an old ready socket publish tombstones or receive new entries.
-    if (attachment?.ready && attachment.version !== PROTOCOL_VERSION) {
+    if (attachment?.ready && !isSupportedProtocol(attachment.version)) {
       this.fail(ws, "Please update Memnoter to keep syncing", true);
       return false;
     }

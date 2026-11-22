@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import contract from "./fixtures/protocol.json";
-import { makeBlobRef, readBlobRef, fromBase64 } from "../../shared-ui/src/lib/sync/protocol";
+import { makeBlobRef, readBlobRef, fromBase64, isSupportedProtocol } from "../../shared-ui/src/lib/sync/protocol";
 import { deriveKey, exportKey, verifyKeyCheck, decryptBlob } from "../../shared-ui/src/lib/sync/crypto";
 it("preserves the shared encrypted protocol contract", async () => {
   expect(readBlobRef(makeBlobRef(contract.blobRef.id))).toBe(contract.blobRef.id);
@@ -10,6 +10,19 @@ it("preserves the shared encrypted protocol contract", async () => {
   expect(await exportKey(key)).toBe(v.key);
   expect(await verifyKeyCheck(key, v.check)).toBe(true);
   await expect(decryptBlob(key, "wrong-doc", fromBase64(v.check))).rejects.toThrow();
+});
+
+// The server deploys on merge, ahead of the app release, so it must keep
+// accepting the released app's protocol (AGENTS.md, Data safety).
+it("accepts every protocol version from the oldest supported to the current", () => {
+  expect(contract.oldestVersion).toBeLessThanOrEqual(contract.version);
+  for (let v = contract.oldestVersion; v <= contract.version; v++) {
+    expect(isSupportedProtocol(v)).toBe(true);
+    expect(isSupportedProtocol(String(v))).toBe(true);
+  }
+  for (const v of [contract.oldestVersion - 1, contract.version + 1, 2.5, "2x", "", null, undefined]) {
+    expect(isSupportedProtocol(v)).toBe(false);
+  }
 });
 
 import { SELF } from "cloudflare:test";
