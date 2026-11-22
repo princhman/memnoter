@@ -77,9 +77,8 @@ Every handback and PR says which level it reached, and on which platform:
 | Level | Means |
 | --- | --- |
 | L1 | Tests, checks or a browser run of shared-ui. |
-| L2 | A recording or screenshot of the real app (see "Demo recordings"). |
-| L3 | On a named native device or simulator, with the build stamp from Settings → About. |
-| L4 | Working live across devices (sync, or one device's edit shown on another). |
+| L2 | A recording or screenshot of the real app on the named platform (see "Demo recordings"). On a device or simulator, include the build stamp from Settings → About. |
+| L3 | Working live across devices (sync, or one device's edit shown on another). |
 
 "Built", "installed", "launched", "registered" and "green CI" are not levels.
 Say what you saw, not what you ran. If the issue asks for a level you couldn't

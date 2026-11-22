@@ -28,6 +28,7 @@ class Description(unittest.TestCase):
     def test_evidence_needs_a_level(self):
         body = GOOD.replace('Evidence: L2 recording', 'Evidence: installed on the iPad')
         self.assertEqual(len(check.problems(body)), 1)
+        self.assertEqual(len(check.problems(GOOD.replace('L2 recording', 'L4 recording'))), 1)
 
     def test_only_closing_keywords_count(self):
         self.assertEqual(check.fixed_issues(GOOD + '\nCloses pri-7\n'), ['PRI-7', 'PRI-12'])

@@ -27,8 +27,8 @@ def problems(body):
         found.append('Missing "Acceptance:" line: the outcome this PR delivers, '
                      'from the issue\'s "Done means" or the user\'s words.')
     evidence = re.search(r'^Evidence:[ \t]*(\S.*)$', body, re.MULTILINE)
-    if not evidence or not re.match(r'L[1-4]\b', evidence.group(1)):
-        found.append('Missing "Evidence: L<1-4> ..." line: the level reached and on which '
+    if not evidence or not re.match(r'L[1-3]\b', evidence.group(1)):
+        found.append('Missing "Evidence: L<1-3> ..." line: the level reached and on which '
                      'platform (see "Evidence" in AGENTS.md).')
     if re.search(r'^Fixes PRI-\s*$', body, re.MULTILINE):
         found.append('The template\'s empty "Fixes PRI-" line is still there: fill it in or delete it.')
