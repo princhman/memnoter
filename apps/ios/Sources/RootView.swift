@@ -607,7 +607,7 @@ struct RootView: View {
                                     ForEach(0..<chrome.count, id: \.self) { index in
                                         Button("Question \(chrome.label(index))") { session?.worksheetQuestion(index) }
                                     }
-                                } label: { Text("\(chrome.label(chrome.index)) · \(chrome.index + 1)/\(chrome.count)") }
+                                } label: { Text("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))") }
                             }
                             Button { session?.worksheetQuestion(chrome.index + 1) } label: { Image(systemName: "chevron.right") }
                                 .disabled(chrome.index + 1 >= chrome.count).accessibilityLabel("Next question")
@@ -709,7 +709,7 @@ struct RootView: View {
                                     Button("Question \(chrome.label(index))") { session.worksheetQuestion(index) }
                                 }
                             } label: {
-                                Text("\(chrome.label(chrome.index)) · \(chrome.index + 1)/\(chrome.count)").font(.subheadline.weight(.medium))
+                                Text("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))").font(.subheadline.weight(.medium))
                             }
                             .accessibilityLabel("Question \(chrome.label(chrome.index)), \(chrome.index + 1) of \(chrome.count)")
                         }
@@ -1344,7 +1344,7 @@ private struct PdfPageButton: View {
             asking = true
         } label: {
             if compact {
-                Label("Page \(reader.page) of \(reader.pageCount) · Go to page", image: "Pdf-file-text")
+                Label("Go to page (\(reader.page) of \(reader.pageCount))", image: "Pdf-file-text")
             } else {
                 HStack(spacing: 3) {
                     Text("\(reader.page)").fontWeight(.semibold)
