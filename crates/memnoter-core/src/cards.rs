@@ -217,7 +217,8 @@ fn sync_module_cards(
         let mut upsert = tx
             .prepare(
                 "insert into cards (id, module_id, kind, front, back, section, due_at, created_at, updated_at)
-                 values (?1, ?2, ?3, ?4, ?5, ?7, ?6, ?6, ?6)
+                 select ?1, ?2, ?3, ?4, ?5, ?7, ?6, ?6, ?6
+                 where not exists(select 1 from sync_card_locations where card_id=?1 and module_id<>?2)
                  on conflict(id) do update set
                      updated_at = case
                          when cards.deleted_at is not null
