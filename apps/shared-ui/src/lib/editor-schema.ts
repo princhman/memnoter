@@ -44,6 +44,7 @@ type NoteExtensionOptions = {
   scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;
   onFirstRender?: () => void;
+  sidebarSectionsEnabled?: () => boolean;
 };
 
 // Every editor of a note's Yjs document must share these: an editor whose
@@ -57,6 +58,7 @@ export function noteExtensions({
   scrollContainer,
   onTocUpdate,
   onFirstRender,
+  sidebarSectionsEnabled = () => false,
 }: NoteExtensionOptions) {
   return [
     (reduced ? StarterKit.extend({
@@ -90,7 +92,13 @@ export function noteExtensions({
     reduced ? Flashcards.extend({ addCommands: () => ({}), addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] }) : Flashcards,
     ui.pdfTextQuote ?? PdfTextQuote,
     ...FoldableBlock,
-    ...(reduced ? [HeadingFold.extend({ addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] })] : [HeadingHieararchy, SectionFocus, Sections, HeadingFold, HeadingNumbering]),
+    ...(reduced ? [HeadingFold.extend({ addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] })] : [
+      HeadingHieararchy,
+      SectionFocus.configure({ sidebarSectionsEnabled }),
+      Sections.configure({ sidebarSectionsEnabled }),
+      HeadingFold,
+      HeadingNumbering,
+    ]),
     ...(ui.menus ?? []),
     (reduced ? TableOfContents.extend({
       // Keep the persisted heading attributes without note navigation effects.

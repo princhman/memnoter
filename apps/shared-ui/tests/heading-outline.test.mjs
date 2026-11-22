@@ -6,7 +6,7 @@ let server, browser, page;
 before(async () => {
   server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
   await server.listen(); browser = await webkit.launch(); page = await browser.newPage();
-  await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/selection.html`);
+  await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/selection.html?sidebar-sections`);
   await page.waitForFunction(() => !!window.editor);
 });
 after(async () => { await browser?.close(); await server?.close(); });

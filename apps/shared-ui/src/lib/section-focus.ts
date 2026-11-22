@@ -83,8 +83,11 @@ function buildSectionMarks(state: EditorState): DecorationSet {
   return DecorationSet.create(state.doc, decorations);
 }
 
-export const SectionFocus = Extension.create({
+export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boolean }>({
   name: "section-focus",
+  addOptions() {
+    return { sidebarSectionsEnabled: () => false };
+  },
   addCommands() {
     return {
       showSection:
@@ -108,6 +111,7 @@ export const SectionFocus = Extension.create({
     };
   },
   addProseMirrorPlugins() {
+    const sidebarSectionsEnabled = this.options.sidebarSectionsEnabled;
     return [
       new Plugin<number | null>({
         key: sectionFocusKey,
@@ -128,14 +132,15 @@ export const SectionFocus = Extension.create({
 
             if (currentPosition !== null && transaction.docChanged) {
               const mapping = transaction.mapping.mapResult(currentPosition, -1);
-              const range = getSectionRange(transaction.doc, mapping.pos);
-              const selected = transaction.selection.$from;
-              const heading = selected.depth === 1 ? selected.parent : null;
-              const focused = transaction.doc.nodeAt(mapping.pos);
-              if (!transaction.getMeta(ySyncPluginKey) && range &&
-                heading?.type.name === "heading" && focused?.type.name === "heading" &&
-                Number(heading.attrs.level) <= Number(focused.attrs.level) &&
-                (selected.pos < range.from || selected.pos >= range.to)) return null;
+              if (sidebarSectionsEnabled() && !transaction.getMeta(ySyncPluginKey)) {
+                const range = getSectionRange(transaction.doc, mapping.pos);
+                const selected = transaction.selection.$from;
+                const heading = selected.depth === 1 ? selected.parent : null;
+                const focused = transaction.doc.nodeAt(mapping.pos);
+                if (range && heading?.type.name === "heading" && focused?.type.name === "heading" &&
+                  Number(heading.attrs.level) <= Number(focused.attrs.level) &&
+                  (selected.pos < range.from || selected.pos >= range.to)) return null;
+              }
               return !mapping.deleted &&
                 isHeadingPosition(transaction.doc, mapping.pos)
                 ? mapping.pos

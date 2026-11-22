@@ -4,6 +4,7 @@ import { queryClient } from "@/lib/query-client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import AppSidebar from "@/components/app-sidebar";
+import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import NumberingSection from "@/components/settings/numbering-section";
 import { Outlet } from "@tanstack/react-router";
 import { SidebarProvider } from "@/components/ui/sidebar";
@@ -20,7 +21,7 @@ mockIPC((command, args) => {
   if (command === "set_module_numbering") modules = modules.map(module => ({ ...module, heading_numbering: args.enabled as boolean }));
   if (command === "plugin:app|version") return "test";
 });
-const rootRoute = createRootRoute({ component: () => <SidebarProvider><AppSidebar /><Outlet /></SidebarProvider> });
+const rootRoute = createRootRoute({ component: () => <ActiveEditorProvider><SidebarProvider><AppSidebar /><Outlet /></SidebarProvider></ActiveEditorProvider> });
 const routeTree = rootRoute.addChildren(["/", "/$moduleId", "/review", "/settings"].map(path => createRoute({ getParentRoute: () => rootRoute, path, component: path === "/settings" ? NumberingSection : () => null })));
 const router = createRouter({ routeTree });
 createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><TooltipProvider><RouterProvider router={router} /></TooltipProvider></QueryClientProvider>);

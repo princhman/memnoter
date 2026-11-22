@@ -29,8 +29,12 @@ export function currentSection(state: EditorState) {
   return { blockPos, heading, end: heading?.end ?? state.doc.content.size };
 }
 
-export const Sections = Extension.create({
+export const Sections = Extension.create<{ sidebarSectionsEnabled: () => boolean }>({
   name: "sections",
+
+  addOptions() {
+    return { sidebarSectionsEnabled: () => false };
+  },
 
   addCommands() {
     return {
@@ -78,13 +82,12 @@ export const Sections = Extension.create({
           if (!dispatch) return true;
           tr.scrollIntoView();
 
-          // A sibling belongs outside the focused section: reveal the note and
-          // keep the caret in the new heading rather than silently refocusing.
           const focusedPos = sectionFocusKey.getState(state);
           if (focusedPos != null) {
             const range = getSectionRange(tr.doc, tr.mapping.map(focusedPos));
             if (!range || headingPos < range.from || headingPos >= range.to) {
-              commands.showDocument();
+              if (this.options.sidebarSectionsEnabled()) commands.showDocument();
+              else commands.showSection(headingPos);
             }
           }
           return true;
@@ -101,20 +104,21 @@ export const Sections = Extension.create({
 
   addProseMirrorPlugins() {
     const editor = this.editor;
+    const enabled = () => editor.isEditable && this.options.sidebarSectionsEnabled();
     return [new Plugin({
       key: new PluginKey("empty-heading-ids"),
       appendTransaction(transactions, _old, state) {
-        if (!editor.isEditable || !transactions.some(tr => tr.docChanged) ||
+        if (!enabled() || !transactions.some(tr => tr.docChanged) ||
           transactions.some(tr => tr.getMeta("composition"))) return null;
         return emptyHeadingIds(state);
       },
       // A note becomes editable only after it loads, without a content change.
       view: () => ({
         update(view) {
-          if (!editor.isEditable || view.composing) return;
+          if (!enabled() || view.composing) return;
           const tr = emptyHeadingIds(view.state);
           if (tr) queueMicrotask(() => {
-            const next = !view.isDestroyed && editor.isEditable ? emptyHeadingIds(view.state) : null;
+            const next = !view.isDestroyed && !view.composing && enabled() ? emptyHeadingIds(view.state) : null;
             if (next) view.dispatch(next);
           });
         },
