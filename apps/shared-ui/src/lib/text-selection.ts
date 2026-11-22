@@ -2,6 +2,8 @@ import { Extension } from "@tiptap/core";
 import { AllSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 
+import { SectionSelection } from "./section-focus.ts";
+
 const selectionKey = new PluginKey<{ composing: boolean }>("textSelectionHighlight");
 
 // Native WebKit selection paints selected newlines all the way to the block
@@ -20,7 +22,7 @@ export const TextSelectionHighlight = Extension.create({
         decorations(state) {
           if (currentView?.composing || selectionKey.getState(state)?.composing) return DecorationSet.empty;
           const { selection, doc } = state;
-          if (selection.empty || !(selection instanceof TextSelection || selection instanceof AllSelection)) return DecorationSet.empty;
+          if (selection.empty || !(selection instanceof TextSelection || selection instanceof AllSelection || selection instanceof SectionSelection)) return DecorationSet.empty;
           const { from, to } = selection;
           const decorations: Decoration[] = [];
           doc.nodesBetween(from, to, (node, pos) => {

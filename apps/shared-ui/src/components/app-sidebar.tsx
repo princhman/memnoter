@@ -17,7 +17,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
-import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
+import { Link, useMatchRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { SidebarModules } from "./sidebar-modules";
 import { ChevronRight, Ellipsis, FilePlus, FileText, House, Files, CircleHelp, Layers, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import { addSidebarSection, openSidebarSection, SidebarSectionNavigation, useSidebarSections } from "@/lib/sidebar-sections";
@@ -54,7 +54,7 @@ import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
 
 const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: string; children: ReactNode }) => {
-  const navigate = useNavigate();
+  const router = useRouter();
   const sidebarSections = useSelector(appStore, state => state.sidebarSections);
   const [menuOpen, setMenuOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -66,8 +66,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
   const items = (Item: typeof DropdownMenuItem | typeof ContextMenuItem) => (
     <>
       {sidebarSections && <Item onClick={() => {
-        addSidebarSection(moduleId);
-        void navigate({ to: "/$moduleId", params: { moduleId } });
+        addSidebarSection(moduleId, router);
       }}><Plus className="size-3" />Add section</Item>}
       {isTauri() && <Item onClick={() => pickPdfs(moduleId)}><FilePlus className="size-3" />Add PDF…</Item>}
       <Item onClick={() => setRenameOpen(true)}>

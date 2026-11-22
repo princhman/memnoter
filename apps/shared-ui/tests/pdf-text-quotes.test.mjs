@@ -131,3 +131,58 @@ test('text quotes insert atomically through the normal note owner and survive HT
     assert.deepEqual(sections.filter(Boolean), ['First', 'First body', 'quote 1', 'Second', 'Second body', 'quote 2']);
   } finally { await browser?.close(); await server.close(); }
 });
+
+test('End of note reveals a text quote from section focus and keeps a rejected draft', async () => {
+  const { createServer } = browserHarness(import.meta.url);
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()};
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
+        if (command === 'get_content') return { state: [], updates: [], files: [] };
+        if (command === 'add_update') return { id: 1, bytes: args.bytes };
+        throw new Error('Unexpected command: ' + command);
+      } } });`);
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/pdf-text-quotes.html`);
+    await page.waitForFunction(() => window.textQuoteTest);
+    await page.evaluate(() => {
+      const { editor, pendingPdfQuote } = window.textQuoteTest;
+      editor.commands.setContent('<h1>First</h1><p>First body</p><h1>Last</h1><p>Last body</p>');
+      editor.commands.showSection(0);
+      pendingPdfQuote.setState(() => ({
+        id: 'end-of-note', moduleId: 'quote-module', kind: 'text', status: 'draft',
+        parts: [{ text: 'Quote for the end', source: { documentId: 'pdf-one', page: 1, name: 'Lecture.pdf', region: { x: .1, y: .2, width: .5, height: .4 } } }],
+      }));
+      const Plugin = editor.state.plugins[0].constructor;
+      window.rejectEdits = new Plugin({ filterTransaction: tr => !tr.docChanged });
+      editor.registerPlugin(window.rejectEdits);
+    });
+    const insertAtEnd = async () => {
+      await page.getByRole('button', { name: 'Choose section' }).click();
+      await page.getByRole('button', { name: 'End of note', exact: true }).click();
+    };
+    const lastHeading = page.locator('.tiptap > h1').filter({ hasText: 'Last' });
+    await lastHeading.waitFor({ state: 'hidden' });
+    await insertAtEnd();
+    await page.getByRole('alert').filter({ hasText: 'Could not insert the quote' }).waitFor();
+    assert.equal(await page.evaluate(() => window.textQuoteTest.pendingPdfQuote.state.status), 'draft');
+
+    await page.evaluate(() => {
+      const { editor } = window.textQuoteTest;
+      editor.view.updateState(editor.state.reconfigure({ plugins: editor.state.plugins.filter(plugin => plugin !== window.rejectEdits) }));
+    });
+    await insertAtEnd();
+    await page.locator('.tiptap').getByText('Quote for the end', { exact: true }).waitFor();
+    await page.getByRole('group', { name: 'Text quote actions' }).waitFor({ state: 'detached' });
+    await lastHeading.waitFor();
+    const tail = await page.locator('.tiptap').evaluate(({ editor }) =>
+      editor.getJSON().content.slice(2).filter(node => node.content?.length).map(node => node.type));
+    assert.deepEqual(tail, ['heading', 'paragraph', 'pdfTextQuote']);
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});

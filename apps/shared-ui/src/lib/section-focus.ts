@@ -1,8 +1,8 @@
-import { outline } from "./outline.ts";
+import { headingId, outline } from "./outline.ts";
 import { Extension, isiOS, isMacOS } from "@tiptap/core";
-import { AllSelection, EditorState, PluginKey, Plugin, Selection, TextSelection } from "@tiptap/pm/state";
-import { StepMap } from "@tiptap/pm/transform";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { AllSelection, type EditorState, PluginKey, Plugin, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
+import { StepMap, type Mappable } from "@tiptap/pm/transform";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { Editor } from "@tiptap/core";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
 
@@ -85,33 +85,88 @@ function buildSectionMarks(state: EditorState): DecorationSet {
   return DecorationSet.create(state.doc, decorations);
 }
 
+// Background repairs must persist even when their blocks are hidden.
+export const sectionFocusBackground = "section-focus-background";
+
+function selectionCrossesBoundary(state: EditorState) {
+  const range = getFocusedSectionRange(state);
+  return !!range && (state.selection.from < range.from || state.selection.to > range.to);
+}
+
+function blockInputOverHiddenSelection(view: EditorView, event: Event) {
+  if (!selectionCrossesBoundary(view.state)) return false;
+  event.preventDefault();
+  return true;
+}
+
+function deletesAcrossBoundary(state: EditorState, direction: -1 | 1) {
+  if (sectionFocusKey.getState(state) == null) return false;
+  const range = getFocusedSectionRange(state);
+  if (!range) return false;
+  if (selectionCrossesBoundary(state)) return true;
+  const { empty, $head } = state.selection;
+  const edge = direction === 1 ? range.to : range.from;
+  const documentEdge = direction === 1 ? state.doc.content.size : 0;
+  // A caret inside the last list item has a closing token for each ancestor.
+  return empty && edge !== documentEdge &&
+    ($head.pos === edge || $head.pos + direction * $head.depth === edge);
+}
+
+function changesHiddenContent(transaction: Transaction, range: { from: number; to: number }) {
+  let { from, to } = range;
+  for (const [index, step] of transaction.steps.entries()) {
+    const map = step.getMap();
+    if (map === StepMap.empty) {
+      const before = transaction.docs[index].content;
+      const after = (transaction.docs[index + 1] ?? transaction.doc).content;
+      const start = before.findDiffStart(after);
+      if (start != null && (start < from || (before.findDiffEnd(after)?.a ?? start) > to)) return true;
+    } else {
+      let outside = false;
+      map.forEach((start, end) => { if (start < from || end > to) outside = true; });
+      if (outside) return true;
+    }
+    from = map.map(from, -1);
+    to = map.map(to, 1);
+  }
+  return false;
+}
+
+// Text selections need inline endpoints. A section ending in a block atom
+// needs a selection whose endpoint can sit after that atom at the document level.
+export class SectionSelection extends Selection {
+  eq(other: Selection) {
+    return other instanceof SectionSelection && this.anchor === other.anchor && this.head === other.head;
+  }
+
+  map(doc: EditorState["doc"], mapping: Mappable): Selection {
+    const anchor = mapping.map(this.anchor, 1);
+    const head = mapping.map(this.head, -1);
+    return anchor < head
+      ? new SectionSelection(doc.resolve(anchor), doc.resolve(head))
+      : Selection.near(doc.resolve(anchor));
+  }
+
+  toJSON() {
+    return { type: "section-selection", anchor: this.anchor, head: this.head };
+  }
+
+  static fromJSON(doc: EditorState["doc"], json: { anchor: number; head: number }) {
+    return new SectionSelection(doc.resolve(json.anchor), doc.resolve(json.head));
+  }
+}
+Selection.jsonID("section-selection", SectionSelection);
+
 export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boolean }>({
   name: "section-focus",
   addOptions() {
     return { sidebarSectionsEnabled: () => false };
   },
-  // Guard the boundary before heading demotion and the default join commands.
-  priority: 111,
+  // Intercept boundary input before MarkdownPaste and the default keymaps.
+  priority: 1101,
   addKeyboardShortcuts() {
-    const guardBoundary = (direction: -1 | 1) => {
-      const { state } = this.editor;
-      if (sectionFocusKey.getState(state) == null) return false;
-      const range = getFocusedSectionRange(state);
-      if (!range) return false;
-
-      const { from, to, empty, $head } = state.selection;
-      if (from < range.from || to > range.to) return true;
-      if (!empty) return false;
-
-      // A caret at the edge may be nested (for example in the last list item).
-      // Each open or close token between it and the top-level edge adds one position.
-      const edge = direction === 1 ? range.to : range.from;
-      const documentEdge = direction === 1 ? state.doc.content.size : 0;
-      return edge !== documentEdge &&
-        ($head.pos === edge || $head.pos + direction * $head.depth === edge);
-    };
-    const forward = () => guardBoundary(1);
-    const backward = () => guardBoundary(-1);
+    const forward = () => deletesAcrossBoundary(this.editor.state, 1);
+    const backward = () => deletesAcrossBoundary(this.editor.state, -1);
     return {
       Delete: forward,
       "Mod-Delete": forward,
@@ -155,42 +210,64 @@ export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boo
     return [
       new Plugin<number | null>({
         key: sectionFocusKey,
+        props: {
+          handleTextInput(view, from, to) {
+            const range = getFocusedSectionRange(view.state);
+            return !!range && (from < range.from || to > range.to || selectionCrossesBoundary(view.state));
+          },
+          handlePaste: view => selectionCrossesBoundary(view.state),
+          handleDOMEvents: {
+            keydown(view, event) {
+              // ProseMirror skips its keymap during composition. Intercept these
+              // editing keys before the browser can replace an escaped selection.
+              if (event.key !== "Delete" && event.key !== "Backspace" && event.key !== "Enter") return false;
+              if (!selectionCrossesBoundary(view.state)) return false;
+              event.preventDefault();
+              return true;
+            },
+            beforeinput(view, event) {
+              const { inputType } = event;
+              if (!inputType.startsWith("insert") && !inputType.startsWith("delete")) return false;
+              const range = getFocusedSectionRange(view.state);
+              if (!range) return false;
+              const outside = event.getTargetRanges?.().some(({ startContainer, startOffset, endContainer, endOffset }) =>
+                view.dom.contains(startContainer) && view.dom.contains(endContainer) &&
+                (view.posAtDOM(startContainer, startOffset) < range.from ||
+                 view.posAtDOM(endContainer, endOffset) > range.to));
+              const boundaryDelete = inputType.endsWith("Forward") && deletesAcrossBoundary(view.state, 1) ||
+                inputType.endsWith("Backward") && deletesAcrossBoundary(view.state, -1);
+              if (!event.cancelable || !(outside || boundaryDelete || selectionCrossesBoundary(view.state))) return false;
+              event.preventDefault();
+              return true;
+            },
+            // Composition start can delete a spanning selection before
+            // ProseMirror starts tagging its transactions as composition.
+            compositionstart: blockInputOverHiddenSelection,
+            compositionupdate: blockInputOverHiddenSelection,
+            cut: blockInputOverHiddenSelection,
+            paste: blockInputOverHiddenSelection,
+          },
+        },
         filterTransaction(transaction, state) {
-          const action = transaction.getMeta(sectionFocusKey);
-          if (!transaction.docChanged || action?.type === "show" || action?.type === "clear" ||
-            transaction.getMeta(ySyncPluginKey)?.isChangeOrigin) return true;
-
+          const input = transaction.getMeta("uiEvent");
+          if (!transaction.docChanged ||
+            !(transaction.getMeta("composition") || input === "cut" || input === "paste" || input === "drop")) return true;
           const range = getFocusedSectionRange(state);
-          if (!range) return true;
-          let { from, to } = range;
-          for (const [index, step] of transaction.steps.entries()) {
-            const map = step.getMap();
-            let outside = false;
-            if (map === StepMap.empty) {
-              // Marks and attributes can change without moving any positions.
-              const before = transaction.docs[index].content;
-              const after = (transaction.docs[index + 1] ?? transaction.doc).content;
-              const start = before.findDiffStart(after);
-              outside = start != null && (start < from || (before.findDiffEnd(after)?.a ?? start) > to);
-            } else {
-              map.forEach((start, end) => { if (start < from || end > to) outside = true; });
-            }
-            if (outside) return false;
-            from = map.map(from, -1);
-            to = map.map(to, 1);
-          }
-          return true;
+          return !range || !changesHiddenContent(transaction, range);
         },
         appendTransaction(_transactions, _old, state) {
           if (!(state.selection instanceof AllSelection)) return null;
           const range = getFocusedSectionRange(state);
           if (!range) return null;
-          const end = Selection.findFrom(state.doc.resolve(range.to), -1, true);
-          return state.tr.setSelection(TextSelection.create(state.doc, range.from + 1, end?.to ?? range.from + 1));
+          const end = Selection.findFrom(state.doc.resolve(range.to), -1);
+          const selection = end instanceof TextSelection
+            ? TextSelection.create(state.doc, range.from + 1, end.to)
+            : new SectionSelection(state.doc.resolve(range.from), state.doc.resolve(range.to));
+          return state.tr.setSelection(selection);
         },
         state: {
           init: () => null,
-          apply(transaction, currentPosition) {
+          apply(transaction, currentPosition, oldState) {
             const action = transaction.getMeta(sectionFocusKey);
 
             if (action?.type === "clear") {
@@ -204,20 +281,42 @@ export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boo
             }
 
             if (currentPosition !== null && transaction.docChanged) {
-              const mapping = transaction.mapping.mapResult(currentPosition, -1);
-              if (sidebarSectionsEnabled() && !transaction.getMeta(ySyncPluginKey)) {
-                const range = getSectionRange(transaction.doc, mapping.pos);
+              const before = getSectionRange(oldState.doc, currentPosition);
+              if (!before) return null;
+              const sync = transaction.getMeta(ySyncPluginKey);
+              let position = transaction.mapping.map(currentPosition, -1);
+              if (sync?.isChangeOrigin) {
+                // The binding renders a full replacement, even for a one-letter change.
+                const heading = oldState.doc.nodeAt(currentPosition);
+                if (!heading) return null;
+                const id = headingId(heading);
+                const matches = outline(transaction.doc).filter(item =>
+                  id ? item.id === id : item.id == null && transaction.doc.nodeAt(item.pos)?.eq(heading));
+                if (matches.length !== 1) return null;
+                position = matches[0].pos;
+              }
+              const after = getSectionRange(transaction.doc, position);
+              if (!after) return null;
+              const background = sync?.isChangeOrigin ? !sync.isUndoRedoOperation :
+                transaction.getMeta("appendedTransaction") || transaction.getMeta(sectionFocusBackground) ||
+                transaction.getMeta("addToHistory") === false;
+              if (!background) {
+                const oldDoc = oldState.doc.content;
+                const newDoc = transaction.doc.content;
+                // Compare both hidden sides, including inserts at the section ends.
+                const mayChangeHidden = sync?.isChangeOrigin ||
+                  transaction.mapping.map(before.to, 1) !== after.to || changesHiddenContent(transaction, before);
+                if (mayChangeHidden && (!oldDoc.cut(0, before.from).eq(newDoc.cut(0, after.from)) ||
+                    !oldDoc.cut(before.to).eq(newDoc.cut(after.to)))) return null;
+
                 const selected = transaction.selection.$from;
                 const heading = selected.depth === 1 ? selected.parent : null;
-                const focused = transaction.doc.nodeAt(mapping.pos);
-                if (range && heading?.type.name === "heading" && focused?.type.name === "heading" &&
+                const focused = transaction.doc.nodeAt(position);
+                if (sidebarSectionsEnabled() && heading?.type.name === "heading" && focused?.type.name === "heading" &&
                   Number(heading.attrs.level) <= Number(focused.attrs.level) &&
-                  (selected.pos < range.from || selected.pos >= range.to)) return null;
+                  (selected.pos < after.from || selected.pos >= after.to)) return null;
               }
-              return !mapping.deleted &&
-                isHeadingPosition(transaction.doc, mapping.pos)
-                ? mapping.pos
-                : null;
+              return position;
             }
             return currentPosition;
           },

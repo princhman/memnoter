@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import type { RegisteredRouter } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { createStore, useSelector } from "@tanstack/react-store";
 import type { JSONContent } from "@tiptap/core";
@@ -20,15 +21,58 @@ import { toast } from "sonner";
 type SectionTarget = { kind: "heading"; id: string } | { kind: "legacy-heading"; chapterIndex: number };
 type Section = { target: SectionTarget; key: string; title: string; number: string };
 type SidebarTarget = SectionTarget | { kind: "document" } | { kind: "add" };
-const destination = createStore<{ moduleId: string; target: SidebarTarget } | null>(null);
+type SidebarRequest = { moduleId: string; target: SidebarTarget };
+const destination = createStore<SidebarRequest | null>(null);
+let pendingAdd: { pathname: string; cancel: () => void } | null = null;
 
-export function openSidebarSection(moduleId: string, target: SidebarTarget) {
+export function openSidebarSection(moduleId: string, target: Exclude<SidebarTarget, { kind: "add" }>) {
+  pendingAdd?.cancel();
   setModulePage(moduleId, "notes");
   destination.setState(() => ({ moduleId, target }));
 }
 
-export function addSidebarSection(moduleId: string) {
-  openSidebarSection(moduleId, { kind: "add" });
+export function pendingSidebarAddCancellation(pathname: string) {
+  const add = pendingAdd;
+  if (!add || add.pathname === pathname) return add?.cancel;
+  // Starting a different navigation supersedes the Add, even while saves drain.
+  add.cancel();
+}
+
+export function addSidebarSection(moduleId: string, router: RegisteredRouter) {
+  pendingAdd?.cancel();
+  destination.setState(() => null);
+  const request: SidebarRequest = { moduleId, target: { kind: "add" } };
+  const id = crypto.randomUUID();
+  const route = { to: "/$moduleId", params: { moduleId } } as const;
+  const { pathname, publicHref } = router.buildLocation(route);
+  const publish = () => {
+    setModulePage(moduleId, "notes");
+    destination.setState(() => request);
+  };
+  const cancel = () => {
+    unsubscribe();
+    if (pendingAdd?.cancel === cancel) pendingAdd = null;
+    if (destination.state === request) destination.setState(() => null);
+  };
+  const unsubscribe = router.history.subscribe(({ location, action }) => {
+    // Only the first commit of this Add navigation can arm the request.
+    // A different navigation, including Back, cancels it even during loading.
+    if (destination.state === request || (action.type !== "PUSH" && action.type !== "REPLACE") ||
+      !("sidebarSectionRequest" in location.state) || location.state.sidebarSectionRequest !== id) {
+      cancel();
+      return;
+    }
+    publish();
+  });
+  pendingAdd = { pathname, cancel };
+  if (router.history.location.href === publicHref) {
+    publish();
+    return;
+  }
+  void router.navigate({
+    ...route,
+    state: state => ({ ...state, sidebarSectionRequest: id }),
+  }).catch(cancel);
 }
 
 function sectionTarget(id: string | null, chapterIndex: number): SectionTarget {
@@ -105,12 +149,12 @@ export function SidebarSectionNavigation() {
   const { activeEditor } = useActiveEditor();
   const request = useSelector(destination, state => state);
   useEffect(() => {
-    if (!request || !activeEditor?.isReady || activeEditor.moduleId !== request.moduleId || activeEditor.editor.isDestroyed) return;
+    if (!request || destination.state !== request || !activeEditor?.isReady || activeEditor.moduleId !== request.moduleId || activeEditor.editor.isDestroyed) return;
     const { editor } = activeEditor;
     const { target } = request;
     if (target.kind === "add" && !editor.isEditable) {
       toast.error("This note is read-only. A section could not be added.");
-      destination.setState(() => null);
+      pendingAdd?.cancel();
       return;
     }
     stopScrollRestore();
@@ -142,7 +186,8 @@ export function SidebarSectionNavigation() {
         if (element instanceof HTMLElement) element.scrollIntoView({ block: "start", behavior: "instant" });
       }
     }
-    destination.setState(() => null);
+    if (target.kind === "add") pendingAdd?.cancel();
+    else destination.setState(() => null);
   }, [request, activeEditor]);
   return null;
 }

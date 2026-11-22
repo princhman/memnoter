@@ -20,10 +20,11 @@ function call(command, args = {}) {
   });
 }
 
-async function createModule(name, titles) {
+async function createModule(name, titles, initialize = () => {}) {
   const moduleId = await call("create_module", { name });
   const doc = new Y.Doc();
-  doc.getXmlFragment("default").insert(0, titles.flatMap((title, index) => {
+  const fragment = doc.getXmlFragment("default");
+  fragment.insert(0, titles.flatMap((title, index) => {
     const heading = new Y.XmlElement("heading");
     heading.setAttribute("level", 1);
     const paragraph = new Y.XmlElement("paragraph");
@@ -39,6 +40,7 @@ async function createModule(name, titles) {
     }
     return [heading, paragraph];
   }));
+  initialize(fragment);
   await call("save_compaction", { moduleId, newState: Array.from(Y.encodeStateAsUpdate(doc)), updateId: 0 });
   doc.destroy();
   await call("set_module_numbering", { moduleId, enabled: true });
@@ -68,13 +70,13 @@ after(async () => {
   }
 });
 
-async function openNote(moduleId, { sections = false } = {}) {
+async function openNote(moduleId, { sections = false, invoke = call } = {}) {
   const page = await browser.newPage({ viewport: { width: 1150, height: 750 } });
   page.setDefaultTimeout(8000);
   page.on("pageerror", error => console.error(error));
   await page.context().route("https://api.github.com/repos/princhman/memnoter/releases/latest",
     route => route.fulfill({ status: 404, json: {} }));
-  await page.exposeFunction("coreCall", call);
+  await page.exposeFunction("coreCall", invoke);
   const setup = sections => {
     Object.defineProperty(navigator, "platform", { value: "MacIntel" });
     if (sections) localStorage.setItem("app-state", JSON.stringify({ sidebarSections: true }));
@@ -319,6 +321,39 @@ test("Select All selects only the focused section and restores whole-note select
   }
 });
 
+function selectAcrossHiddenSections(node) {
+  const { editor } = node;
+  editor.commands.setTextSelection({
+    from: editor.state.doc.firstChild.nodeSize - 2,
+    to: editor.state.doc.content.size - 2,
+  });
+}
+
+test("typing, cut and Markdown paste keep hidden text when the selection spans chapters", async () => {
+  const moduleId = await createModule("Input boundary", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  try {
+    await focusMiddleSection(page);
+    const editor = page.locator(".tiptap");
+    const snapshot = () => editor.evaluate(({ editor }) => editor.getJSON());
+    const before = await snapshot();
+    await editor.evaluate(selectAcrossHiddenSections);
+    await page.keyboard.insertText("Replacement");
+    assert.deepEqual(await snapshot(), before);
+    for (const type of ["cut", "paste"]) {
+      await editor.evaluate(selectAcrossHiddenSections);
+      await editor.evaluate((node, type) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", "# Markdown heading\n\n- list item");
+        node.dispatchEvent(new ClipboardEvent(type, { clipboardData, bubbles: true, cancelable: true }));
+      }, type);
+      assert.deepEqual(await snapshot(), before);
+    }
+  } finally {
+    await page.close();
+  }
+});
+
 test("section focus rejects a composing Delete across hidden sections before it reaches Yjs", async () => {
   const moduleId = await createModule("Composition", ["Before", "Middle", "After"]);
   const page = await openNote(moduleId);
@@ -335,20 +370,215 @@ test("section focus rejects a composing Delete across hidden sections before it 
     const before = await snapshot();
     // A native selection can escape the focused range independently of the
     // app's Select All shortcut. Establish it before the composing keydown.
-    const composing = await editor.evaluate(node => {
-      const { editor } = node;
-      const first = editor.state.doc.firstChild;
-      editor.commands.setTextSelection({ from: first.nodeSize - 2, to: editor.state.doc.content.size - 2 });
-      node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
-      return editor.view.composing;
+    await editor.evaluate(selectAcrossHiddenSections);
+    const cancelled = await editor.evaluate(node => {
+      return !node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, cancelable: true }));
     });
-    assert.equal(composing, true);
+    assert.equal(cancelled, true);
     await page.keyboard.press("Delete");
     await editor.evaluate(async node => {
       node.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
       await new Promise(resolve => requestAnimationFrame(resolve));
     });
     assert.deepEqual(await snapshot(), before);
+  } finally {
+    await page.close();
+  }
+});
+
+test("a section move keeps offline edits in the drop target and untouched chapter", async () => {
+  const moduleId = await createModule("Concurrent chapters", ["First", "Second", "Third"]);
+  const page = await openNote(moduleId, { sections: true });
+  const peer = new Y.Doc();
+  try {
+    const { state, updates } = await call("get_content", { moduleId });
+    Y.applyUpdate(peer, Uint8Array.from(state));
+    for (const { bytes } of updates) Y.applyUpdate(peer, Uint8Array.from(bytes));
+    const base = Y.encodeStateVector(peer);
+    const fragment = peer.getXmlFragment("default");
+    for (const [index, edit] of [[3, " Target peer edit."], [5, " Untouched peer edit."]]) {
+      const text = fragment.get(index).get(0);
+      text.insert(text.length, edit);
+    }
+    const sidebar = page.getByRole("list", { name: "Sections of Concurrent chapters" });
+    const first = sidebar.getByRole("button", { name: "1 First" });
+    const second = sidebar.getByRole("button", { name: "2 Second" });
+    await first.click();
+    const source = await first.boundingBox();
+    const target = await second.boundingBox();
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height * 0.8, { steps: 15 });
+    await page.locator("[data-sidebar-drag-preview]").waitFor();
+    await page.mouse.up();
+    await sidebar.getByRole("button", { name: "2 First" }).waitFor();
+
+    const editor = page.locator(".tiptap");
+    const moved = await editor.evaluate(async ({ editor }, bytes) => {
+      const doc = editor.extensionManager.extensions.find(ext => ext.name === "collaboration").options.document;
+      const { applySavedContent } = await import("/src/lib/content.ts");
+      applySavedContent(doc, { state: [], updates: [{ id: 1, bytes }], files: [] });
+      return doc.getXmlFragment("default").toArray().map(block => block.get(0)?.toString());
+    }, Array.from(Y.encodeStateAsUpdate(peer, base)));
+    assert.deepEqual(moved, ["Second", "Notes for Second. Target peer edit.", "First", "Notes for First.", "Third", "Notes for Third. Untouched peer edit."]);
+    assert.deepEqual(await editor.locator(":scope > h1").filter({ visible: true }).allTextContents(), ["2\u00a0First"]);
+  } finally {
+    peer.destroy();
+    await page.close();
+  }
+});
+
+test("undo and redo reveal edits in a hidden chapter", async () => {
+  const moduleId = await createModule("History", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId, { sections: true });
+  try {
+    const after = page.locator(".tiptap > p").filter({ hasText: "Notes for After." });
+    await after.click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" Edited");
+    const focusBefore = async () => {
+      await page.getByRole("list", { name: "Sections of History" })
+        .getByRole("button", { name: "1 Before", exact: true }).click();
+      await page.locator(".tiptap > p").filter({ hasText: "Notes for Before." }).click();
+      await after.waitFor({ state: "hidden" });
+    };
+    await focusBefore();
+    await page.keyboard.press("Meta+z");
+    await after.waitFor({ timeout: 3000 });
+    assert.equal(await after.textContent(), "Notes for After.");
+    await focusBefore();
+    await page.keyboard.press("Meta+Shift+z");
+    await after.waitFor({ timeout: 3000 });
+    assert.equal(await after.textContent(), "Notes for After. Edited");
+  } finally {
+    await page.close();
+  }
+});
+
+test("a blocked Add section cannot insert on Back, and a fresh request can add across notes", async () => {
+  const a = await createModule("Save source", ["Before"]);
+  const b = await createModule("Add destination", ["Existing"]);
+  let failing = false;
+  const page = await openNote(b, { sections: true, invoke(command, args) {
+    if (failing && command === "sync_cards" && args.moduleId === a) throw new Error("test card save failure");
+    return call(command, args);
+  } });
+  const editor = page.locator(".tiptap[contenteditable=true]");
+  const destination = page.getByRole("link", { name: "Add destination", exact: true });
+  const add = async () => {
+    await destination.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Add section", exact: true }).click();
+  };
+  try {
+    await page.getByRole("link", { name: "Save source", exact: true }).click();
+    await editor.getByText("Notes for Before.", { exact: true }).waitFor();
+    failing = true;
+    await editor.locator(":scope > p").click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" Prompt :: answer");
+    const blocked = page.waitForEvent("dialog");
+    const attempted = add();
+    const dialog = await blocked;
+    assert.match(dialog.message(), /Could not save flashcards/);
+    await dialog.accept();
+    await attempted;
+    assert.equal(new URL(page.url()).pathname, `/${a}`);
+
+    failing = false;
+    await page.evaluate(() => history.back());
+    await editor.getByText("Notes for Existing.", { exact: true }).waitFor();
+    assert.equal(await editor.locator(":scope > h1").count(), 1);
+
+    await page.getByRole("link", { name: "Save source", exact: true }).click();
+    await page.waitForURL(`**/${a}`);
+    await editor.locator(":scope > p").filter({ hasText: "Prompt" }).waitFor();
+    await add();
+    await editor.locator(":scope > h1").nth(1).waitFor();
+    await page.keyboard.type("Added");
+    assert.deepEqual(await editor.locator(":scope > h1").allTextContents(), ["1\u00a0Existing", "2\u00a0Added"]);
+  } finally {
+    await page.close();
+  }
+});
+
+test("card ID conflict repair indexes a hidden card without leaving section focus", async () => {
+  const cardId = crypto.randomUUID();
+  const initialize = fragment => {
+    const paragraph = fragment.get(1);
+    paragraph.setAttribute("cardId", cardId);
+    const text = paragraph.get(0);
+    text.delete(0, text.length);
+    text.insert(0, "Question :: answer");
+  };
+  const owner = await createModule("Original card", ["Before"], initialize);
+  await call("sync_cards", { moduleId: owner, cards: [{ id: cardId, kind: "basic", front: "Question", back: "answer" }] });
+  const moduleId = await createModule("Copied card", ["Before", "Middle", "After"], initialize);
+
+  const { promise: focused, resolve: release } = Promise.withResolvers();
+  const page = await openNote(moduleId, { async invoke(command, args) {
+    if (command === "sync_cards" && args.moduleId === moduleId) await focused;
+    return call(command, args);
+  } });
+  try {
+    await focusMiddleSection(page);
+    release();
+    await page.evaluate(moduleId => {
+      const check = async () => {
+        window.hiddenCardIndexed = (await window.coreCall("card_schedules", { moduleId })).length === 1;
+        if (!window.hiddenCardIndexed) setTimeout(check, 50);
+      };
+      void check();
+    }, moduleId);
+    await page.waitForFunction(() => window.hiddenCardIndexed, null, { timeout: 4000 });
+    const [copied] = await call("card_schedules", { moduleId });
+    const [existing] = await call("card_schedules", { moduleId: owner });
+    assert.notEqual(copied.id, existing.id);
+    assert.deepEqual(await page.locator(".tiptap > h1").filter({ visible: true }).allTextContents(), ["2\u00a0Middle"]);
+  } finally {
+    release();
+    await page.close();
+  }
+});
+
+test("Insert heading above adopts the hidden next chapter with sidebar sections off", async () => {
+  const moduleId = await createModule("Insert parent", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  try {
+    await focusMiddleSection(page);
+    await page.locator(".tiptap > p").filter({ hasText: "Notes for Middle." }).evaluate((node) => {
+      const { editor } = node.parentElement;
+      editor.commands.setTextSelection(editor.view.posAtDOM(node, node.childNodes.length));
+      editor.view.focus();
+    });
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("/insert title");
+    await page.getByRole("option", { name: /Insert heading above/ }).click();
+    await page.keyboard.type("Parent");
+    const editor = page.locator(".tiptap");
+    await editor.locator(":scope > h2").filter({ hasText: "After" }).waitFor();
+    assert.deepEqual(await editor.locator(":scope > h1").filter({ visible: true }).allTextContents(),
+      ["1\u00a0Before", "2\u00a0Middle", "3\u00a0Parent"]);
+  } finally {
+    await page.close();
+  }
+});
+
+test("focused Select All includes a trailing block image without selecting the next chapter", async () => {
+  const moduleId = await createModule("Image selection", ["Before", "Middle", "After"], fragment => {
+    fragment.insert(4, [new Y.XmlElement("image")]);
+  });
+  const page = await openNote(moduleId);
+  try {
+    await focusMiddleSection(page);
+    await page.keyboard.press("Meta+a");
+    const selected = await page.locator(".tiptap").evaluate(({ editor }) =>
+      editor.state.selection.content().content.toJSON().map(node => node.type));
+    assert.deepEqual(selected, ["heading", "paragraph", "image"]);
+    const highlights = await page.locator(".tiptap .text-range-selected").allTextContents();
+    assert.deepEqual(highlights, ["Middle", "Notes for Middle."]);
+    await page.keyboard.press("Backspace");
+    const remaining = await page.locator(".tiptap > h1").allTextContents();
+    assert.deepEqual(remaining, ["1\u00a0Before", "2\u00a0After"]);
   } finally {
     await page.close();
   }

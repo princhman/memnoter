@@ -13,6 +13,8 @@ import { renderKatex } from "./inline-math.ts";
 import { cardGroupsOf, groupOpener, isCardBlock, cardIdsOf, changedRanges, clozeIdsOf, clozeNotesOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, validatedClozeNote, type ClozeId, type ClozeNote, type Range, type Segment } from "./cards.ts";
 import { CardState, formatInterval } from "./fsrs.ts";
 
+import { sectionFocusBackground } from "./section-focus.ts";
+
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
 
 declare module "@tiptap/core" {
@@ -818,6 +820,7 @@ export const Flashcards = Extension.create({
               if (isImageNode(node)) tr.setNodeMarkup(pos, undefined, renewImageIdentity(node.attrs, () => crypto.randomUUID()));
               else tr.setNodeAttribute(pos, "cardId", crypto.randomUUID());
             }
+            tr.setMeta(sectionFocusBackground, true);
           }
           return true;
         },

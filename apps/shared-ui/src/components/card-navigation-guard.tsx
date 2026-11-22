@@ -1,5 +1,6 @@
 import { useBlocker } from "@tanstack/react-router";
 import type { Editor } from "@tiptap/react";
+import { pendingSidebarAddCancellation } from "@/lib/sidebar-sections";
 import { flushCardSyncs } from "@/lib/card-sync";
 
 // Palette actions share the same flush/error behavior as blocked navigation.
@@ -18,11 +19,13 @@ export function CardNavigationGuard({ editor, ready }: { editor: Editor | null; 
   useBlocker({
     disabled: !editor || !ready,
     enableBeforeUnload: false,
-    shouldBlockFn: async () => {
+    shouldBlockFn: async ({ next }) => {
+      const cancelAdd = pendingSidebarAddCancellation(next.pathname);
       try {
         await flushCardSyncs();
         return false;
       } catch {
+        cancelAdd?.();
         window.alert("Could not save flashcards. Please try leaving the note again.");
         return true;
       }

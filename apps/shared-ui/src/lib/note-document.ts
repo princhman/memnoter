@@ -220,10 +220,11 @@ export function useNoteDocument(moduleId: string) {
       },
       insert: saved => attempt(() => {
         if (inserted) return;
+        const before = currentEditor.state.doc;
         const accepted = currentEditor.commands.insertContentAt(destination.resolve(), {
           type: "image", attrs: { fileId: saved.id, imageId: crypto.randomUUID(), alt: file.name, pdfSource: parsedSource },
         });
-        if (!accepted) throw new Error("Could not insert the quote.");
+        if (!accepted || before.eq(currentEditor.state.doc)) throw new Error("Could not insert the quote.");
         inserted = true;
       }),
       dispose: () => {
@@ -263,7 +264,10 @@ export function useNoteDocument(moduleId: string) {
       const position = destination.resolve();
       const undoManager = yUndoPluginKey.getState(currentEditor.state)?.undoManager;
       undoManager?.stopCapturing();
-      if (!currentEditor.commands.insertContentAt(position, content)) throw new Error("Could not insert the quote. Try again.");
+      const before = currentEditor.state.doc;
+      if (!currentEditor.commands.insertContentAt(position, content) || before.eq(currentEditor.state.doc)) {
+        throw new Error("Could not insert the quote. Try again.");
+      }
       undoManager?.stopCapturing();
     } finally {
       destination.dispose();
