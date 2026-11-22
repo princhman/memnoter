@@ -24,8 +24,6 @@ import { addSidebarSection, openSidebarSection, SidebarSectionNavigation, useSid
 import type { Module } from "@/lib/types";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "@/lib/store";
-import { useActiveEditor } from "@/lib/active-editor-context";
-import { reorderSidebarSection } from "@/lib/section-reorder";
 import { SidebarSectionRow } from "./sidebar-section-row";
 import { pickPdfs } from "./add-pdf";
 import { isTauri } from "@/lib/backend";
@@ -130,7 +128,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
 
 function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }) {
   const [expanded, setExpanded] = useState(isActive);
-  const { sections, focusedKey, canReorder, loading, error } = useSidebarSections(module.id, expanded);
+  const { sections, focusedKey, loading, error } = useSidebarSections(module.id, expanded);
   const navigate = useNavigate();
   const sectionsId = `sidebar-sections-${module.id}`;
   useEffect(() => { if (isActive) setExpanded(true); }, [isActive]);
@@ -159,9 +157,9 @@ function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }
       {error && <li className="px-2 py-1 text-xs text-muted-foreground" role="alert">Could not load sections.</li>}
       {!loading && !error && !sections.length && <li className="px-2 py-1 text-xs text-muted-foreground">No H1 sections</li>}
       {sections.map(section => <SidebarSectionRow key={section.key}
-          moduleId={module.id} headingId={section.target.kind === "heading" ? section.target.id : null} title={section.title}
+          title={section.title}
           number={module.heading_numbering ? section.number : undefined}
-          selected={isActive && focusedKey === section.key} canReorder={canReorder}
+          selected={isActive && focusedKey === section.key}
           onClick={() => {
             openSidebarSection(module.id, section.target);
             void navigate({ to: "/$moduleId", params: { moduleId: module.id } });
@@ -176,7 +174,6 @@ const AppSidebar = () => {
   const matchRoute = useMatchRoute();
   const { total } = useDueCounts();
   const sidebarSections = useSelector(appStore, state => state.sidebarSections);
-  const { activeEditor } = useActiveEditor();
   const bankEnabled = useBankGate();
   const moduleId = useModuleSectionScope();
   const navigateSection = useModuleSectionNavigation();
@@ -225,7 +222,7 @@ const AppSidebar = () => {
 
           {data && (
             <SidebarGroupContent>
-              <SidebarModules modules={data} onReorderSection={sidebarSections ? move => reorderSidebarSection(move, activeEditor) : undefined} renderModule={(module, preview) => {
+              <SidebarModules modules={data} renderModule={(module, preview) => {
                   const isActive = moduleId === module.id;
                   return sidebarSections && !preview
                     ? <ModuleEntry key={module.id} module={module} isActive={isActive} />

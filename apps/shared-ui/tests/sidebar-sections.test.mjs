@@ -127,133 +127,75 @@ test("the New section shortcut still focuses the new sibling with sidebar sectio
   }
 });
 
-test("numbered chapters match in the sidebar and editor after reordering within a note and back", async () => {
-  const page = await openNote(course, { sections: true });
-  const computing = page.getByRole("list", { name: "Sections of Computing" });
-  const archived = page.getByRole("list", { name: "Sections of Archive" });
-  const module = name => page.getByRole("link", { name, exact: true });
-  const renderedHeadings = page.locator(".tiptap > h1");
-  const initial = ["1 Introduction", "2 Untitled section", "3 Algorithms", "4 Data structures", "5 Complexity"];
-  const reordered = ["1 Introduction", "2 Algorithms", "3 Untitled section", "4 Data structures", "5 Complexity"];
+test("chapter numbers match in the sidebar and editor when editing a legacy heading and adding a section", async () => {
+  const moduleId = await createModule("Numbered chapters", ["Introduction", "", "Algorithms"]);
+  const page = await openNote(moduleId, { sections: true });
+  const sidebar = page.getByRole("list", { name: "Sections of Numbered chapters" });
+  const headings = page.locator(".tiptap > h1");
+  const module = page.getByRole("link", { name: "Numbered chapters", exact: true });
+  const chapter = name => sidebar.getByRole("button", { name, exact: true });
 
-  async function checkNumbers(sidebar, expected) {
-    await sidebar.getByRole("button", { name: expected.at(-1), exact: true }).waitFor();
-    const rows = await sidebar.getByRole("button").evaluateAll(rows =>
-      rows.map(row => [...row.children].map(child => child.textContent).join(" ")));
-    const headings = await renderedHeadings.filter({ visible: true }).evaluateAll(nodes => nodes.map(node => {
-      const number = node.querySelector(".heading-number")?.textContent.trim();
-      const title = [...node.childNodes].filter(child => child.nodeType === Node.TEXT_NODE)
-        .map(child => child.textContent).join("").trim() || "Untitled section";
-      return `${number} ${title}`;
-    }));
+  async function checkNumbers(expected) {
+    for (const label of expected) await chapter(label).waitFor();
+    const rows = await sidebar.getByRole("button").evaluateAll(rows => rows.map(row => row.title));
+    const editorLabels = (await headings.filter({ visible: true }).allTextContents()).map(text => {
+      const [number, title] = text.split("\u00a0");
+      return `${number} ${title || "Untitled section"}`;
+    });
     assert.deepEqual(rows, expected, "sidebar chapter labels");
-    assert.deepEqual(headings, rows, "editor chapter labels");
+    assert.deepEqual(editorLabels, expected, "editor chapter labels");
   }
 
-  const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  async function pickUp(row) {
-    const box = await row.boundingBox();
-    const x = box.x + box.width / 2;
-    const y = box.y + box.height / 2;
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x, y + 8, { steps: 4 });
-    const preview = page.locator("[data-sidebar-drag-preview]");
-    await preview.waitFor();
-    const labels = locator => locator.evaluate(node => [...node.children].map(child => child.textContent));
-    assert.deepEqual(await labels(preview), await labels(row), "preview preserves separate chapter number and title");
-    assert.ok((await preview.boundingBox()).width >= box.width - 1);
-  }
-  async function hoverRow(row, fraction = 0.5) {
-    const box = await row.boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height * fraction, { steps: 12 });
-    await frames();
-  }
   try {
-    await checkNumbers(computing, initial);
-    const chapter = name => computing.getByRole("button", { name, exact: true });
-    await pickUp(chapter("3 Algorithms"));
-    await hoverRow(chapter("2 Untitled section"), 0.2);
-    await page.mouse.up();
-    await checkNumbers(computing, reordered);
-
-    await pickUp(chapter("2 Algorithms"));
-    await hoverRow(chapter("3 Untitled section"), 0.8);
-    await page.mouse.up();
-    await checkNumbers(computing, initial);
-
-    const archiveBefore = await call("get_content", { moduleId: archive });
-    const archiveDisclosure = page.getByRole("button", { name: /^(Expand|Collapse) sections of Archive$/ });
-    assert.equal(await archived.count(), 0);
-    await pickUp(chapter("3 Algorithms"));
-    await hoverRow(module("Archive"));
-    await page.waitForTimeout(2200);
-    assert.equal(await archiveDisclosure.getAttribute("aria-expanded"), "false", "hovering a different module during a section drag keeps it collapsed");
-    await page.mouse.up();
-    await frames();
-    await checkNumbers(computing, initial);
-
-    await archiveDisclosure.click();
-    const reference = archived.getByRole("button", { name: "1 Reference", exact: true });
-    await reference.waitFor();
-    await pickUp(chapter("3 Algorithms"));
-    await hoverRow(reference, 0.8);
-    assert.equal(await reference.locator("..").locator("span[aria-hidden=true]").count(), 0, "another module's rows show no insertion marker");
-    await page.mouse.up();
-    await frames();
-    await checkNumbers(computing, initial);
-    assert.deepEqual(await archived.getByRole("button").allTextContents(), ["1Reference", "2Appendix"]);
-    assert.deepEqual(await call("get_content", { moduleId: archive }), archiveBefore, "a rejected drop leaves the other note untouched");
+    await checkNumbers(["1 Introduction", "2 Untitled section", "3 Algorithms"]);
+    await headings.nth(1).click();
+    await page.keyboard.type("Foundations");
+    await checkNumbers(["1 Introduction", "2 Foundations", "3 Algorithms"]);
 
     await chapter("3 Algorithms").click();
-    assert.deepEqual(await renderedHeadings.filter({ visible: true }).allTextContents(), ["3\u00a0Algorithms"]);
-    await pickUp(chapter("3 Algorithms"));
-    await hoverRow(chapter("2 Untitled section"), 0.2);
-    await page.mouse.up();
-    await chapter("2 Algorithms").waitFor();
-    assert.deepEqual(await renderedHeadings.filter({ visible: true }).allTextContents(), ["2\u00a0Algorithms"]);
-    await page.locator(".tiptap > .section-focus-start").click();
-    await page.keyboard.press("Meta+z");
-    await chapter("3 Algorithms").waitFor();
-    await chapter("3 Algorithms").click();
-    await module("Computing").click({ button: "right" });
+    await module.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Add section", exact: true }).click();
+    await chapter("4 Untitled section").waitFor();
     await page.keyboard.type("Networks");
-    await checkNumbers(computing, [...initial, "6 Networks"]);
+    await checkNumbers(["1 Introduction", "2 Foundations", "3 Algorithms", "4 Networks"]);
   } finally {
     await page.close();
   }
 });
 
-test("a closed section cannot be dragged until its note is open", async () => {
+test("dragging a sidebar section row leaves the note and module order in place", async () => {
   const page = await openNote(course, { sections: true });
-  const disclosure = page.getByRole("button", { name: "Expand sections of Archive" });
-  const rows = page.getByRole("list", { name: "Sections of Archive" }).getByRole("button");
-  const original = await call("get_content", { moduleId: archive });
-  const moveTo = async (row, fraction) => {
-    const box = await row.boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height * fraction, { steps: 15 });
-  };
-  try {
-    await disclosure.click();
-    await rows.last().waitFor();
-    await moveTo(rows.first(), 0.5);
-    await page.mouse.down();
-    await moveTo(rows.last(), 0.8);
-    assert.equal(await page.locator("[data-sidebar-drag-preview]").count(), 0);
-    await page.mouse.up();
-    assert.deepEqual(await call("get_content", { moduleId: archive }), original);
-    assert.equal(new URL(page.url()).pathname, `/${course}`);
+  const sidebar = page.getByRole("list", { name: "Sections of Computing" });
+  const headings = page.locator(".tiptap > h1").filter({ visible: true });
+  const section = sidebar.getByRole("button", { name: "3 Algorithms", exact: true });
+  const target = sidebar.getByRole("button", { name: "1 Introduction", exact: true });
+  const module = page.getByRole("link", { name: "Computing", exact: true });
+  const moduleOrder = () => page.locator("[data-sidebar-item] a").allTextContents();
 
-    await page.getByRole("link", { name: "Archive", exact: true }).click();
-    await page.locator(".tiptap > h1").filter({ hasText: "Appendix" }).waitFor();
-    await page.locator(".tiptap[contenteditable=true]").waitFor();
-    await moveTo(rows.first(), 0.5);
+  try {
+    await section.click();
+    assert.deepEqual(await headings.allTextContents(), ["3\u00a0Algorithms"]);
+    await module.click();
+    await headings.first().waitFor();
+    assert.equal(await headings.count(), 5);
+    const modulesBefore = await moduleOrder();
+    const sectionsBefore = await sidebar.getByRole("button").allTextContents();
+    const noteBefore = await page.locator(".tiptap").innerText();
+
+    const sourceBox = await section.boundingBox();
+    const targetBox = await target.boundingBox();
+    await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
     await page.mouse.down();
-    await moveTo(rows.last(), 0.8);
-    await page.locator("[data-sidebar-drag-preview]").waitFor();
+    await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 4, { steps: 20 });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const previewCount = await page.locator("[data-sidebar-drag-preview]").count();
     await page.mouse.up();
-    await rows.first().filter({ hasText: "Appendix" }).waitFor();
+
+    assert.equal(previewCount, 0, "neither a section nor its module picks up");
+    assert.deepEqual(await moduleOrder(), modulesBefore);
+    assert.deepEqual(await sidebar.getByRole("button").allTextContents(), sectionsBefore);
+    assert.equal(await page.locator(".tiptap").innerText(), noteBefore);
+    assert.equal(new URL(page.url()).pathname, `/${course}`);
   } finally {
     await page.close();
   }
@@ -382,48 +324,6 @@ test("section focus rejects a composing Delete across hidden sections before it 
     });
     assert.deepEqual(await snapshot(), before);
   } finally {
-    await page.close();
-  }
-});
-
-test("a section move keeps offline edits in the drop target and untouched chapter", async () => {
-  const moduleId = await createModule("Concurrent chapters", ["First", "Second", "Third"]);
-  const page = await openNote(moduleId, { sections: true });
-  const peer = new Y.Doc();
-  try {
-    const { state, updates } = await call("get_content", { moduleId });
-    Y.applyUpdate(peer, Uint8Array.from(state));
-    for (const { bytes } of updates) Y.applyUpdate(peer, Uint8Array.from(bytes));
-    const base = Y.encodeStateVector(peer);
-    const fragment = peer.getXmlFragment("default");
-    for (const [index, edit] of [[3, " Target peer edit."], [5, " Untouched peer edit."]]) {
-      const text = fragment.get(index).get(0);
-      text.insert(text.length, edit);
-    }
-    const sidebar = page.getByRole("list", { name: "Sections of Concurrent chapters" });
-    const first = sidebar.getByRole("button", { name: "1 First" });
-    const second = sidebar.getByRole("button", { name: "2 Second" });
-    await first.click();
-    const source = await first.boundingBox();
-    const target = await second.boundingBox();
-    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(target.x + target.width / 2, target.y + target.height * 0.8, { steps: 15 });
-    await page.locator("[data-sidebar-drag-preview]").waitFor();
-    await page.mouse.up();
-    await sidebar.getByRole("button", { name: "2 First" }).waitFor();
-
-    const editor = page.locator(".tiptap");
-    const moved = await editor.evaluate(async ({ editor }, bytes) => {
-      const doc = editor.extensionManager.extensions.find(ext => ext.name === "collaboration").options.document;
-      const { applySavedContent } = await import("/src/lib/content.ts");
-      applySavedContent(doc, { state: [], updates: [{ id: 1, bytes }], files: [] });
-      return doc.getXmlFragment("default").toArray().map(block => block.get(0)?.toString());
-    }, Array.from(Y.encodeStateAsUpdate(peer, base)));
-    assert.deepEqual(moved, ["Second", "Notes for Second. Target peer edit.", "First", "Notes for First.", "Third", "Notes for Third. Untouched peer edit."]);
-    assert.deepEqual(await editor.locator(":scope > h1").filter({ visible: true }).allTextContents(), ["2\u00a0First"]);
-  } finally {
-    peer.destroy();
     await page.close();
   }
 });

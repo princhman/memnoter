@@ -141,7 +141,7 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
       });
     } finally { doc.destroy(); }
   }, [live, query.data, moduleId]);
-  return { sections, focusedKey, canReorder: !!editor?.isEditable, loading: !editor && query.isPending, error: !editor && query.error };
+  return { sections, focusedKey, loading: !editor && query.isPending, error: !editor && query.error };
 }
 
 // Wait for the destination editor and its saved view before applying navigation.
