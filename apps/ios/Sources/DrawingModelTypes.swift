@@ -16,7 +16,7 @@ struct DrawingSnapshot: Sendable {
         return document
     }
 
-    func preview() throws -> Data {
+    func preview() throws -> (bytes: Data, pixelSize: CGSize) {
         let bounds = drawing.bounds
         let rect = bounds.isNull || bounds.isEmpty ? CGRect(x: 0, y: 0, width: 640, height: 240) : bounds.insetBy(dx: -24, dy: -24)
         guard rect.width.isFinite, rect.height.isFinite else { throw CocoaError(.coderInvalidValue) }
@@ -31,8 +31,8 @@ struct DrawingSnapshot: Sendable {
                 ink.draw(in: CGRect(origin: .zero, size: rect.size))
             }
         }
-        guard let bytes = image.pngData() else { throw CocoaError(.fileWriteUnknown) }
-        return bytes
+        guard let bytes = image.pngData(), let bitmap = image.cgImage else { throw CocoaError(.fileWriteUnknown) }
+        return (bytes, CGSize(width: bitmap.width, height: bitmap.height))
     }
 
     /// The same ruling the canvas shows (every 28 pt in page coordinates), so the image matches what was drawn on.
@@ -146,6 +146,8 @@ struct WorksheetDrawingResult: Encodable {
     let status: String
     var source: SavedFile? = nil
     var preview: SavedFile? = nil
+    var width: Double? = nil
+    var height: Double? = nil
     var expectedSourceId: String? = nil
     var asCopy = false
     var hasChanges = false

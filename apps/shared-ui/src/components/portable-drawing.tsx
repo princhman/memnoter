@@ -109,10 +109,11 @@ function PortableDrawing({ request, initial, base, recovered, finish }: { reques
     dialog.current?.focus();
     return () => { siblings.forEach(el => el.removeAttribute("inert")); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, []);
-  const gesture = useRef<{
+  type Gesture = {
     id: number; before: InkDocument; stroke: InkStroke | null; last?: InkPosition;
     loop?: InkPosition[]; move?: NonNullable<typeof selection>; origin?: InkPosition;
-  } | null>(null);
+  };
+  const gesture = useRef<Gesture | null>(null);
   const paint = useRef<() => void>(() => {});
   paint.current = () => {
     const c = canvas.current;
@@ -323,7 +324,7 @@ function PortableDrawing({ request, initial, base, recovered, finish }: { reques
           e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
           dialog.current?.focus({ preventScroll: true });
           const before = current.current;
-          const g: NonNullable<typeof gesture.current> = {
+          const g: Gesture = {
             id: e.pointerId, before, stroke: tool === "eraser" || tool === "lasso" ? null : { tool, color, width, points: [] },
           };
           if (tool === "lasso") {

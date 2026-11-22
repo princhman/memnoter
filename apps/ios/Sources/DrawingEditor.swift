@@ -51,12 +51,12 @@ actor DrawingDraftStore {
         let draft = DrawingLocalDraft(document: try snapshot.document(includeGeometry: false), baseSourceId: baseSourceId)
         try save(JSONEncoder().encode(draft), revision: revision)
     }
-    func publication(_ snapshot: DrawingSnapshot, maximumBytes: Int) throws -> (source: Data, preview: Data) {
+    func publication(_ snapshot: DrawingSnapshot, maximumBytes: Int) throws -> (source: Data, preview: Data, previewSize: CGSize) {
         let source = try JSONEncoder().encode(snapshot.document(includeGeometry: true))
         guard source.count <= maximumBytes else { throw DrawingFailure.tooLarge }
         let preview = try snapshot.preview()
-        guard preview.count <= maximumBytes else { throw DrawingFailure.tooLarge }
-        return (source, preview)
+        guard preview.bytes.count <= maximumBytes else { throw DrawingFailure.tooLarge }
+        return (source, preview.bytes, preview.pixelSize)
     }
     func export(_ snapshot: DrawingSnapshot) throws -> Data {
         try JSONEncoder().encode(DrawingStrokeExport(drawing: snapshot.drawing, page: snapshot.size))
@@ -186,7 +186,8 @@ final class DrawingCanvas: PKCanvasView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         overToolPalette(point) ? nil : super.hitTest(point, with: event)
     }
-    private let history = UndoManager()
+    private let paper = UIView()
+    private var paperSpacing: CGFloat = 28
     private var updatingViewport = false
     private var pendingTop: CGFloat?
     private(set) var documentSize = DrawingModel.page
@@ -197,25 +198,48 @@ final class DrawingCanvas: PKCanvasView {
 
     }
     func updatePaper() {
-        guard paperStyle != "blank" else { backgroundColor = .systemBackground; return }
-        let spacing = max(8, 28 * zoomScale)
-        let phase = (-contentOffset.y).truncatingRemainder(dividingBy: spacing)
-        let lineY = phase < 0 ? phase + spacing : phase
+        let scale = max(1, traitCollection.displayScale)
+        paperSpacing = max(1, (28 * zoomScale * scale).rounded()) / scale
+        guard paperStyle != "blank" else {
+            paper.backgroundColor = .systemBackground
+            positionPaper()
+            return
+        }
+        let spacing = paperSpacing
         let tile = UIGraphicsImageRenderer(size: CGSize(width: spacing, height: spacing)).image { context in
             UIColor.systemBackground.resolvedColor(with: traitCollection).setFill()
             context.fill(CGRect(x: 0, y: 0, width: spacing, height: spacing))
             UIColor.label.resolvedColor(with: traitCollection).withAlphaComponent(0.22).setStroke()
-            let path = UIBezierPath(); path.lineWidth = 0.5
-            path.move(to: CGPoint(x: 0, y: lineY)); path.addLine(to: CGPoint(x: spacing, y: lineY))
-            if paperStyle == "grid" { path.move(to: CGPoint(x: spacing - 0.5, y: 0)); path.addLine(to: CGPoint(x: spacing - 0.5, y: spacing)) }
+            let path = UIBezierPath()
+            path.lineWidth = 0.5
+            path.move(to: CGPoint(x: 0, y: 0.5))
+            path.addLine(to: CGPoint(x: spacing, y: 0.5))
+            if paperStyle == "grid" {
+                path.move(to: CGPoint(x: 0.5, y: 0))
+                path.addLine(to: CGPoint(x: 0.5, y: spacing))
+            }
             path.stroke()
         }
-        backgroundColor = UIColor(patternImage: tile)
+        paper.backgroundColor = UIColor(patternImage: tile)
+        positionPaper()
+    }
+
+    func positionPaper() {
+        guard paperSpacing > 0 else { return }
+        // Fit a viewport-sized tile field on the document's grid origin.
+        let x = floor(bounds.minX / paperSpacing) * paperSpacing
+        let y = floor(bounds.minY / paperSpacing) * paperSpacing
+        paper.frame = CGRect(x: x, y: y, width: bounds.width + paperSpacing, height: bounds.height + paperSpacing)
     }
     var toolsEnabled = false { didSet { updateTools() } }
     override init(frame: CGRect) { super.init(frame: frame); configureViewport() }
     required init?(coder: NSCoder) { super.init(coder: coder); configureViewport() }
     private func configureViewport() {
+        backgroundColor = .clear
+        isOpaque = false
+        paper.isUserInteractionEnabled = false
+        insertSubview(paper, at: 0)
+        updatePaper()
         contentSize = documentSize
         pinchGestureRecognizer?.isEnabled = false
         bouncesZoom = false
@@ -225,7 +249,14 @@ final class DrawingCanvas: PKCanvasView {
         isDirectionalLockEnabled = true
         contentInsetAdjustmentBehavior = .never
     }
-    override var undoManager: UndoManager? { history }
+    // PencilKit registers its own edits. The drawing controls use the model's
+    // snapshot history so scratch-out and its ink removal form one edit.
+    private let pencilKitHistory: UndoManager = {
+        let manager = UndoManager()
+        manager.disableUndoRegistration()
+        return manager
+    }()
+    override var undoManager: UndoManager? { pencilKitHistory }
     override func didMoveToWindow() { super.didMoveToWindow(); updateTools() }
     private func updateTools() {
         // SwiftUI can attach/dismantle this view while updating its responder
@@ -284,6 +315,7 @@ final class DrawingCanvas: PKCanvasView {
         let size = CGSize(width: bounds.width, height: documentSize.height * fit)
         if contentSize != size { contentSize = size }
         super.layoutSubviews()
+        sendSubviewToBack(paper)
         if pendingTop != nil {
             pendingTop = nil
             contentOffset = CGPoint(x: 0, y: min(top * fit, max(0, contentSize.height - bounds.height)))
@@ -311,13 +343,24 @@ final class DrawingCanvas: PKCanvasView {
     private var savedHadInk = false
     private var worksheetToolUsed = false
     private var loading = false
-    private var uploaded: (revision: Int, source: SavedFile, preview: SavedFile, size: CGSize)?
+    private var uploaded: (revision: Int, source: SavedFile, preview: SavedFile, size: CGSize, previewSize: CGSize)?
     private var copyId: String?
     private let pencilInteraction = UIPencilInteraction()
+    private let history = UndoManager()
     private var strokeStart: PKDrawing?
+    private var completedStroke: (before: PKDrawing, usesInk: Bool)?
+    private var applyingHistory = false
     private var previousTool: DrawingTool = .pen
+    private(set) var lastPen: DrawingTool = .pen
+    private(set) var lastEraser: DrawingTool = .eraser
     var tool: DrawingTool = .pen {
-        didSet { if tool != oldValue { previousTool = oldValue }; updateTool(); preferences.set(tool.rawValue, forKey: "drawing.tool") }
+        didSet {
+            if tool != oldValue { previousTool = oldValue }
+            if tool.usesInk { lastPen = tool }
+            if tool == .eraser || tool == .objectEraser { lastEraser = tool }
+            updateTool()
+            preferences.set(tool.rawValue, forKey: "drawing.tool")
+        }
     }
     var ink: DrawingInk = .black { didSet { updateTool(); preferences.set(ink.rawValue, forKey: "drawing.ink") } }
     var inkWidth: CGFloat = 3 { didSet { updateTool(); preferences.set(Double(inkWidth), forKey: "drawing.width") } }
@@ -369,10 +412,12 @@ final class DrawingCanvas: PKCanvasView {
         drafts = DrawingDraftStore(directory: directory, moduleId: request.storageId)
         prototype = DrawingDraftStore(directory: directory, moduleId: request.module.id)
         super.init()
+        if tool.usesInk { lastPen = tool }
+        if tool == .eraser || tool == .objectEraser { lastEraser = tool }
         paperStyle = DrawingPaperStyle(rawValue: preferences.string(forKey: "drawing.paper") ?? "")?.rawValue ?? "blank"
         canvas.paperStyle = paperStyle
         canvas.adaptiveWorksheetInk = true
-        canvas.isOpaque = true
+        history.groupsByEvent = false
         canvas.contentSize = Self.page
         canvas.maximumSupportedContentVersion = .version2
         canvas.drawingPolicy = fingerDrawing ? .anyInput : .pencilOnly
@@ -460,51 +505,91 @@ final class DrawingCanvas: PKCanvasView {
     }
 
     func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+        finishStroke()
+        completedStroke = nil
         if request.answer != nil, loaded, !saving { worksheetToolUsed = true }
-        strokeStart = request.answer != nil && tool.usesInk ? canvasView.drawing : nil
-        usingTool = true; pendingSave?.cancel()
+        strokeStart = canvasView.drawing
+        usingTool = true
+        pendingSave?.cancel()
     }
+
     func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-        usingTool = false; processingStroke = true
-        let before = strokeStart; strokeStart = nil
+        if let before = strokeStart { completedStroke = (before, tool.usesInk) }
+        strokeStart = nil
+        usingTool = false
+        processingStroke = true
         Task { [weak self] in
             await Task.yield()
             guard let self else { return }
-            defer { self.processingStroke = false; self.scheduleSave() }
-            guard !self.retired, !self.usingTool, let before else { return }
-            self.eraseScribbledStrokes(before: before)
+            self.finishStroke()
+            self.processingStroke = false
+            self.scheduleSave()
         }
     }
+
     func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+        guard !applyingHistory else { return }
+        if !usingTool { finishStroke() }
+        drawingChanged()
+    }
+
+    private func drawingChanged() {
         canvas.keepWritingRoom()
-        revision += 1; hasLocalEdits = true
-        refreshHistory(); status = "Unsaved changes"
+        revision += 1
+        hasLocalEdits = true
+        status = "Unsaved changes"
         if !usingTool { scheduleSave() }
     }
+
     private func refreshHistory() {
-        let undo = canvas.undoManager?.canUndo == true, redo = canvas.undoManager?.canRedo == true
-        if canUndo != undo { canUndo = undo }; if canRedo != redo { canRedo = redo }
+        canUndo = history.canUndo
+        canRedo = history.canRedo
     }
-    private func eraseScribbledStrokes(before: PKDrawing) {
-        let current = canvas.drawing.strokes
-        guard current.count == before.strokes.count + 1, let scratch = current.last,
-              let region = ScribbleDeletion.region(for: scratch) else { return }
-        let original = before.strokes
-        let remaining = original.filter { !ScribbleDeletion.intersects($0, region: region, bounds: scratch.renderBounds.insetBy(dx: -12, dy: -12)) }
-        guard remaining.count < original.count else { return }
-        replaceDrawing(PKDrawing(strokes: remaining), undoTo: before)
-        canvas.undoManager?.setActionName("Delete scribbled strokes")
-    }
-    private func replaceDrawing(_ drawing: PKDrawing, undoTo: PKDrawing? = nil) {
-        let previous = undoTo ?? canvas.drawing
-        canvas.undoManager?.registerUndo(withTarget: self) { target in
-            MainActor.assumeIsolated { target.replaceDrawing(previous) }
+
+    private func finishStroke() {
+        guard !retired, let edit = completedStroke else { return }
+        let current = canvas.drawing
+        guard current != edit.before else { return }
+        completedStroke = nil
+        history.beginUndoGrouping()
+        registerDrawingUndo(edit.before)
+        history.endUndoGrouping()
+        if edit.usesInk, let erased = eraseScribbledStrokes(in: current, before: edit.before) {
+            displayDrawing(erased)
+            drawingChanged()
         }
-        canvas.drawing = drawing
-        canvasViewDrawingDidChange(canvas)
         refreshHistory()
     }
-    func scrollViewDidScroll(_ scrollView: UIScrollView) { canvas.keepWritingRoom(); canvas.updatePaper() }
+
+    private func eraseScribbledStrokes(in drawing: PKDrawing, before: PKDrawing) -> PKDrawing? {
+        let current = drawing.strokes
+        let original = before.strokes
+        guard current.count == original.count + 1, let scratch = current.last,
+              let scribble = ScribbleDeletion(scratch: scratch) else { return nil }
+        let remaining = original.filter { !scribble.covers($0) }
+        return remaining.count < original.count ? PKDrawing(strokes: remaining) : nil
+    }
+
+    private func displayDrawing(_ drawing: PKDrawing) {
+        applyingHistory = true
+        canvas.drawing = drawing
+        applyingHistory = false
+    }
+
+    private func registerDrawingUndo(_ drawing: PKDrawing) {
+        history.registerUndo(withTarget: self) { target in
+            MainActor.assumeIsolated {
+                target.registerDrawingUndo(target.canvas.drawing)
+                target.displayDrawing(drawing)
+                target.drawingChanged()
+            }
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        canvas.keepWritingRoom()
+        canvas.positionPaper()
+    }
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         if !decelerate { checkpointView() }
     }
@@ -538,14 +623,23 @@ final class DrawingCanvas: PKCanvasView {
     }
     @objc private func undoGesture() { guard loaded, !saving, !usingTool else { return }; undo() }
     @objc private func redoGesture() { guard loaded, !saving, !usingTool else { return }; redo() }
-    func undo() { canvas.undoManager?.undo(); refreshHistory() }
-    func redo() { canvas.undoManager?.redo(); refreshHistory() }
+    func undo() {
+        guard !usingTool, !processingStroke else { return }
+        completedStroke = nil
+        history.undo()
+        refreshHistory()
+    }
 
-    func worksheetAppearanceChanged(dark _: Bool) {
-        if ink == .black, tool.usesInk {
-            let type: PKInkingTool.InkType = tool == .marker ? .marker : tool == .pencil ? .pencil : .monoline
-            canvas.tool = PKInkingTool(type, color: .black, width: tool == .marker ? inkWidth * 5 : inkWidth)
-        }
+    func redo() {
+        guard !usingTool, !processingStroke else { return }
+        completedStroke = nil
+        history.redo()
+        refreshHistory()
+    }
+
+    func worksheetAppearanceChanged(dark: Bool) {
+        // PencilKit adapts canonical black ink to the current appearance.
+        updateTool()
     }
 
     private func updateTool() {
@@ -633,7 +727,7 @@ final class DrawingCanvas: PKCanvasView {
             let encoded = try await drafts.publication(captured, maximumBytes: SyncConfiguration.integer("MAX_FILE_BYTES") - 29)
             let source: SavedFile = try await client.call("save_file", FileArgs(moduleId: request.module.id, bytes: Array(encoded.source), mimeType: "application/vnd.memnoter.drawing+json"))
             let preview: SavedFile = try await client.call("save_file", FileArgs(moduleId: request.module.id, bytes: Array(encoded.preview), mimeType: "image/png"))
-            uploaded = (capturedRevision, source, preview, captured.size)
+            uploaded = (capturedRevision, source, preview, captured.size, encoded.previewSize)
         }
         guard let uploaded else { throw CocoaError(.fileWriteUnknown) }
         guard uploaded.revision == revision else { throw DrawingFailure.inputChanged }
@@ -655,6 +749,7 @@ final class DrawingCanvas: PKCanvasView {
         try await prepareUpload()
         guard let uploaded else { throw CocoaError(.fileWriteUnknown) }
         return WorksheetDrawingResult(status: "save", source: uploaded.source, preview: uploaded.preview,
+                                      width: Double(uploaded.previewSize.width), height: Double(uploaded.previewSize.height),
                                       expectedSourceId: baseSourceId, asCopy: asCopy && (request.sourceId != nil || requiresCopy),
                                       hasChanges: hasLocalEdits)
     }
@@ -878,10 +973,31 @@ struct DrawingEditor: View {
     }
 }
 
-/// Deliberately conservative: ordinary letters move forward; hatching generally
-/// advances monotonically on its other axis. A deletion scratch must rapidly
-/// reverse on BOTH axes and revisit the same compact area over existing ink.
-private enum ScribbleDeletion {
+/// A fast series of back-and-forth passes over existing ink.
+private struct ScribbleDeletion {
+    private struct InkPoint {
+        let location: CGPoint
+        let radius: CGFloat
+    }
+
+    private let segments: [(InkPoint, InkPoint)]
+    private let bounds: CGRect
+    private static let tolerance: CGFloat = 0.75
+
+    private static func inkPoints(for stroke: PKStroke) -> [InkPoint] {
+        let transform = stroke.transform
+        let xScale = hypot(transform.a, transform.b)
+        let yScale = hypot(transform.c, transform.d)
+        let path = stroke.path
+        let samples = path.count > 1 ? Array(path.interpolatedPoints(by: .distance(2))) : Array(path)
+        return samples.map {
+            InkPoint(
+                location: $0.location.applying(transform),
+                radius: max($0.size.width * xScale, $0.size.height * yScale) / 2
+            )
+        }
+    }
+
     static func reversals(_ values: [CGFloat], threshold: CGFloat) -> Int {
         guard let first = values.first else { return 0 }
         var extreme = first, direction: CGFloat = 0, count = 0
@@ -893,41 +1009,73 @@ private enum ScribbleDeletion {
         }
         return count
     }
-    static func region(for stroke: PKStroke) -> CGPath? {
+    init?(scratch stroke: PKStroke) {
         let path = stroke.path
-        guard path.count >= 14, let first = path.first, let last = path.last else { return nil }
+        guard path.count >= 8, let first = path.first, let last = path.last else { return nil }
         let duration = last.timeOffset - first.timeOffset
-        guard duration > 0, duration <= 1.2 else { return nil }
+        guard duration > 0, duration <= 1.5 else { return nil }
         let points = path.map { $0.location.applying(stroke.transform) }
         let box = points.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: CGSize(width: 0.01, height: 0.01))) }
-        guard box.width >= 24, box.height >= 12, box.width <= 320, box.height <= 320 else { return nil }
+        guard max(box.width, box.height) >= 24, box.width <= 320, box.height <= 320 else { return nil }
         let horizontal = box.width >= box.height
-        guard reversals(points.map { horizontal ? $0.x : $0.y }, threshold: 12) >= 6,
-              reversals(points.map { horizontal ? $0.y : $0.x }, threshold: 4) >= 2 else { return nil }
+        guard Self.reversals(points.map { horizontal ? $0.x : $0.y }, threshold: 12) >= 4 else { return nil }
         let length = zip(points, points.dropFirst()).reduce(CGFloat.zero) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
-        guard length > max(box.width, box.height) * 5, length / duration > 250,
-              let start = points.first, let end = points.last,
-              hypot(end.x - start.x, end.y - start.y) < max(box.width, box.height) * 0.8 else { return nil }
-        let outline = CGMutablePath(); outline.move(to: start)
-        for point in points.dropFirst() { outline.addLine(to: point) }
-        return outline.copy(strokingWithWidth: 22, lineCap: .round, lineJoin: .round, miterLimit: 1)
+        guard length > max(box.width, box.height) * 3, length / duration > 200 else { return nil }
+
+        let ink = Self.inkPoints(for: stroke)
+        segments = Array(zip(ink, ink.dropFirst()))
+        bounds = stroke.renderBounds.insetBy(dx: -Self.tolerance, dy: -Self.tolerance)
     }
-    static func intersects(_ stroke: PKStroke, region: CGPath, bounds: CGRect) -> Bool {
-        // A bitmap-erased stroke's centreline also traverses invisible regions.
-        // Never delete its remaining ink based on an invisible crossing.
-        guard stroke.mask == nil else { return false }
+
+    private func overlapsScratch(at point: CGPoint, radius: CGFloat) -> Bool {
+        guard bounds.insetBy(dx: -radius, dy: -radius).contains(point) else { return false }
+        return segments.contains { start, end in
+            let dx = end.location.x - start.location.x
+            let dy = end.location.y - start.location.y
+            let x = point.x - start.location.x
+            let y = point.y - start.location.y
+            let lengthSquared = dx * dx + dy * dy
+            let t = lengthSquared > 0 ? min(1, max(0, (x * dx + y * dy) / lengthSquared)) : 0
+            let scratchRadius = start.radius + (end.radius - start.radius) * t
+            return hypot(x - dx * t, y - dy * t) <= radius + scratchRadius + Self.tolerance
+        }
+    }
+
+    func covers(_ stroke: PKStroke) -> Bool {
         guard bounds.intersects(stroke.renderBounds) else { return false }
-        let points = stroke.path.map { $0.location.applying(stroke.transform) }
-        if points.contains(where: { region.contains($0) }) { return true }
-        for (a, b) in zip(points, points.dropFirst()) {
-            let distance = hypot(b.x - a.x, b.y - a.y)
-            let count = min(512, max(1, Int(distance / 6)))
-            for sample in 1..<count {
-                let t = CGFloat(sample) / CGFloat(count)
-                if region.contains(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)) { return true }
+        let points = Self.inkPoints(for: stroke)
+        let mask = stroke.mask
+        let inverse = stroke.transform.inverted()
+        func isVisible(_ point: CGPoint) -> Bool {
+            mask?.contains(point.applying(inverse)) ?? true
+        }
+
+        var visibleLength: CGFloat = 0
+        var coveredLength: CGFloat = 0
+        for (start, end) in zip(points, points.dropFirst()) {
+            let dx = end.location.x - start.location.x
+            let dy = end.location.y - start.location.y
+            let length = hypot(dx, dy)
+            guard length > 0 else { continue }
+            let count = max(1, Int(ceil(length)))
+            let step = length / CGFloat(count)
+            for sample in 0..<count {
+                let t = (CGFloat(sample) + 0.5) / CGFloat(count)
+                let point = CGPoint(x: start.location.x + dx * t, y: start.location.y + dy * t)
+                guard isVisible(point) else { continue }
+                visibleLength += step
+                let radius = start.radius + (end.radius - start.radius) * t
+                if overlapsScratch(at: point, radius: radius) {
+                    coveredLength += step
+                    if coveredLength >= 3 { return true }
+                }
             }
         }
-        return false
+
+        // A crossing can cover a few points of a long stroke. For short strokes,
+        // require a share of their visible length and handle dots separately.
+        if visibleLength > 0 { return coveredLength >= visibleLength * 0.25 }
+        return points.contains { isVisible($0.location) && overlapsScratch(at: $0.location, radius: $0.radius) }
     }
 }
 

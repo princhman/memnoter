@@ -328,3 +328,17 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-phone .native-questions .bank-toolbar { height: 44px; gap: 4px; }
 .native-phone .native-questions .bank-toolbar button { min-width: 44px; height: 44px; }
 .native-phone .native-questions .bank-toolbar button svg { width: 20px; height: 20px; }
+
+.worksheet-drawing-shortcut { display: none; }
+.native-tablet .worksheet-answer-field { position: relative; }
+.native-tablet .native-questions .worksheet-answer-field:has(> .worksheet-drawing-shortcut) .tiptap.worksheet-answer-input {
+  padding-inline-end: 44px;
+}
+.native-tablet .worksheet-answer-field > .worksheet-drawing-shortcut {
+  display: inline-flex;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  width: 44px;
+  height: 44px;
+}

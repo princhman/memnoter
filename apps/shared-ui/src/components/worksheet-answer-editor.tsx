@@ -2,6 +2,8 @@ import { registerWorksheetEditor } from "@/editor-host/worksheet-editor";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { MODULE_CONTENT_SYNCED_EVENT } from "@/lib/sync/apply-remote";
+import { Pencil } from "lucide-react";
+import { Selection } from "@tiptap/pm/state";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import * as Y from "yjs";
 import { noteExtensions, isNoteFromNewerVersion } from "@/lib/editor-schema";
@@ -27,7 +29,7 @@ import { Button } from "./ui/button";
 
 // Same persisted schema and commands as notes, with a private document and no
 // note module registration, view persistence, indexing or flashcard side effects.
-type DrawingResult = { status: string; source?: FileType; preview?: FileType; expectedSourceId?: string | null; asCopy: boolean; hasChanges: boolean };
+type DrawingResult = { status: string; source?: FileType; preview?: FileType; width?: number; height?: number; expectedSourceId?: string | null; asCopy: boolean; hasChanges: boolean };
 type PendingDrawing = { imageId: string; sourceId: string | null; result?: DrawingResult; copyId?: string; anchorId?: string };
 type AnswerOwner = { readOnly?: boolean; moduleId: string; attemptId: string; revisionId: string; leafPartId: string; answer?: Bank["answers"][string]; flushDurable: () => Promise<void> };
 const ANSWER_ACTIONS = ["Text", "Table", "Bullet list", "Numbered list", "Code block", "Mermaid diagram", "Quote", "Drawing", "Foldable block", "Image", "Inline math", "Math block", "Add row above", "Add row below", "Add column left", "Add column right", "Delete row", "Delete column", "Toggle header row", "Delete table"];
@@ -39,6 +41,7 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
   const pendingRef = useRef(pending);
   const [drawingError, setDrawingError] = useState("");
   const busy = useRef(false);
+  const lastFocusedEditor = useRef<import("@tiptap/core").Editor | null>(null);
   const [drawingBusy, setDrawingBusy] = useState(false);
   const [files, setFiles] = useState<ReadonlyMap<string, FileType>>(new Map());
   const retain = (value: PendingDrawing) => { pendingRef.current = value; setPending(value); localStorage.setItem(storageKey, JSON.stringify(value)); };
@@ -95,8 +98,13 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
     if (isNativeHost()) {
       // Reuse the existing image attribute understood by desktop and iOS.
       current.state.doc.descendants((node, position) => {
-        if (node.type.name === "image" && node.attrs.imageId === imageId && !node.attrs.adaptive) {
-          current.view.dispatch(current.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, adaptive: true }));
+        if (node.type.name === "image" && node.attrs.imageId === imageId) {
+          const attrs = { ...node.attrs, adaptive: true, width: node.attrs.width, height: node.attrs.height };
+          if (result.width && result.height) {
+            attrs.width = Math.round(node.attrs.width ?? result.width);
+            attrs.height = Math.round(attrs.width * result.height / result.width);
+          }
+          current.view.dispatch(current.state.tr.setNodeMarkup(position, undefined, attrs));
           return false;
         }
       });
@@ -108,7 +116,7 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
   };
   // Registered once per editor; always calls the latest runDrawing closure.
   const runDrawingRef = useRef<(current: import("@tiptap/core").Editor) => Promise<void>>(async () => {});
-  const runDrawing = async (current: import("@tiptap/core").Editor, target?: PendingDrawing, retry = false) => {
+  const runDrawing = async (current: import("@tiptap/core").Editor, target?: PendingDrawing, retry = false, append = false) => {
     if (busy.current || current.isDestroyed || !current.isEditable) return;
     if (pendingRef.current && pendingRef.current.imageId !== target?.imageId) {
       setDrawingError("Save or reopen the retained local drawing before opening another drawing."); return;
@@ -127,7 +135,7 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
           }
         });
         if (target && !hasDrawing(current, draft)) { forgetDeletedDrawing(draft); return; }
-        if (!target) beginDrawing(current, draft.imageId);
+        if (!target) beginDrawing(current, draft.imageId, append ? Selection.atEnd(current.state.doc).to : undefined);
         retain(pendingRef.current?.imageId === draft.imageId ? { ...pendingRef.current, ...draft } : draft);
         await owner.flushDurable();
         if (isNativeHost()) {
@@ -171,6 +179,7 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
       "data-placeholder": placeholder ?? "Type your answer here, or type /drawing to insert a drawing.",
       autocapitalize: "off", autocorrect: "off",
     }) },
+    onFocus: ({ editor }) => { lastFocusedEditor.current = editor; },
     onBlur: flush,
   }, [doc]);
   useEffect(() => {
@@ -229,7 +238,26 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
         readImage: async fileId => { const read = await call<{ bytes: number[]; file_type: string }>("read_file", { moduleId: owner.moduleId, fileId }); return new Blob([new Uint8Array(read.bytes)], { type: read.file_type }); },
         editDrawing: !owner.readOnly && capabilities.worksheetDrawing ? (imageId, sourceId) => { if (editor) void runDrawing(editor, { imageId, sourceId }); } : undefined,
         unsavedDrawingId: pending && !drawingBusy && (!isNativeHost() || recoverable) ? pending.anchorId ?? pending.imageId : null }}>
-        <EditorContent editor={editor} />
+        <div className="worksheet-answer-field">
+          <EditorContent editor={editor} />
+          {!owner.readOnly && isNativeHost() && <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="worksheet-drawing-shortcut text-muted-foreground"
+            aria-label="Insert drawing"
+            disabled={!editor || drawingBusy || !!pending}
+            onPointerDown={event => event.preventDefault()}
+            onClick={() => {
+              if (!editor) return;
+              const activeAnswer = editor.view.dom.ownerDocument.activeElement;
+              if (activeAnswer instanceof HTMLElement && activeAnswer !== editor.view.dom && activeAnswer.matches(".worksheet-answer-input")) {
+                activeAnswer.blur();
+              }
+              void runDrawing(editor, undefined, false, lastFocusedEditor.current !== editor);
+            }}
+          ><Pencil aria-hidden="true" /></Button>}
+        </div>
       </FilesContext.Provider>
       {/* As in notes: on iPad the native bar above the keyboard formats, so no web bubble. */}
       {!owner.readOnly && !isNativeHost() && <>
