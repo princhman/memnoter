@@ -64,6 +64,8 @@ export const Sections = Extension.create<{ sidebarSectionsEnabled: () => boolean
           const level = heading
             ? Math.min(heading.level + (kind === "subsection" ? 1 : 0), MAX_LEVEL)
             : 1;
+          const id = dispatch && this.options.sidebarSectionsEnabled() ? crypto.randomUUID() : null;
+          const attrs = id ? { level, id, [TOC_ID_ATTRIBUTE]: id } : { level };
 
           let headingPos: number;
           const block = $from.depth > 0 ? $from.node(1) : null;
@@ -71,12 +73,12 @@ export const Sections = Extension.create<{ sidebarSectionsEnabled: () => boolean
             // An empty line, e.g. one the slash menu just cleared, becomes
             // the heading itself.
             headingPos = $from.before(1);
-            tr.setBlockType(headingPos, headingPos + 1, headingType, { level });
+            tr.setBlockType(headingPos, headingPos + 1, headingType, attrs);
           } else {
             // Otherwise the new section goes after the current one, so it
             // does not take over the rest of that section's content.
             headingPos = end;
-            tr.insert(headingPos, headingType.create({ level }));
+            tr.insert(headingPos, headingType.create(attrs));
           }
           tr.setSelection(TextSelection.create(tr.doc, headingPos + 1));
           if (!dispatch) return true;

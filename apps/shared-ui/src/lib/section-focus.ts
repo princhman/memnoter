@@ -286,14 +286,26 @@ export const SectionFocus = Extension.create({
         appendTransaction(transactions, oldState, state) {
           const selectAll = state.selection instanceof AllSelection;
           const sync = transactions[0]?.getMeta(ySyncPluginKey);
-          const restore = oldState.selection instanceof SectionSelection && sync?.isChangeOrigin && !sync.isUndoRedoOperation;
-          if (!selectAll && !restore) return null;
+          const remote = sync?.isChangeOrigin && !sync.isUndoRedoOperation;
+          if (!selectAll && !remote) return null;
           const range = getFocusedSectionRange(state);
           if (!range) return null;
-          if (restore) {
+          const previous = oldState.selection;
+          if (remote && previous instanceof SectionSelection) {
             // Yjs restores text endpoints, which cannot sit after a block atom.
             return state.tr.setSelection(new SectionSelection(state.doc.resolve(range.from), state.doc.resolve(range.to)));
           }
+          if (remote && previous instanceof TextSelection && previous.empty) {
+            const before = getFocusedSectionRange(oldState);
+            const { head } = state.selection;
+            if (before && previous.head > before.from && previous.head < before.to &&
+                (head <= range.from || head >= range.to)) {
+              const atStart = head <= range.from;
+              const selection = Selection.findFrom(state.doc.resolve(atStart ? range.from : range.to), atStart ? 1 : -1, true);
+              if (selection) return state.tr.setSelection(selection);
+            }
+          }
+          if (!selectAll) return null;
           const end = Selection.findFrom(state.doc.resolve(range.to), -1);
           const selection = end instanceof TextSelection
             ? TextSelection.create(state.doc, range.from + 1, end.to)

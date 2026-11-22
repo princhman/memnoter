@@ -24,13 +24,18 @@ type Section = { target: SectionTarget; key: string; title: string; number: stri
 type SidebarTarget = SectionTarget | { kind: "document" } | { kind: "add" };
 type SidebarRequest = { moduleId: string; target: SidebarTarget };
 const destination = createStore<SidebarRequest | null>(null);
-let pendingRequest: { pathname: string; cancel: () => void } | null = null;
+let pendingRequest: { id: string; cancel: () => void } | null = null;
 
-export function pendingSidebarSectionCancellation(pathname: string, action: string) {
-  const pending = pendingRequest;
-  if (pending?.pathname === pathname && (action === "PUSH" || action === "REPLACE")) return pending.cancel;
+export function guardSidebarSectionNavigation(state: object, action: string) {
+  if ((action === "PUSH" || action === "REPLACE") && "sidebarSectionRequest" in state) {
+    const request = pendingRequest?.id === state.sidebarSectionRequest ? pendingRequest : null;
+    return {
+      isSuperseded: () => !request || pendingRequest !== request,
+      cancel: () => request?.cancel(),
+    };
+  }
   // Starting a different navigation supersedes the request even while saves drain.
-  pending?.cancel();
+  pendingRequest?.cancel();
 }
 
 export function openSidebarSection(moduleId: string, target: SidebarTarget, router: RegisteredRouter) {
@@ -38,7 +43,7 @@ export function openSidebarSection(moduleId: string, target: SidebarTarget, rout
   const request: SidebarRequest = { moduleId, target };
   const id = crypto.randomUUID();
   const route = { to: "/$moduleId", params: { moduleId } } as const;
-  const { pathname, publicHref } = router.buildLocation(route);
+  const { publicHref } = router.buildLocation(route);
   const publish = () => {
     setModulePage(moduleId, "notes");
     destination.setState(() => request);
@@ -58,7 +63,7 @@ export function openSidebarSection(moduleId: string, target: SidebarTarget, rout
     }
     publish();
   });
-  pendingRequest = { pathname, cancel };
+  pendingRequest = { id, cancel };
   if (router.history.location.href === publicHref) {
     publish();
     return;
@@ -125,13 +130,21 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
       if (isNoteFromNewerVersion(doc)) return null;
       const saved: JSONContent = yDocToProsemirrorJSON(doc, "default");
       const content = saved.content ?? [];
-      const numbers = numberHeadings(content.flatMap((node, pos) => node.type === "heading" ? [{ pos, level: Number(node.attrs?.level) }] : []));
-      const chapters = content.map((node, pos) => ({ node, pos }))
-        .filter(({ node }) => node.type === "heading" && Number(node.attrs?.level) === 1);
+      const seenIds = new Set<string>();
+      const duplicateIds = new Set<string>();
+      const headings = content.flatMap((node, pos) => {
+        if (node.type !== "heading") return [];
+        const attr = node.attrs?.[TOC_ID_ATTRIBUTE];
+        const id = typeof attr === "string" && attr ? attr : null;
+        if (id && seenIds.has(id)) duplicateIds.add(id);
+        if (id) seenIds.add(id);
+        return [{ node, pos, level: Number(node.attrs?.level), id }];
+      });
+      const numbers = numberHeadings(headings);
+      const chapters = headings.filter(({ level }) => level === 1);
       const text = (item: JSONContent): string => item.text ?? (item.content ?? []).map(text).join("");
-      return chapters.map(({ node, pos }, index) => {
-        const id = node.attrs?.[TOC_ID_ATTRIBUTE];
-        const target = sectionTarget(typeof id === "string" ? id : null, index);
+      return chapters.map(({ node, pos, id }, index) => {
+        const target = sectionTarget(id && !duplicateIds.has(id) ? id : null, index);
         return { target, key: sectionKey(target), title: text(node).trim() || UNTITLED_SECTION, number: numbers.get(pos) ?? "" };
       });
     } catch {

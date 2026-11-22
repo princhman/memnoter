@@ -127,6 +127,21 @@ test("the New section shortcut still focuses the new sibling with sidebar sectio
   }
 });
 
+test("one undo removes the section created by the New section shortcut", async () => {
+  const moduleId = await createModule("Shortcut undo", ["First", "Last"]);
+  const page = await openNote(moduleId, { sections: true });
+  try {
+    const headings = page.locator(".tiptap > h1");
+    await page.locator(".tiptap > p").first().click();
+    await page.keyboard.press("Meta+Alt+s");
+    await headings.nth(2).waitFor();
+    await page.keyboard.press("Meta+z");
+    assert.deepEqual(await headings.allTextContents(), ["1\u00a0First", "2\u00a0Last"]);
+  } finally {
+    await page.close();
+  }
+});
+
 test("chapter numbers match in the sidebar and editor when editing a legacy heading and adding a section", async () => {
   const moduleId = await createModule("Numbered chapters", ["Introduction", "", "Algorithms"]);
   const page = await openNote(moduleId, { sections: true });
@@ -219,23 +234,35 @@ test("opening a note after expanding its sidebar sections still cleans up orphan
   }
 });
 
-test("a closed note's legacy untitled section opens in section focus", async () => {
-  const moduleId = await createModule("Untitled chapters", ["First", "", "Last"]);
-  const page = await openNote(course, { sections: true });
-  try {
-    await page.getByRole("button", { name: "Expand sections of Untitled chapters" }).click();
-    const rows = page.getByRole("list", { name: "Sections of Untitled chapters" });
-    await rows.getByRole("button", { name: "2 Untitled section", exact: true }).click();
-    assert.equal(new URL(page.url()).pathname, `/${moduleId}`);
-    await page.locator(".tiptap > .section-focus-start").waitFor({ timeout: 3000 });
-    assert.deepEqual(await page.locator(".tiptap > h1").filter({ visible: true }).allTextContents(), ["2\u00a0"]);
-    await page.getByRole("link", { name: "Untitled chapters", exact: true }).click();
-    await page.locator(".tiptap.section-focused").waitFor({ state: "detached" });
-    assert.equal(await page.locator(".tiptap > h1").filter({ visible: true }).count(), 3);
-  } finally {
-    await page.close();
-  }
-});
+for (const duplicateId of [false, true]) {
+  const label = duplicateId
+    ? "a closed note opens its untitled section when it shares the next heading's id"
+    : "a closed note's legacy untitled section opens in section focus";
+  test(label, async () => {
+    const name = duplicateId ? "Duplicate chapter ids" : "Untitled chapters";
+    const moduleId = await createModule(name, ["First", "", "Last"], fragment => {
+      if (!duplicateId) return;
+      const id = fragment.get(4).getAttribute("data-toc-id");
+      fragment.get(2).setAttribute("data-toc-id", id);
+      fragment.get(2).setAttribute("id", id);
+    });
+    const page = await openNote(course, { sections: true });
+    try {
+      await page.getByRole("button", { name: `Expand sections of ${name}` }).click();
+      const rows = page.getByRole("list", { name: `Sections of ${name}` });
+      await rows.getByRole("button", { name: "2 Untitled section", exact: true }).click();
+      assert.equal(new URL(page.url()).pathname, `/${moduleId}`);
+      await page.locator(".tiptap > .section-focus-start").waitFor({ timeout: 3000 });
+      const visibleHeadings = page.locator(".tiptap > h1").filter({ visible: true });
+      assert.deepEqual(await visibleHeadings.allTextContents(), ["2\u00a0"]);
+      await page.getByRole("link", { name, exact: true }).click();
+      await page.locator(".tiptap.section-focused").waitFor({ state: "detached" });
+      assert.equal(await visibleHeadings.count(), 3);
+    } finally {
+      await page.close();
+    }
+  });
+}
 
 test("expanding a newer-format note reports an error only in its sidebar row", async () => {
   const moduleId = await createModule("Future sections", ["First"], fragment => {
@@ -365,6 +392,22 @@ test("a synced outline id change keeps focus on the surviving heading", async ()
     await editor.locator('[data-toc-id="peer-middle-id"]').waitFor({ state: "attached" });
     assert.deepEqual(await editor.locator(":scope > h1").filter({ visible: true }).allTextContents(), ["2\u00a0Middle"]);
     assert.equal(await editor.getByText("Peer edit. Notes for Before.", { exact: true }).count(), 1);
+  } finally {
+    await page.close();
+  }
+});
+
+test("typing stays in the focused section after a peer deletes the caret paragraph", async () => {
+  const moduleId = await createModule("Remote caret", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId, { sections: true });
+  try {
+    await focusMiddleSection(page);
+    const editor = page.locator(".tiptap");
+    await syncPeerEdit(page, moduleId, fragment => fragment.delete(3, 1));
+    await editor.getByText("Notes for Middle.", { exact: true }).waitFor({ state: "detached" });
+    await page.keyboard.type("!");
+    assert.deepEqual(await editor.locator(":scope > h1").allTextContents(), ["1\u00a0Before", "2\u00a0Middle!", "3\u00a0After"]);
+    assert.equal(await editor.locator(":scope > h1.section-focus-start").textContent(), "2\u00a0Middle!");
   } finally {
     await page.close();
   }
@@ -546,6 +589,47 @@ for (const target of ["Add section", "section row", "module title"]) {
     }
   });
 }
+
+test("only the latest sidebar section click commits while a card save is pending", async () => {
+  const source = await createModule("Pending card save", ["Source"]);
+  const { promise: saving, resolve: started } = Promise.withResolvers();
+  const { promise: held, resolve: release } = Promise.withResolvers();
+  const page = await openNote(source, { sections: true, async invoke(command, args) {
+    if (command === "sync_cards" && args.moduleId === source && args.cards.length > 0) {
+      started();
+      await held;
+    }
+    return call(command, args);
+  } });
+  try {
+    for (const name of ["Computing", "Archive"]) {
+      await page.getByRole("button", { name: `Expand sections of ${name}` }).click();
+    }
+    const editor = page.locator(".tiptap[contenteditable=true]");
+    await editor.locator(":scope > p").click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" Prompt :: answer");
+    await saving;
+
+    const historyLength = await page.evaluate(() => history.length);
+    await page.getByRole("list", { name: "Sections of Computing" })
+      .getByRole("button", { name: "3 Algorithms", exact: true }).click();
+    await page.getByRole("list", { name: "Sections of Archive" })
+      .getByRole("button", { name: "2 Appendix", exact: true }).click();
+    assert.equal(new URL(page.url()).pathname, `/${source}`);
+    release();
+
+    await page.waitForURL(`**/${archive}`);
+    await editor.getByText("Notes for Appendix.", { exact: true }).waitFor();
+    assert.deepEqual(await editor.locator(":scope > h1").filter({ visible: true }).allTextContents(), ["2\u00a0Appendix"]);
+    assert.equal(await page.evaluate(() => history.length), historyLength + 1);
+    await page.evaluate(() => history.back());
+    await page.waitForURL(`**/${source}`);
+  } finally {
+    release();
+    await page.close();
+  }
+});
 
 test("card ID conflict repair indexes a hidden card without leaving section focus", async () => {
   const cardId = crypto.randomUUID();
