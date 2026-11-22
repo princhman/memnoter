@@ -3,6 +3,7 @@ import { outline, TOC_ID_ATTRIBUTE } from "./outline.ts";
 import { Extension } from "@tiptap/core";
 import type { EditorState } from "@tiptap/pm/state";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { getSectionRange, sectionFocusBackground, sectionFocusKey } from "./section-focus.ts";
 
 export type SectionKind = "sibling" | "subsection";
@@ -112,7 +113,12 @@ export const Sections = Extension.create<{ sidebarSectionsEnabled: () => boolean
       appendTransaction(transactions, _old, state) {
         if (!enabled() || !transactions.some(tr => tr.docChanged) ||
           transactions.some(tr => tr.getMeta("composition"))) return null;
-        return emptyHeadingIds(state);
+        const source = transactions[0].getMeta("appendedTransaction") ?? transactions[0];
+        // The view repairs synced headings in a separate background write.
+        if (source.getMeta(ySyncPluginKey)?.isChangeOrigin) return null;
+        const repair = emptyHeadingIds(state);
+        if (source.getMeta("addToHistory") === false) repair?.setMeta("addToHistory", false);
+        return repair;
       },
       // A note becomes editable only after it loads, without a content change.
       view: () => ({
@@ -121,7 +127,7 @@ export const Sections = Extension.create<{ sidebarSectionsEnabled: () => boolean
           const tr = emptyHeadingIds(view.state);
           if (tr) queueMicrotask(() => {
             const next = !view.isDestroyed && !view.composing && enabled() ? emptyHeadingIds(view.state) : null;
-            if (next) view.dispatch(next);
+            if (next) view.dispatch(next.setMeta("addToHistory", false));
           });
         },
       }),
@@ -146,5 +152,5 @@ function emptyHeadingIds(state: EditorState) {
     seen.add(fresh);
     tr.setNodeMarkup(pos, undefined, { ...node.attrs, [TOC_ID_ATTRIBUTE]: fresh, id: fresh });
   });
-  return tr.docChanged ? tr.setMeta(sectionFocusBackground, true).setMeta("addToHistory", false) : null;
+  return tr.docChanged ? tr.setMeta(sectionFocusBackground, true) : null;
 }

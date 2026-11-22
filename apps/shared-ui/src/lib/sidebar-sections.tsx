@@ -132,12 +132,23 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
       const content = saved.content ?? [];
       const seenIds = new Set<string>();
       const duplicateIds = new Set<string>();
+      // The editor's TOC repairs duplicate IDs across the whole document.
+      // Use chapter order whenever that repair could change a sidebar target.
+      function collectIds(node: JSONContent) {
+        if (node.type === "heading") {
+          const id = node.attrs?.[TOC_ID_ATTRIBUTE];
+          if (typeof id === "string" && id) {
+            if (seenIds.has(id)) duplicateIds.add(id);
+            seenIds.add(id);
+          }
+        }
+        node.content?.forEach(collectIds);
+      }
+      collectIds(saved);
       const headings = content.flatMap((node, pos) => {
         if (node.type !== "heading") return [];
         const attr = node.attrs?.[TOC_ID_ATTRIBUTE];
         const id = typeof attr === "string" && attr ? attr : null;
-        if (id && seenIds.has(id)) duplicateIds.add(id);
-        if (id) seenIds.add(id);
         return [{ node, pos, level: Number(node.attrs?.level), id }];
       });
       const numbers = numberHeadings(headings);

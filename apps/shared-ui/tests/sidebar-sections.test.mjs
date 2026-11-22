@@ -4,13 +4,13 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { chromium, webkit } from "playwright";
 import * as Y from "yjs";
 import { browserHarness, installTestBridge } from "./support/browser.mjs";
 
 const { createServer } = browserHarness(import.meta.url);
 const workspace = fileURLToPath(new URL("../../..", import.meta.url));
-let server, browser, core, course, archive;
+let server, browser, webkitBrowser, core, course, archive;
 const pending = [];
 
 function call(command, args = {}) {
@@ -62,6 +62,7 @@ before(async () => {
 
 after(async () => {
   await browser?.close();
+  await webkitBrowser?.close();
   await server?.close();
   if (core && core.exitCode === null) {
     const exited = once(core, "exit");
@@ -70,8 +71,9 @@ after(async () => {
   }
 });
 
-async function openNote(moduleId, { sections = false, invoke = call } = {}) {
-  const page = await browser.newPage({ viewport: { width: 1150, height: 750 } });
+async function openNote(moduleId, { sections = false, invoke = call, engine = "Chromium" } = {}) {
+  const selectedBrowser = engine === "WebKit" ? webkitBrowser ??= await webkit.launch() : browser;
+  const page = await selectedBrowser.newPage({ viewport: { width: 1150, height: 750 } });
   page.setDefaultTimeout(8000);
   page.on("pageerror", error => console.error(error));
   await page.context().route("https://api.github.com/repos/princhman/memnoter/releases/latest",
@@ -127,20 +129,38 @@ test("the New section shortcut still focuses the new sibling with sidebar sectio
   }
 });
 
-test("one undo removes the section created by the New section shortcut", async () => {
-  const moduleId = await createModule("Shortcut undo", ["First", "Last"]);
-  const page = await openNote(moduleId, { sections: true });
-  try {
-    const headings = page.locator(".tiptap > h1");
-    await page.locator(".tiptap > p").first().click();
-    await page.keyboard.press("Meta+Alt+s");
-    await headings.nth(2).waitFor();
-    await page.keyboard.press("Meta+z");
-    assert.deepEqual(await headings.allTextContents(), ["1\u00a0First", "2\u00a0Last"]);
-  } finally {
-    await page.close();
-  }
-});
+for (const method of ["New section shortcut", "Markdown heading input rule"]) {
+  test(`undo removes the empty heading from the ${method} before the earlier edit`, async () => {
+    const moduleId = await createModule(method, ["First", "Last"], fragment => {
+      fragment.insert(3, [new Y.XmlElement("paragraph")]);
+    });
+    const page = await openNote(moduleId, { sections: true });
+    try {
+      const headings = page.locator(".tiptap > h1");
+      const paragraphs = page.locator(".tiptap > p");
+      await paragraphs.first().click();
+      await page.keyboard.press("End");
+      await page.keyboard.type("!");
+      await paragraphs.first().filter({ hasText: "Notes for First.!" }).waitFor();
+      // Separate the edits by more than the Yjs undo capture timeout.
+      await page.waitForTimeout(550);
+      if (method === "New section shortcut") {
+        await page.keyboard.press("Meta+Alt+s");
+      } else {
+        await paragraphs.nth(1).click();
+        await page.keyboard.insertText("# ");
+      }
+      await headings.nth(2).waitFor();
+      await page.keyboard.press("Meta+z");
+      assert.deepEqual(await headings.allTextContents(), ["1\u00a0First", "2\u00a0Last"]);
+      assert.equal(await paragraphs.first().textContent(), "Notes for First.!");
+      await page.keyboard.press("Meta+z");
+      assert.equal(await paragraphs.first().textContent(), "Notes for First.");
+    } finally {
+      await page.close();
+    }
+  });
+}
 
 test("chapter numbers match in the sidebar and editor when editing a legacy heading and adding a section", async () => {
   const moduleId = await createModule("Numbered chapters", ["Introduction", "", "Algorithms"]);
@@ -263,6 +283,42 @@ for (const duplicateId of [false, true]) {
     }
   });
 }
+
+test("a closed note focuses the chapter whose id was shared by a nested heading", async () => {
+  const name = "Nested duplicate id";
+  const moduleId = await createModule(name, ["First", "Last"], fragment => {
+    const quote = new Y.XmlElement("blockquote");
+    const heading = new Y.XmlElement("heading");
+    heading.setAttribute("level", 1);
+    heading.setAttribute("data-toc-id", fragment.get(2).getAttribute("data-toc-id"));
+    const text = new Y.XmlText();
+    text.insert(0, "Quoted heading");
+    heading.insert(0, [text]);
+    quote.insert(0, [heading]);
+    fragment.insert(2, [quote]);
+  });
+  // Orphan cleanup keeps the destination loading while the editor repairs IDs.
+  await call("save_file", { moduleId, bytes: [1, 2, 3], mimeType: "image/png" });
+  const { promise: releaseCleanup, resolve: finishCleanup } = Promise.withResolvers();
+  const page = await openNote(course, { sections: true, async invoke(command, args) {
+    if (command === "cleanup_files" && args.moduleId === moduleId) await releaseCleanup;
+    return call(command, args);
+  } });
+  try {
+    await page.getByRole("button", { name: `Expand sections of ${name}` }).click();
+    await page.getByRole("list", { name: `Sections of ${name}` })
+      .getByRole("button", { name: "2 Last", exact: true }).click();
+    await page.waitForURL(`**/${moduleId}`);
+    await page.locator(`.tiptap > h1:not([data-toc-id="${name}-1"])`)
+      .filter({ hasText: "Last" }).waitFor();
+    finishCleanup();
+    await page.locator(".tiptap > h1.section-focus-start").waitFor({ timeout: 3000 });
+    assert.deepEqual(await page.locator(".tiptap > h1:visible").allTextContents(), ["2\u00a0Last"]);
+  } finally {
+    finishCleanup();
+    await page.close();
+  }
+});
 
 test("expanding a newer-format note reports an error only in its sidebar row", async () => {
   const moduleId = await createModule("Future sections", ["First"], fragment => {
@@ -432,6 +488,33 @@ test("Select All selects only the focused section and restores whole-note select
   }
 });
 
+test("Shift-Arrow and node selections stay inside the focused section", async () => {
+  const moduleId = await createModule("Selection boundaries", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  try {
+    await focusMiddleSection(page);
+    const editor = page.locator(".tiptap");
+    await page.keyboard.press("End");
+    await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("Shift+ArrowDown");
+    assert.equal(await editor.evaluate(({ editor }) => {
+      const { doc, selection } = editor.state;
+      const start = doc.child(0).nodeSize + doc.child(1).nodeSize;
+      const end = start + doc.child(2).nodeSize + doc.child(3).nodeSize;
+      return selection.from >= start && selection.to <= end;
+    }), true);
+    await editor.evaluate(({ editor }) => {
+      const { doc } = editor.state;
+      editor.commands.setNodeSelection(doc.content.size - doc.lastChild.nodeSize);
+    });
+    await page.keyboard.type("!");
+    assert.equal(await editor.locator(":scope > p").nth(1).textContent(), "Notes for Middle.!");
+    assert.equal(await editor.locator(":scope > p").last().textContent(), "Notes for After.");
+  } finally {
+    await page.close();
+  }
+});
+
 function selectAcrossHiddenSections(node) {
   const { editor } = node;
   editor.commands.setTextSelection({
@@ -440,32 +523,171 @@ function selectAcrossHiddenSections(node) {
   });
 }
 
-test("typing, cut and Markdown paste keep hidden text when the selection spans chapters", async () => {
+async function focusFromHeadingToolbar(page, headingIndex) {
+  await page.locator(".tiptap > h1").nth(headingIndex).hover();
+  await page.getByRole("toolbar", { name: "Heading controls" })
+    .getByRole("button", { name: "Focus on this section", exact: true }).click();
+  await page.locator(".tiptap > h1").nth(headingIndex).and(page.locator(".section-focus-start")).waitFor();
+}
+
+async function savedBlocks(moduleId) {
+  const doc = new Y.Doc();
+  try {
+    const { state, updates } = await call("get_content", { moduleId });
+    Y.applyUpdate(doc, Uint8Array.from(state));
+    for (const { bytes } of updates) Y.applyUpdate(doc, Uint8Array.from(bytes));
+    return doc.getXmlFragment("default").toArray().map(block => block.toJSON());
+  } finally {
+    doc.destroy();
+  }
+}
+
+for (const engine of ["Chromium", "WebKit"]) {
+  test(`${engine}: Tab after focusing a cross-chapter selection keeps both hidden chapters saved`, async () => {
+    const moduleId = await createModule("Tab selection", ["Before", "Middle", "After"]);
+    const page = await openNote(moduleId, { engine });
+    try {
+      const editor = page.locator(".tiptap");
+      await editor.locator(":scope > h1").first().click();
+      await editor.evaluate(selectAcrossHiddenSections);
+      const before = await savedBlocks(moduleId);
+      await focusFromHeadingToolbar(page, 0);
+      await page.keyboard.press("Tab");
+      await page.evaluate(async () => {
+        const { flushSaves } = await import("/src/lib/saves.ts");
+        await flushSaves();
+      });
+      const saved = await savedBlocks(moduleId);
+      assert.deepEqual(saved.slice(-4), before.slice(-4));
+      assert.notDeepEqual(saved, before, "Tab edits the visible chapter");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test(`${engine}: typing after toolbar focus starts in the newly visible heading`, async () => {
+    const moduleId = await createModule("Toolbar caret", ["Before", "Middle", "After"]);
+    const page = await openNote(moduleId, { engine });
+    try {
+      await page.locator(".tiptap > p").first().click();
+      await focusFromHeadingToolbar(page, 1);
+      await page.keyboard.type("!");
+      assert.deepEqual(await page.locator(".tiptap > h1").allTextContents(), ["1\u00a0Before", "2\u00a0!Middle", "3\u00a0After"]);
+      assert.equal(await page.locator(".tiptap > p").first().textContent(), "Notes for Before.");
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+test("registered editor shortcuts keep hidden chapters unchanged after toolbar focus", async () => {
+  const moduleId = await createModule("Shortcut sweep", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  const editor = page.locator(".tiptap");
+  try {
+    const keys = await editor.evaluate(async ({ editor }) => {
+      const { getExtensionField, getSchemaTypeByName } = await import("/node_modules/@tiptap/core/dist/index.js");
+      return [...new Set(editor.extensionManager.extensions.flatMap(extension => {
+        const shortcuts = getExtensionField(extension, "addKeyboardShortcuts", {
+          name: extension.name,
+          options: extension.options,
+          storage: editor.extensionStorage[extension.name],
+          editor,
+          type: getSchemaTypeByName(extension.name, editor.schema),
+        });
+        return Object.keys(shortcuts?.() ?? {});
+      }))];
+    });
+    assert.ok(keys.includes("Tab"));
+    const original = await editor.evaluate(({ editor }) => editor.getJSON());
+    const damaged = [];
+    for (const key of keys) {
+      await editor.evaluate(async ({ editor }, original) => {
+        const { yUndoPluginKey } = await import("/node_modules/@tiptap/y-tiptap/dist/y-tiptap.js");
+        editor.chain().showDocument().setContent(original).run();
+        const history = yUndoPluginKey.getState(editor.state).undoManager;
+        history.clear();
+        history.stopCapturing();
+        editor.view.focus();
+      }, original);
+      await editor.evaluate(selectAcrossHiddenSections);
+      await focusFromHeadingToolbar(page, 0);
+      await page.keyboard.press(key.split("-").map(part => ({ Mod: "Meta", Ctrl: "Control" })[part] ?? part).join("+"));
+      const hidden = await editor.evaluate(({ editor }) => editor.getJSON().content.slice(-4));
+      if (JSON.stringify(hidden) !== JSON.stringify(original.content.slice(-4))) damaged.push(key);
+      await page.keyboard.press("Escape");
+    }
+    assert.deepEqual(damaged, [], "shortcuts that changed hidden chapters");
+  } finally {
+    await page.close();
+  }
+});
+
+test("a list shortcut cannot join across the focused edge, while a programmatic join reveals it", async () => {
+  const moduleId = await createModule("List join", ["Before", "Middle", "After"], fragment => {
+    const list = new Y.XmlElement("bulletList");
+    const item = new Y.XmlElement("listItem");
+    const paragraph = new Y.XmlElement("paragraph");
+    const text = new Y.XmlText();
+    text.insert(0, "Hidden list");
+    paragraph.insert(0, [text]);
+    item.insert(0, [paragraph]);
+    list.insert(0, [item]);
+    fragment.insert(2, [list]);
+  });
+  const page = await openNote(moduleId);
+  try {
+    const editor = page.locator(".tiptap");
+    const hiddenList = editor.locator(":scope > ul").first();
+    await editor.locator(":scope > h1").first().click();
+    await editor.evaluate(selectAcrossHiddenSections);
+    await focusFromHeadingToolbar(page, 1);
+    await page.keyboard.press("Meta+Shift+8");
+    assert.deepEqual(await hiddenList.locator("li").allTextContents(), ["Hidden list"]);
+    await editor.locator(":scope > h1.section-focus-start").waitFor();
+
+    await editor.evaluate(({ editor }) => editor.commands.toggleBulletList());
+    await hiddenList.waitFor();
+    assert.deepEqual(await hiddenList.locator("li").allTextContents(), ["Hidden list", "Middle", "Notes for Middle."]);
+    assert.equal(await editor.locator(":scope > h1.section-focus-start").count(), 0);
+  } finally {
+    await page.close();
+  }
+});
+
+test("typing, cut and Markdown paste act on the clamped selection and keep hidden text", async () => {
   const moduleId = await createModule("Input boundary", ["Before", "Middle", "After"]);
   const page = await openNote(moduleId);
   try {
-    await focusMiddleSection(page);
     const editor = page.locator(".tiptap");
-    const snapshot = () => editor.evaluate(({ editor }) => editor.getJSON());
+    const snapshot = () => editor.evaluate(({ editor }) => editor.getJSON().content);
     const before = await snapshot();
-    await editor.evaluate(selectAcrossHiddenSections);
-    await page.keyboard.insertText("Replacement");
-    assert.deepEqual(await snapshot(), before);
-    for (const type of ["cut", "paste"]) {
+    for (const type of ["typing", "cut", "paste"]) {
+      await focusMiddleSection(page);
       await editor.evaluate(selectAcrossHiddenSections);
-      await editor.evaluate((node, type) => {
-        const clipboardData = new DataTransfer();
-        clipboardData.setData("text/plain", "# Markdown heading\n\n- list item");
-        node.dispatchEvent(new ClipboardEvent(type, { clipboardData, bubbles: true, cancelable: true }));
-      }, type);
-      assert.deepEqual(await snapshot(), before);
+      if (type === "typing") {
+        await page.keyboard.insertText("Replacement");
+      } else {
+        await editor.evaluate((node, type) => {
+          const clipboardData = new DataTransfer();
+          clipboardData.setData("text/plain", "# Markdown heading\n\n- list item");
+          node.dispatchEvent(new ClipboardEvent(type, { clipboardData, bubbles: true, cancelable: true }));
+        }, type);
+      }
+      const after = await snapshot();
+      assert.deepEqual(after.slice(0, 2), before.slice(0, 2), type);
+      assert.deepEqual(after.slice(-2), before.slice(-2), type);
+      assert.notDeepEqual(after, before, type);
+      await page.keyboard.press("Meta+z");
+      assert.deepEqual(await snapshot(), before, `undo ${type}`);
+      await editor.evaluate(({ editor }) => editor.commands.showDocument());
     }
   } finally {
     await page.close();
   }
 });
 
-test("section focus rejects a composing Delete across hidden sections before it reaches Yjs", async () => {
+test("section focus rejects an escaped native composition and its hidden edits before Yjs", async () => {
   const moduleId = await createModule("Composition", ["Before", "Middle", "After"]);
   const page = await openNote(moduleId);
   try {
@@ -479,18 +701,18 @@ test("section focus rejects a composing Delete across hidden sections before it 
       };
     });
     const before = await snapshot();
-    // A native selection can escape the focused range independently of the
-    // app's Select All shortcut. Establish it before the composing keydown.
-    await editor.evaluate(selectAcrossHiddenSections);
     const cancelled = await editor.evaluate(node => {
-      return !node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, cancelable: true }));
+      const { editor } = node;
+      const start = editor.view.domAtPos(1);
+      const end = editor.view.domAtPos(editor.state.doc.content.size - 1);
+      // Native composition can start before PM observes a DOM selection change.
+      getSelection().setBaseAndExtent(start.node, start.offset, end.node, end.offset);
+      const cancelled = !node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, cancelable: true }));
+      editor.view.focus();
+      editor.view.dispatch(editor.state.tr.delete(1, editor.state.doc.content.size - 1).setMeta("composition", 1));
+      return cancelled;
     });
     assert.equal(cancelled, true);
-    await page.keyboard.press("Delete");
-    await editor.evaluate(async node => {
-      node.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
-      await new Promise(resolve => requestAnimationFrame(resolve));
-    });
     assert.deepEqual(await snapshot(), before);
   } finally {
     await page.close();
