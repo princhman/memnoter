@@ -45,7 +45,6 @@ commands! { core;
     delete_module(module_id: String) => crate::delete_module(core.data_dir(), &core.db, module_id);
     get_content(module_id: String) => crate::get_content(&core.db, module_id);
     add_update(module_id: String, bytes: Vec<u8>) => crate::add_update(&core.db, module_id, bytes);
-    move_note_section(edits: Vec<crate::section_moves::SectionEdit>, card_ids: Vec<String>) => crate::section_moves::move_section(&core.db, edits, card_ids);
     save_compaction(module_id: String, new_state: Vec<u8>, update_id: i64) => crate::save_compaction(&core.db, module_id, new_state, update_id);
     add_document(module_id: String, path: String) => crate::add_document(core.data_dir(), &core.db, module_id, path);
     add_document_bytes(module_id: String, name: String, bytes: Vec<u8>) => crate::add_document_bytes(core.data_dir(), &core.db, module_id, name, bytes);

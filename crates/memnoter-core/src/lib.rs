@@ -102,7 +102,6 @@ impl Core {
 mod import;
 pub(crate) use import::{import_module, ImportImage};
 mod content;
-mod section_moves;
 #[cfg(test)]
 pub(crate) use content::delete_module_data;
 pub(crate) use content::{

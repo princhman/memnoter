@@ -24,7 +24,7 @@
 pub mod crypto;
 pub mod session;
 
-use crate::{db_err, section_moves, CommandResult, ContentUpdate, Db};
+use crate::{db_err, CommandResult, ContentUpdate, Db};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -184,23 +184,13 @@ pub fn record_module(
     Ok(true)
 }
 
-// A deleted note can still house the review log of a transferred card.
+// The module was deleted: the server can forget its note and review history.
 fn forget_module_docs(conn: &Connection, module_id: &str) -> CommandResult<()> {
-    push_outbox(conn, module_id, &[])?;
-    let retains_history: bool = conn
-        .query_row(
-            "select exists(select 1 from sync_card_locations where review_module=?1)",
-            [module_id],
-            |row| row.get(0),
-        )
+    let reviews = review_doc_id(module_id);
+    conn.execute("delete from sync_docs where doc = ?1", [&reviews])
         .map_err(db_err)?;
-    if !retains_history {
-        let reviews = review_doc_id(module_id);
-        conn.execute("delete from sync_docs where doc = ?1", [&reviews])
-            .map_err(db_err)?;
-        push_outbox(conn, &reviews, &[])?;
-    }
-    Ok(())
+    push_outbox(conn, module_id, &[])?;
+    push_outbox(conn, &reviews, &[])
 }
 
 pub fn record_file(
@@ -566,23 +556,13 @@ pub fn record_review(
         ),
         None => None,
     };
-    let route = section_moves::review_route(conn, card_id)?;
-    let (doc_id, state_key) = match route {
-        Some(route) => (
-            review_doc_id(&route.review_module),
-            format!(
-                "{}/{card_id}",
-                route.epochs.last().ok_or("Missing review epoch")?
-            ),
-        ),
-        None => (review_doc_id(&module_id), card_id.to_owned()),
-    };
+    let doc_id = review_doc_id(&module_id);
     let doc = load_doc(conn, &doc_id)?;
     let cards = doc.get_or_insert_map(REVIEW_CARDS_MAP);
     let log = doc.get_or_insert_map(REVIEW_LOG_MAP);
     let update = {
         let mut txn = doc.transact_mut();
-        cards.insert(&mut txn, state_key, state);
+        cards.insert(&mut txn, card_id, state);
         if let Some((sync_id, row)) = added {
             log.insert(&mut txn, sync_id, row);
         }
@@ -642,75 +622,33 @@ fn string_entries(doc: &Doc, map_name: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-// Materialize schedules from the current owner epoch first. Until it has
-// a review or undo, an offline review from the previous owner can still supply
-// the schedule. Every epoch shares the log and its undo tombstones.
-fn apply_review_doc(conn: &Connection, module_id: &str, doc: &Doc) -> CommandResult<bool> {
-    let states: BTreeMap<_, _> = string_entries(doc, REVIEW_CARDS_MAP).into_iter().collect();
-    let mut locations = conn
-        .prepare(
-            "select location.card_id, location.epochs from sync_card_locations location
-         join cards on cards.id=location.card_id and cards.module_id=location.module_id
-         where location.review_module=?1",
-        )
-        .map_err(db_err)?;
-    let moved = locations
-        .query_map([module_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(db_err)?;
+// Writes a review document into the card and review log tables. Cards and
+// log rows this device does not have yet are skipped; this runs again after
+// the note's cards are indexed.
+fn apply_review_doc(conn: &Connection, doc: &Doc) -> CommandResult<bool> {
     let mut changed = false;
-    let values = crate::cards::CARD_STATE_FIELDS
-        .iter()
-        .map(|field| format!("json_extract(?2, '$.{field}')"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let fields = crate::cards::CARD_STATE_FIELDS.join(", ");
-    let mut regular = conn.prepare(&format!(
-        "update cards set ({fields})=({values})
-         where id=?1 and module_id=?3 and not exists(select 1 from sync_card_locations where card_id=?1)
-           and ({fields}) is not ({values})"
-    )).map_err(db_err)?;
-    for (card_id, state) in &states {
-        changed |= regular
-            .execute(params![card_id, state, module_id])
+    for (card_id, state) in string_entries(doc, REVIEW_CARDS_MAP) {
+        changed |= conn
+            .execute(
+                &format!("update cards set {}
+                 where id = ?1 and not (
+                     reps = json_extract(?2, '$.reps')
+                     and coalesce(last_review_at, -1) = coalesce(json_extract(?2, '$.last_review_at'), -1)
+                 )", crate::cards::CARD_STATE_FIELDS.iter()
+                    .map(|field| format!("{field} = json_extract(?2, '$.{field}')"))
+                    .collect::<Vec<_>>().join(", ")),
+                params![card_id, state],
+            )
             .map_err(db_err)?
             > 0;
     }
-    let mut transferred = conn
-        .prepare(&format!(
-            "update cards set ({fields})=({values}) where id=?1
-         and ({fields}) is not ({values})"
-        ))
-        .map_err(db_err)?;
-    for location in moved {
-        let (card_id, epochs) = location.map_err(db_err)?;
-        let epochs: Vec<String> = serde_json::from_str(&epochs).map_err(db_err)?;
-        let state = epochs
-            .iter()
-            .rev()
-            .find_map(|epoch| states.get(&format!("{epoch}/{card_id}")))
-            .or_else(|| states.get(&card_id));
-        if let Some(state) = state {
-            changed |= transferred
-                .execute(params![card_id, state])
-                .map_err(db_err)?
-                > 0;
-        }
-    }
     for (sync_id, row) in string_entries(doc, REVIEW_LOG_MAP) {
         if row.is_empty() {
-            changed |= conn.execute(
-                "delete from review_log where sync_id=?1 and exists(
-                    select 1 from cards left join sync_card_locations location on location.card_id=cards.id
-                    where cards.id=review_log.card_id and coalesce(location.review_module, cards.module_id)=?2
-                      and cards.module_id=coalesce(location.module_id, cards.module_id)
-                )",
-                params![sync_id, module_id],
-            ).map_err(db_err)? > 0;
+            conn.execute("delete from review_log where sync_id = ?1", [&sync_id])
+                .map_err(db_err)?;
             continue;
         }
-        changed |= conn.execute(
+        conn.execute(
             "insert or ignore into review_log (sync_id, card_id, rating, review_time, duration_ms,
                  fsrs_model, state, schedule_status, due_at, last_review_at, stability,
                  stability_fast, difficulty, scheduled_days, learning_step)
@@ -721,13 +659,10 @@ fn apply_review_doc(conn: &Connection, module_id: &str, doc: &Doc) -> CommandRes
                  json_extract(?2, '$.last_review_at'), json_extract(?2, '$.stability'),
                  json_extract(?2, '$.stability_fast'), json_extract(?2, '$.difficulty'),
                  json_extract(?2, '$.scheduled_days'), json_extract(?2, '$.learning_step')
-             where exists (select 1 from cards left join sync_card_locations location on location.card_id=cards.id
-                 where cards.id=json_extract(?2, '$.card_id')
-                   and coalesce(location.review_module, cards.module_id)=?3
-                   and cards.module_id=coalesce(location.module_id, cards.module_id))",
-            params![sync_id, row, module_id],
+             where exists (select 1 from cards where id = json_extract(?2, '$.card_id'))",
+            params![sync_id, row],
         )
-        .map_err(db_err)? > 0;
+        .map_err(db_err)?;
     }
     Ok(changed)
 }
@@ -738,25 +673,16 @@ pub fn apply_reviews(conn: &Connection, module_id: &str) -> CommandResult<()> {
     if !is_enabled(conn)? {
         return Ok(());
     }
-    let mut stmt = conn
-        .prepare("select ?1 union select review_module from sync_card_locations where module_id=?1")
-        .map_err(db_err)?;
-    let modules = stmt
-        .query_map([module_id], |row| row.get::<_, String>(0))
-        .map_err(db_err)?;
-    for module in modules {
-        let module = module.map_err(db_err)?;
-        let doc_id = review_doc_id(&module);
-        let exists: bool = conn
-            .query_row(
-                "select exists(select 1 from sync_docs where doc=?1)",
-                [&doc_id],
-                |row| row.get(0),
-            )
-            .map_err(db_err)?;
-        if exists {
-            apply_review_doc(conn, &module, &load_doc(conn, &doc_id)?)?;
-        }
+    let doc_id = review_doc_id(module_id);
+    let exists = conn
+        .query_row("select 1 from sync_docs where doc = ?1", [&doc_id], |_| {
+            Ok(())
+        })
+        .optional()
+        .map_err(db_err)?
+        .is_some();
+    if exists {
+        apply_review_doc(conn, &load_doc(conn, &doc_id)?)?;
     }
     Ok(())
 }
@@ -989,10 +915,6 @@ fn seed(conn: &Connection) -> CommandResult<()> {
         .encode_state_as_update_v1(&StateVector::default());
     push_outbox(conn, VAULT_DOC, &state)?;
     conn.execute(
-        "insert into sync_outbox (doc, bytes) select doc, state from sync_section_moves order by rowid",
-        [],
-    ).map_err(db_err)?;
-    conn.execute(
         "insert into sync_outbox (doc, bytes)
          select module_id, state from contents where length(state) > 0",
         [],
@@ -1004,10 +926,10 @@ fn seed(conn: &Connection) -> CommandResult<()> {
         [],
     )
     .map_err(db_err)?;
-    seed_reviews(conn)
+    seed_reviews(conn, &modules)
 }
 
-fn seed_reviews(conn: &Connection) -> CommandResult<()> {
+fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResult<()> {
     conn.execute(
         "delete from sync_docs where doc like ?1",
         [format!("{REVIEW_PREFIX}%")],
@@ -1017,29 +939,17 @@ fn seed_reviews(conn: &Connection) -> CommandResult<()> {
         "update review_log set sync_id = lower(hex(randomblob(16))) where sync_id is null;",
     )
     .map_err(db_err)?;
-    let mut stmt = conn
-        .prepare(
-            "select distinct coalesce(location.review_module, cards.module_id)
-         from cards left join sync_card_locations location on location.card_id=cards.id",
-        )
-        .map_err(db_err)?;
-    let modules = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(db_err)?;
-    for module_id in modules {
-        let module_id = module_id.map_err(db_err)?;
+    for (module_id, _) in modules {
         let states: Vec<(String, String)> = {
             let mut stmt = conn
                 .prepare(&format!(
-                    "select coalesce(json_extract(location.epochs, '$[#-1]') || '/', '') || cards.id, {}
-                     from cards left join sync_card_locations location on location.card_id=cards.id
-                     where coalesce(location.review_module, cards.module_id)=?1
-                       and (reps > 0 or last_review_at is not null or location.card_id is not null)",
+                    "select id, {} from cards
+                     where module_id = ?1 and (reps > 0 or last_review_at is not null)",
                     card_state_json()
                 ))
                 .map_err(db_err)?;
             let rows = stmt
-                .query_map([&module_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .query_map([module_id], |row| Ok((row.get(0)?, row.get(1)?)))
                 .map_err(db_err)?;
             rows.collect::<rusqlite::Result<_>>().map_err(db_err)?
         };
@@ -1047,22 +957,19 @@ fn seed_reviews(conn: &Connection) -> CommandResult<()> {
             let mut stmt = conn
                 .prepare(&format!(
                     "select sync_id, {} from review_log
-                     where card_id in (
-                         select cards.id from cards left join sync_card_locations location on location.card_id=cards.id
-                         where coalesce(location.review_module, cards.module_id)=?1
-                     ) order by id",
+                     where card_id in (select id from cards where module_id = ?1) order by id",
                     log_json()
                 ))
                 .map_err(db_err)?;
             let rows = stmt
-                .query_map([&module_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .query_map([module_id], |row| Ok((row.get(0)?, row.get(1)?)))
                 .map_err(db_err)?;
             rows.collect::<rusqlite::Result<_>>().map_err(db_err)?
         };
         if states.is_empty() && logs.is_empty() {
             continue;
         }
-        let doc_id = review_doc_id(&module_id);
+        let doc_id = review_doc_id(module_id);
         let doc = Doc::new();
         let cards = doc.get_or_insert_map(REVIEW_CARDS_MAP);
         let log = doc.get_or_insert_map(REVIEW_LOG_MAP);
@@ -1089,10 +996,10 @@ fn delete_modules(conn: &mut Connection, files_dir: &Path, ids: &[String]) -> Co
     for id in deleted_documents(&load_vault(conn)?) {
         crate::documents::remove_local(data_dir, conn, &id)?;
     }
-    // Keep received review docs. A move arriving after this tombstone may
-    // still need the old note's review doc for the cards it moved out.
     for id in ids {
         crate::content::delete_remote_module_data(conn, files_dir, id)?;
+        conn.execute("delete from sync_docs where doc = ?1", [review_doc_id(id)])
+            .map_err(db_err)?;
     }
     Ok(())
 }
@@ -1271,9 +1178,9 @@ fn apply_remote(
     let (vault_entries, rest): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .partition(|entry| entry.doc == VAULT_DOC);
-    let (review_entries, note_entries): (Vec<_>, Vec<_>) = rest.into_iter().partition(|entry| {
-        entry.doc.starts_with(REVIEW_PREFIX) && !entry.doc.starts_with(section_moves::SYNC_PREFIX)
-    });
+    let (review_entries, content_entries): (Vec<_>, Vec<_>) = rest
+        .into_iter()
+        .partition(|entry| entry.doc.starts_with(REVIEW_PREFIX));
     let doc = load_vault(&tx)?;
     if !vault_entries.is_empty() {
         {
@@ -1294,24 +1201,6 @@ fn apply_remote(
     result.deleted = deleted;
     let vault = vault_modules(&doc);
 
-    let mut content_entries = Vec::new();
-    let mut transfer_reviews = HashSet::new();
-    let mut moved_sections = false;
-    for entry in note_entries {
-        if !entry.doc.starts_with(section_moves::SYNC_PREFIX) {
-            content_entries.push(entry);
-            continue;
-        }
-        if let Some(movement) = section_moves::receive(&tx, &entry.doc, &entry.bytes)? {
-            transfer_reviews.extend(movement.review_modules);
-            content_entries.extend(movement.edits.into_iter().map(|(doc, bytes)| RemoteEntry {
-                seq: entry.seq,
-                doc,
-                bytes,
-            }));
-            moved_sections = true;
-        }
-    }
     let now = chrono::Utc::now().timestamp_millis();
     let mut touched = HashSet::new();
     let mut worksheet_history = BTreeMap::new();
@@ -1346,10 +1235,6 @@ fn apply_remote(
         });
         touched.insert(entry.doc);
     }
-    if moved_sections {
-        section_moves::relocate_cards(&tx)?;
-        result.reviews_changed = true;
-    }
     for (module, old) in worksheet_history {
         let after = crate::worksheets::load(&tx, &module)?;
         match crate::worksheets::read(&after) {
@@ -1362,11 +1247,11 @@ fn apply_remote(
     for entry in review_entries {
         reviews.entry(entry.doc.clone()).or_default().push(entry);
     }
-    for module in transfer_reviews {
-        reviews.entry(review_doc_id(&module)).or_default();
-    }
     for (doc_id, entries) in reviews {
         let module_id = &doc_id[REVIEW_PREFIX.len()..];
+        if vault.get(module_id).is_some_and(|module| module.deleted) {
+            continue;
+        }
         let doc = load_doc(&tx, &doc_id)?;
         {
             let mut txn = doc.transact_mut();
@@ -1375,10 +1260,8 @@ fn apply_remote(
                     .map_err(db_err)?;
             }
         }
-        if !entries.is_empty() {
-            save_doc(&tx, &doc_id, &doc)?;
-        }
-        result.reviews_changed |= apply_review_doc(&tx, module_id, &doc)?;
+        save_doc(&tx, &doc_id, &doc)?;
+        result.reviews_changed |= apply_review_doc(&tx, &doc)?;
     }
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
@@ -1402,11 +1285,6 @@ fn snapshot(conn: &Connection, doc_id: &str) -> CommandResult<Option<Vec<u8>>> {
                 .encode_state_as_update_v1(&StateVector::default()),
         ));
     }
-    if doc_id.starts_with(section_moves::SYNC_PREFIX) {
-        // The move is immutable. Replacing it with a later snapshot would
-        // let compaction reorder it behind the notes that depend on it.
-        return Ok(Some(Vec::new()));
-    }
     if doc_id.starts_with(REVIEW_PREFIX) {
         return conn
             .query_row(
@@ -1416,19 +1294,6 @@ fn snapshot(conn: &Connection, doc_id: &str) -> CommandResult<Option<Vec<u8>>> {
             )
             .optional()
             .map_err(db_err);
-    }
-    let move_pending: bool = conn
-        .query_row(
-            "select exists(select 1 from sync_outbox o join sync_section_moves m on m.doc=o.doc
-         where m.source=?1 or m.destination=?1)",
-            [doc_id],
-            |row| row.get(0),
-        )
-        .map_err(db_err)?;
-    if move_pending {
-        // An ordinary note snapshot would expose half of this unpublished
-        // transaction to a receiver. Retry on a later compaction hint.
-        return Ok(Some(Vec::new()));
     }
     let Some(state) = conn
         .query_row(
@@ -1764,7 +1629,7 @@ pub fn sync_reconcile(data_dir: &Path, db: &Db, generation: String) -> CommandRe
 mod tests {
     use super::*;
     use crate::content::delete_module_data;
-    use yrs::{GetString, Text, XmlFragment, XmlTextPrelim};
+    use yrs::{GetString, Text};
 
     fn db() -> (std::path::PathBuf, Connection) {
         let dir = std::env::temp_dir().join(format!("notes-sync-{}", uuid::Uuid::new_v4()));
@@ -2379,269 +2244,6 @@ mod tests {
         transfer(&a, &mut b, &mut seq);
         assert_eq!(reps(&b, "card"), 1);
         assert_eq!(log_count(&b), 1);
-    }
-
-    fn section_text_update(text: &str) -> Vec<u8> {
-        let doc = Doc::new();
-        let root = doc.get_or_insert_xml_fragment("default");
-        let mut txn = doc.transact_mut();
-        root.insert(&mut txn, 0, XmlTextPrelim::new(text));
-        txn.encode_update_v1()
-    }
-
-    fn section_text(conn: &Connection, module: &str) -> String {
-        let doc = crate::worksheets::load(conn, module).unwrap();
-        let root = doc.get_or_insert_xml_fragment("default");
-        let text = root.get_string(&doc.transact());
-        text
-    }
-
-    struct SectionTransfer {
-        a: Db,
-        b: Db,
-        source: String,
-        destination: String,
-        seq: i64,
-    }
-
-    impl SectionTransfer {
-        fn new() -> Self {
-            let (a_dir, _) = db();
-            let (b_dir, _) = db();
-            let a = crate::open_db(&a_dir).unwrap();
-            let b = crate::open_db(&b_dir).unwrap();
-            let source = crate::create_module(&a, "Source".into()).unwrap();
-            let destination = crate::create_module(&a, "Destination".into()).unwrap();
-            crate::content::add_update(&a, source.clone(), section_text_update("card")).unwrap();
-            Self::index(&a, &source, true);
-            review(&a.lock().unwrap(), "card", 1, 1000);
-            enable(&mut a.lock().unwrap(), "{}").unwrap();
-            enable(&mut b.lock().unwrap(), "{}").unwrap();
-            let mut seq = 0;
-            transfer(&a.lock().unwrap(), &mut b.lock().unwrap(), &mut seq);
-            Self::index(&b, &source, true);
-            assert_eq!(reps(&b.lock().unwrap(), "card"), 1);
-            Self {
-                a,
-                b,
-                source,
-                destination,
-                seq,
-            }
-        }
-
-        fn index(db: &Db, module: &str, contains_card: bool) {
-            let cards = if contains_card {
-                vec![serde_json::from_value(serde_json::json!({
-                    "id": "card", "kind": "basic", "front": "Question", "back": "Answer"
-                }))
-                .unwrap()]
-            } else {
-                vec![]
-            };
-            assert!(crate::cards::sync_cards(db, module.into(), cards)
-                .unwrap()
-                .is_empty());
-        }
-
-        fn move_on_a(&self) {
-            let edits = {
-                let conn = self.a.lock().unwrap();
-                [&self.source, &self.destination].into_iter().map(|module| {
-                    let (state, latest): (Vec<u8>, i64) = conn.query_row(
-                        "select state, coalesce((select max(id) from contents_updates where module_id=?1),0)
-                         from contents where module_id=?1",
-                        [module], |row| Ok((row.get(0)?, row.get(1)?)),
-                    ).unwrap();
-                    let doc = crate::worksheets::load(&conn, module).unwrap();
-                    let text = doc.get_or_insert_xml_fragment("default");
-                    let mut txn = doc.transact_mut();
-                    if module == &self.source {
-                        text.remove_range(&mut txn, 0, 1);
-                    } else {
-                        let end = text.len(&txn);
-                        text.insert(&mut txn, end, XmlTextPrelim::new("card"));
-                    }
-                    serde_json::from_value(serde_json::json!({
-                        "moduleId": module, "expectedState": state, "expectedUpdateId": latest,
-                        "bytes": txn.encode_update_v1()
-                    })).unwrap()
-                }).collect()
-            };
-            crate::section_moves::move_section(&self.a, edits, vec!["card".into()]).unwrap();
-        }
-    }
-
-    #[test]
-    fn split_pulls_move_cards_before_the_open_destination_indexes() {
-        let mut pair = SectionTransfer::new();
-        crate::content::add_update(
-            &pair.a,
-            pair.destination.clone(),
-            section_text_update("intro "),
-        )
-        .unwrap();
-        pair.move_on_a();
-
-        // The receiver indexes the open destination immediately after each
-        // batch. Its closed source never runs the background indexer here.
-        let mut saw_move = false;
-        let pending = outbox(&pair.a.lock().unwrap(), i64::MAX).unwrap();
-        assert!(pending.len() > 1);
-        let last_outbox_id = pending.last().unwrap().id;
-        for entry in pending {
-            pair.seq += 1;
-            let result = apply_remote(
-                &mut pair.b.lock().unwrap(),
-                &pair.b.data_dir.join("files"),
-                vec![RemoteEntry {
-                    doc: entry.doc,
-                    seq: pair.seq,
-                    bytes: entry.bytes,
-                }],
-                pair.seq,
-            )
-            .unwrap();
-            if result
-                .updates
-                .iter()
-                .any(|update| update.module_id == pair.destination)
-            {
-                let contains_card = {
-                    let conn = pair.b.lock().unwrap();
-                    section_text(&conn, &pair.destination).contains("card")
-                };
-                SectionTransfer::index(&pair.b, &pair.destination, contains_card);
-                if contains_card && !saw_move {
-                    saw_move = true;
-                    assert!(result
-                        .updates
-                        .iter()
-                        .any(|update| update.module_id == pair.source));
-                }
-            }
-        }
-        assert!(saw_move);
-        let generation = generation(&pair.a.lock().unwrap()).unwrap();
-        for note in [&pair.source, &pair.destination] {
-            assert_eq!(
-                sync_snapshot(&pair.a, note.clone(), generation.clone()).unwrap(),
-                Some(vec![])
-            );
-        }
-        sync_ack(&pair.a, last_outbox_id, generation.clone()).unwrap();
-        assert!(
-            !sync_snapshot(&pair.a, pair.destination.clone(), generation)
-                .unwrap()
-                .unwrap()
-                .is_empty()
-        );
-        let conn = pair.b.lock().unwrap();
-        assert!(section_text(&conn, &pair.source).is_empty());
-        let module: String = conn
-            .query_row("select module_id from cards where id='card'", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(module, pair.destination);
-        assert_eq!(reps(&conn, "card"), 1);
-        assert_eq!(log_count(&conn), 1);
-    }
-
-    #[test]
-    fn late_source_review_merges_history_without_overriding_the_destination_undo() {
-        let mut pair = SectionTransfer::new();
-        {
-            let b = pair.b.lock().unwrap();
-            let log = review(&b, "card", 2, 2000);
-            record_review(&b, "card", Some(log), None).unwrap();
-        }
-        pair.move_on_a();
-        crate::cards::undo_review(
-            &pair.a,
-            "card".into(),
-            1,
-            serde_json::from_value(serde_json::json!({
-                "state": 0, "scheduleStatus": "new", "dueAt": 0,
-                "stability": 0, "stabilityFast": 0, "difficulty": 0, "scheduledDays": 0,
-                "learningStep": 0, "reps": 0, "lapses": 0, "lastReviewAt": null
-            }))
-            .unwrap(),
-            None,
-            1000,
-        )
-        .unwrap();
-
-        // A has committed the move and undo before B's offline source review
-        // reaches it. B gets the move after having recorded the source review.
-        transfer(
-            &pair.b.lock().unwrap(),
-            &mut pair.a.lock().unwrap(),
-            &mut pair.seq,
-        );
-        assert_eq!(reps(&pair.a.lock().unwrap(), "card"), 0);
-        transfer(
-            &pair.a.lock().unwrap(),
-            &mut pair.b.lock().unwrap(),
-            &mut pair.seq,
-        );
-        for db in [&pair.a, &pair.b] {
-            SectionTransfer::index(db, &pair.destination, true);
-            let conn = db.lock().unwrap();
-            assert_eq!(reps(&conn, "card"), 0);
-            let reviews: Vec<i64> = conn
-                .prepare("select review_time from review_log where card_id='card'")
-                .unwrap()
-                .query_map([], |row| row.get(0))
-                .unwrap()
-                .collect::<rusqlite::Result<_>>()
-                .unwrap();
-            assert_eq!(reviews, vec![2000]);
-        }
-    }
-
-    #[test]
-    fn deleting_the_source_keeps_the_moved_cards_review_log_in_sync() {
-        let mut pair = SectionTransfer::new();
-        {
-            let b = pair.b.lock().unwrap();
-            let log = review(&b, "card", 2, 2000);
-            record_review(&b, "card", Some(log), None).unwrap();
-        }
-        pair.move_on_a();
-        crate::delete_module(&pair.a.data_dir, &pair.a, pair.source.clone()).unwrap();
-        let retired_reviews = review_doc_id(&pair.source);
-
-        // A server drop would erase the canonical review log. This still
-        // applies when the move and delete were queued in the same push.
-        assert!(!outbox(&pair.a.lock().unwrap(), i64::MAX)
-            .unwrap()
-            .iter()
-            .any(|entry| entry.doc == retired_reviews && entry.bytes.is_empty()));
-        transfer(
-            &pair.b.lock().unwrap(),
-            &mut pair.a.lock().unwrap(),
-            &mut pair.seq,
-        );
-        // With no destination review or undo yet, the offline grade still
-        // supplies the schedule through the retained source review document.
-        assert_eq!(reps(&pair.a.lock().unwrap(), "card"), 2);
-        transfer(
-            &pair.a.lock().unwrap(),
-            &mut pair.b.lock().unwrap(),
-            &mut pair.seq,
-        );
-        SectionTransfer::index(&pair.b, &pair.destination, true);
-        let b = pair.b.lock().unwrap();
-        assert!(!module_exists(&b, &pair.source).unwrap());
-        assert_eq!(reps(&b, "card"), 2);
-
-        let log = review(&b, "card", 3, 3000);
-        record_review(&b, "card", Some(log), None).unwrap();
-        let mut a = pair.a.lock().unwrap();
-        transfer(&b, &mut a, &mut pair.seq);
-        assert_eq!(reps(&a, "card"), 3);
-        assert_eq!(log_count(&a), 3);
     }
 
     #[test]

@@ -25,8 +25,8 @@ import type { Module } from "@/lib/types";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "@/lib/store";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { moveSidebarSection } from "@/lib/section-moves";
-import { SidebarSectionRow, useSectionModuleDrop } from "./sidebar-section-row";
+import { reorderSidebarSection } from "@/lib/section-reorder";
+import { SidebarSectionRow } from "./sidebar-section-row";
 import { pickPdfs } from "./add-pdf";
 import { isTauri } from "@/lib/backend";
 import {
@@ -134,16 +134,10 @@ function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }
   const { sections, focusedId, loading, error } = useSidebarSections(module.id, expanded);
   const navigate = useNavigate();
   const sectionsId = `sidebar-sections-${module.id}`;
-  const sectionDrop = useSectionModuleDrop(module.id);
   useEffect(() => { if (isActive) setExpanded(true); }, [isActive]);
-  useEffect(() => {
-    if (!sectionDrop.isOver || expanded) return;
-    const timer = window.setTimeout(() => setExpanded(true), 2000);
-    return () => window.clearTimeout(timer);
-  }, [sectionDrop.isOver, expanded]);
 
   return <ModuleMenu moduleId={module.id} name={module.name}>
-    <div ref={sectionDrop.setNodeRef} className={`relative rounded-md ${sectionDrop.isOver ? "bg-sidebar-accent" : ""}`}>
+    <div className="relative">
     <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} sections of ${module.name}`}
       aria-expanded={expanded} aria-controls={expanded ? sectionsId : undefined}
       className="absolute top-1 left-0 z-10 flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-ring"
@@ -232,9 +226,9 @@ const AppSidebar = () => {
 
           {data && (
             <SidebarGroupContent>
-              <SidebarModules modules={data} onMoveSection={(source, target) => moveSidebarSection(source, target, activeEditor)} renderModule={(module) => {
+              <SidebarModules modules={data} onReorderSection={sidebarSections ? move => reorderSidebarSection(move, activeEditor) : undefined} renderModule={(module, preview) => {
                   const isActive = moduleId === module.id;
-                  return sidebarSections
+                  return sidebarSections && !preview
                     ? <ModuleEntry key={module.id} module={module} isActive={isActive} />
                     : <ModuleMenu key={module.id} moduleId={module.id} name={module.name}>
                       <SidebarMenuButton isActive={isActive} render={<Link to="/$moduleId" params={{ moduleId: module.id }} />}>

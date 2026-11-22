@@ -25,22 +25,19 @@ export const headingNumberingKey = new PluginKey<boolean>("headingNumbering");
 export const HeadingNumbering = Extension.create({
   name: "headingNumbering",
   addProseMirrorPlugins() {
-    // Only retain the current document's labels. A content change must rebuild
-    // them, including a Yjs update that removes or returns a whole section.
-    let cached: { doc: Node; decorations: DecorationSet } | undefined;
+    // Selection-only transactions keep the immutable document and its numbers.
+    const cache = new WeakMap<Node, DecorationSet>();
     return [new Plugin({
       key: headingNumberingKey,
       state: {
         init: () => false,
-        apply: (tr, enabled) => {
-          if (tr.docChanged || tr.getMeta(headingNumberingKey) !== undefined) cached = undefined;
-          return tr.getMeta(headingNumberingKey) ?? enabled;
-        },
+        apply: (tr, enabled) => tr.getMeta(headingNumberingKey) ?? enabled,
       },
       props: {
         decorations(state) {
           if (!headingNumberingKey.getState(state)) return null;
-          if (cached?.doc === state.doc) return cached.decorations;
+          const cached = cache.get(state.doc);
+          if (cached) return cached;
           const decorations = DecorationSet.create(state.doc, [...headingNumbers(state.doc)].map(([pos, number]) =>
             Decoration.widget(pos + 1, (view) => {
               const span = view.dom.ownerDocument.createElement("span");
@@ -54,12 +51,10 @@ export const HeadingNumbering = Extension.create({
               // in an empty heading with only ProseMirror's trailing break.
               side: -1,
               ignoreSelection: true,
-              // The same ordinal can belong to a different heading after a
-              // move. Reusing its widget across headings can retain stale DOM.
-              key: `heading-number-${state.doc.nodeAt(pos)?.attrs["data-toc-id"] ?? pos}-${number}`,
+              key: `heading-number-${number}`,
             }),
           ));
-          cached = { doc: state.doc, decorations };
+          cache.set(state.doc, decorations);
           return decorations;
         },
       },

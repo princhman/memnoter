@@ -41,7 +41,7 @@ export interface SyncStore {
   // Applies the entries and sets the cursor, atomically.
   applyRemote(entries: RemoteEntry[], cursor: number): Promise<void>;
   setCursor(cursor: number): Promise<void>;
-  // Full local state, empty bytes to defer compaction, or null for a missing document.
+  // The document's full local state, or null when it no longer exists.
   snapshot(doc: string): Promise<Uint8Array | null>;
 }
 
@@ -279,7 +279,6 @@ export function createSyncEngine({
       send({ t: "drop", doc });
       return;
     }
-    if (state.byteLength === 0) return;
     const blob = await storable(await encryptBlob(key, doc, state));
     if (!blob) return;
     send({ t: "compact", doc, upTo: cursor, data: toBase64(blob) });

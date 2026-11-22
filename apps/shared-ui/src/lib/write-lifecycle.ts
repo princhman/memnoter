@@ -141,7 +141,6 @@ async function drainMutations(excluded?: string, writesOnly = false) {
 export type ExclusiveWork =
   | { kind: "restore" }
   | { kind: "delete" }
-  | { kind: "section-move" }
   | { kind: "exit"; unsaved?: "discard" | "retry" };
 
 export async function exclusiveWrite<T>(action: () => Promise<T>, work?: ExclusiveWork): Promise<T> {
@@ -156,7 +155,7 @@ export async function exclusiveWrite<T>(action: () => Promise<T>, work?: Exclusi
     if (!discard) await flushAll({ permit: drainPermit });
     await Promise.all([saveQueue.suspend(), ...[...participants].map(owner => owner.suspend())]);
     suspended = true;
-    await drainMutations(work?.kind === "restore" ? MUTATIONS.restoreBackup : work?.kind === "delete" ? MUTATIONS.deleteModule : work?.kind === "section-move" ? MUTATIONS.moveSection : undefined);
+    await drainMutations(work?.kind === "restore" ? MUTATIONS.restoreBackup : work?.kind === "delete" ? MUTATIONS.deleteModule : undefined);
     const result = await action();
     if (discard || work?.kind === "restore" || work?.kind === "delete") {
       for (const owner of participants) owner.discard();
@@ -185,7 +184,6 @@ async function settleWork(discard = false, retry = false) {
 }
 
 export const MUTATIONS = {
-  moveSection: "move-section",
   restoreBackup: "restore-backup", cardWrite: "card-write", searchIndex: "search-index",
   deleteModule: "delete-module", compactContent: "compact-content",
   uploadFile: "upload-file", backupNow: "backup-now",

@@ -52,7 +52,7 @@ before(async () => {
   core = spawn(`${workspace}/target/debug/examples/command-harness`, [], { stdio: ["pipe", "pipe", "inherit"] });
   createInterface({ input: core.stdout }).on("line", line => pending.shift()(JSON.parse(line)));
   course = await createModule("Computing", ["Introduction", "", "Algorithms", "Data structures", "Complexity"]);
-  archive = await createModule("Archive", ["Reference"]);
+  archive = await createModule("Archive", ["Reference", "Appendix"]);
   server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   await server.listen();
   browser = await chromium.launch();
@@ -96,7 +96,10 @@ test("opening an editable legacy note with sidebar sections off leaves the store
   const before = await call("get_content", { moduleId });
   const page = await openNote(moduleId);
   try {
-    await page.locator(".tiptap > h1").nth(1).locator(".heading-number").waitFor();
+    const emptyHeading = page.locator(".tiptap > h1").nth(1);
+    await emptyHeading.locator(".heading-number").waitFor();
+    assert.equal(await emptyHeading.getAttribute("data-toc-id"), null);
+    assert.equal(await page.getByRole("list", { name: "Sections of Legacy" }).count(), 0);
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await page.locator(".tiptap").waitFor({ state: "detached" });
     assert.deepEqual(await call("get_content", { moduleId }), before);
@@ -122,14 +125,14 @@ test("the New section shortcut still focuses the new sibling with sidebar sectio
   }
 });
 
-test("numbered chapters match in the sidebar and editor after dragging out and back", async () => {
+test("numbered chapters match in the sidebar and editor after reordering within a note and back", async () => {
   const page = await openNote(course, { sections: true });
   const computing = page.getByRole("list", { name: "Sections of Computing" });
   const archived = page.getByRole("list", { name: "Sections of Archive" });
   const module = name => page.getByRole("link", { name, exact: true });
   const renderedHeadings = page.locator(".tiptap > h1");
   const initial = ["1 Introduction", "2 Untitled section", "3 Algorithms", "4 Data structures", "5 Complexity"];
-  const remaining = ["1 Introduction", "2 Untitled section", "3 Data structures", "4 Complexity"];
+  const reordered = ["1 Introduction", "2 Algorithms", "3 Untitled section", "4 Data structures", "5 Complexity"];
 
   async function checkNumbers(sidebar, expected) {
     await sidebar.getByRole("button", { name: expected.at(-1), exact: true }).waitFor();
@@ -171,33 +174,64 @@ test("numbered chapters match in the sidebar and editor after dragging out and b
 
   try {
     await checkNumbers(computing, initial);
+    const chapter = name => computing.getByRole("button", { name, exact: true });
+    await pickUp(chapter("3 Algorithms"));
+    await hoverRow(chapter("2 Untitled section"), 0.2);
+    await page.mouse.up();
+    await checkNumbers(computing, reordered);
+
+    await pickUp(chapter("2 Algorithms"));
+    await hoverRow(chapter("3 Untitled section"), 0.8);
+    await page.mouse.up();
+    await checkNumbers(computing, initial);
+
+    const archiveBefore = await call("get_content", { moduleId: archive });
+    const archiveDisclosure = page.getByRole("button", { name: /^(Expand|Collapse) sections of Archive$/ });
     assert.equal(await archived.count(), 0);
-    await pickUp(computing.getByRole("button", { name: "3 Algorithms", exact: true }));
+    await pickUp(chapter("3 Algorithms"));
     await hoverRow(module("Archive"));
+    await page.waitForTimeout(2200);
+    assert.equal(await archiveDisclosure.getAttribute("aria-expanded"), "false", "hovering a different module during a section drag keeps it collapsed");
+    await page.mouse.up();
+    await frames();
+    await checkNumbers(computing, initial);
+
+    await archiveDisclosure.click();
     const reference = archived.getByRole("button", { name: "1 Reference", exact: true });
     await reference.waitFor();
+    await pickUp(chapter("3 Algorithms"));
     await hoverRow(reference, 0.8);
+    assert.equal(await reference.locator("..").locator("span[aria-hidden=true]").count(), 0, "another module's rows show no insertion marker");
     await page.mouse.up();
-    await checkNumbers(computing, remaining);
+    await frames();
+    await checkNumbers(computing, initial);
+    assert.deepEqual(await archived.getByRole("button").allTextContents(), ["1Reference", "2Appendix"]);
+    assert.deepEqual(await call("get_content", { moduleId: archive }), archiveBefore, "a rejected drop leaves the other note untouched");
 
+    await pickUp(reference);
+    await hoverRow(archived.getByRole("button", { name: "2 Appendix", exact: true }), 0.8);
+    await page.mouse.up();
+    await archived.getByRole("button", { name: "2 Reference", exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, `/${course}`, "reordering a closed note leaves the active note open");
+    const saved = await call("get_content", { moduleId: archive });
+    const doc = new Y.Doc();
+    try {
+      Y.applyUpdate(doc, Uint8Array.from(saved.state));
+      for (const update of saved.updates) Y.applyUpdate(doc, Uint8Array.from(update.bytes));
+      assert.deepEqual(doc.getXmlFragment("default").toArray()
+        .filter(node => node.nodeName === "heading").map(node => node.get(0).toString()), ["Appendix", "Reference"]);
+    } finally {
+      doc.destroy();
+    }
     await openModule("Archive");
-    await checkNumbers(archived, ["1 Reference", "2 Algorithms"]);
+    await checkNumbers(archived, ["1 Appendix", "2 Reference"]);
 
-    await openModule("Computing");
-    const introduction = page.locator(".tiptap > p").first();
-    await introduction.click();
-    await page.keyboard.press("End");
-    await page.keyboard.type(" Remember this.");
-    assert.match(await introduction.textContent(), /Remember this\./);
-
-    await pickUp(archived.getByRole("button", { name: "2 Algorithms", exact: true }));
-    await hoverRow(computing.getByRole("button", { name: "3 Data structures", exact: true }), 0.2);
-    await page.mouse.up();
-    await archived.getByRole("button", { name: "2 Algorithms", exact: true }).waitFor({ state: "hidden" });
-    await checkNumbers(computing, initial);
-    await page.getByRole("button", { name: "Undo", exact: true }).click();
-    assert.equal(await introduction.textContent(), "Notes for Introduction.");
-    await checkNumbers(computing, initial);
+    await chapter("3 Algorithms").click();
+    assert.deepEqual(await renderedHeadings.filter({ visible: true }).allTextContents(), ["3\u00a0Algorithms"]);
+    await module("Computing").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Add section", exact: true }).click();
+    await page.keyboard.type("Networks");
+    await checkNumbers(computing, [...initial, "6 Networks"]);
   } finally {
     await page.close();
   }
