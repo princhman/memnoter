@@ -32,6 +32,7 @@ import { useSearchIndexing } from "@/lib/search-index";
 import { FilesContext } from "@/components/saved-image";
 import { isSchemaReadOnly } from "@/lib/guarded-collaboration";
 import { NEWER_VERSION_MESSAGE } from "@/lib/schema-compatibility";
+import { toast } from "sonner";
 import { noteExtensions } from "@/lib/editor-schema";
 import { appStore } from "@/lib/store";
 
@@ -69,6 +70,10 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       extensions: noteExtensions({
         document: yDoc,
         sidebarSectionsEnabled: () => appStore.state.sidebarSections,
+        cutClozes: {
+          moduleId,
+          onError: error => toast.error(error instanceof Error ? error.message : String(error)),
+        },
         scrollContainer: () => element.current ? host.scrollContainer(element.current) : null,
         ui: {
           ...(!host.isNative ? { mention: MentionView } : {}),

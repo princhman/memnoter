@@ -35,7 +35,10 @@ import { PdfTextQuote } from "./editor-schema/pdf-text-quotes";
 import { Flashcards } from "@/lib/flashcards";
 import { FoldableBlock } from "@/lib/foldable-block";
 
+import type { CutClozeOptions } from "./cloze-clipboard";
+
 type NoteExtensionOptions = {
+  cutClozes?: CutClozeOptions;
   reduced?: boolean;
   document: Y.Doc;
   fragment?: Y.XmlFragment;
@@ -51,6 +54,7 @@ type NoteExtensionOptions = {
 // schema lacks a node or attribute would delete it from the document.
 export function noteExtensions({
   document,
+  cutClozes,
   reduced = false,
   fragment,
   ui = {},
@@ -89,7 +93,7 @@ export function noteExtensions({
     TextSelectionHighlight,
     ui.inlineMath ?? InlineMath,
     ui.mathBlock ?? MathBlock,
-    reduced ? Flashcards.extend({ addCommands: () => ({}), addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] }) : Flashcards,
+    reduced ? Flashcards.extend({ addCommands: () => ({}), addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] }) : Flashcards.configure({ cutClozes }),
     ui.pdfTextQuote ?? PdfTextQuote,
     ...FoldableBlock,
     ...(reduced ? [HeadingFold.extend({ addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] })] : [

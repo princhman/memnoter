@@ -215,7 +215,7 @@ test("a persisted cloze keeps its identity across a split and backward join", ()
 });
 
 
-test("cutting and pasting a cloze within its block keeps its review identity", () => {
+test("restoring a removed cloze through text edits keeps its review identity", () => {
   const editor = editorFor([paragraph("{{Paris}} and {{France}}", "reviewed")]);
   try {
     editor.commands.deleteRange({ from: 1, to: 15 });
@@ -359,7 +359,8 @@ test("copied HTML excludes retired answers and preserves the initialized empty m
 
 test("arrow keys cross hidden cloze markers in one step without requesting page scrolling", () => {
   const editor = editorFor([paragraph("A {{word}} Z")]);
-  const handlers = Flashcards.config.addProseMirrorPlugins().filter((plugin) => plugin.props.handleKeyDown);
+  const handlers = Flashcards.config.addProseMirrorPlugins.call({ editor, options: Flashcards.options })
+    .filter((plugin) => plugin.props.handleKeyDown);
   const arrow = (key, shiftKey = false) => handlers.some((plugin) =>
     plugin.props.handleKeyDown.call(plugin, editor.view, {
       key, shiftKey, altKey: false, ctrlKey: false, metaKey: false, isComposing: false,

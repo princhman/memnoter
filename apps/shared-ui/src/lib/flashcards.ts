@@ -1,7 +1,7 @@
 import { insertGroupCard, makeGroupCard, removeGroupCard, type GroupKind } from "./group-card-commands";
 import { action } from "./shortcuts.ts";
 import { isImageNode } from "./cards.ts";
-import { Fragment, Slice } from "@tiptap/pm/model";
+import { Slice } from "@tiptap/pm/model";
 import { renewImageIdentity } from "./occlusion.ts";
 import { Extension } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
@@ -11,6 +11,7 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { renderKatex } from "./inline-math.ts";
 import { cardGroupsOf, groupOpener, isCardBlock, cardIdsOf, changedRanges, clozeIdsOf, clozeNotesOf, parseBlock, planCardIds, validatedClozeIds, validatedClozeGroups, validatedClozeNote, type ClozeId, type ClozeNote, type Range, type Segment } from "./cards.ts";
+import { clozeClipboard, literalPasteMeta, hasClozeIdentity, mapClipboardNodes, type CutClozeOptions } from "./cloze-clipboard";
 import { CardState, formatInterval } from "./fsrs.ts";
 
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
@@ -418,7 +419,7 @@ function carryMergedCardIds(
 }
 
 function repairClozeIds(
-  tr: Transaction, mapping: Mapping, oldBlocks: ReturnType<typeof collectBlocks>, ranges: Range[],
+  tr: Transaction, mapping: Mapping, oldBlocks: ReturnType<typeof collectBlocks>, ranges: Range[], isPaste: boolean,
 ) {
   const previous = new Map(oldBlocks
     .filter(({ node }) => node.attrs.cardId)
@@ -458,10 +459,8 @@ function repairClozeIds(
           entry.from === cloze.inner.from && entry.to === cloze.inner.to);
         if (target !== -1 && entry) claim(target, entry.id);
       });
-      // Cut/paste and whole-block replacements lose their mapped positions.
-      // Match remaining answers only after surviving anchors have claimed ids,
-      // so prepending a duplicate cannot steal an existing cloze's history.
-      syntax.clozes.forEach(({ inner }, index) => {
+      // A pasted answer must not reclaim a previously deleted card.
+      if (!isPaste) syntax.clozes.forEach(({ inner }, index) => {
         if (next[index]) return;
         const answer = node.cut(inner.from, inner.to).textContent;
         const match = oldIds.find((entry) => !used.has(entry.id) && entry.answer === answer);
@@ -593,7 +592,7 @@ function activeBlock(state: EditorState, set: DecorationSet) {
   return hasSyntax ? Decoration.node(from, to, { class: "card-block-active" }) : null;
 }
 
-export const Flashcards = Extension.create({
+export const Flashcards = Extension.create<{ cutClozes?: CutClozeOptions }>({
   name: "flashcards",
 
   addGlobalAttributes() {
@@ -833,6 +832,7 @@ export const Flashcards = Extension.create({
   },
 
   addProseMirrorPlugins() {
+    const clipboard = this.options.cutClozes && clozeClipboard(this.options.cutClozes);
     return [
       // Ids appear with the first complete card in a block, and copies made
       // by paste or a split are renumbered. Outside syntax, ids stay, so a
@@ -892,7 +892,9 @@ export const Flashcards = Extension.create({
             else seen.add(image.attrs.imageId);
           }
           for (const { pos, cardId } of plan) tr.setNodeAttribute(pos, "cardId", cardId);
-          repairClozeIds(tr, mapping, oldBlocks, ranges);
+          repairClozeIds(tr, mapping, oldBlocks, ranges, transactions.some(transaction =>
+            transaction.getMeta("uiEvent") === "paste" || transaction.getMeta(literalPasteMeta) === true,
+          ));
           if (!tr.docChanged) return null;
           if (transactions.some((transaction) => transaction.getMeta(ySyncPluginKey)?.isChangeOrigin)) {
             tr.setMeta(flashcardIdsKey, true);
@@ -900,22 +902,31 @@ export const Flashcards = Extension.create({
           return tr;
         },
         props: {
-          transformPasted(slice, view) {
+          handleDOMEvents: { copy: clipboard?.copy, cut: clipboard?.cut, paste: clipboard?.startPaste },
+          handlePaste: clipboard?.handlePaste,
+          transformPasted(slice, view, plain) {
             // Internal drops keep the dragged slice: move/copy modifiers can
             // change after dragstart. Duplicate repair above renews copy ids.
             if (slice === view.dragging?.slice) return slice;
-            // A pasted copy of a note is a note of its own.
+            const cut = clipboard?.blocksForPaste(plain);
             const notes = new Map<string, string>();
-            const map = (fragment: import("@tiptap/pm/model").Fragment): import("@tiptap/pm/model").Fragment => Fragment.fromArray(Array.from({ length: fragment.childCount }, (_, i) => {
-              const node = fragment.child(i);
-              const note = validatedClozeNote(node.attrs.clozeNote);
-              if (note && !notes.has(note)) notes.set(note, crypto.randomUUID());
-              return isImageNode(node)
-                ? node.type.create(renewImageIdentity(node.attrs, () => crypto.randomUUID()), node.content, node.marks)
-                : note ? node.type.create({ ...node.attrs, clozeNote: notes.get(note) }, map(node.content), node.marks)
-                : node.copy(map(node.content));
-            }));
-            return new Slice(map(slice.content), slice.openStart, slice.openEnd);
+            const content = mapClipboardNodes(slice.content, node => {
+              if (isImageNode(node)) return node.type.create(renewImageIdentity(node.attrs, () => crypto.randomUUID()), node.content, node.marks);
+              if (cut?.has(node.attrs.cardId)) return node;
+              const attrs = { ...node.attrs };
+              const note = validatedClozeNote(attrs.clozeNote);
+              if (note && !cut) {
+                if (!notes.has(note)) notes.set(note, crypto.randomUUID());
+                attrs.clozeNote = notes.get(note);
+              }
+              if (hasClozeIdentity(node)) {
+                attrs.cardId = crypto.randomUUID();
+              }
+              return note || attrs.cardId !== node.attrs.cardId
+                ? node.type.create(attrs, node.content, node.marks)
+                : node;
+            });
+            return new Slice(content, slice.openStart, slice.openEnd);
           },
         },
       }),

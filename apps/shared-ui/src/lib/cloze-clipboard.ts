@@ -1,0 +1,216 @@
+import { Fragment, Slice, type Node } from "@tiptap/pm/model";
+import { Selection } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
+import { yUndoPluginKey } from "@tiptap/y-tiptap";
+import { clozeNotesOf, extractCards, isCardBlock, parseBlock, validatedClozeIds, validatedClozeNote } from "./cards";
+
+export const literalPasteMeta = "literal-paste";
+
+export function mapClipboardNodes(fragment: Fragment, map: (node: Node) => Node): Fragment {
+  const nodes: Node[] = [];
+  fragment.forEach(node => nodes.push(map(node.copy(mapClipboardNodes(node.content, map)))));
+  return Fragment.fromArray(nodes);
+}
+
+export function hasClozeIdentity(node: Node) {
+  return isCardBlock(node) && typeof node.attrs.cardId === "string" &&
+    (validatedClozeIds(node.attrs.clozeIds) !== null || parseBlock(node).cards.some(card => card.kind === "cloze"));
+}
+
+function writeClipboard(view: EditorView, event: ClipboardEvent, slice: Slice, token?: string) {
+  const data = event.clipboardData;
+  if (!data) return null;
+  const { dom, text } = view.serializeForClipboard(slice);
+  if (token) {
+    if (!dom.firstElementChild) return null;
+    dom.firstElementChild.setAttribute(cutAttribute, token);
+  }
+  data.clearData();
+  data.setData("text/html", dom.innerHTML);
+  data.setData("text/plain", text);
+  event.preventDefault();
+  return { text };
+}
+
+export type CutClozeOptions = {
+  moduleId: string;
+  onError: (error: unknown) => void;
+};
+
+type Cut = {
+  token: string;
+  text: string;
+  source: string;
+  cardIds: readonly string[];
+  blockIds: ReadonlySet<string>;
+};
+
+// The clipboard carries a nonce. Only this session can claim the original ids.
+let latestCut: Cut | undefined;
+const cutAttribute = "data-memnoter-cloze-cut";
+
+function hasCutToken(cut: Cut, html: string) {
+  return html.includes(`${cutAttribute}="${cut.token}"`);
+}
+
+function matchesPlainCut(cut: Cut, text: string) {
+  return !!cut.text && text.replace(/\r\n/g, "\n") === cut.text;
+}
+
+// Chromium exposes only text/plain for Paste as Plain Text. Text can spend
+// a claim, but only the nonce in HTML can transfer history.
+export function consumePlainClozeCut(html: string, text: string) {
+  const cut = latestCut;
+  if (cut && (html ? hasCutToken(cut, html) : matchesPlainCut(cut, text))) {
+    latestCut = undefined;
+  }
+}
+
+export function clozeClipboard(options: CutClozeOptions) {
+  let paste: Cut | undefined;
+
+  return {
+    copy(view: EditorView, event: ClipboardEvent) {
+      if (!event.clipboardData || view.state.selection.empty) return false;
+      const slice = view.state.selection.content();
+      const content = mapClipboardNodes(slice.content, node => hasClozeIdentity(node)
+        ? node.type.create({ ...node.attrs, cardId: null }, node.content, node.marks)
+        : node);
+      if (content.eq(slice.content)) return false;
+      return !!writeClipboard(view, event, new Slice(content, slice.openStart, slice.openEnd));
+    },
+
+    cut(view: EditorView, event: ClipboardEvent) {
+      if (!view.editable || !event.clipboardData || view.state.selection.empty) return false;
+      const { doc, selection } = view.state;
+      const { from, to } = selection;
+      // Selecting all of a paragraph's text counts even when ProseMirror
+      // leaves its empty shell behind. A clipped block never lends its id.
+      const wholeBlocks = new Set<string>();
+      doc.nodesBetween(from, to, (node, pos) => {
+        if (hasClozeIdentity(node) && from <= pos + 1 && to >= pos + node.nodeSize - 1) {
+          wholeBlocks.add(node.attrs.cardId);
+        }
+      });
+      if (!wholeBlocks.size) return false;
+
+      const moved = extractCards(doc).filter(card => card.kind === "cloze" && wholeBlocks.has(card.blockId));
+      if (!moved.length) return false;
+      const blockIds = new Set(moved.map(card => card.blockId));
+      const tr = view.state.tr.deleteSelection();
+      tr.doc.descendants((node, pos) => {
+        if (!blockIds.has(node.attrs.cardId)) return;
+        tr.setNodeAttribute(pos, "cardId", null);
+        tr.setNodeAttribute(pos, "clozeIds", null);
+        tr.setNodeAttribute(pos, "clozeGroups", null);
+      });
+      const token = crypto.randomUUID();
+      const clipboard = writeClipboard(view, event, selection.content(), token);
+      if (!clipboard) return false;
+
+      const history = yUndoPluginKey.getState(view.state)?.undoManager;
+      history?.stopCapturing();
+      view.dispatch(tr.scrollIntoView().setMeta("uiEvent", "cut"));
+      history?.stopCapturing();
+      latestCut = { token, text: clipboard.text, source: options.moduleId, cardIds: moved.map(card => card.id), blockIds };
+      return true;
+    },
+
+    startPaste(view: EditorView, event: ClipboardEvent) {
+      const cut = latestCut;
+      const data = event.clipboardData;
+      if (!cut || !data || !view.editable || view.composing) return false;
+      const html = data.getData("text/html");
+      const plain = !html;
+      if (plain ? !matchesPlainCut(cut, data.getData("text/plain")) : !hasCutToken(cut, html)) return false;
+      if (plain) {
+        latestCut = undefined;
+        return false;
+      }
+      paste = cut;
+      queueMicrotask(() => { paste = undefined; });
+      return false;
+    },
+
+    blocksForPaste(plain: boolean) {
+      if (plain && paste) {
+        if (latestCut === paste) latestCut = undefined;
+        paste = undefined;
+      }
+      return paste?.blockIds;
+    },
+
+    handlePaste(view: EditorView, _event: ClipboardEvent, slice: Slice) {
+      const cut = paste;
+      if (!cut) return false;
+      paste = undefined;
+
+      const { state } = view;
+      const { from, to, $from } = state.selection;
+      let afterCard: number | undefined;
+      const protect = (node: Node, pos: number) => {
+        if (isCardBlock(node) && parseBlock(node).cards.length) afterCard = pos + node.nodeSize;
+      };
+      if (from === to && $from.depth) protect($from.parent, $from.before());
+      else state.doc.nodesBetween(from, to, protect);
+
+      const sameNote = cut.source === options.moduleId;
+      const present = new Set(extractCards(state.doc).map(card => card.id));
+      // Undo may have restored the original before the user pasted.
+      const keepHistory = sameNote && !cut.cardIds.some(id => present.has(id));
+      const adjacentNotes = sameNote
+        ? clozeNotesOf(state.doc).filter(note => note.from <= (afterCard ?? to) && note.to >= (afterCard ?? from))
+        : [];
+      const openStart = clozePasteDepth(slice.content.firstChild, slice.openStart, cut.blockIds, "firstChild");
+      const openEnd = clozePasteDepth(slice.content.lastChild, slice.openEnd, cut.blockIds, "lastChild");
+      let content = remapClozeNotes(slice.content, id => adjacentNotes.some(note => note.id === id));
+      if (!keepHistory) {
+        content = mapClipboardNodes(content, node => cut.blockIds.has(node.attrs.cardId)
+          ? node.type.create({ ...node.attrs, cardId: crypto.randomUUID() }, node.content, node.marks)
+          : node);
+      }
+      const pasted = new Slice(content, openStart, openEnd);
+      const tr = state.tr;
+      if (afterCard === undefined) {
+        tr.replaceSelection(pasted);
+      } else {
+        tr.replaceRange(afterCard, afterCard, pasted);
+        if (tr.docChanged) tr.setSelection(Selection.near(tr.doc.resolve(tr.mapping.map(afterCard)), -1));
+      }
+      const inserted = new Set(extractCards(tr.doc).map(card => card.id));
+      if (!tr.docChanged || (keepHistory && cut.cardIds.some(id => !inserted.has(id)))) {
+        options.onError(new Error("The cut card does not fit here. Choose a different paste location."));
+        return true;
+      }
+
+      const history = yUndoPluginKey.getState(state)?.undoManager;
+      latestCut = undefined;
+      history?.stopCapturing();
+      view.dispatch(tr.scrollIntoView().setMeta("uiEvent", "paste"));
+      history?.stopCapturing();
+      return true;
+    },
+  };
+}
+
+function remapClozeNotes(content: Fragment, keep: (id: string) => boolean = () => false) {
+  const notes = new Map<string, string>();
+  return mapClipboardNodes(content, node => {
+    const note = validatedClozeNote(node.attrs.clozeNote);
+    if (!note || keep(note)) return node;
+    let id = notes.get(note);
+    if (!id) {
+      id = crypto.randomUUID();
+      notes.set(note, id);
+    }
+    return node.type.create({ ...node.attrs, clozeNote: id }, node.content, node.marks);
+  });
+}
+
+// Open textblock edges would merge into the destination and lose their attrs.
+function clozePasteDepth(node: Node | null, depth: number, blocks: ReadonlySet<string>, edge: "firstChild" | "lastChild") {
+  for (let level = 0; node && level < depth; level++, node = node[edge]) {
+    if (blocks.has(node.attrs.cardId)) return level;
+  }
+  return depth;
+}

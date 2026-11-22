@@ -535,56 +535,55 @@ fn saved_images_are_announced_downloaded_and_not_echoed_as_uploads() {
     );
 }
 
-#[test]
-fn drawing_source_and_preview_survive_a_second_device_edit_and_restart() {
-    use yrs::{
-        updates::decoder::Decode, GetString, ReadTxn, Transact, Update, Xml, XmlElementPrelim,
-        XmlFragment,
-    };
-
-    fn transfer(from: &Fixture, to: &Fixture, cursor: &mut i64) {
-        let generation = from.call("sync_status", json!({}))["generation"].clone();
-        let rows = from.call(
-            "sync_outbox",
-            json!({"generation":generation,"limitBytes":1048576}),
+fn transfer(from: &Fixture, to: &Fixture, cursor: &mut i64) {
+    let generation = from.call("sync_status", json!({}))["generation"].clone();
+    let rows = from.call(
+        "sync_outbox",
+        json!({"generation":generation,"limitBytes":1048576}),
+    );
+    let entries: Vec<_> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            *cursor += 1;
+            json!({"seq":*cursor,"doc":row["doc"],"bytes":row["bytes"]})
+        })
+        .collect();
+    to.call("sync_apply", json!({"entries":entries,"cursor":cursor,"generation":to.call("sync_status", json!({}))["generation"]}));
+    if let Some(last) = rows.as_array().unwrap().last() {
+        from.call(
+            "sync_ack",
+            json!({"maxId":last["id"],"generation":generation}),
         );
-        let entries: Vec<_> = rows
+    }
+}
+
+fn reopen_note(fixture: &Fixture, module: &Value) -> yrs::Doc {
+    use yrs::{updates::decoder::Decode, Transact, Update};
+    let content = fixture.call("get_content", json!({"moduleId":module}));
+    let doc = yrs::Doc::new();
+    let mut txn = doc.transact_mut();
+    for bytes in std::iter::once(&content["state"]).chain(
+        content["updates"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|row| {
-                *cursor += 1;
-                json!({"seq":*cursor,"doc":row["doc"],"bytes":row["bytes"]})
-            })
-            .collect();
-        to.call("sync_apply", json!({"entries":entries,"cursor":cursor,"generation":to.call("sync_status", json!({}))["generation"]}));
-        if let Some(last) = rows.as_array().unwrap().last() {
-            from.call(
-                "sync_ack",
-                json!({"maxId":last["id"],"generation":generation}),
-            );
+            .map(|row| &row["bytes"]),
+    ) {
+        let bytes: Vec<u8> = serde_json::from_value(bytes.clone()).unwrap();
+        if !bytes.is_empty() {
+            txn.apply_update(Update::decode_v1(&bytes).unwrap())
+                .unwrap();
         }
     }
-    fn reopen_note(fixture: &Fixture, module: &Value) -> yrs::Doc {
-        let content = fixture.call("get_content", json!({"moduleId":module}));
-        let doc = yrs::Doc::new();
-        let mut txn = doc.transact_mut();
-        for bytes in std::iter::once(&content["state"]).chain(
-            content["updates"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|row| &row["bytes"]),
-        ) {
-            let bytes: Vec<u8> = serde_json::from_value(bytes.clone()).unwrap();
-            if !bytes.is_empty() {
-                txn.apply_update(Update::decode_v1(&bytes).unwrap())
-                    .unwrap();
-            }
-        }
-        drop(txn);
-        doc
-    }
+    drop(txn);
+    doc
+}
+
+#[test]
+fn drawing_source_and_preview_survive_a_second_device_edit_and_restart() {
+    use yrs::{GetString, ReadTxn, Transact, Xml, XmlElementPrelim, XmlFragment};
 
     let ipad = Fixture::new();
     let desktop = Fixture::new();
@@ -711,4 +710,122 @@ fn document_commands_keep_typed_frontend_payloads_and_local_availability() {
     assert!(dispatch(&f.core, "document_path", &json!({"id":id}).to_string()).is_err());
     assert_eq!(f.call("delete_document", json!({"id":id})), Value::Null);
     assert_eq!(f.call("list_documents", json!({})), json!([]));
+}
+
+#[test]
+fn same_note_cut_and_paste_keeps_fsrs_and_review_log_after_sync() {
+    use yrs::{Transact, Xml, XmlElementPrelim, XmlFragment, XmlTextPrelim};
+
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"Capitals"}));
+    for device in [&a, &b] {
+        device.call("sync_enable", json!({"account":"same-note-cut-paste"}));
+    }
+
+    let doc = yrs::Doc::new();
+    let root = doc.get_or_insert_xml_fragment("default");
+    let block_id = "moved-block";
+    let card_id = "moved-block:c1";
+    let insert_card = |txn: &mut yrs::TransactionMut, index| {
+        let paragraph = root.insert(txn, index, XmlElementPrelim::empty("paragraph"));
+        paragraph.insert_attribute(txn, "cardId", block_id);
+        paragraph.insert(txn, 0, XmlTextPrelim::new("The capital is {{Paris}}."));
+    };
+    let mut txn = doc.transact_mut();
+    insert_card(&mut txn, 0);
+    let context = root.insert(&mut txn, 1, XmlElementPrelim::empty("paragraph"));
+    context.insert(&mut txn, 0, XmlTextPrelim::new("European capitals"));
+    let original = txn.encode_update_v1();
+    drop(txn);
+    a.call("add_update", json!({"moduleId":module,"bytes":original}));
+    let cards = json!([{"id":card_id,"kind":"cloze","front":[{"type":"blank"}],"back":[{"type":"text","text":"Paris"}]}]);
+    let index = |device: &Fixture, cards: &Value| {
+        device.call("sync_cards", json!({"moduleId":module,"cards":cards}));
+    };
+    index(&a, &cards);
+    a.call("review_card", json!({
+        "cardId":card_id,"expectedReps":0,
+        "card":{"dueAt":9000,"stability":5.5,"stabilityFast":0.25,"difficulty":4.2,
+          "scheduledDays":5,"learningStep":0,"state":2,"scheduleStatus":"review","lastReviewAt":1000,
+          "reps":1,"lapses":0},
+        "log":{"rating":3,"reviewTime":1000,"durationMs":1234,"fsrsModel":"6",
+          "dueAt":1000,"stability":0,"stabilityFast":0,"difficulty":0,"scheduledDays":0,
+          "learningStep":0,"state":0,"scheduleStatus":"new","lastReviewAt":null}
+    }));
+    let due =
+        |device: &Fixture| device.call("due_cards", json!({"moduleId":module,"now":i64::MAX - 1}));
+    let logs =
+        |device: &Fixture| {
+            let db = device.core.db.lock().unwrap();
+            let mut statement = db.prepare(
+            "select rating, review_time, duration_ms, sync_id from review_log where card_id=?1"
+        ).unwrap();
+            statement
+                .query_map([card_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+    let original_card = due(&a);
+    let original_logs = logs(&a);
+    assert_eq!(original_card.as_array().unwrap().len(), 1);
+    assert_eq!(original_logs.len(), 1);
+    let mut cursor = 0;
+    transfer(&a, &b, &mut cursor);
+    index(&b, &cards);
+    assert_eq!(due(&b), original_card);
+    assert_eq!(logs(&b), original_logs);
+
+    // Let both clients see and index the cut before the user pastes.
+    let mut cut = doc.transact_mut();
+    root.remove_range(&mut cut, 0, 1);
+    let removal = cut.encode_update_v1();
+    drop(cut);
+    a.call("add_update", json!({"moduleId":module,"bytes":removal}));
+    index(&a, &json!([]));
+    transfer(&a, &b, &mut cursor);
+    let cut_note = reopen_note(&b, &module);
+    assert_eq!(
+        cut_note
+            .get_or_insert_xml_fragment("default")
+            .len(&cut_note.transact()),
+        1
+    );
+    index(&b, &json!([]));
+    assert_eq!(due(&a), json!([]));
+    assert_eq!(due(&b), json!([]));
+
+    let mut paste = doc.transact_mut();
+    insert_card(&mut paste, 1);
+    let insertion = paste.encode_update_v1();
+    drop(paste);
+    a.call("add_update", json!({"moduleId":module,"bytes":insertion}));
+    index(&a, &cards);
+    transfer(&a, &b, &mut cursor);
+    let moved = reopen_note(&b, &module);
+    let root = moved.get_or_insert_xml_fragment("default");
+    let txn = moved.transact();
+    assert_eq!(root.len(&txn), 2);
+    let paragraph = root.get(&txn, 1).unwrap().into_xml_element().unwrap();
+    assert_eq!(
+        paragraph
+            .get_attribute(&txn, "cardId")
+            .unwrap()
+            .to_string(&txn),
+        block_id
+    );
+    index(&b, &cards);
+
+    for device in [&a, &b] {
+        assert_eq!(due(device), original_card);
+        assert_eq!(logs(device), original_logs);
+    }
 }

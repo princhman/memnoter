@@ -3,6 +3,7 @@ import { Fragment, Slice, type Schema } from "@tiptap/pm/model";
 import { Plugin } from "@tiptap/pm/state";
 import { closeHistory } from "@tiptap/pm/history";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
+import { consumePlainClozeCut, literalPasteMeta } from "./cloze-clipboard";
 import { looksLikeMarkdown, markdownToJSON } from "./markdown-paste.ts";
 
 // Older schemas retain readable content, including table cells and formulas.
@@ -72,7 +73,8 @@ export const MarkdownPaste = Extension.create({
             const tr = closeHistory(view.state.tr).replaceSelection(slice).scrollIntoView();
             // Don't set uiEvent=paste: TipTap's paste rules would reinterpret
             // literal card/math/code contents that have already been parsed.
-            view.dispatch(tr);
+            view.dispatch(tr.setMeta(literalPasteMeta, true));
+            if (bypass || !html) consumePlainClozeCut(html, source);
             undoManager?.stopCapturing();
             event.preventDefault();
             return true;
