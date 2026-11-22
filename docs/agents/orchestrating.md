@@ -225,8 +225,10 @@ compare before recording; preserve local edits when updating the checkout.
   changes, so drive the scenario while recording.
 - **minipc** can make Chromium/WebKit proof only (no iOS, no macOS).
 - **Uploads:** proof goes on the Linear issue, one file at a time
-  (`file_upload`, then PUT within 60 s). Delete every local video and
-  screenshot after it's uploaded; none go in the repo or stay on the machine.
+  (`file_upload`, then PUT within 60 s). Embed each file in the comment with
+  `![what it shows](assetUrl)`, videos too, never a plain link. Delete every
+  local video and screenshot after it's uploaded; none go in the repo or stay
+  on the machine.
 
 **Profiling** (verified on the Mac 2026-11-11 unless marked):
 
