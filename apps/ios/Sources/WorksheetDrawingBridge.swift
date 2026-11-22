@@ -125,7 +125,8 @@ import UniformTypeIdentifiers
             let file: DrawingFileContents = try await client.call("read_file", DrawingFileArgs(moduleId: owner.module.id, fileId: source))
             saved = try await drafts.decodeDocument(Data(file.bytes))
         }
-        return try await drafts.worksheetDraft(sourceId: owner.sourceId, saved: saved) == nil ? "false" : "true"
+        let fallbackPaper = DrawingPaperStyle(rawValue: preferences.string(forKey: "drawing.paper") ?? "") ?? .blank
+        return try await drafts.worksheetDraft(sourceId: owner.sourceId, saved: saved, fallbackPaper: fallbackPaper.rawValue) == nil ? "false" : "true"
     }
 
     func cancel() async throws {

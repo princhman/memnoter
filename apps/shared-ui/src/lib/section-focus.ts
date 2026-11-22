@@ -1,5 +1,5 @@
 import { outline } from "./outline.ts";
-import { Extension } from "@tiptap/core";
+import { Extension, isiOS, isMacOS } from "@tiptap/core";
 import { EditorState, PluginKey, Plugin } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { Editor } from "@tiptap/core";
@@ -87,6 +87,44 @@ export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boo
   name: "section-focus",
   addOptions() {
     return { sidebarSectionsEnabled: () => false };
+  },
+  // Guard the boundary before heading demotion and the default join commands.
+  priority: 111,
+  addKeyboardShortcuts() {
+    const guardBoundary = (direction: -1 | 1) => {
+      const { state } = this.editor;
+      if (sectionFocusKey.getState(state) == null) return false;
+      const range = getFocusedSectionRange(state);
+      if (!range) return false;
+
+      const { from, to, empty, $head } = state.selection;
+      if (from < range.from || to > range.to) return true;
+      if (!empty) return false;
+
+      // A caret at the edge may be nested (for example in the last list item).
+      // Each open or close token between it and the top-level edge adds one position.
+      const edge = direction === 1 ? range.to : range.from;
+      const documentEdge = direction === 1 ? state.doc.content.size : 0;
+      return edge !== documentEdge &&
+        ($head.pos === edge || $head.pos + direction * $head.depth === edge);
+    };
+    const forward = () => guardBoundary(1);
+    const backward = () => guardBoundary(-1);
+    return {
+      Delete: forward,
+      "Mod-Delete": forward,
+      Backspace: backward,
+      "Mod-Backspace": backward,
+      "Shift-Backspace": backward,
+      ...((isMacOS() || isiOS()) && {
+        "Ctrl-d": forward,
+        "Alt-Delete": forward,
+        "Alt-d": forward,
+        "Ctrl-Alt-Backspace": forward,
+        "Ctrl-h": backward,
+        "Alt-Backspace": backward,
+      }),
+    };
   },
   addCommands() {
     return {

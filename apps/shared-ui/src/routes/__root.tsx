@@ -23,7 +23,7 @@ import { useIsFullscreen } from "@/hooks/use-fullscreen";
 import { IS_MAC } from "@/lib/platform";
 import { useSectionNavigationShortcuts } from "@/hooks/use-section-navigation-shortcuts";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
-import { WORKSHEET_ACTIONS_SLOT } from "@/lib/pdf-pane";
+import { useAnyWorksheetOpen, WORKSHEET_ACTIONS_SLOT } from "@/lib/pdf-pane";
 import { ModuleReviewButton } from "@/components/module-review-button";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { UndoRedo } from "@/components/undo-redo";
@@ -47,6 +47,8 @@ const RootLayout = () => {
   const navigate = useNavigate();
   const router = useRouter();
   const reviewCounts = useSelector(reviewActionsStore, (state) => state?.counts);
+  // A worksheet owns the header actions; card review does not belong there.
+  const worksheetOpen = useAnyWorksheetOpen() !== null;
   const reviewCurrent = useSelector(reviewActionsStore, (state) => state?.current);
 
   useCommand({ id: "review.all", title: "Review all cards", keywords: ["flashcards"],
@@ -125,7 +127,7 @@ const RootLayout = () => {
               <div className="ml-auto flex shrink-0 items-center gap-2 pr-3">
                 <div id={WORKSHEET_ACTIONS_SLOT} className="contents" />
                 <PdfHeaderActions />
-                {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} current={reviewCurrent} /> : <ModuleReviewButton />}
+                {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} current={reviewCurrent} /> : !worksheetOpen && <ModuleReviewButton />}
                 <FilesPanelButton />
               </div>
             </header>

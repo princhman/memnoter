@@ -13,11 +13,11 @@ import { maskCards, validMasks } from "@/lib/occlusion";
 import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
 import { CropDialog, type Crop as ImageCrop } from "./image-crop-dialog";
 import { copyImageAttrs } from "@/lib/editor-schema/images";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
-import { call as invoke, fileUrl as convertFileSrc, postNativeEvent } from "../lib/backend.ts";
+import { call as invoke, fileUrl as convertFileSrc, isTauri, postNativeEvent } from "../lib/backend.ts";
 import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Scan, Scaling, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
@@ -27,12 +27,15 @@ import { adaptedUrl, cachedAdaptedUrl, scheduleTrim } from "@/lib/image-adapt";
 import { useDarkTheme } from "@/hooks/use-dark-theme";
 import { useSelector } from "@tanstack/react-store";
 import { requestSyncedFile, syncedFilesStore } from "@/lib/sync/file-requests";
+import { isLocallyPublishedPreview } from "@/editor-host/drawings";
 import { drawingReference } from "@/lib/drawing";
+import { IS_MAC } from "@/lib/platform";
 import { ImageControlsLayer } from "./image-controls-layer";
 import "./saved-image.css";
 
 type FilesContextValue = {
   flashcards?: boolean;
+  worksheet?: boolean;
   editDrawing?: (imageId: string, sourceId: string | null) => void;
   /** Drawing whose newer strokes are only in a local draft; shown with an "Unsaved" badge. */
   unsavedDrawingId?: string | null;
@@ -62,8 +65,10 @@ export function SavedImageView(props: NodeViewProps) {
       return selection instanceof NodeSelection && selection.from === props.getPos();
     },
   });
-  const { files, saveImage, readImage, moduleId, editDrawing, unsavedDrawingId, flashcards = true } = useContext(FilesContext);
+  const { files, saveImage, readImage, moduleId, editDrawing, unsavedDrawingId, flashcards = true, worksheet = false } = useContext(FilesContext);
   const drawing = drawingReference(node.attrs.drawing);
+  const macDrawing = !!drawing && IS_MAC && isTauri();
+  const drawingAdapts = !!drawing && (environment.isNative || macDrawing);
   const canEditDrawing = !!drawing && (environment.isNative || !!editDrawing);
   const previewId = drawing?.previewId ?? node.attrs.fileId;
   const file = files.get(previewId);
@@ -72,17 +77,37 @@ export function SavedImageView(props: NodeViewProps) {
   const syncedFiles = useSelector(syncedFilesStore, (state) => state.version);
   useEffect(() => {
     let active = true;
-    if (!file && previewId) void invoke<string>("resolve_card_image", { fileId: previewId }).then(path => { if (active) setResolved({ id: previewId, path }); }).catch(() => { if (active) requestSyncedFile(previewId); });
+    if (!file && previewId) void invoke<string>("resolve_card_image", { fileId: previewId }).then(path => {
+      if (active) setResolved({ id: previewId, path });
+    }).catch(() => {
+      if (!active) return;
+      requestSyncedFile(previewId);
+    });
     return () => { active = false; };
   }, [file, previewId, syncedFiles]);
   const currentSrc = file ? convertFileSrc(file.path) : resolved && resolved.id === previewId ? convertFileSrc(resolved.path) : (drawing?.previewId ? null : node.attrs.src);
-  const previousSrc = useRef<string | null>(null);
-  useEffect(() => { if (currentSrc) previousSrc.current = currentSrc; }, [currentSrc]);
-  const src = currentSrc || (drawing?.previewId ? previousSrc.current : null);
-  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const imageId = typeof node.attrs.imageId === "string" ? node.attrs.imageId : null;
+  const drawingPreviewId = drawing?.previewId;
+  const pictureKey = imageId && JSON.stringify([moduleId, imageId]);
+  // A sync rebuild can remount the view mid-update. Restore the last picture
+  // together with the dimensions it was displayed at.
+  const [picture, setPicture] = useState(() => drawingPreviewId && pictureKey ? lastDrawingPicture.get(pictureKey) : undefined);
+  const showingPrevious = !!(drawingPreviewId && picture && picture.previewId !== drawingPreviewId);
+  const width = showingPrevious ? picture.width : node.attrs.width;
+  const height = showingPrevious ? picture.height : node.attrs.height;
+  const src = currentSrc || (drawingPreviewId ? picture?.src : null);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const failed = !!currentSrc && failedSource === currentSrc;
-  const loading = !!drawing?.previewId && !failed && (!currentSrc || loadedSrc !== currentSrc);
+  const waitingForPicture = !!drawingPreviewId && !picture && !failed;
+  const loading = waitingForPicture || (showingPrevious && !failed && !worksheet && !isLocallyPublishedPreview(drawingPreviewId));
+  const rememberPicture = (source: string, naturalWidth: number, naturalHeight: number) => {
+    if (!drawingPreviewId) return;
+    if (worksheet && naturalWidth && naturalHeight) {
+      rememberPreview(worksheetPreviewSizes, drawingPreviewId, { width: naturalWidth, height: naturalHeight });
+    }
+    const attrs = latest.current.node.attrs;
+    setPicture({ src: source, previewId: drawingPreviewId, width: attrs.width, height: attrs.height, naturalWidth, naturalHeight });
+  };
   const isInline = node.type.isInline;
   const host = useRef<HTMLElement>(null);
   const inTableCell = useEditorState({
@@ -164,7 +189,7 @@ export function SavedImageView(props: NodeViewProps) {
   const [displayedImage, setDisplayedImage] = useState<{ source: string; url: string } | null>(null);
   const [describing, setDescribing] = useState(false);
   const dark = useDarkTheme();
-  const adaptive = Boolean(node.attrs.adaptive) || (environment.isNative && !!drawing);
+  const adaptive = drawingAdapts || Boolean(node.attrs.adaptive);
 
   // The image's cards get the dot text cards have: due state and schedule on
   // hover, and a way into the mask editor.
@@ -192,7 +217,7 @@ export function SavedImageView(props: NodeViewProps) {
 
   const hasSrc = !!src;
   // Preview revisions must not detach editor DOM while a text caret is active.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!host.current || !hasSrc) {
       setControlsAnchor(null);
       return;
@@ -203,12 +228,6 @@ export function SavedImageView(props: NodeViewProps) {
     img.draggable = false;
     img.loading = "lazy";
     img.decoding = "async";
-    const { width, height } = latest.current.node.attrs;
-    if (width > 0 && height > 0) {
-      img.width = width;
-      img.height = height;
-      img.style.aspectRatio = `${width} / ${height}`;
-    }
     const view = new ResizableNodeView({
       element: img,
       editor,
@@ -250,13 +269,18 @@ export function SavedImageView(props: NodeViewProps) {
     };
   }, [hasSrc, editor]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const img = image.current;
     if (!img || !src) return;
     setFailedSource(null);
     // Retain the decoded old preview until the source effect below swaps it.
-    if (!img.getAttribute("src")) {
-      if (latest.current.node.attrs.adaptive || (environment.isNative && drawing)) {
+    if (!img.getAttribute("src") && picture) {
+      // The source effect below crossfades to the new preview once it decodes.
+      if (macDrawing) img.loading = "eager";
+      img.src = (adaptive && cachedAdaptedUrl(picture.previewId, dark)) || picture.src;
+      setDisplayedImage({ source: picture.src, url: img.src });
+    } else if (!img.getAttribute("src")) {
+      if (adaptive) {
         // Hide the original until its recolored copy is ready.
         const cached = cachedAdaptedUrl(previewId ?? src, dark);
         if (cached) img.src = cached;
@@ -269,32 +293,40 @@ export function SavedImageView(props: NodeViewProps) {
     }
     img.onerror = () => setFailedSource(src);
     img.onload = () => {
-      if (drawing?.previewId && img.naturalWidth && img.naturalHeight && img.closest("[data-worksheet-answer]")) {
-        worksheetPreviewSizes.set(drawing.previewId, { width: img.naturalWidth, height: img.naturalHeight });
-        if (worksheetPreviewSizes.size > 128) {
-          const oldest = worksheetPreviewSizes.keys().next().value;
-          if (oldest !== undefined) worksheetPreviewSizes.delete(oldest);
-        }
-      }
       setFailedSource(null);
-      setLoadedSrc(src);
+      const showsCurrent = currentSrc && (img.src === new URL(currentSrc, location.href).href || img.src === cachedAdaptedUrl(drawingPreviewId ?? currentSrc, dark));
+      if (showsCurrent && img.style.opacity !== "0") {
+        rememberPicture(currentSrc, img.naturalWidth, img.naturalHeight);
+      }
     };
     return () => { img.onload = null; img.onerror = null; };
-  }, [src]);
+  }, [src, currentSrc, drawingPreviewId, dark, adaptive, macDrawing]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (picture && picture.previewId === drawingPreviewId) {
+      if (picture.width !== width || picture.height !== height) {
+        setPicture({ ...picture, width, height });
+      }
+      if (pictureKey) rememberPreview(lastDrawingPicture, pictureKey, { ...picture, width, height });
+    }
+  }, [pictureKey, picture, drawingPreviewId, width, height]);
+
+  useLayoutEffect(() => {
     if (!image.current) return;
     image.current.alt = node.attrs.alt ?? "";
     image.current.title = node.attrs.title ?? "";
-    image.current.style.width = node.attrs.width ? `${node.attrs.width}px` : "";
+    const previewWidth = width || (macDrawing && picture?.naturalWidth);
+    const previewHeight = height || (macDrawing && picture?.naturalHeight);
+    image.current.style.width = previewWidth ? `${previewWidth}px` : "";
     image.current.style.height = "auto";
-    image.current.style.aspectRatio = node.attrs.width > 0 && node.attrs.height > 0 ? `${node.attrs.width} / ${node.attrs.height}` : "";
-  }, [src, node.attrs.alt, node.attrs.title, node.attrs.width, node.attrs.height]);
+    image.current.style.aspectRatio = previewWidth && previewHeight ? `${previewWidth} / ${previewHeight}` : "";
+  }, [src, node.attrs.alt, node.attrs.title, width, height, macDrawing, picture?.naturalWidth, picture?.naturalHeight]);
 
   // Recolored on the fly rather than saved, so it follows theme changes.
   useEffect(() => {
     const img = image.current;
-    if (!img || !src) return;
+    if (!img || !currentSrc) return;
+    const src = currentSrc;
     const fileId = previewId as string | null;
     const key = fileId ?? src;
     if (img.src === (adaptive ? cachedAdaptedUrl(key, dark) : src)) return;
@@ -319,21 +351,27 @@ export function SavedImageView(props: NodeViewProps) {
       if (adaptive) {
         const adapted = adaptedUrl(key, dark, async () => fileId ? readImage(fileId) : (await fetch(src)).blob());
         release = adapted.release;
-        next = await adapted.url;
+        next = await adapted.url.catch(() => src);
       }
       // Decode first so the swap never shows an empty frame.
       const probe = document.createElement("img");
       probe.src = next;
       await probe.decode();
       if (!cancelled) {
-        swapImage(img, next);
+        await swapImage(img, next, macDrawing ? () => !cancelled : undefined);
+        if (cancelled) return;
         setDisplayedImage({ source: src, url: next });
+        rememberPicture(src, probe.naturalWidth, probe.naturalHeight);
       }
     })().catch((error) => {
       console.error("Failed to adapt image:", error);
       if (!cancelled) {
-        swapImage(img, src);
-        setDisplayedImage({ source: src, url: src });
+        if (!drawingPreviewId) {
+          swapImage(img, src);
+          setDisplayedImage({ source: src, url: src });
+        } else {
+          setFailedSource(src);
+        }
       }
     }).finally(() => release?.());
     return () => {
@@ -341,7 +379,7 @@ export function SavedImageView(props: NodeViewProps) {
       stopWaiting?.();
       release?.();
     };
-  }, [src, adaptive, dark, previewId, readImage]);
+  }, [currentSrc, adaptive, dark, previewId, readImage, macDrawing]);
 
   const resizeTo = (fraction: number) => {
     const img = image.current;
@@ -477,14 +515,14 @@ export function SavedImageView(props: NodeViewProps) {
 
   const hasImage = !!src && !failed;
   const canCrop = !drawing && hasImage && !!node.attrs.fileId;
-  const previewSize = drawing && (node.attrs.width > 0 && node.attrs.height > 0
-    ? { width: node.attrs.width, height: node.attrs.height }
-    : drawing.previewId && worksheetPreviewSizes.get(drawing.previewId));
+  const previewSize = drawing && (width > 0 && height > 0
+    ? { width, height }
+    : drawingPreviewId && worksheetPreviewSizes.get(showingPrevious ? picture.previewId : drawingPreviewId));
   const drawingSize = previewSize
     ? { "--drawing-width": `${previewSize.width}px`, "--drawing-ratio": `${previewSize.width} / ${previewSize.height}` } as CSSProperties
     : undefined;
   return (
-    <NodeViewWrapper style={drawingSize} data-drawing={drawing ? true : undefined} as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-loading={loading || undefined} aria-busy={loading || undefined} data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
+    <NodeViewWrapper style={drawingSize} data-drawing={drawing ? true : undefined} as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-loading={waitingForPicture || undefined} aria-busy={loading || undefined} data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
       <span ref={infoHost} className="contents" />
       {isInline
         ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && !canEditDrawing && src && !failed) { setPreviewOpen(true); } }} />
@@ -525,7 +563,7 @@ export function SavedImageView(props: NodeViewProps) {
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </Menu.SubmenuRoot>}
-              {!(environment.isNative && drawing) && (!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>}
+              {!drawingAdapts && (!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>}
               {!isNativeTablet && <DropdownMenuSeparator />}
               {flashcards && (!isNativeTablet || canCrop) && <DropdownMenuItem disabled={!canCrop} onClick={() => setOcclusionOpen(true)}><Scan />Occlusion ({validMasks(node.attrs.masks).length})</DropdownMenuItem>}
               {(!isNativeTablet || canCrop) && <DropdownMenuItem disabled={!canCrop} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop />Crop</DropdownMenuItem>}
@@ -553,7 +591,7 @@ export function SavedImageView(props: NodeViewProps) {
           // range as iOS text-selection handles, including its control toolbar.
           // Keep the node outline without requesting text input on return.
           finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}
-          src={displayedImage && displayedImage.source === src && displayedImage.url ? displayedImage.url : undefined}
+          src={displayedImage && (drawing || displayedImage.source === src) && displayedImage.url ? displayedImage.url : undefined}
           alt={node.attrs.alt || node.attrs.title || "Image"}
         />
       )}
@@ -562,16 +600,28 @@ export function SavedImageView(props: NodeViewProps) {
 }
 
 const SWAP_FADE_MS = 220;
+// Last loaded preview per drawing (imageId), so a remounted view never blanks.
+const lastDrawingPicture = new Map<string, { src: string; previewId: string; width: number | null; height: number | null; naturalWidth: number; naturalHeight: number }>();
+
+function rememberPreview<T>(cache: Map<string, T>, id: string, value: T) {
+  cache.delete(id);
+  cache.set(id, value);
+  if (cache.size > 128) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
 
 // Shows `next` in place of the image's current picture: fades in a hidden
 // image, otherwise crossfades by fading a copy of the old picture out on top.
-function swapImage(img: HTMLImageElement, next: string) {
+async function swapImage(img: HTMLImageElement, next: string, stillCurrent?: () => boolean) {
   const hidden = img.style.opacity === "0";
   img.style.opacity = "";
   if (img.src === next) return;
   // Nothing on screen yet (still loading or failed): no crossfade, and no
   // offset reads, which force a layout of the whole note per image on open.
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !img.isConnected || !img.complete || !img.naturalWidth) {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if ((reduceMotion && (!stillCurrent || hidden)) || !img.isConnected || !img.complete || !img.naturalWidth) {
     img.src = next;
     return;
   }
@@ -593,8 +643,22 @@ function swapImage(img: HTMLImageElement, next: string) {
     pointerEvents: "none",
   });
   ghost.removeAttribute("loading");
+  if (stillCurrent) {
+    // The Mac WKWebView can briefly clear an image during a source change.
+    // Decode the overlay before replacing the visible source.
+    await ghost.decode().catch(() => {});
+    if (!stillCurrent() || !img.isConnected) return;
+  }
   img.insertAdjacentElement("afterend", ghost);
   img.src = next;
+  if (stillCurrent) {
+    await img.decode().catch(() => {});
+    if (reduceMotion || !stillCurrent()) {
+      ghost.remove();
+      scheduleTrim();
+      return;
+    }
+  }
   ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SWAP_FADE_MS, easing: "ease-in-out" })
     .finished.finally(() => {
       ghost.remove();

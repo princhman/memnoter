@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { call, isTauri } from "@/lib/backend";
 import { useSyncedImageUrl } from "@/lib/synced-image";
-import { IS_MAC } from "@/lib/platform";
 import { bankKey, type Bank } from "@/lib/question-bank";
 import { queryClient } from "@/lib/query-client";
 import { answerKey } from "@/lib/worksheet-session";
@@ -28,7 +27,7 @@ export function WorksheetDrawings({ moduleId, attemptId, revisionId, leafPartId,
       return value && typeof value.canvasId === "string" && (value.sourceId === null || typeof value.sourceId === "string") ? value : null;
     } catch { return null; }
   });
-  const supported = !readOnly && IS_MAC && isTauri();
+  const supported = !readOnly && isTauri();
   const answerRef = useRef(answer);
   answerRef.current = answer;
   const running = useRef(false);
@@ -86,7 +85,8 @@ export function WorksheetDrawings({ moduleId, attemptId, revisionId, leafPartId,
   };
   const open = (draft: Pending) => run(async () => {
     if (wasRemoved(draft)) { forgetRemoved(draft); return; }
-    draft = { ...draft, attached: draft.attached ?? !!answerRef.current?.canvases[draft.canvasId] };
+    const canvas = answerRef.current?.canvases[draft.canvasId];
+    draft = { ...draft, sourceId: canvas ? canvas.revision?.sourceId ?? null : draft.sourceId, attached: draft.attached ?? !!canvas };
     retain(draft);
     await writeOperation(async permit => {
       assertWritable(permit);

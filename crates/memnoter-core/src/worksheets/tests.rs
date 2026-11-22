@@ -725,6 +725,7 @@ fn answer_doc(text: &str, image: Option<&str>, drawing_source: Option<&str>) -> 
         let node = fragment.push_back(&mut txn, yrs::XmlElementPrelim::empty("image"));
         node.insert_attribute(&mut txn, "fileId", id);
         if let Some(source) = drawing_source {
+            node.insert_attribute(&mut txn, "imageId", "09e5e8fc-b36d-4daa-a27a-067e5f421299");
             node.insert_attribute(&mut txn, "drawing", Any::from_json(&json!({
                 "version": 1, "sourceId": source, "previewId": id
             }).to_string()).unwrap());
@@ -792,7 +793,7 @@ fn offline_answer_replacements_converge_without_losing_either_devices_text_or_im
             let loaded = attempts::load_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone()).unwrap();
             let expected = serde_json::to_value(loaded).unwrap()["expected"].as_str().unwrap().into();
             let image = files::save_file(device.data_dir(), &device.db, module.clone(), text.as_bytes().to_vec(), "image/png".into()).unwrap().id;
-            let source = files::save_file(device.data_dir(), &device.db, module.clone(), br#"{"strokes":[]}"#.to_vec(), "application/vnd.memnoter.drawing+json".into()).unwrap().id;
+            let source = files::save_file(device.data_dir(), &device.db, module.clone(), include_bytes!("../../../../apps/ios/Tests/Fixtures/portable-drawing.json").to_vec(), "application/vnd.memnoter.drawing+json".into()).unwrap().id;
             attempts::save_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone(), answer_doc(text, Some(&image), Some(&source)), expected).unwrap();
             assert!(sync::sync_pending_uploads(&device.db, generation(device)).unwrap().contains(&source));
             image_ids.push(source);
@@ -812,6 +813,25 @@ fn offline_answer_replacements_converge_without_losing_either_devices_text_or_im
             let loaded = attempts::load_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone()).unwrap();
             serde_json::to_value(loaded).unwrap()["expected"].as_str().unwrap().to_owned()
         };
+        let drawing_ids = |device: &Core| {
+            use yrs::{Xml, XmlFragment, XmlOut};
+            let loaded = attempts::load_answer_document(device, module.clone(), owner.attempt_id.clone(), owner.revision_id.clone(), owner.leaf_part_id.clone()).unwrap();
+            let doc = Doc::new();
+            let fragment = doc.get_or_insert_xml_fragment("default");
+            let loaded = serde_json::to_value(loaded).unwrap();
+            let update: Vec<u8> = serde_json::from_value(loaded["document"].clone()).unwrap();
+            doc.transact_mut().apply_update(Update::decode_v1(&update).unwrap()).unwrap();
+            let txn = doc.transact();
+            fragment.children(&txn).filter_map(|node| {
+                let XmlOut::Element(node) = node else { return None; };
+                let Some(Out::Any(Any::String(id))) = node.get_attribute(&txn, "imageId") else { return None; };
+                Some(id.to_string())
+            }).collect::<Vec<_>>()
+        };
+        let ids = drawing_ids(&core);
+        assert_eq!(ids, drawing_ids(&peer), "drawings must keep the same identities across devices and reloads");
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "both versions must be independently editable");
         let merged_token = answer_token(&core);
         assert_eq!(answer_token(&peer), merged_token);
         assert_eq!(without_display(merged.clone()), without_display(bank::get(&peer, module.clone()).unwrap().unwrap()));

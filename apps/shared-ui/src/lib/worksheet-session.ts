@@ -130,6 +130,19 @@ export function useWorksheetAnswers(moduleId: string, attemptId: string) {
       publish(session, { values });
       return loaded;
     },
+    async refreshDocument(revisionId: string, leafPartId: string, expected: string, isCurrent: () => boolean, apply: (loaded: AnswerDocument) => void) {
+      const key = answerKey(attemptId, revisionId, leafPartId);
+      if (session.snapshot.drafts[key]) return false;
+      const value = session.snapshot.values[key];
+      const loaded = await call<AnswerDocument>("worksheet_answer_document_load", { moduleId, attemptId, revisionId, leafPartId });
+      // Typing or a save acknowledgement may race the backend read.
+      if (!isCurrent() || session.snapshot.drafts[key] || session.snapshot.values[key] !== value) return false;
+      if (loaded.expected === (value?.expected ?? expected)) return true;
+      const values = { ...session.snapshot.values }; delete values[key];
+      publish(session, { values });
+      apply(loaded);
+      return true;
+    },
     setDocument(revisionId: string, leafPartId: string, document: number[], expected: string, text: string, hasContent: boolean) {
       const key = answerKey(attemptId, revisionId, leafPartId);
       // Prefer the last ack's base when this mounted editor still has an old base.
@@ -140,26 +153,33 @@ export function useWorksheetAnswers(moduleId: string, attemptId: string) {
       if (session.timer) clearTimeout(session.timer);
       session.timer = setTimeout(() => { void flush(session); }, 500);
     },
-    async retryAnswer(revisionId: string, leafPartId: string) {
+    async retryAnswer(revisionId: string, leafPartId: string, confirmedBase?: string) {
       const key = answerKey(attemptId, revisionId, leafPartId);
+      const draft = session.snapshot.drafts[key];
+      if (!draft) return;
+      if (draft.document && confirmedBase === undefined) {
+        // Retrying with the original base also recovers a lost save receipt.
+        await flush(session);
+        if (session.snapshot.drafts[key] !== draft) return;
+      }
       try {
         const loaded = await call<AnswerDocument>("worksheet_answer_document_load", { moduleId, attemptId, revisionId, leafPartId });
-        const draft = session.snapshot.drafts[key];
-        if (draft) {
-          // Explicit Retry reapplies retained local content on the freshly read base.
-          let document = draft.document;
-          if (!document) {
-            const local = new Y.Doc();
-            const paragraph = new Y.XmlElement("paragraph");
-            local.getXmlFragment("default").insert(0, [paragraph]);
-            if (draft.text) { const text = new Y.XmlText(); paragraph.insert(0, [text]); text.insert(0, draft.text); }
-            document = Array.from(Y.encodeStateAsUpdate(local));
-            local.destroy();
-          }
-          const next = { ...draft, document, expected: loaded.expected };
-          publish(session, { drafts: { ...session.snapshot.drafts, [key]: next }, values: { ...session.snapshot.values, [key]: next } });
-          backup(session);
+        if (session.snapshot.drafts[key] !== draft) return;
+        const conflict = draft.document ? loaded.expected !== draft.expected : loaded.plainText === null;
+        if (conflict && loaded.expected !== confirmedBase) return loaded.expected;
+        if (!conflict && draft.document) return; // The retry failed for another reason.
+        let document = draft.document;
+        if (!document) {
+          const local = new Y.Doc();
+          const paragraph = new Y.XmlElement("paragraph");
+          local.getXmlFragment("default").insert(0, [paragraph]);
+          if (draft.text) { const text = new Y.XmlText(); paragraph.insert(0, [text]); text.insert(0, draft.text); }
+          document = Array.from(Y.encodeStateAsUpdate(local));
+          local.destroy();
         }
+        const next = { ...draft, document, expected: loaded.expected };
+        publish(session, { drafts: { ...session.snapshot.drafts, [key]: next }, values: { ...session.snapshot.values, [key]: next } });
+        backup(session);
         await flush(session);
       } catch (error) { publish(session, { errors: { ...session.snapshot.errors, [key]: message(error) }, error: message(error) }); }
     },

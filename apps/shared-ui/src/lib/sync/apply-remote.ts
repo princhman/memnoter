@@ -13,6 +13,8 @@ import { bankKey } from "@/lib/question-bank";
 // Dispatched on window with the module id when another device deleted it.
 export const MODULE_DELETED_REMOTELY_EVENT = "memnoter:module-deleted-remotely";
 
+export const MODULE_CONTENT_SYNCED_EVENT = "memnoter:module-content-synced";
+
 const REINDEX_DELAY_MS = 2_000;
 
 export type ApplyResult = {
@@ -58,6 +60,7 @@ export function onRemote(result: ApplyResult) {
     void queryClient.invalidateQueries({ queryKey: ["mention-note", moduleId] });
     // Questions, worksheets and answers live in the module's content too.
     void queryClient.invalidateQueries({ queryKey: bankKey(moduleId) });
+    window.dispatchEvent(new CustomEvent(MODULE_CONTENT_SYNCED_EVENT, { detail: moduleId }));
     scheduleReindex(moduleId);
   }
   for (const moduleId of result.deleted) {

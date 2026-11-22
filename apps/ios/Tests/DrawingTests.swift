@@ -3,6 +3,33 @@ import PencilKit
 @testable import Memnoter
 
 final class DrawingTests: XCTestCase {
+    func testPortableGeometryOverridesStaleArchiveAndExportsSubsequentNativeEdits() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "portable-drawing", withExtension: "json"))
+        let document = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: url))
+        // AQID is not a PKDrawing: using the stale sidecar must fail this test.
+        let drawing = try document.drawing()
+        XCTAssertEqual(drawing.strokes.count, 1)
+        XCTAssertEqual(drawing.strokes.first?.path.first?.location, CGPoint(x: 30, y: 40))
+        let edited = PKDrawing(strokes: drawing.strokes + drawing.strokes)
+        let snapshot = DrawingSnapshot(drawing: edited, size: CGSize(width: 1024, height: 1440), paperStyle: "lined")
+        let published = try snapshot.document(includeGeometry: true)
+        XCTAssertEqual(published.paperStyle, .lined)
+        XCTAssertEqual(try snapshot.document(includeGeometry: false).paperStyle, .lined)
+        let portable = try XCTUnwrap(published.portable)
+        XCTAssertEqual(portable.strokes.count, 2)
+        try portable.validate()
+        let stroke = drawing.strokes[0]
+        let masked = PKStroke(ink: stroke.ink, path: stroke.path, transform: stroke.transform,
+                              mask: UIBezierPath(rect: CGRect(x: 0, y: 0, width: 45, height: 100)))
+        let descriptors = try XCTUnwrap(PortableInk.exporting(PKDrawing(strokes: [masked])))
+        XCTAssertEqual(descriptors.version, 2)
+        XCTAssertNotNil(descriptors.strokes[0].mask)
+        let returned = try DrawingDocument(version: 2, nativeData: PKDrawing(strokes: [masked]).dataRepresentation(),
+            width: 1024, height: 1440, geometry: nil, portable: descriptors).drawing()
+        XCTAssertEqual(returned.strokes.count, 1)
+        XCTAssertEqual(returned.strokes[0].mask?.cgPath, masked.mask?.cgPath)
+    }
+
     func testMacCanvasArchiveOpensAsEditableNativeInkOnIPad() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "mac-drawing", withExtension: "json"))
         let document = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: url))

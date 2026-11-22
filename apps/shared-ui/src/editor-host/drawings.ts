@@ -2,13 +2,19 @@ import type { Editor } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
 import { drawingReference, type DrawingOwner } from "../lib/drawing";
 
-function target(editor: Editor, imageId: string) {
+// Local publication can reach the editor before its file index catches up.
+const localPreviews = new Set<string>();
+
+export function isLocallyPublishedPreview(previewId: string) {
+  return localPreviews.has(previewId);
+}
+
+function findDrawing(editor: Editor, imageId: string) {
   const matches: { node: Node; pos: number }[] = [];
   editor.state.doc.descendants((node, pos) => {
     if (["image", "inlineImage"].includes(node.type.name) && node.attrs.imageId === imageId && drawingReference(node.attrs.drawing)) matches.push({ node, pos });
   });
-  if (matches.length !== 1) throw new Error("This drawing was removed or its identity changed. Save a copy to keep your work.");
-  return matches[0];
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function beginDrawing(editor: Editor, imageId: unknown, position = editor.state.selection.to) {
@@ -25,10 +31,17 @@ export function beginDrawing(editor: Editor, imageId: unknown, position = editor
 export function commitDrawing(editor: Editor, args: Record<string, unknown>) {
   const { imageId, sourceId, previewId, expectedSourceId } = args;
   if (typeof imageId !== "string" || typeof sourceId !== "string" || !sourceId || typeof previewId !== "string" || !previewId || !(expectedSourceId === null || typeof expectedSourceId === "string")) throw new Error("Invalid drawing revision");
-  const { node, pos } = target(editor, imageId);
+  const target = findDrawing(editor, imageId);
+  if (!target) throw new Error("This drawing was removed or its identity changed. Save a copy to keep your work.");
+  const { node, pos } = target;
   const current = drawingReference(node.attrs.drawing)!;
   if (current.sourceId === sourceId && current.previewId === previewId) return true;
   if (current.sourceId !== expectedSourceId) throw new Error("This drawing changed on another device. Save a copy to keep both versions.");
+  localPreviews.add(previewId);
+  if (localPreviews.size > 128) {
+    const oldest = localPreviews.values().next().value;
+    if (oldest !== undefined) localPreviews.delete(oldest);
+  }
   editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, {
     ...node.attrs, fileId: previewId, src: null, masks: [],
     drawing: { version: 1, sourceId, previewId },
@@ -38,8 +51,9 @@ export function commitDrawing(editor: Editor, args: Record<string, unknown>) {
 
 export function discardEmptyDrawing(editor: Editor, imageId: unknown) {
   if (typeof imageId !== "string") throw new Error("Drawing identity is required");
-  const { node, pos } = target(editor, imageId);
-  if (drawingReference(node.attrs.drawing)?.sourceId !== null) return false;
+  const target = findDrawing(editor, imageId);
+  if (!target || drawingReference(target.node.attrs.drawing)?.sourceId !== null) return false;
+  const { node, pos } = target;
   editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize));
   return true;
 }
