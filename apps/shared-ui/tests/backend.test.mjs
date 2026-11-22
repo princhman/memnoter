@@ -3,6 +3,11 @@ import { test } from 'node:test';
 import { mockIPC, clearMocks, mockConvertFileSrc } from '@tauri-apps/api/mocks';
 
 globalThis.window = {};
+// This fixture exercises a Mac Tauri shell, even when CI runs it on Linux.
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: { platform: 'MacIntel', userAgent: 'Mac browser', maxTouchPoints: 0 },
+});
 const { call, listen, fileUrl, postNativeEvent } = await import('../src/lib/backend.ts');
 
 test('Tauri takes precedence and retains command arguments and asset URLs', async () => {
