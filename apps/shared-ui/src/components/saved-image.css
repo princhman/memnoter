@@ -14,16 +14,24 @@
   min-width: 0;
   max-width: 100%;
 }
-/* Above the portaled table edge bars and cell toolbar (z-index 39/40). */
-.note-image-controls[data-floating] {
-  position: fixed;
-  z-index: var(--z-popup);
-  top: 0;
-  left: 0;
-  margin: 0;
-  transform: none;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+.note-image-controls {
+  top: 8px;
+  right: 8px;
+  line-height: normal;
+}
+/* Inside the editor's resize wrapper: keep the trigger a fixed circle. */
+.note-image-controls .note-image-menu-button {
+  flex: none;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  aspect-ratio: 1;
+  border-radius: 9999px;
+}
+
+[data-anchor-hidden]:has(> .note-image-actions-menu) {
   visibility: hidden;
 }
 
