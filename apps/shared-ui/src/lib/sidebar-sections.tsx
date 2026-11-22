@@ -197,9 +197,9 @@ export function SidebarSectionNavigation() {
     if (container) beginHostNavigation(container);
     if (target.kind === "add") {
       const end = editor.state.doc.content.size;
-      editor.chain().showDocument()
+      editor.chain()
         .insertContentAt(end, { type: "heading", attrs: { level: 1, "data-toc-id": crypto.randomUUID() } })
-        .setTextSelection(end + 1).focus().scrollIntoView().run();
+        .setTextSelection(end + 1).showSection(end).focus().scrollIntoView().run();
     } else if (target.kind === "document") {
       const pos = sectionFocusKey.getState(editor.state);
       const heading = pos == null ? null : editor.view.nodeDOM(pos);

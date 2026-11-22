@@ -162,15 +162,15 @@ for (const method of ["New section shortcut", "Markdown heading input rule"]) {
   });
 }
 
-test("chapter numbers match in the sidebar and editor when editing a legacy heading and adding a section", async () => {
+test("Add section focuses the numbered title and one undo removes the new section", async () => {
   const moduleId = await createModule("Numbered chapters", ["Introduction", "", "Algorithms"]);
   const page = await openNote(moduleId, { sections: true });
   const sidebar = page.getByRole("list", { name: "Sections of Numbered chapters" });
   const headings = page.locator(".tiptap > h1");
-  const module = page.getByRole("link", { name: "Numbered chapters", exact: true });
+  const actions = page.getByRole("button", { name: "Actions for Numbered chapters", exact: true });
   const chapter = name => sidebar.getByRole("button", { name, exact: true });
 
-  async function checkNumbers(expected) {
+  async function checkNumbers(expected, visible = expected) {
     for (const label of expected) await chapter(label).waitFor();
     const rows = await sidebar.getByRole("button").evaluateAll(rows => rows.map(row => row.title));
     const editorLabels = (await headings.filter({ visible: true }).allTextContents()).map(text => {
@@ -178,7 +178,7 @@ test("chapter numbers match in the sidebar and editor when editing a legacy head
       return `${number} ${title || "Untitled section"}`;
     });
     assert.deepEqual(rows, expected, "sidebar chapter labels");
-    assert.deepEqual(editorLabels, expected, "editor chapter labels");
+    assert.deepEqual(editorLabels, visible, "visible editor chapter labels");
   }
 
   try {
@@ -187,12 +187,34 @@ test("chapter numbers match in the sidebar and editor when editing a legacy head
     await page.keyboard.type("Foundations");
     await checkNumbers(["1 Introduction", "2 Foundations", "3 Algorithms"]);
 
+    // Separate the earlier title edit from the new heading in Yjs history.
+    await page.waitForTimeout(550);
     await chapter("3 Algorithms").click();
-    await module.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Add section", exact: true }).click();
-    await chapter("4 Untitled section").waitFor();
+    const addSection = async () => {
+      await actions.click();
+      await page.getByRole("menuitem", { name: "Add section", exact: true }).click();
+      await chapter("4 Untitled section").waitFor();
+    };
+    const existing = ["1 Introduction", "2 Foundations", "3 Algorithms"];
+    await addSection();
+    await checkNumbers([...existing, "4 Untitled section"], ["4 Untitled section"]);
+    assert.equal(await chapter("4 Untitled section").getAttribute("aria-current"), "location");
+    const inView = await headings.nth(3).evaluate(heading => new Promise(resolve => {
+      const observer = new IntersectionObserver(([entry]) => {
+        observer.disconnect();
+        resolve(entry.isIntersecting);
+      });
+      observer.observe(heading);
+    }));
+    assert.equal(inView, true, "the new title is in view");
+    await page.keyboard.press("Meta+z");
+    await headings.nth(3).waitFor({ state: "detached" });
+    await checkNumbers(existing);
+
+    await addSection();
     await page.keyboard.type("Networks");
-    await checkNumbers(["1 Introduction", "2 Foundations", "3 Algorithms", "4 Networks"]);
+    await checkNumbers([...existing, "4 Networks"], ["4 Networks"]);
+    assert.equal(await chapter("4 Networks").getAttribute("aria-current"), "location");
   } finally {
     await page.close();
   }
@@ -802,7 +824,7 @@ for (const target of ["Add section", "section row", "module title"]) {
       if (target === "Add section") {
         await editor.locator(":scope > h1").nth(2).waitFor();
         await page.keyboard.type("Added");
-        assert.deepEqual(await visible(), ["1\u00a0Existing", "2\u00a0Next", "3\u00a0Added"]);
+        assert.deepEqual(await visible(), ["3\u00a0Added"]);
       } else {
         await editor.getByText("Notes for Next.", { exact: true }).waitFor();
         assert.deepEqual(await visible(), target === "section row" ? ["2\u00a0Next"] : ["1\u00a0Existing", "2\u00a0Next"]);
