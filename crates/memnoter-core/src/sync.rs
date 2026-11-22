@@ -32,13 +32,32 @@ use yrs::{updates::decoder::Decode, Any, Doc, Map, Out, ReadTxn, StateVector, Tr
 
 pub const VAULT_DOC: &str = "vault";
 const MODULES_MAP: &str = "modules";
+const MODULE_DELETIONS_MAP: &str = "moduleDeletions";
 const FILES_MAP: &str = "files";
 const REVIEW_PREFIX: &str = "r-";
+const CARRIED_REVIEWS_PREFIX: &str = "r-carried-";
 const REVIEW_CARDS_MAP: &str = "cards";
 const REVIEW_LOG_MAP: &str = "log";
 
 pub fn review_doc_id(module_id: &str) -> String {
     format!("{REVIEW_PREFIX}{module_id}")
+}
+
+fn carried_reviews_id(module_id: &str) -> String {
+    format!("{CARRIED_REVIEWS_PREFIX}{module_id}")
+}
+
+// A legacy note delete can drop r-<module>. Its encrypted review history
+// must also have an address that a note deletion cannot name.
+pub(crate) fn carry_reviews(conn: &Connection, module: &str) -> CommandResult<()> {
+    if !is_enabled(conn)? {
+        return Ok(());
+    }
+    let doc = load_doc(conn, &review_doc_id(module))?;
+    let state = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    push_outbox(conn, &carried_reviews_id(module), &state)
 }
 
 // Card state and review log rows as JSON, for the review documents.
@@ -150,6 +169,7 @@ pub fn record_update(conn: &Connection, module_id: &str, bytes: &[u8]) -> Comman
 
 pub enum VaultChange<'a> {
     Name(&'a str),
+    Recovered(&'a str),
     Deleted,
 }
 
@@ -161,17 +181,44 @@ pub fn record_module(
     if !is_enabled(conn)? {
         return Ok(false);
     }
+    section_moves::remember_synced_note(conn, module_id)?;
     let deleted = matches!(change, VaultChange::Deleted);
     let doc = load_vault(conn)?;
     let map = doc.get_or_insert_map(MODULES_MAP);
+    let observed_moves = if deleted {
+        let mut stmt = conn
+            .prepare("select doc from sync_section_moves where destination=?1 order by doc")
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([module_id], |row| row.get::<_, String>(0))
+            .map_err(db_err)?;
+        Some(
+            serde_json::to_string(&rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)?)
+                .map_err(db_err)?,
+        )
+    } else {
+        None
+    };
+    let deletions = deleted.then(|| doc.get_or_insert_map(MODULE_DELETIONS_MAP));
     let update = {
         let mut txn = doc.transact_mut();
         match change {
             VaultChange::Name(name) => {
                 map.insert(&mut txn, format!("{module_id}.name"), name);
             }
+            VaultChange::Recovered(name) => {
+                map.insert(&mut txn, format!("{module_id}.name"), name);
+                map.insert(&mut txn, format!("{module_id}.recovered"), true);
+            }
             VaultChange::Deleted => {
                 map.insert(&mut txn, format!("{module_id}.deleted"), true);
+                if let (Some(deletions), Some(observed)) = (deletions, observed_moves) {
+                    deletions.insert(
+                        &mut txn,
+                        format!("{module_id}/{}", uuid::Uuid::new_v4()),
+                        observed,
+                    );
+                }
             }
         }
         txn.encode_update_v1()
@@ -180,6 +227,29 @@ pub fn record_module(
     push_outbox(conn, VAULT_DOC, &update)?;
     if deleted {
         forget_module_docs(conn, module_id)?;
+        let modules = vault_modules(&doc);
+        let mut stmt = conn.prepare(
+            "select doc,source,destination from sync_section_moves where source=?1 or destination=?1",
+        ).map_err(db_err)?;
+        let moves = stmt
+            .query_map([module_id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(db_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(db_err)?;
+        for (id, source, destination) in moves {
+            if [source, destination]
+                .iter()
+                .all(|module| modules.get(module).is_some_and(|note| note.deleted))
+            {
+                section_moves::retire(conn, &id)?;
+            }
+        }
     }
     Ok(true)
 }
@@ -567,16 +637,14 @@ pub fn record_review(
         None => None,
     };
     let route = section_moves::review_route(conn, card_id)?;
-    let (doc_id, state_key) = match route {
-        Some(route) => (
-            review_doc_id(&route.review_module),
-            format!(
-                "{}/{card_id}",
-                route.epochs.last().ok_or("Missing review epoch")?
-            ),
-        ),
-        None => (review_doc_id(&module_id), card_id.to_owned()),
+    let (home, state_key, carried) = match route {
+        Some(route) => {
+            let epoch = route.epochs.last().ok_or("Missing review epoch")?;
+            (route.review_module, format!("{epoch}/{card_id}"), true)
+        }
+        None => (module_id, card_id.to_owned(), false),
     };
+    let doc_id = review_doc_id(&home);
     let doc = load_doc(conn, &doc_id)?;
     let cards = doc.get_or_insert_map(REVIEW_CARDS_MAP);
     let log = doc.get_or_insert_map(REVIEW_LOG_MAP);
@@ -592,7 +660,21 @@ pub fn record_review(
         txn.encode_update_v1()
     };
     save_doc(conn, &doc_id, &doc)?;
-    push_outbox(conn, &doc_id, &update)?;
+    if carried {
+        carry_reviews(conn, &home)?;
+    } else {
+        push_outbox(conn, &doc_id, &update)?;
+        let transferred: bool = conn
+            .query_row(
+                "select exists(select 1 from sync_card_locations where review_module=?1)",
+                [&home],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if transferred {
+            carry_reviews(conn, &home)?;
+        }
+    }
     Ok(true)
 }
 
@@ -833,6 +915,7 @@ pub(crate) fn save_vault(conn: &Connection, doc: &Doc) -> CommandResult<()> {
 struct VaultModule {
     name: Option<String>,
     deleted: bool,
+    recovered: bool,
 }
 
 fn vault_modules(doc: &Doc) -> BTreeMap<String, VaultModule> {
@@ -847,6 +930,7 @@ fn vault_modules(doc: &Doc) -> BTreeMap<String, VaultModule> {
         match (field, value) {
             ("name", Out::Any(Any::String(name))) => module.name = Some(name.to_string()),
             ("deleted", Out::Any(Any::Bool(true))) => module.deleted = true,
+            ("recovered", Out::Any(Any::Bool(true))) => module.recovered = true,
             _ => {}
         }
     }
@@ -881,7 +965,15 @@ fn reconcile(tx: &Transaction, doc: &Doc) -> CommandResult<(bool, Vec<String>)> 
             }
             continue;
         }
+        if module.recovered {
+            tx.execute(
+                "insert or ignore into section_conflict_notes(module_id) values (?1)",
+                [&id],
+            )
+            .map_err(db_err)?;
+        }
         let Some(name) = module.name else { continue };
+        section_moves::remember_synced_note(tx, &id)?;
         match local {
             None => {
                 crate::content::module_rows::insert(tx, &id, &name, &[])?;
@@ -915,6 +1007,19 @@ fn reconcile(tx: &Transaction, doc: &Doc) -> CommandResult<(bool, Vec<String>)> 
 // Queues everything stored locally: the vault (with every module added) and
 // each note's snapshot and saved updates.
 fn seed(conn: &Connection) -> CommandResult<()> {
+    let has_transfers: bool = conn
+        .query_row("select exists(select 1 from sync_section_moves)", [], |r| {
+            r.get(0)
+        })
+        .map_err(db_err)?;
+    if has_transfers && !section_moves::published_transfers_supported() {
+        return Err("These notes contain cross-note moves that require compatible sync.".into());
+    }
+    conn.execute(
+        "insert or ignore into section_synced_notes(module_id) select id from modules",
+        [],
+    )
+    .map_err(db_err)?;
     conn.execute("delete from sync_outbox", [])
         .map_err(db_err)?;
     let doc = load_vault(conn)?;
@@ -1079,7 +1184,19 @@ fn seed_reviews(conn: &Connection) -> CommandResult<()> {
         let state = doc
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
-        push_outbox(conn, &doc_id, &state)?;
+        let carried: bool = conn
+            .query_row(
+                "select exists(select 1 from sync_card_locations where review_module=?1)",
+                [&module_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        let upload_id = if carried {
+            carried_reviews_id(&module_id)
+        } else {
+            doc_id
+        };
+        push_outbox(conn, &upload_id, &state)?;
     }
     Ok(())
 }
@@ -1218,7 +1335,8 @@ pub(crate) fn reconcile_restored_account(
 
 fn disable(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(
-        "delete from sync_outbox; delete from sync_state; delete from sync_docs; delete from sync_file_uploads; delete from sync_file_deletes;",
+        "delete from sync_outbox; delete from sync_state; delete from sync_docs;
+         delete from pending_section_moves; delete from sync_file_uploads; delete from sync_file_deletes;",
     )
     .map_err(db_err)?;
     rotate_generation(conn)
@@ -1245,6 +1363,49 @@ fn outbox(conn: &Connection, limit_bytes: i64) -> CommandResult<Vec<OutboxEntry>
         })
         .map_err(db_err)?;
     rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+}
+
+#[derive(Default)]
+struct NotePull {
+    touched: HashSet<String>,
+    worksheet_history: BTreeMap<String, crate::worksheets::Bank>,
+}
+
+impl NotePull {
+    fn apply(
+        &mut self,
+        tx: &Transaction<'_>,
+        result: &mut ApplyResult,
+        module: String,
+        bytes: Vec<u8>,
+    ) -> CommandResult<()> {
+        section_moves::remember_synced_note(tx, &module)?;
+        if !module_exists(tx, &module)? {
+            // A compacted vault may name the note in a later frame.
+            crate::content::module_rows::insert(tx, &module, "Untitled", &[])?;
+            result.modules_changed = true;
+        }
+        if self.touched.insert(module.clone()) {
+            if let Ok(before) = crate::worksheets::load(tx, &module) {
+                if let Ok(Some(bank)) = crate::worksheets::read(&before) {
+                    self.worksheet_history.insert(module.clone(), bank);
+                }
+            }
+        }
+        tx.execute(
+            "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
+            params![module, bytes, chrono::Utc::now().timestamp_millis()],
+        )
+        .map_err(db_err)?;
+        result.updates.push(RemoteUpdate {
+            module_id: module,
+            update: ContentUpdate {
+                id: tx.last_insert_rowid(),
+                bytes,
+            },
+        });
+        Ok(())
+    }
 }
 
 fn apply_remote(
@@ -1294,63 +1455,133 @@ fn apply_remote(
     result.deleted = deleted;
     let vault = vault_modules(&doc);
 
-    let mut content_entries = Vec::new();
-    let mut transfer_reviews = HashSet::new();
-    let mut moved_sections = false;
-    for entry in note_entries {
-        if !entry.doc.starts_with(section_moves::SYNC_PREFIX) {
-            content_entries.push(entry);
-            continue;
-        }
-        if let Some(movement) = section_moves::receive(&tx, &entry.doc, &entry.bytes)? {
-            transfer_reviews.extend(movement.review_modules);
-            content_entries.extend(movement.edits.into_iter().map(|(doc, bytes)| RemoteEntry {
-                seq: entry.seq,
-                doc,
-                bytes,
-            }));
-            moved_sections = true;
-        }
-    }
-    let now = chrono::Utc::now().timestamp_millis();
-    let mut touched = HashSet::new();
-    let mut worksheet_history = BTreeMap::new();
-    for entry in content_entries {
-        if vault.get(&entry.doc).is_some_and(|module| module.deleted) {
-            continue;
-        }
-        if !module_exists(&tx, &entry.doc)? {
-            // Content can arrive before the vault entry that names it, for
-            // example after the vault was compacted. The name follows later.
-            crate::content::module_rows::insert(&tx, &entry.doc, "Untitled", &[])?;
-            result.modules_changed = true;
-        }
-        if !touched.contains(&entry.doc) {
-            if let Ok(before) = crate::worksheets::load(&tx, &entry.doc) {
-                if let Ok(Some(bank)) = crate::worksheets::read(&before) {
-                    worksheet_history.insert(entry.doc.clone(), bank);
-                }
+    let is_deleted = |module: &str| vault.get(module).is_some_and(|note| note.deleted);
+    let deletions = if vault.values().any(|note| note.deleted) {
+        let mut deletions = BTreeMap::<String, Vec<Vec<String>>>::new();
+        for (key, observed) in string_entries(&doc, MODULE_DELETIONS_MAP) {
+            if let Some((module, _)) = key.split_once('/') {
+                deletions
+                    .entry(module.to_owned())
+                    .or_default()
+                    .push(serde_json::from_str(&observed).map_err(db_err)?);
             }
         }
-        tx.execute(
-            "insert into contents_updates (module_id, bytes, created_at) values (?1, ?2, ?3)",
-            params![entry.doc, entry.bytes, now],
-        )
-        .map_err(db_err)?;
-        result.updates.push(RemoteUpdate {
-            module_id: entry.doc.clone(),
-            update: ContentUpdate {
-                id: tx.last_insert_rowid(),
-                bytes: entry.bytes,
-            },
-        });
-        touched.insert(entry.doc);
+        deletions
+    } else {
+        BTreeMap::new()
+    };
+    let mut content_entries = Vec::new();
+    for entry in note_entries {
+        if entry.doc.starts_with(section_moves::SYNC_PREFIX) {
+            section_moves::stage(&tx, &entry.doc, &entry.bytes)?;
+        } else {
+            content_entries.push((entry.doc, entry.bytes));
+        }
+    }
+    let mut notes = NotePull::default();
+    let mut transfer_reviews = HashSet::new();
+    let mut moved_sections = false;
+    // Try the transfer before dependent note edits, then again after any
+    // newly arrived prerequisites. No partial move is visible between pulls.
+    loop {
+        let mut applied = false;
+        let pending = {
+            let mut stmt = tx
+                .prepare("select doc,state from pending_section_moves order by rowid")
+                .map_err(db_err)?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+                })
+                .map_err(db_err)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)?
+        };
+        for (id, bytes) in pending {
+            if let Some(movement) = section_moves::receive(&tx, &id, &bytes, is_deleted)? {
+                transfer_reviews.extend(movement.review_modules);
+                if let Some(conflict) = movement.conflict {
+                    let source = &movement.edits[0].0;
+                    let module = conflict.module_id;
+                    if !is_deleted(&module) && !module_exists(&tx, &module)? {
+                        let name: String = tx
+                            .query_row("select name from modules where id=?1", [source], |r| {
+                                r.get(0)
+                            })
+                            .map_err(db_err)?;
+                        let title = format!("Recovered chapter from {name}");
+                        crate::content::module_rows::insert(&tx, &module, &title, &[])?;
+                        tx.execute(
+                            "insert into section_conflict_notes(module_id) values (?1)",
+                            [&module],
+                        )
+                        .map_err(db_err)?;
+                        record_module(&tx, &module, VaultChange::Recovered(&title))?;
+                        record_update(&tx, &module, &conflict.content)?;
+                        notes.apply(&tx, &mut result, module, conflict.content)?;
+                        result.modules_changed = true;
+                    }
+                    // Top-level blocks inserted offline are independent of
+                    // the author's cut. Keep them in the recovery note.
+                    if let Some(cut) = conflict.source_cut {
+                        record_update(&tx, source, &cut)?;
+                        notes.apply(&tx, &mut result, source.clone(), cut)?;
+                    }
+                }
+                for (doc, bytes) in movement.edits {
+                    if !is_deleted(&doc) {
+                        notes.apply(&tx, &mut result, doc, bytes)?;
+                    }
+                }
+                moved_sections = true;
+                applied = true;
+            }
+        }
+        for (doc, bytes) in content_entries.drain(..) {
+            if !is_deleted(&doc) {
+                notes.apply(&tx, &mut result, doc, bytes)?;
+                applied = true;
+            }
+        }
+        if !applied {
+            break;
+        }
+    }
+
+    let recoveries =
+        {
+            let mut stmt = tx.prepare(
+            "select m.doc,m.source,m.destination from sync_section_moves m order by m.rowid",
+        ).map_err(db_err)?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(db_err)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)?
+        };
+    for (id, source, destination) in recoveries {
+        if is_deleted(&destination) && is_deleted(&source) {
+            section_moves::retire(&tx, &id)?;
+        } else if is_deleted(&destination)
+            && deletions
+                .get(&destination)
+                .is_none_or(|events| events.iter().any(|observed| !observed.contains(&id)))
+        {
+            if let Some((doc, bytes)) = section_moves::recover(&tx, &id)? {
+                notes.apply(&tx, &mut result, doc, bytes)?;
+                moved_sections = true;
+            }
+        }
     }
     if moved_sections {
         section_moves::relocate_cards(&tx)?;
         result.reviews_changed = true;
     }
-    for (module, old) in worksheet_history {
+    for (module, old) in notes.worksheet_history {
         let after = crate::worksheets::load(&tx, &module)?;
         match crate::worksheets::read(&after) {
             Ok(Some(new)) => crate::worksheets::preserve_history(&old, &new)?,
@@ -1360,7 +1591,12 @@ fn apply_remote(
     }
     let mut reviews: BTreeMap<String, Vec<RemoteEntry>> = BTreeMap::new();
     for entry in review_entries {
-        reviews.entry(entry.doc.clone()).or_default().push(entry);
+        let home = entry
+            .doc
+            .strip_prefix(CARRIED_REVIEWS_PREFIX)
+            .map(review_doc_id)
+            .unwrap_or_else(|| entry.doc.clone());
+        reviews.entry(home).or_default().push(entry);
     }
     for module in transfer_reviews {
         reviews.entry(review_doc_id(&module)).or_default();
@@ -1382,7 +1618,7 @@ fn apply_remote(
     }
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
-    for module_id in &touched {
+    for module_id in &notes.touched {
         crate::asset_refs::publish_current(&tx, module_id)?;
         crate::search::invalidate_indexes(&tx, module_id)?;
     }
@@ -1408,10 +1644,13 @@ fn snapshot(conn: &Connection, doc_id: &str) -> CommandResult<Option<Vec<u8>>> {
         return Ok(Some(Vec::new()));
     }
     if doc_id.starts_with(REVIEW_PREFIX) {
+        let home = doc_id
+            .strip_prefix(CARRIED_REVIEWS_PREFIX)
+            .map(review_doc_id);
         return conn
             .query_row(
                 "select state from sync_docs where doc = ?1",
-                [doc_id],
+                [home.as_deref().unwrap_or(doc_id)],
                 |row| row.get(0),
             )
             .optional()
@@ -1628,6 +1867,15 @@ pub fn sync_outbox(
 ) -> CommandResult<Vec<OutboxEntry>> {
     let conn = db.lock()?;
     check_generation(&conn, &generation)?;
+    if !section_moves::published_transfers_supported() {
+        let has_unpublished_transfers: bool = conn.query_row(
+            "select exists(select 1 from sync_outbox where doc like 'r-move-%' and length(bytes)>0)",
+            [], |row| row.get(0),
+        ).map_err(db_err)?;
+        if has_unpublished_transfers {
+            return Err("Unpublished cross-note moves require compatible sync.".into());
+        }
+    }
     outbox(&conn, limit_bytes)
 }
 
@@ -1746,18 +1994,8 @@ pub fn sync_reconcile(data_dir: &Path, db: &Db, generation: String) -> CommandRe
     if !is_enabled(&conn)? {
         return Ok(ApplyResult::default());
     }
-    let tx = conn.transaction().map_err(db_err)?;
-    let doc = load_vault(&tx)?;
-    let (modules_changed, deleted) = reconcile(&tx, &doc)?;
-    let annotations_changed = crate::pdf_annotations::reconcile(&tx, &doc)?;
-    tx.commit().map_err(db_err)?;
-    delete_modules(&mut conn, &data_dir.join("files"), &deleted)?;
-    Ok(ApplyResult {
-        modules_changed,
-        annotations_changed,
-        deleted,
-        ..ApplyResult::default()
-    })
+    let current = cursor(&conn)?;
+    apply_remote(&mut conn, &data_dir.join("files"), Vec::new(), current)
 }
 
 #[cfg(test)]
@@ -2392,8 +2630,19 @@ mod tests {
     fn section_text(conn: &Connection, module: &str) -> String {
         let doc = crate::worksheets::load(conn, module).unwrap();
         let root = doc.get_or_insert_xml_fragment("default");
-        let text = root.get_string(&doc.transact());
-        text
+        let txn = doc.transact();
+        root.children(&txn)
+            .filter_map(|node| node.into_xml_text())
+            .map(|text| text.get_string(&txn))
+            .collect()
+    }
+
+    fn insert_test_chapter(root: &impl XmlFragment, txn: &mut yrs::TransactionMut<'_>, at: u32) {
+        use yrs::Xml;
+        let heading = root.insert(txn, at, yrs::XmlElementPrelim::empty("heading"));
+        heading.insert_attribute(txn, "level", 1);
+        heading.insert_attribute(txn, "data-toc-id", "chapter");
+        root.insert(txn, at + 1, XmlTextPrelim::new("card"));
     }
 
     struct SectionTransfer {
@@ -2412,7 +2661,14 @@ mod tests {
             let b = crate::open_db(&b_dir).unwrap();
             let source = crate::create_module(&a, "Source".into()).unwrap();
             let destination = crate::create_module(&a, "Destination".into()).unwrap();
-            crate::content::add_update(&a, source.clone(), section_text_update("card")).unwrap();
+            let doc = Doc::new();
+            let root = doc.get_or_insert_xml_fragment("default");
+            let bytes = {
+                let mut txn = doc.transact_mut();
+                insert_test_chapter(&root, &mut txn, 0);
+                txn.encode_update_v1()
+            };
+            crate::content::add_update(&a, source.clone(), bytes).unwrap();
             Self::index(&a, &source, true);
             review(&a.lock().unwrap(), "card", 1, 1000);
             enable(&mut a.lock().unwrap(), "{}").unwrap();
@@ -2445,9 +2701,17 @@ mod tests {
         }
 
         fn move_on_a(&self) {
-            let edits = {
+            self.try_move_on_a(Some(3)).unwrap();
+        }
+
+        fn try_move_on_a(&self, minimum: Option<u64>) -> CommandResult<Vec<ContentUpdate>> {
+            let (edits, restore_source) = {
                 let conn = self.a.lock().unwrap();
-                [&self.source, &self.destination].into_iter().map(|module| {
+                let source = crate::worksheets::load(&conn, &self.source).unwrap();
+                let root = source.get_or_insert_xml_fragment("default");
+                let images = crate::files::assets::note_images(&root, &source.transact());
+                let mut restore_source = None;
+                let edits = [&self.source, &self.destination].into_iter().map(|module| {
                     let (state, latest): (Vec<u8>, i64) = conn.query_row(
                         "select state, coalesce((select max(id) from contents_updates where module_id=?1),0)
                          from contents where module_id=?1",
@@ -2457,19 +2721,487 @@ mod tests {
                     let text = doc.get_or_insert_xml_fragment("default");
                     let mut txn = doc.transact_mut();
                     if module == &self.source {
-                        text.remove_range(&mut txn, 0, 1);
+                        let length = text.len(&txn);
+                        text.remove_range(&mut txn, 0, length);
                     } else {
                         let end = text.len(&txn);
-                        text.insert(&mut txn, end, XmlTextPrelim::new("card"));
+                        insert_test_chapter(&text, &mut txn, end);
+                        append_test_images(&text, &mut txn, &images);
+                    }
+                    let bytes = txn.encode_update_v1();
+                    drop(txn);
+                    if module == &self.source {
+                        let mut txn = doc.transact_mut();
+                        insert_test_chapter(&text, &mut txn, 0);
+                        append_test_images(&text, &mut txn, &images);
+                        restore_source = Some(txn.encode_update_v1());
                     }
                     serde_json::from_value(serde_json::json!({
                         "moduleId": module, "expectedState": state, "expectedUpdateId": latest,
-                        "bytes": txn.encode_update_v1()
+                        "bytes": bytes
                     })).unwrap()
-                }).collect()
+                }).collect();
+                (edits, restore_source)
             };
-            crate::section_moves::move_section(&self.a, edits, vec!["card".into()]).unwrap();
+            let cards = vec!["card".into()];
+            let headings = vec!["chapter".into()];
+            if let Some(minimum) = minimum {
+                crate::section_moves::move_section_at_protocol(
+                    &self.a,
+                    edits,
+                    cards,
+                    headings,
+                    restore_source,
+                    minimum,
+                )
+            } else {
+                crate::section_moves::move_section(&self.a, edits, cards, headings, restore_source)
+            }
         }
+    }
+
+    fn append_test_images(
+        root: &impl XmlFragment,
+        txn: &mut yrs::TransactionMut<'_>,
+        images: &HashSet<String>,
+    ) {
+        use yrs::Xml;
+        for id in images {
+            let image = root.push_back(txn, yrs::XmlElementPrelim::empty("image"));
+            image.insert_attribute(txn, "fileId", id.as_str());
+        }
+    }
+
+    #[test]
+    fn released_protocol_blocks_cross_note_moves_before_either_note_is_written() {
+        let pair = SectionTransfer::new();
+        let err = pair.try_move_on_a(None).unwrap_err();
+        assert!(err.contains("newer sync service"));
+        let conn = pair.a.lock().unwrap();
+        assert_eq!(section_text(&conn, &pair.source), "card");
+        assert!(section_text(&conn, &pair.destination).is_empty());
+        assert!(outbox(&conn, i64::MAX).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_stale_source_delete_cannot_tombstone_the_moved_image() {
+        let mut pair = SectionTransfer::new();
+        let image = crate::save_file(
+            &pair.a.data_dir,
+            &pair.a,
+            pair.source.clone(),
+            b"image".to_vec(),
+            "image/png".into(),
+        )
+        .unwrap();
+        let bytes = {
+            let doc = crate::worksheets::load(&pair.a.lock().unwrap(), &pair.source).unwrap();
+            let root = doc.get_or_insert_xml_fragment("default");
+            let mut txn = doc.transact_mut();
+            append_test_images(&root, &mut txn, &HashSet::from([image.id.clone()]));
+            txn.encode_update_v1()
+        };
+        crate::content::add_update(&pair.a, pair.source.clone(), bytes).unwrap();
+        transfer(
+            &pair.a.lock().unwrap(),
+            &mut pair.b.lock().unwrap(),
+            &mut pair.seq,
+        );
+        store_file(
+            &pair.b.lock().unwrap(),
+            &pair.b.data_dir.join("files"),
+            &image.id,
+            &pair.source,
+            "image/png",
+            b"image",
+        )
+        .unwrap();
+        pair.move_on_a();
+        let copied = {
+            let conn = pair.a.lock().unwrap();
+            let doc = crate::worksheets::load(&conn, &pair.destination).unwrap();
+            let root = doc.get_or_insert_xml_fragment("default");
+            let ids = crate::files::assets::note_images(&root, &doc.transact());
+            assert_eq!(ids.len(), 1);
+            let copy = ids.into_iter().next().unwrap();
+            assert_ne!(copy, image.id);
+            copy
+        };
+        crate::delete_module(&pair.b.data_dir, &pair.b, pair.source.clone()).unwrap();
+        let stale_deletes = pair.b.lock().unwrap();
+        assert!(stale_deletes
+            .query_row(
+                "select exists(select 1 from sync_file_deletes where file_id=?1)",
+                [&image.id],
+                |r| r.get::<_, bool>(0)
+            )
+            .unwrap());
+        drop(stale_deletes);
+        transfer(
+            &pair.b.lock().unwrap(),
+            &mut pair.a.lock().unwrap(),
+            &mut pair.seq,
+        );
+        transfer(
+            &pair.a.lock().unwrap(),
+            &mut pair.b.lock().unwrap(),
+            &mut pair.seq,
+        );
+        let missing = missing_files(&pair.b.lock().unwrap()).unwrap();
+        assert!(missing
+            .iter()
+            .any(|file| file.file_id == copied && file.module_id == pair.destination));
+        let local =
+            crate::read_file(&pair.a.data_dir, &pair.a, pair.destination.clone(), copied).unwrap();
+        assert_eq!(
+            serde_json::to_value(local).unwrap()["bytes"],
+            serde_json::json!(b"image")
+        );
+    }
+
+    #[test]
+    fn a_concurrent_offline_edit_has_one_recovery_copy_and_only_one_card_owner() {
+        let mut pair = SectionTransfer::new();
+        let offline_edit = {
+            let doc = crate::worksheets::load(&pair.b.lock().unwrap(), &pair.source).unwrap();
+            let root = doc.get_or_insert_xml_fragment("default");
+            let mut txn = doc.transact_mut();
+            let text = root.get(&txn, 1).unwrap().into_xml_text().unwrap();
+            text.insert(&mut txn, 4, " edited offline");
+            root.insert(&mut txn, 2, XmlTextPrelim::new(" with a new block"));
+            txn.encode_update_v1()
+        };
+        crate::content::add_update(&pair.b, pair.source.clone(), offline_edit).unwrap();
+        pair.move_on_a();
+        transfer(
+            &pair.a.lock().unwrap(),
+            &mut pair.b.lock().unwrap(),
+            &mut pair.seq,
+        );
+        transfer(
+            &pair.b.lock().unwrap(),
+            &mut pair.a.lock().unwrap(),
+            &mut pair.seq,
+        );
+        for db in [&pair.a, &pair.b] {
+            let copy: String = {
+                let conn = db.lock().unwrap();
+                let copies = conn
+                    .prepare("select id from modules where name = 'Recovered chapter from Source'")
+                    .unwrap()
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap();
+                assert_eq!(copies.len(), 1);
+                assert_eq!(
+                    section_text(&conn, &copies[0]),
+                    "card edited offline with a new block"
+                );
+                assert_eq!(
+                    section_text(&conn, &pair.source),
+                    "",
+                    "source on {}",
+                    db.data_dir.display()
+                );
+                assert_eq!(section_text(&conn, &pair.destination), "card");
+                copies[0].clone()
+            };
+            SectionTransfer::index(db, &copy, true);
+            SectionTransfer::index(db, &pair.destination, true);
+            let conn = db.lock().unwrap();
+            assert_eq!(reps(&conn, "card"), 1);
+            let owner: String = conn
+                .query_row("select module_id from cards where id='card'", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(owner, pair.destination);
+        }
+    }
+
+    #[test]
+    fn concurrent_destination_delete_restores_the_same_section_on_both_devices() {
+        for deletion_arrives_first in [true, false] {
+            let mut pair = SectionTransfer::new();
+            pair.move_on_a();
+            crate::delete_module(&pair.b.data_dir, &pair.b, pair.destination.clone()).unwrap();
+            if deletion_arrives_first {
+                transfer(
+                    &pair.b.lock().unwrap(),
+                    &mut pair.a.lock().unwrap(),
+                    &mut pair.seq,
+                );
+            }
+            transfer(
+                &pair.a.lock().unwrap(),
+                &mut pair.b.lock().unwrap(),
+                &mut pair.seq,
+            );
+            if !deletion_arrives_first {
+                transfer(
+                    &pair.b.lock().unwrap(),
+                    &mut pair.a.lock().unwrap(),
+                    &mut pair.seq,
+                );
+            }
+            for db in [&pair.a, &pair.b] {
+                SectionTransfer::index(db, &pair.source, true);
+                let conn = db.lock().unwrap();
+                assert_eq!(section_text(&conn, &pair.source), "card");
+                assert!(!module_exists(&conn, &pair.destination).unwrap());
+                assert_eq!(reps(&conn, "card"), 1);
+                assert_eq!(log_count(&conn), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_the_destination_after_observing_the_move_does_not_restore_the_chapter() {
+        let mut pair = SectionTransfer::new();
+        pair.move_on_a();
+        transfer(
+            &pair.a.lock().unwrap(),
+            &mut pair.b.lock().unwrap(),
+            &mut pair.seq,
+        );
+        crate::delete_module(&pair.b.data_dir, &pair.b, pair.destination.clone()).unwrap();
+        transfer(
+            &pair.b.lock().unwrap(),
+            &mut pair.a.lock().unwrap(),
+            &mut pair.seq,
+        );
+        let conn = pair.a.lock().unwrap();
+        assert!(!module_exists(&conn, &pair.destination).unwrap());
+        assert!(section_text(&conn, &pair.source).is_empty());
+    }
+
+    fn transfer_entry(pair: &SectionTransfer) -> OutboxEntry {
+        outbox(&pair.a.lock().unwrap(), i64::MAX)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.doc.starts_with(section_moves::SYNC_PREFIX))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_transfer_waits_for_note_history_before_persisting_its_cut() {
+        let pair = SectionTransfer::new();
+        let (fresh_dir, mut fresh) = db();
+        enable(&mut fresh, "{}").unwrap();
+        let vault = snapshot(&pair.a.lock().unwrap(), VAULT_DOC)
+            .unwrap()
+            .unwrap();
+        let source = snapshot(&pair.a.lock().unwrap(), &pair.source)
+            .unwrap()
+            .unwrap();
+        let prerequisite = section_text_update("Destination prefix");
+        crate::content::add_update(&pair.a, pair.destination.clone(), prerequisite.clone())
+            .unwrap();
+        pair.move_on_a();
+        let movement = transfer_entry(&pair);
+        let pull = |conn: &mut Connection, seq, doc, bytes| {
+            apply_remote(
+                conn,
+                &fresh_dir.join("files"),
+                vec![RemoteEntry { seq, doc, bytes }],
+                seq,
+            )
+            .unwrap()
+        };
+        pull(&mut fresh, 1, VAULT_DOC.into(), vault);
+        assert!(pull(&mut fresh, 2, movement.doc, movement.bytes)
+            .updates
+            .is_empty());
+        assert!(pull(&mut fresh, 3, pair.source.clone(), source)
+            .updates
+            .iter()
+            .all(|u| u.module_id == pair.source));
+        assert_eq!(section_text(&fresh, &pair.source), "card");
+        let updates = pull(&mut fresh, 4, pair.destination.clone(), prerequisite).updates;
+        let source_update = updates.iter().find(|u| u.module_id == pair.source).unwrap();
+        assert!(section_text(&fresh, &pair.source).is_empty());
+        assert_eq!(
+            section_text(&fresh, &pair.destination),
+            "Destination prefixcard"
+        );
+        drop(fresh);
+        let db = crate::open_db(&fresh_dir).unwrap();
+        crate::save_compaction(&db, pair.source, Vec::new(), source_update.update.id).unwrap();
+    }
+
+    #[test]
+    fn destination_snapshot_before_the_source_prerequisite_keeps_the_card_id() {
+        let mut pair = SectionTransfer::new();
+        let prerequisite = section_text_update("Late source history");
+        crate::content::add_update(&pair.a, pair.source.clone(), prerequisite.clone()).unwrap();
+        pair.move_on_a();
+        let movement = transfer_entry(&pair);
+        let destination = snapshot(&pair.a.lock().unwrap(), &pair.destination).unwrap();
+        // An acknowledged move may be embedded in a later compacted snapshot
+        // of the destination, while the source prerequisite is in another frame.
+        assert_eq!(destination, Some(Vec::new()));
+        pair.a
+            .lock()
+            .unwrap()
+            .execute("delete from sync_outbox", [])
+            .unwrap();
+        let destination = snapshot(&pair.a.lock().unwrap(), &pair.destination)
+            .unwrap()
+            .unwrap();
+        for (doc, bytes) in [
+            (movement.doc, movement.bytes),
+            (pair.destination.clone(), destination),
+        ] {
+            pair.seq += 1;
+            apply_remote(
+                &mut pair.b.lock().unwrap(),
+                &pair.b.data_dir.join("files"),
+                vec![RemoteEntry {
+                    seq: pair.seq,
+                    doc,
+                    bytes,
+                }],
+                pair.seq,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            section_text(&pair.b.lock().unwrap(), &pair.destination),
+            "card"
+        );
+        SectionTransfer::index(&pair.b, &pair.destination, true);
+        pair.seq += 1;
+        apply_remote(
+            &mut pair.b.lock().unwrap(),
+            &pair.b.data_dir.join("files"),
+            vec![RemoteEntry {
+                seq: pair.seq,
+                doc: pair.source.clone(),
+                bytes: prerequisite,
+            }],
+            pair.seq,
+        )
+        .unwrap();
+        let conn = pair.b.lock().unwrap();
+        assert!(section_text(&conn, &pair.source).is_empty());
+        assert_eq!(reps(&conn, "card"), 1);
+        let owner: String = conn
+            .query_row("select module_id from cards where id='card'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(owner, pair.destination);
+    }
+
+    #[test]
+    fn upgrade_applies_a_move_cached_as_a_review_past_the_cursor() {
+        let pair = SectionTransfer::new();
+        pair.move_on_a();
+        let movement = transfer_entry(&pair);
+        {
+            let conn = pair.b.lock().unwrap();
+            conn.execute(
+                "insert into sync_docs(doc,state) values (?1,?2)",
+                params![movement.doc, movement.bytes],
+            )
+            .unwrap();
+            set_value(&conn, "cursor", 100).unwrap();
+            // Open the database at the schema the released client left behind.
+            let version: i64 = conn
+                .query_row("pragma user_version", [], |r| r.get(0))
+                .unwrap();
+            conn.pragma_update(None, "user_version", version - 1)
+                .unwrap();
+        }
+        let upgraded = crate::open_db(&pair.b.data_dir).unwrap();
+        let generation = generation(&upgraded.lock().unwrap()).unwrap();
+        let result = sync_reconcile(&upgraded.data_dir, &upgraded, generation).unwrap();
+        assert_eq!(result.updates.len(), 2);
+        let conn = upgraded.lock().unwrap();
+        assert_eq!(cursor(&conn).unwrap(), 100);
+        assert!(section_text(&conn, &pair.source).is_empty());
+        assert_eq!(section_text(&conn, &pair.destination), "card");
+    }
+
+    #[test]
+    fn fresh_device_keeps_moved_card_history_after_a_legacy_source_drop() {
+        let mut pair = SectionTransfer::new();
+        pair.move_on_a();
+        let (fresh_dir, _) = db();
+        let fresh = crate::open_db(&fresh_dir).unwrap();
+        enable(&mut fresh.lock().unwrap(), "{}").unwrap();
+        let vault = snapshot(&pair.a.lock().unwrap(), VAULT_DOC)
+            .unwrap()
+            .unwrap();
+        crate::delete_module(&pair.b.data_dir, &pair.b, pair.source.clone()).unwrap();
+        let legacy_drop = outbox(&pair.b.lock().unwrap(), i64::MAX).unwrap();
+        assert!(legacy_drop
+            .iter()
+            .any(|entry| entry.doc == review_doc_id(&pair.source) && entry.bytes.is_empty()));
+        let mut replay = vec![(VAULT_DOC.into(), vault)];
+        replay.extend(
+            legacy_drop
+                .into_iter()
+                .filter(|e| e.doc == VAULT_DOC)
+                .map(|e| (e.doc, e.bytes)),
+        );
+        replay.extend(
+            outbox(&pair.a.lock().unwrap(), i64::MAX)
+                .unwrap()
+                .into_iter()
+                .filter(|e| {
+                    e.doc == carried_reviews_id(&pair.source)
+                        || e.doc.starts_with(section_moves::SYNC_PREFIX)
+                })
+                .map(|e| (e.doc, e.bytes)),
+        );
+        let entries = replay
+            .into_iter()
+            .map(|(doc, bytes)| {
+                pair.seq += 1;
+                RemoteEntry {
+                    seq: pair.seq,
+                    doc,
+                    bytes,
+                }
+            })
+            .collect();
+        apply_remote(
+            &mut fresh.lock().unwrap(),
+            &fresh_dir.join("files"),
+            entries,
+            pair.seq,
+        )
+        .unwrap();
+        SectionTransfer::index(&fresh, &pair.destination, true);
+        let conn = fresh.lock().unwrap();
+        assert!(!module_exists(&conn, &pair.source).unwrap());
+        assert_eq!(section_text(&conn, &pair.destination), "card");
+        assert_eq!(reps(&conn, "card"), 1);
+        assert_eq!(log_count(&conn), 1);
+    }
+
+    #[test]
+    fn deleting_both_notes_removes_the_transfer_payload_and_queues_a_cloud_drop() {
+        let pair = SectionTransfer::new();
+        pair.move_on_a();
+        let movement = transfer_entry(&pair);
+        for module in [pair.source, pair.destination] {
+            crate::delete_module(&pair.a.data_dir, &pair.a, module).unwrap();
+        }
+        let conn = pair.a.lock().unwrap();
+        let updates = outbox(&conn, i64::MAX).unwrap();
+        assert!(updates
+            .iter()
+            .any(|entry| entry.doc == movement.doc && entry.bytes.is_empty()));
+        assert!(updates
+            .iter()
+            .all(|entry| entry.doc != movement.doc || entry.bytes.is_empty()));
+        let stored: i64 = conn
+            .query_row("select count(*) from sync_section_moves", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored, 0);
     }
 
     #[test]

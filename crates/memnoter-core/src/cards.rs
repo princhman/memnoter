@@ -211,6 +211,21 @@ fn sync_module_cards(
     {
         return Ok(Vec::new());
     }
+    if tx
+        .query_row(
+            "select exists(select 1 from section_conflict_notes where module_id=?1)",
+            [module_id],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(db_err)?
+    {
+        tx.execute(
+            "insert or ignore into card_indexed_modules(module_id) values (?1)",
+            [module_id],
+        )
+        .map_err(db_err)?;
+        return Ok(Vec::new());
+    }
     let mut conflicts = Vec::new();
     let mut unavailable = Vec::new();
     {
@@ -265,7 +280,20 @@ fn sync_module_cards(
                 ])
                 .map_err(db_err)?;
             if changed == 0 {
-                conflicts.push(card.id.clone());
+                let moving: bool = tx
+                    .query_row(
+                        "select exists(select 1 from pending_section_cards p
+                      join cards c on c.id=p.card_id and c.module_id=p.source
+                      where p.destination=?1 and p.card_id=?2)",
+                        params![module_id, card.id],
+                        |r| r.get(0),
+                    )
+                    .map_err(db_err)?;
+                if moving {
+                    unavailable.push(card.id.clone());
+                } else {
+                    conflicts.push(card.id.clone());
+                }
             }
         }
     }
