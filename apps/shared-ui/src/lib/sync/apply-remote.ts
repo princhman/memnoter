@@ -52,6 +52,7 @@ function scheduleReindex(moduleId: string) {
 
 export function onRemote(result: ApplyResult) {
   refreshPdfAnnotations(result.annotationsChanged ?? []);
+  if (result.updates.length) void queryClient.invalidateQueries({ queryKey: ["heading-destinations"] });
   for (const { moduleId, update } of result.updates) {
     // The same path as a local save: an open editor applies the update from
     // the cache, and compaction then includes it.

@@ -7,6 +7,7 @@ import { Extension, type Editor } from "@tiptap/core";
 import { PluginKey } from "@tiptap/pm/state";
 import Suggestion, { type SuggestionProps } from "@tiptap/suggestion";
 import { useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { createStore } from "@tanstack/react-store";
 import { getFoldedRanges, getFoldedIds } from "@/lib/heading-fold";
@@ -16,6 +17,7 @@ import { useMentionNotes } from "@/lib/use-mentions";
 import { useDocuments } from "@/lib/use-documents";
 import { backlinks, mentionLabel } from "@/lib/mention-index";
 import { InsertMenu, type InsertMenuHandle, type InsertItem } from "./insert-menu";
+import { call } from "@/lib/backend";
 
 const Context = createContext<ReturnType<typeof useMentionNotes> & { files: { id: string; name: string }[] } | null>(null);
 export function MentionProvider({ children }: { children: ReactNode }) {
@@ -69,8 +71,18 @@ function MentionChip({ node }: NodeViewProps) {
   const catalog = useCatalog();
   const open = useOpenReference();
   const target = mentionTarget(node.attrs.target);
-  const label = target ? mentionLabel(catalog.notes, catalog.files, target) : undefined;
-  return <NodeViewWrapper as="span" className="mention-chip" contentEditable={false}><button type="button" onMouseDown={event => event.preventDefault()} onClick={() => target && open(target)} title={label ?? "Reference unavailable"}>@{label ?? (catalog.loading ? "Loading…" : "Reference unavailable")}</button></NodeViewWrapper>;
+  const originalLabel = target ? mentionLabel(catalog.notes, catalog.files, target) : undefined;
+  const missingHeading = target?.kind === "heading" && target.nodeId && !originalLabel ? target : null;
+  const { data: destinations } = useQuery({
+    queryKey: ["heading-destinations", target?.id, target?.nodeId],
+    queryFn: () => missingHeading ? call<string[]>("heading_destinations", { moduleId: missingHeading.id, headingId: missingHeading.nodeId }) : [],
+    enabled: !!missingHeading && !catalog.loading,
+  });
+  const destination = missingHeading && destinations?.map(id => ({ ...missingHeading, id }))
+    .find(candidate => mentionLabel(catalog.notes, catalog.files, candidate));
+  const resolved = destination || target;
+  const label = destination ? mentionLabel(catalog.notes, catalog.files, destination) : originalLabel;
+  return <NodeViewWrapper as="span" className="mention-chip" contentEditable={false}><button type="button" onMouseDown={event => event.preventDefault()} onClick={() => resolved && open(resolved)} title={label ?? "Reference unavailable"}>@{label ?? (catalog.loading ? "Loading…" : "Reference unavailable")}</button></NodeViewWrapper>;
 }
 export const MentionView = Mention.extend({ addNodeView: () => ReactNodeViewRenderer(MentionChip) });
 

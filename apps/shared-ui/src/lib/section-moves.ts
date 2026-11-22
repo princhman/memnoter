@@ -17,6 +17,51 @@ import { onRemote } from "./sync/apply-remote";
 export type SectionSource = { moduleId: string; headingId: string };
 export type SectionDestination = { moduleId: string; headingId?: string; edge: "before" | "after" | "end" };
 
+function headingIdsIn(node: Y.XmlElement | Y.XmlText | Y.XmlHook): string[] {
+  if (!(node instanceof Y.XmlElement)) return [];
+  const id = node.nodeName === "heading" ? node.getAttribute("data-toc-id") : undefined;
+  return [...(typeof id === "string" && id ? [id] : []), ...node.toArray().flatMap(headingIdsIn)];
+}
+
+function forgetSectionUndo(editor: Editor, headingId: string) {
+  const manager: Y.UndoManager | undefined = yUndoPluginKey.getState(editor.state)?.undoManager;
+  if (!manager) return;
+  const root = manager.doc.getXmlFragment("default");
+  const section = root.toArray().find(node => node instanceof Y.XmlElement &&
+    node.nodeName === "heading" && node.getAttribute("data-toc-id") === headingId);
+  if (!section?._item) return;
+  const moved = new Set<Y.Item>();
+  // Include already-deleted sibling blocks in this range. They still exist
+  // in the live undo manager and could otherwise be restored in the source.
+  for (let item: Y.Item | null = section._item; item; item = item.right) {
+    const [node] = item.content.getContent();
+    if (item !== section._item && !item.deleted && node instanceof Y.XmlElement &&
+      node.nodeName === "heading" && Number(node.getAttribute("level")) === 1) break;
+    moved.add(item);
+  }
+  const outsideSection = (stack: Y.UndoManager["undoStack"]) => {
+    return stack.filter(entry => {
+      let touchesSection = false;
+      const inspect = (struct: Y.AbstractStruct) => {
+        if (!(struct instanceof Y.Item)) return;
+        let item = struct;
+        while (item.parent instanceof Y.AbstractType && item.parent._item) {
+          item = item.parent._item;
+        }
+        touchesSection ||= moved.has(item);
+      };
+      manager.doc.transact(transaction => {
+        Y.iterateDeletedStructs(transaction, entry.insertions, inspect);
+        Y.iterateDeletedStructs(transaction, entry.deletions, inspect);
+      });
+      return !touchesSection;
+    });
+  };
+  manager.undoStack = outsideSection(manager.undoStack);
+  manager.redoStack = outsideSection(manager.redoStack);
+  manager.stopCapturing();
+}
+
 function reorderOpen(editor: Editor, source: SectionSource, target: SectionDestination) {
   assertWritable();
   const headings = outline(editor.state.doc);
@@ -84,9 +129,13 @@ export async function moveSidebarSection(source: SectionSource, target: SectionD
         if (target.edge === "after") { at++; while (at < targetNodes.length && !isH1(targetNodes[at])) at++; }
       }
       if (targetIndex === 0 && at >= start && at <= end) return;
-      const moved = sourceNodes.slice(start, end).map(node => node.clone()) as (Y.XmlElement | Y.XmlText)[];
+      const section = sourceNodes.slice(start, end);
+      const moved = section.map(node => node.clone()) as (Y.XmlElement | Y.XmlText)[];
+      const headingIds = section.flatMap(headingIdsIn);
       const schema = getSchema(noteExtensions({ document: docs[0] }));
       const previousCards = extractCards(schema.nodeFromJSON(yDocToProsemirrorJSON(docs[0], "default")));
+      let cut: number[] | undefined;
+      if (targetIndex !== 0) docs[0].once("update", update => { cut = Array.from(update); });
       docs[0].transact(() => roots[0].delete(start, end - start));
       if (targetIndex === 0 && at > end) at -= end - start;
       docs[targetIndex].transact(() => targetRoot.insert(at, moved));
@@ -95,13 +144,16 @@ export async function moveSidebarSection(source: SectionSource, target: SectionD
       const edits = ids.map((moduleId, index) => ({
         moduleId, expectedState: saved[index].state,
         expectedUpdateId: Math.max(0, ...saved[index].updates.map(update => update.id)),
-        bytes: Array.from(Y.encodeStateAsUpdate(docs[index], before[index])),
+        bytes: index === 0 && cut ? cut : Array.from(Y.encodeStateAsUpdate(docs[index], before[index])),
       }));
-      const receipts = await call<ContentUpdate[]>("move_note_section", { edits, cardIds });
-      // Source history can resurrect transferred content. The recipient's
-      // existing history cannot touch the newly inserted Yjs nodes.
-      if (active?.moduleId === source.moduleId && !active.editor.isDestroyed) {
-        yUndoPluginKey.getState(active.editor.state)?.undoManager.clear();
+      let restoreSource: number[] | null = null;
+      if (targetIndex !== 0) {
+        docs[0].once("update", update => { restoreSource = Array.from(update); });
+        roots[0].insert(start, moved.map(node => node.clone()));
+      }
+      const receipts = await call<ContentUpdate[]>("move_note_section", { edits, cardIds, headingIds, restoreSource });
+      if (targetIndex !== 0 && active?.moduleId === source.moduleId && !active.editor.isDestroyed) {
+        forgetSectionUndo(active.editor, source.headingId);
       }
       for (let i = 0; i < ids.length; i++) {
         appendSavedUpdate(ids[i], receipts[i]);

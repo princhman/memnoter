@@ -55,7 +55,7 @@ before(async () => {
   archive = await createModule("Archive", ["Reference"]);
   server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   await server.listen();
-  browser = await chromium.launch();
+  browser = await chromium.launch({ slowMo: process.env.PROOF_DIR ? 60 : 0 });
 });
 
 after(async () => {
@@ -68,8 +68,11 @@ after(async () => {
   }
 });
 
-async function openNote(moduleId, { sections = false } = {}) {
-  const page = await browser.newPage({ viewport: { width: 1150, height: 750 } });
+async function openNote(moduleId, { sections = false, proof = false } = {}) {
+  const page = await browser.newPage({
+    viewport: { width: 1150, height: 750 },
+    recordVideo: proof && process.env.PROOF_DIR ? { dir: process.env.PROOF_DIR } : undefined,
+  });
   page.setDefaultTimeout(8000);
   page.on("pageerror", error => console.error(error));
   await page.context().route("https://api.github.com/repos/princhman/memnoter/releases/latest",
@@ -123,7 +126,17 @@ test("the New section shortcut still focuses the new sibling with sidebar sectio
 });
 
 test("numbered chapters match in the sidebar and editor after dragging out and back", async () => {
-  const page = await openNote(course, { sections: true });
+  const referenceModule = await call("create_module", { name: "Study plan" });
+  const referenceDoc = new Y.Doc();
+  const paragraph = new Y.XmlElement("paragraph");
+  const mention = new Y.XmlElement("mention");
+  mention.setAttribute("target", { kind: "heading", id: course, nodeId: "Computing-2", locator: null });
+  mention.setAttribute("mentionId", "link-to-algorithms");
+  paragraph.insert(0, [mention]);
+  referenceDoc.getXmlFragment("default").insert(0, [paragraph]);
+  await call("add_update", { moduleId: referenceModule, bytes: Array.from(Y.encodeStateAsUpdate(referenceDoc)) });
+  referenceDoc.destroy();
+  const page = await openNote(course, { sections: true, proof: true });
   const computing = page.getByRole("list", { name: "Sections of Computing" });
   const archived = page.getByRole("list", { name: "Sections of Archive" });
   const module = name => page.getByRole("link", { name, exact: true });
@@ -146,6 +159,7 @@ test("numbered chapters match in the sidebar and editor after dragging out and b
   }
 
   const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const pauseForProof = () => process.env.PROOF_DIR ? page.waitForTimeout(900) : Promise.resolve();
   async function pickUp(row) {
     const box = await row.boundingBox();
     const x = box.x + box.width / 2;
@@ -171,20 +185,31 @@ test("numbered chapters match in the sidebar and editor after dragging out and b
 
   try {
     await checkNumbers(computing, initial);
+    const introduction = page.locator(".tiptap > p").first();
+    await introduction.click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" Remember the source.", { delay: process.env.PROOF_DIR ? 45 : 0 });
     assert.equal(await archived.count(), 0);
     await pickUp(computing.getByRole("button", { name: "3 Algorithms", exact: true }));
     await hoverRow(module("Archive"));
     const reference = archived.getByRole("button", { name: "1 Reference", exact: true });
     await reference.waitFor();
     await hoverRow(reference, 0.8);
+    await pauseForProof();
     await page.mouse.up();
     await checkNumbers(computing, remaining);
+    await pauseForProof();
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    assert.equal(await introduction.textContent(), "Notes for Introduction.");
+    await checkNumbers(computing, remaining);
 
-    await openModule("Archive");
+    await openModule("Study plan");
+    await pauseForProof();
+    await page.getByRole("button", { name: "@Archive › Algorithms", exact: true }).click();
     await checkNumbers(archived, ["1 Reference", "2 Algorithms"]);
+    await pauseForProof();
 
     await openModule("Computing");
-    const introduction = page.locator(".tiptap > p").first();
     await introduction.click();
     await page.keyboard.press("End");
     await page.keyboard.type(" Remember this.");
