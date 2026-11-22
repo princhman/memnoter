@@ -151,7 +151,7 @@ struct ReviewView: View {
                     Text("Show answer").font(.system(size: 14, weight: .medium))
                         .frame(maxWidth: .infinity).frame(height: 48)
                         .foregroundStyle(Color(uiColor: .systemBackground))
-                        .background(Color.primary, in: RoundedRectangle(cornerRadius: 12))
+                        .background(Color("BrandAccent"), in: RoundedRectangle(cornerRadius: 12))
                 }.keyboardShortcut(.space, modifiers: [])
             }
         }
