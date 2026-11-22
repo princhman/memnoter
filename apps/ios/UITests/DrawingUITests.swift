@@ -13,7 +13,10 @@ final class DrawingUITests: XCTestCase {
         XCTAssertTrue(field.existsOrWait(timeout: 5))
         field.tap(); field.typeText("Drawing save regression")
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.webViews.textViews.firstMatch.existsOrWait(timeout: 15))
+        let editor = app.webViews.textViews.firstMatch
+        let editable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: editor)
+        // A cold WebKit process can take longer to mount the editor on CI.
+        XCTAssertEqual(XCTWaiter.wait(for: [editable], timeout: 60), .completed, "The new note's editor must become ready")
         let actions = app.buttons["Note actions"]
         XCTAssertTrue(actions.existsOrWait(timeout: 5))
         actions.tap()
@@ -33,8 +36,7 @@ final class DrawingUITests: XCTestCase {
         canvas.swipeUp()
         app.buttons["Done"].tap()
         XCTAssertTrue(actions.existsOrWait(timeout: 10), "Done must finish and return to the note")
-        let drawing = app.webViews.images["Drawing"].firstMatch
-        XCTAssertTrue(drawing.existsOrWait(timeout: 10), "The saved drawing must be embedded")
+        let drawing = waitForDrawingPreview(in: app, timeout: 30, message: "The saved drawing preview must be ready to tap")
         drawing.tap()
         let imageActions = app.webViews.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Image actions")).firstMatch
         let edit = app.webViews.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Edit drawing")).firstMatch
@@ -59,13 +61,26 @@ final class DrawingUITests: XCTestCase {
         XCTAssertTrue(actions.existsOrWait(timeout: 10))
         XCTAssertFalse(imageActions.exists, "Close must also return without an image selection")
         app.terminate(); app.launch()
-        XCTAssertTrue(drawing.existsOrWait(timeout: 15))
-        drawing.tap()
-        XCTAssertTrue(imageActions.existsOrWait(timeout: 5)); imageActions.tap()
-        XCTAssertTrue(edit.existsOrWait(timeout: 5)); edit.tap()
+        // A relaunch replaces the WebKit process and its accessibility elements.
+        let restoredDrawing = waitForDrawingPreview(in: app, timeout: 60, message: "Relaunch must restore the note and its drawing preview")
+        restoredDrawing.tap()
+        let restoredActions = app.webViews.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Image actions")).firstMatch
+        XCTAssertTrue(restoredActions.existsOrWait(timeout: 5)); restoredActions.tap()
+        let restoredEdit = app.webViews.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Edit drawing")).firstMatch
+        XCTAssertTrue(restoredEdit.existsOrWait(timeout: 5)); restoredEdit.tap()
         XCTAssertTrue(app.buttons["Done"].existsOrWait(timeout: 10))
         XCTAssertTrue(app.buttons["Blue ink"].isSelected, "Ink preference must survive app relaunch")
         app.buttons["Done"].tap()
         XCTAssertTrue(actions.existsOrWait(timeout: 10))
+    }
+
+    @MainActor private func waitForDrawingPreview(in app: XCUIApplication, timeout: TimeInterval, message: String,
+                                                  file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let drawing = app.webViews.images["Drawing"].firstMatch
+        let updating = app.webViews.staticTexts["Updating drawing…"].firstMatch
+        let ready = NSPredicate { _, _ in drawing.exists && !updating.exists && drawing.isHittable }
+        let preview = XCTNSPredicateExpectation(predicate: ready, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [preview], timeout: timeout), .completed, message, file: file, line: line)
+        return drawing
     }
 }
