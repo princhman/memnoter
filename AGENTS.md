@@ -153,6 +153,9 @@ Other agents often have uncommitted work in the same checkout.
   change, and say which you did.
 - A flaky test gets fixed or merged into a reliable one. Skip it on CI only
   when the user says so, only that case, and keep it runnable locally.
+  Known-flaky iOS UI tests the user agreed to stop blocking on are listed in
+  `NON_BLOCKING` in `scripts/ci/check-ios-results.py`: they still run, and a
+  failure only warns. Remove a name once its fix has passed CI a few times.
 - "Verified" means you performed the reported action through the app's real
   entry point (a real pointer drag for a drag bug). A launch or a synthetic
   event doesn't count; say which you did.

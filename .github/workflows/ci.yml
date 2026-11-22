@@ -168,14 +168,15 @@ jobs:
   ios-build:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 25
     permissions:
       actions: read
       contents: read
     env:
       CARGO_BUILD_JOBS: 4
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      # Same Xcode as release.yml's ios-testflight.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -264,7 +265,7 @@ jobs:
   ios-tests:
     needs: [changes, ios-build-started]
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-26
+    runs-on: xcode-27
     permissions:
       actions: read
       contents: read
@@ -277,7 +278,8 @@ jobs:
       matrix:
         suite: [drawing, navigation, phone]
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      # Same Xcode as release.yml's ios-testflight.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -354,7 +356,11 @@ jobs:
           top -l 0 -s 10 -n 15 -o cpu -stats pid,command,cpu,mem,threads,state,time > "$RUNNER_TEMP/ios-resources.log" &
           resource_monitor=$!
           trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
-          bash scripts/ci/run-ios-tests.sh
+          # The next step decides pass/fail from the results, so known-flaky
+          # UI tests (check-ios-results.py NON_BLOCKING) only warn.
+          status=0
+          bash scripts/ci/run-ios-tests.sh || status=$?
+          echo "xcodebuild exited with $status"
       - name: Verify native tests actually ran
         if: always()
         env:

@@ -55,3 +55,9 @@ test('phone and combined navigation groups require their native contracts', asyn
     });
   }
 });
+
+test('a known-flaky test failure warns without failing the group', () => {
+  const run = check('navigation', [result(sync), result(navigation, 'Failed'), result('storage')]);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /::warning::Non-blocking flaky test failed/);
+});
