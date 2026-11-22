@@ -32,7 +32,8 @@
     "patchedDependencies": {
       "@tanstack/history@1.162.0": "patches/@tanstack__history@1.162.0.patch",
       "@tiptap/y-tiptap@3.0.6": "patches/@tiptap__y-tiptap@3.0.6.patch",
-      "@tiptap/extension-details@3.29.2": "patches/@tiptap__extension-details@3.29.2.patch"
+      "@tiptap/extension-details@3.29.2": "patches/@tiptap__extension-details@3.29.2.patch",
+      "prosemirror-view@1.41.9": "patches/prosemirror-view@1.41.9.patch"
     }
   }
 }

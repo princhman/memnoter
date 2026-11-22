@@ -246,6 +246,22 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-tablet [data-slot="dropdown-menu-content"] { width: max-content; min-width: 200px; max-width: calc(100vw - 24px); }
 .native-tablet [data-slot="dropdown-menu-content"] [role="menuitem"],
 .native-tablet [data-slot="dropdown-menu-content"] [role="menuitemradio"] { min-height: 44px; white-space: nowrap; padding-inline: 12px; }
+.native-tablet :is(.note-image-actions-menu, .note-image-actions-submenu)[data-slot="dropdown-menu-content"] {
+  min-width: min(176px, calc(100vw - 24px));
+}
+.native-tablet :is(.note-image-actions-menu, .note-image-actions-submenu) :is([role="menuitem"], [role="menuitemradio"]) {
+  min-height: 38px;
+  gap: 8px;
+  padding-inline: 10px;
+}
+.native-tablet .note-image-actions-submenu [role="menuitemradio"] {
+  padding-inline-end: 32px;
+}
+.native-tablet :is(.note-image-actions-menu, .note-image-actions-submenu) [data-slot="dropdown-menu-separator"] {
+  height: 4px;
+  margin: 0;
+  background: transparent;
+}
 .native-tablet .question-crop-bar { max-width: min(960px, calc(100% - 24px)); gap: 8px; }
 .native-tablet .question-crop-bar > div { flex-wrap: nowrap; gap: 2px; }
 .native-tablet .question-crop-bar button { flex-shrink: 0; white-space: nowrap; padding-inline: 8px; }
@@ -328,3 +344,17 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-phone .native-questions .bank-toolbar { height: 44px; gap: 4px; }
 .native-phone .native-questions .bank-toolbar button { min-width: 44px; height: 44px; }
 .native-phone .native-questions .bank-toolbar button svg { width: 20px; height: 20px; }
+
+.worksheet-drawing-shortcut { display: none; }
+.native-tablet .worksheet-answer-field { position: relative; }
+.native-tablet .native-questions .worksheet-answer-field:has(> .worksheet-drawing-shortcut) .tiptap.worksheet-answer-input {
+  padding-inline-end: 44px;
+}
+.native-tablet .worksheet-answer-field > .worksheet-drawing-shortcut {
+  display: inline-flex;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  width: 44px;
+  height: 44px;
+}

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// One embedded answer session. No note editor command or legacy canvas save is
 /// used here: JavaScript publishes the returned assets into its own Yjs answer.
 @MainActor @Observable final class WorksheetDrawingBridge {
+    var paletteHiddenForResize = false
     private(set) var request: DrawingRequest?
     private(set) var model: DrawingModel?
     private(set) var awaitingCommit = false
@@ -226,7 +227,11 @@ struct WorksheetDrawingPane: View {
                 
                 }
             }
-            .overlay { WorksheetToolPalette(model: model, viewport: CGSize(width: geometry.size.width, height: max(180, geometry.size.height - paletteOffset))) }
+            .overlay {
+                if !bridge.paletteHiddenForResize {
+                    WorksheetToolPalette(model: model, viewport: CGSize(width: geometry.size.width, height: max(180, geometry.size.height - paletteOffset)))
+                }
+            }
             .coordinateSpace(name: "WorksheetDrawingCanvas")
             }
             .background(Color(uiColor: .systemBackground)).clipShape(RoundedRectangle(cornerRadius: 20)).tint(Color("BrandAccent"))
@@ -331,6 +336,7 @@ final class WorksheetDrawerController: UIViewController, UIGestureRecognizerDele
         frozenCanvas?.drawingGestureRecognizer.isEnabled = true
         frozenCanvas?.panGestureRecognizer.isEnabled = true
         frozenCanvas = nil; session.drawerGestureActive = false
+        session.worksheetDrawing.paletteHiddenForResize = false
     }
     /// Full height stops below the top bar, so its buttons never sit over the handle and steal the drag.
     private var maximum: CGFloat { worksheetDrawerMaximum(view.bounds.height) }
@@ -361,6 +367,7 @@ final class WorksheetDrawerController: UIViewController, UIGestureRecognizerDele
             animator?.stopAnimation(true); animator = nil
             drawer.transform = CGAffineTransform(translationX: 0, y: top)
             startTop = top; dragging = true; session.drawerGestureActive = true
+            session.worksheetDrawing.paletteHiddenForResize = true
             frozenCanvas = session.worksheetDrawing.model?.canvas
             frozenCanvas?.drawingGestureRecognizer.isEnabled = false
             frozenCanvas?.panGestureRecognizer.isEnabled = false
@@ -387,6 +394,10 @@ final class WorksheetDrawerController: UIViewController, UIGestureRecognizerDele
                         self.dismissing = false
                         UIView.animate(withDuration: 0.22) {
                             self.drawer.transform = CGAffineTransform(translationX: 0, y: self.view.bounds.height - self.height(for: self.fraction))
+                        } completion: { _ in
+                            if !self.dragging && self.animator == nil && !self.dismissing {
+                                self.session.worksheetDrawing.paletteHiddenForResize = false
+                            }
                         }
                     }
                 }
@@ -414,6 +425,7 @@ final class WorksheetDrawerController: UIViewController, UIGestureRecognizerDele
                 self.frozenCanvas?.panGestureRecognizer.isEnabled = true
                 self.frozenCanvas = nil; self.session.drawerGestureActive = false
                 self.settled(next)
+                self.session.worksheetDrawing.paletteHiddenForResize = false
             }
             if UIAccessibility.isReduceMotionEnabled {
                 drawer.transform = CGAffineTransform(translationX: 0, y: view.bounds.height - target); finish()

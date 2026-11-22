@@ -87,7 +87,7 @@ test("the entire top bar drags while controls and overlays remain interactive", 
       assert.equal(await palette.inputValue(), "Algebra");
       await page.keyboard.press("Escape");
       await page.evaluate(() => {
-        const canvas = document.createElement("canvas"); canvas.width = canvas.height = 40;
+        const canvas = document.createElement("canvas"); canvas.width = canvas.height = 160; // Room to double-click beside the corner "…" button.
         document.querySelector(".tiptap").editor.commands.insertContent({ type: "image", attrs: { src: canvas.toDataURL(), alt: "Drag-area preview" } });
       });
       const image = page.locator(".note-image-host img");

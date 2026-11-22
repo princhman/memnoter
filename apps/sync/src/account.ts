@@ -13,14 +13,15 @@ export type StartResult = { code: string } | { retryAfterMs: number };
 // sign-in code. Only a hash of the code is stored.
 export class Account extends DurableObject<Env> {
   async startSignIn(): Promise<StartResult> {
+    const code = randomCode();
+    const codeHash = await sha256(code);
     const now = Date.now();
     const pending = await this.ctx.storage.get<Pending>("pending");
     if (pending && now - pending.sentAt < RESEND_AFTER_MS) {
       return { retryAfterMs: RESEND_AFTER_MS - (now - pending.sentAt) };
     }
-    const code = randomCode();
     await this.ctx.storage.put("pending", {
-      codeHash: await sha256(code),
+      codeHash,
       expiresAt: now + CODE_TTL_MS,
       sentAt: now,
       attempts: 0,
@@ -30,9 +31,10 @@ export class Account extends DurableObject<Env> {
 
   // The user id when the code is right; null otherwise. A code works once.
   async verify(code: string): Promise<string | null> {
+    const codeHash = await sha256(code);
     const pending = await this.ctx.storage.get<Pending>("pending");
     if (!pending || Date.now() > pending.expiresAt || pending.attempts >= MAX_ATTEMPTS) return null;
-    if ((await sha256(code)) !== pending.codeHash) {
+    if (codeHash !== pending.codeHash) {
       await this.ctx.storage.put("pending", { ...pending, attempts: pending.attempts + 1 });
       return null;
     }
@@ -43,6 +45,11 @@ export class Account extends DurableObject<Env> {
       await this.ctx.storage.put("userId", userId);
     }
     return userId;
+  }
+
+  async deleteIfMatches(userId: string): Promise<void> {
+    // A retry for the old vault must leave any replacement account alone.
+    if (await this.ctx.storage.get<string>("userId") === userId) await this.ctx.storage.deleteAll();
   }
 }
 

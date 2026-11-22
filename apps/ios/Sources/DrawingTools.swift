@@ -116,12 +116,28 @@ struct DrawingToolBar: View {
 
 struct DrawingGlass: ViewModifier {
     var prominent = false
+    var interactive = true
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.glassEffect(.regular.tint(prominent ? Color("BrandAccent") : nil).interactive(), in: Capsule())
+            content.glassEffect(.regular.tint(prominent ? Color("BrandAccent") : nil).interactive(interactive), in: Capsule())
         } else {
             content.background(.regularMaterial, in: Capsule())
         }
+    }
+}
+
+private struct WorksheetPaletteButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(isEnabled ? 1 : 0.3)
+            .background(
+                Color.primary.opacity(isEnabled && configuration.isPressed ? 0.2 : 0),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            // Quick fade so the press reads clearly without lingering.
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
@@ -136,6 +152,28 @@ struct DrawingPaperPicker: View {
     }
 }
 
+private struct WorksheetPaletteDockLayout: Layout {
+    var center: CGPoint
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(center.x, center.y) }
+        set { center = CGPoint(x: newValue.first, y: newValue.second) }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        // Place the buttons at their docked coordinates so popover anchors follow the bar.
+        subviews.first?.place(
+            at: CGPoint(x: bounds.minX + center.x, y: bounds.minY + center.y),
+            anchor: .center,
+            proposal: .unspecified
+        )
+    }
+}
+
 /// Touch controls remain separate from the background that moves the palette.
 struct WorksheetToolPalette: View {
     @Bindable var model: DrawingModel
@@ -145,87 +183,148 @@ struct WorksheetToolPalette: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var translation = CGSize.zero
     @State private var dragging = false
-    @State private var colourOpen = false
-    @State private var widthOpen = false
+    @State private var penMenuOpen = false
+    @State private var eraserMenuOpen = false
 
-    private var vertical: Bool { edge != "bottom" }
-    private var arrow: Edge { edge == "left" ? .leading : edge == "right" ? .trailing : .bottom }
-    private func displayed(_ ink: DrawingInk) -> Color {
-        ink == .black && colorScheme == .dark ? .white : Color(uiColor: ink.color)
+    private var vertical: Bool { edge == "left" || edge == "right" }
+    private var arrow: Edge {
+        switch edge {
+        case "left": .leading
+        case "right": .trailing
+        case "top": .top
+        default: .bottom
+        }
     }
+    private let topInset: CGFloat = 68
+
     private func nearest(_ point: CGPoint) -> String {
-        [("left", point.x), ("right", viewport.width - point.x), ("bottom", viewport.height - point.y)].min { $0.1 < $1.1 }?.0 ?? "bottom"
+        [("left", point.x), ("right", viewport.width - point.x),
+         ("top", point.y - topInset), ("bottom", viewport.height - point.y)]
+            .min { $0.1 < $1.1 }?.0 ?? "bottom"
     }
+    private var pen: DrawingTool { model.tool.usesInk ? model.tool : model.lastPen }
+    private var eraser: DrawingTool { isErasing ? model.tool : model.lastEraser }
+    private var isErasing: Bool { model.tool == .eraser || model.tool == .objectEraser }
+
     var body: some View {
         // A slim bar that sits flush against its edge (8 pt inset).
-        let size = CGSize(width: vertical ? 44 : 262, height: vertical ? 262 : 44)
+        let size = CGSize(width: vertical ? 44 : 256, height: vertical ? 256 : 44)
         let inset: CGFloat = 8
         let origin = CGPoint(x: edge == "left" ? inset + size.width / 2 : edge == "right" ? viewport.width - inset - size.width / 2 : viewport.width / 2,
-                             y: vertical ? max(68 + size.height / 2, viewport.height / 2) : viewport.height - inset - size.height / 2)
+                             y: vertical ? max(topInset + size.height / 2, viewport.height / 2)
+                                : edge == "top" ? topInset + inset + size.height / 2
+                                : viewport.height - inset - size.height / 2)
         let position = CGPoint(x: origin.x + translation.width, y: origin.y + translation.height)
         let layout = vertical ? AnyLayout(VStackLayout(spacing: 0)) : AnyLayout(HStackLayout(spacing: 0))
         ZStack {
             if dragging {
-                PaletteEdgeHighlight(edge: nearest(position)).allowsHitTesting(false)
+                PaletteEdgeHighlight(edge: nearest(position), topInset: topInset)
+                    .frame(width: viewport.width, height: viewport.height)
+                    .position(x: viewport.width / 2, y: viewport.height / 2)
+                    .allowsHitTesting(false)
             }
-            layout {
-                Button {} label: {
-                    Capsule().fill(.secondary).frame(width: vertical ? 22 : 5, height: vertical ? 5 : 22)
-                        .frame(width: vertical ? 36 : 28, height: vertical ? 28 : 36).contentShape(Rectangle())
-                }.highPriorityGesture(move(from: origin))
-                    .accessibilityLabel("Move drawing tools")
-                Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 36, height: 36) }
-                    .disabled(!model.canUndo).accessibilityLabel("Undo")
-                Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward").frame(width: 36, height: 36) }
-                    .disabled(!model.canRedo).accessibilityLabel("Redo")
-                Menu {
-                    ForEach(DrawingTool.allCases) { tool in
-                        Button(tool.title, systemImage: tool.symbol) { model.tool = tool }
+            WorksheetPaletteDockLayout(center: position) {
+                layout {
+                    Button {} label: {
+                        Capsule().fill(.secondary).frame(width: vertical ? 22 : 5, height: vertical ? 5 : 22)
+                            .frame(width: vertical ? 36 : 28, height: vertical ? 28 : 36).contentShape(Rectangle())
+                    }.highPriorityGesture(move(from: origin))
+                        .accessibilityLabel("Move drawing tools")
+                    historyButton("Undo", symbol: "arrow.uturn.backward", enabled: model.canUndo) { model.undo() }
+                    historyButton("Redo", symbol: "arrow.uturn.forward", enabled: model.canRedo) { model.redo() }
+                    toolButton(pen, title: "Pen", selected: model.tool.usesInk) {
+                        if model.tool.usesInk { penMenuOpen = true } else { model.tool = pen }
                     }
-                } label: { Image(systemName: model.tool.symbol).frame(width: 36, height: 36) }
-                    .accessibilityLabel("Drawing tool")
-                Button { colourOpen.toggle() } label: {
-                    Circle().fill(displayed(model.ink)).frame(width: 20, height: 20)
-                        .overlay(Circle().stroke(.primary.opacity(0.2), lineWidth: 1))
-                        .frame(width: 36, height: 36).contentShape(Rectangle())
-                }.accessibilityLabel("Ink colour")
-                    .popover(isPresented: $colourOpen, arrowEdge: arrow) {
-                        WorksheetInkChoices(model: model) { colourOpen = false }
+                    .popover(isPresented: $penMenuOpen, arrowEdge: arrow) {
+                        variants([.pen, .pencil, .marker], presented: $penMenuOpen)
+                    }
+                    toolButton(eraser, title: "Eraser", selected: isErasing) {
+                        if isErasing { eraserMenuOpen = true } else { model.tool = eraser }
+                    }
+                    .popover(isPresented: $eraserMenuOpen, arrowEdge: arrow) {
+                        variants([.objectEraser, .eraser], presented: $eraserMenuOpen)
+                    }
+                    toolButton(.lasso, title: "Lasso", selected: model.tool == .lasso) { model.tool = .lasso }
+                    Button { model.showInkOptions = true } label: {
+                        let diameter = max(5, model.inkWidth * 1.4)
+                        Circle().fill(model.ink == .black && colorScheme == .dark ? .white : Color(uiColor: model.ink.color))
+                            .frame(width: diameter, height: diameter)
+                            .overlay(Circle().stroke(.primary.opacity(0.2), lineWidth: 1))
+                            .frame(width: 36, height: 36).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Colour and thickness")
+                    .popover(isPresented: $model.showInkOptions, arrowEdge: arrow) {
+                        WorksheetInkChoices(model: model, pen: pen)
                             .presentationCompactAdaptation(.popover)
                     }
-                Button { widthOpen.toggle() } label: {
-                    Group {
-                        if model.tool == .objectEraser || model.tool == .lasso {
-                            Image(systemName: model.tool.symbol).font(.system(size: 16, weight: .medium))
-                        } else if model.tool == .eraser {
-                            Circle().stroke(.primary, lineWidth: 1.5).frame(width: min(26, max(8, model.eraserWidth / 3)), height: min(26, max(8, model.eraserWidth / 3)))
-                        } else {
-                            Circle().fill(displayed(model.ink)).frame(width: max(5, model.inkWidth * 1.4), height: max(5, model.inkWidth * 1.4))
-                        }
-                    }
-                        .frame(width: 36, height: 36).contentShape(Rectangle())
-                }.accessibilityLabel(model.tool == .eraser ? "Eraser size" : "Stroke width")
-                    .popover(isPresented: $widthOpen, arrowEdge: arrow) {
-                        VStack(alignment: .leading) {
-                            Text(model.tool == .eraser ? "Eraser size" : "Stroke width").font(.headline)
-                            Slider(value: $model.activeWidth, in: model.activeWidthRange, step: 0.5).accessibilityLabel("Stroke width")
-                        }.padding(20).frame(width: 230).presentationCompactAdaptation(.popover)
-                    }
+                }
+                .buttonStyle(WorksheetPaletteButtonStyle()).font(.system(size: 16, weight: .medium))
+                .padding(vertical ? EdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4) : EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                .contentShape(Capsule())
+                .modifier(DrawingGlass(interactive: false))
+                .simultaneousGesture(move(from: origin))
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("WorksheetDrawingCanvas")) } action: { model.canvas.toolOverlayFrameInViewport = $0 }
             }
-            .buttonStyle(.plain).font(.system(size: 16, weight: .medium))
-            .padding(vertical ? EdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4) : EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
-            .background {
-                Capsule().fill(Color(uiColor: .secondarySystemBackground).opacity(0.96))
-                    .contentShape(Capsule()).gesture(move(from: origin))
-            }
-            .modifier(DrawingGlass())
-            .simultaneousGesture(move(from: origin))
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("WorksheetDrawingCanvas")) } action: { model.canvas.toolOverlayFrameInViewport = $0 }
-            .position(position)
             .disabled(!model.loaded || model.saving)
         }
-        .onDisappear { model.canvas.toolOverlayFrameInViewport = .null }
+        .onDisappear {
+            model.canvas.toolOverlayFrameInViewport = .null
+            model.showInkOptions = false
+        }
     }
+    private func historyButton(_ title: String, symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Image(systemName: symbol)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .disabled(!enabled)
+        .accessibilityLabel(title)
+    }
+
+    private func toolButton(_ tool: DrawingTool, title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            // The icon keeps its colour; selection is only a tinted backing, switched without animation.
+            Image(systemName: tool.symbol)
+                .foregroundStyle(Color.primary)
+                .frame(width: 36, height: 36)
+                .background(selected ? Color("BrandAccent").opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
+                .transaction { $0.animation = nil }
+        }
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func variants(_ tools: [DrawingTool], presented: Binding<Bool>) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(tools) { tool in
+                Button {
+                    model.tool = tool
+                    presented.wrappedValue = false
+                } label: {
+                    HStack {
+                        Label(tool == .eraser ? "Pixel eraser" : tool.title, systemImage: tool.symbol)
+                            .fixedSize()
+                        Spacer()
+                        if model.tool == tool { Image(systemName: "checkmark") }
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(model.tool == tool ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(width: 190)
+        .presentationCompactAdaptation(.popover)
+    }
+
     private func move(from origin: CGPoint) -> some Gesture {
         // A tap wobbles a few points; only a real drag moves the palette, so taps reach its buttons.
         // Measured against the screen, not the bar: the bar moves under the finger while dragging.
@@ -243,7 +342,7 @@ struct WorksheetToolPalette: View {
 
 private struct WorksheetInkChoices: View {
     @Bindable var model: DrawingModel
-    let selected: () -> Void
+    let pen: DrawingTool
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -252,8 +351,7 @@ private struct WorksheetInkChoices: View {
                 ForEach(DrawingInk.allCases) { ink in
                     Button {
                         model.ink = ink
-                        if !model.tool.usesInk { model.tool = .pen }
-                        selected()
+                        if !model.tool.usesInk { model.tool = pen }
                     } label: {
                         Circle().fill(ink == .black && colorScheme == .dark ? Color.white : Color(uiColor: ink.color))
                             .frame(width: 28, height: 28)
@@ -264,16 +362,28 @@ private struct WorksheetInkChoices: View {
                         .accessibilityAddTraits(model.ink == ink ? .isSelected : [])
                 }
             }
-        }.padding(16)
+            if model.tool == .eraser {
+                Text("Eraser size").font(.headline)
+                Slider(value: $model.activeWidth, in: model.activeWidthRange, step: 0.5)
+                    .accessibilityLabel("Eraser size")
+            }
+            Text("Stroke width").font(.headline)
+            Slider(value: $model.inkWidth, in: 1...10, step: 0.5)
+                .accessibilityLabel("Stroke width")
+        }.padding(16).fixedSize(horizontal: false, vertical: true)
+            .frame(width: 320)
     }
 }
 
 private struct PaletteEdgeHighlight: View {
     let edge: String
+    let topInset: CGFloat
     var body: some View {
+        let horizontal = edge == "top" || edge == "bottom"
         RoundedRectangle(cornerRadius: 4).fill(Color("BrandAccent").opacity(0.25))
-            .frame(width: edge == "bottom" ? 100 : 4, height: edge == "bottom" ? 4 : 100)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == "left" ? .leading : edge == "right" ? .trailing : .bottom)
+            .frame(width: horizontal ? 100 : 4, height: horizontal ? 4 : 100)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == "left" ? .leading : edge == "right" ? .trailing : edge == "top" ? .top : .bottom)
             .padding(4)
+            .padding(.top, edge == "top" ? topInset : 0)
     }
 }

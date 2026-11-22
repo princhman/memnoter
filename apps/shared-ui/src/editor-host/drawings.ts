@@ -11,12 +11,12 @@ function target(editor: Editor, imageId: string) {
   return matches[0];
 }
 
-export function beginDrawing(editor: Editor, imageId: unknown) {
+export function beginDrawing(editor: Editor, imageId: unknown, position = editor.state.selection.to) {
   if (typeof imageId !== "string" || !imageId) throw new Error("Drawing identity is required");
   let exists = false;
   editor.state.doc.descendants(node => { if (node.attrs.imageId === imageId && drawingReference(node.attrs.drawing)) exists = true; });
   if (exists) return true;
-  return editor.commands.insertContentAt(editor.state.selection.to, [
+  return editor.commands.insertContentAt(position, [
     { type: "image", attrs: { imageId, alt: "Drawing", drawing: { version: 1, sourceId: null, previewId: null } } },
     { type: "paragraph" },
   ]);

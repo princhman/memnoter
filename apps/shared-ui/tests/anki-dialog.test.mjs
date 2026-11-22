@@ -45,8 +45,7 @@ async function open(failAt = 0) {
     } } });
   });
   await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/anki-dialog.html`);
-  await page.waitForFunction(() => !!window.prepareAnkiImport);
-  await page.evaluate(() => window.dispatchEvent(new Event("memnoter-import-anki")));
+  await page.getByRole("button", { name: "Import Anki", exact: true }).click();
   await page.getByRole("dialog").waitFor();
   return page;
 }

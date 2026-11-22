@@ -75,6 +75,9 @@ test("Tab precedes prose spacing, Shift-Tab goes back, final Tab adds a row", as
 });
 
 test("cell editing preserves table boundaries and note sections", async () => {
+  await fresh();
+  await page.keyboard.press("ControlOrMeta+Alt+1");
+  assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.type.name), "heading", "the shortcut changes headings outside a table");
   await insert();
   await cell(0);
   await page.keyboard.type("alpha -> beta");
@@ -84,7 +87,7 @@ test("cell editing preserves table boundaries and note sections", async () => {
   await page.keyboard.press("Alt+ArrowUp");
   assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.textContent), "second");
   await page.keyboard.press("Alt+ArrowUp");
-  await page.keyboard.press("Meta+Alt+1");
+  await page.keyboard.press("ControlOrMeta+Alt+1");
   assert.equal(await page.evaluate(() => editor.state.selection.$from.parent.type.name), "paragraph");
   assert.equal(await page.evaluate(() => editor.commands.insertSection("sibling")), false);
   await cell(0);

@@ -17,7 +17,7 @@ import Tiptap from "@/components/Tiptap";
 import { QuestionBank } from "@/components/question-bank";
 import { useBankGate } from "@/lib/question-bank";
 import { useModules } from "@/lib/modules";
-import { updatePdfPane } from "@/lib/pdf-pane";
+import { updatePdfPane, useAnyWorksheetOpen } from "@/lib/pdf-pane";
 import SaveStatus from "@/components/save-status";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { postNativeEvent } from "@/lib/backend";
@@ -36,18 +36,20 @@ async function flushHostWrites() {
 
 // Use the desktop /questions data source and components without its app shell.
 // QuestionBank owns the worksheet picker and renders WorksheetAttempt itself.
-function NativeQuestions({ scope, onOpenSource, visible }: { scope: string | null; onOpenSource(documentId: string): void; visible: boolean }) {
+function NativeQuestions({ scope, onOpenSource, visible, tablet, worksheetModule }: { scope: string | null; onOpenSource(documentId: string): void; visible: boolean; tablet: boolean; worksheetModule: string | null }) {
   const enabled = useBankGate();
   const { data: modules = [], isPending, error } = useModules();
   if (!enabled) return <p className="text-center text-sm text-muted-foreground">Questions are not available.</p>;
-  const scopedModules = modules.filter(module => !scope || module.id === scope);
-  return <div className="mx-auto w-full max-w-3xl space-y-8 py-4">
+  const selectedModule = scope ?? worksheetModule;
+  const scopedModules = modules.filter(module => !selectedModule || module.id === selectedModule);
+  return <div className="questions-all mx-auto w-full max-w-3xl space-y-8 py-4">
     {error && <p role="alert" className="text-sm text-destructive">{error.message}</p>}
     {isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
     {!isPending && !error && !scopedModules.length && <p className="text-sm text-muted-foreground">{scope ? "Module not found." : "Create a module to start collecting questions."}</p>}
-    {scopedModules.map(module => <section key={module.id} aria-label={module.name || "Untitled module"}>
-      {!scope && <h2 className="bank-module-heading mb-4 text-sm font-medium text-muted-foreground">{module.name || "Untitled module"}</h2>}
-      <QuestionBank moduleId={module.id} onOpenSource={onOpenSource} nativeToolbar={visible && !!scope && document.documentElement.classList.contains("native-tablet")} />
+    {tablet && !selectedModule && !isPending && !error && scopedModules.length > 0 && <p className="questions-all-empty text-sm text-muted-foreground">Open a PDF and choose <span className="text-foreground">Crop question</span> to add questions.</p>}
+    {scopedModules.map(module => <section key={module.id} className="questions-module" aria-label={module.name || "Untitled module"}>
+      {!selectedModule && <h2 className="bank-module-heading mb-4 text-sm font-medium text-muted-foreground">{module.name || "Untitled module"}</h2>}
+      <QuestionBank moduleId={module.id} onOpenSource={onOpenSource} hideWhenEmpty={tablet && !scope} nativeToolbar={visible && !!scope && tablet} />
     </section>)}
   </div>;
 }
@@ -62,6 +64,9 @@ export function Host() {
   const [moduleId, setModuleId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<{ open: boolean; moduleId: string | null; mounted: boolean }>({ open: false, moduleId: null, mounted: false });
   const [questionSourceOpen, setQuestionSourceOpen] = useState<string | null>(null);
+  const tablet = document.documentElement.classList.contains("native-tablet");
+  const openWorksheetModule = useAnyWorksheetOpen();
+  const worksheetModule = tablet && (!questions.moduleId || questions.moduleId === openWorksheetModule) ? openWorksheetModule : null;
   const questionSurface = useRef(questions);
   const showQuestions = (open: boolean, scope: string | null = questionSurface.current.moduleId) => {
     if (!open || scope !== questionSurface.current.moduleId) setQuestionSourceOpen(null);
@@ -134,17 +139,23 @@ export function Host() {
         if (!hasSectionAnchor(element) && editor && !editor.isDestroyed) revealCaret(editor.view, "inset");
       },
       open(id) {
+        traceScroll("open-entered", { moduleId: id });
         const operation = queue.then(async () => {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
+          traceScroll("open-queue-start", { moduleId: id });
           await flushHostWrites();
+          traceScroll("open-flushed", { moduleId: id });
           showQuestions(false);
           if (active.current?.moduleId === id && active.current.isReady) {
-            await router.navigate({ to: "/$moduleId", params: { moduleId: id } }); return;
+            await router.navigate({ to: "/$moduleId", params: { moduleId: id } });
+            traceScroll("open-route-complete", { moduleId: id });
+            return;
           }
           await new Promise<void>((resolve, reject) => {
             opening.current = { moduleId: id, resolve, reject };
             setModuleId(id);
-            void router.navigate({ to: "/$moduleId", params: { moduleId: id } }).catch(reject);
+            void router.navigate({ to: "/$moduleId", params: { moduleId: id } })
+              .then(() => traceScroll("open-route-complete", { moduleId: id })).catch(reject);
           });
         }).catch(error => { throw fail(error); });
         queue = settled(operation);
@@ -274,6 +285,7 @@ export function Host() {
       sectionToTop(editor, focused);
     }
     if (opening.current?.moduleId === id) {
+      traceScroll("open-editor-ready", { moduleId: id });
       opening.current.resolve();
       opening.current = null;
     }
@@ -359,8 +371,8 @@ export function Host() {
     if (questions.moduleId) updatePdfPane(questions.moduleId, { open: true, active: documentId });
     else setQuestionSourceOpen(documentId);
   };
-  return <EditorHostProvider value={editorHost}><NativePdfWorkspace questions={questions.open} moduleId={questions.open ? questions.moduleId : moduleId} actions={pdfActions} sourceDocumentId={questionSourceOpen} onCloseSource={() => setQuestionSourceOpen(null)}><SaveStatus />
+  return <EditorHostProvider value={editorHost}><NativePdfWorkspace questions={questions.open} moduleId={questions.open ? questions.moduleId : moduleId} actions={pdfActions} sourceDocumentId={worksheetModule ? null : questionSourceOpen} onCloseSource={() => setQuestionSourceOpen(null)}><SaveStatus />
     <main ref={container} style={questions.open ? { display: "none" } : undefined} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} />}</main>
-    {questions.mounted && <main aria-label="Questions" style={!questions.open ? { display: "none" } : undefined} className="app-scroll-container native-questions h-full overflow-y-auto p-4"><NativeQuestions visible={questions.open} scope={questions.moduleId} onOpenSource={openQuestionSource} /></main>}
+    {questions.mounted && <main aria-label={worksheetModule ? "Worksheet" : "Questions"} style={!questions.open ? { display: "none" } : undefined} className="app-scroll-container native-questions h-full overflow-y-auto p-4"><NativeQuestions visible={questions.open} scope={questions.moduleId} onOpenSource={openQuestionSource} tablet={tablet} worksheetModule={worksheetModule} /></main>}
   </NativePdfWorkspace></EditorHostProvider>;
 }

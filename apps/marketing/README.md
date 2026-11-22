@@ -31,12 +31,8 @@ names keep the `Memnoter_<version>_` prefix, which the build checks.
 ## Hosting
 
 Cloudflare Workers static assets plus `worker.js` (`wrangler.jsonc`), serving `memnoter.com`
-and `www.memnoter.com`. To deploy by hand:
-
-```sh
-node apps/marketing/build.mjs
-cd apps/marketing && npx wrangler@4 deploy
-```
+and `www.memnoter.com`. Cloudflare deploys it from `main` through the
+dashboard's Git integration; never deploy it by hand.
 
 ## Editing
 

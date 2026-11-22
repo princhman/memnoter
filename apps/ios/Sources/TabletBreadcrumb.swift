@@ -8,8 +8,10 @@ struct TabletBreadcrumb: View {
     let item: String?
     let questionsEnabled: Bool
     let maximumWidth: CGFloat
+    var wrapsTitles = false
     let changeScope: (String?) -> Void
     let changeSection: (String) -> Void
+    var compact: Bool = false
 
     private var moduleTitle: String { modules.first { $0.id == scope }?.name ?? "All modules" }
     private var distinctItem: String? {
@@ -31,7 +33,8 @@ struct TabletBreadcrumb: View {
     private var labelWidths: (module: CGFloat, section: CGFloat, item: CGFloat) {
         let section = Self.textWidth(section.capitalized)
         let itemChrome: CGFloat = distinctItem == nil ? 0 : 24
-        let chrome: CGFloat = 78 + itemChrome
+        // Compact navigation menus add native button padding around both labels.
+        let chrome: CGFloat = (compact ? 114 : 78) + itemChrome
         let available = max(40, maximumWidth - chrome - section)
         let module = Self.textWidth(moduleTitle)
         guard let item = distinctItem else { return (min(module, available), section, 0) }
@@ -55,6 +58,7 @@ struct TabletBreadcrumb: View {
                 breadcrumbLabel(moduleTitle, width: widths.module)
             }.accessibilityLabel("Module scope")
             Text("/").foregroundStyle(.secondary)
+                .fixedSize(horizontal: compact, vertical: false)
             Menu {
                 Button("Notes") { changeSection("notes") }
                 Button("Files") { changeSection("files") }
@@ -65,7 +69,7 @@ struct TabletBreadcrumb: View {
             }.accessibilityLabel("Select module section")
             if let item = distinctItem {
                 Text("›").foregroundStyle(.secondary)
-                fittedText(item, width: widths.item)
+                fittedText(item, width: widths.item, wraps: wrapsTitles)
             }
         }
         .font(.subheadline)
@@ -77,7 +81,7 @@ struct TabletBreadcrumb: View {
 
     private func breadcrumbLabel(_ title: String, width: CGFloat) -> some View {
         HStack(spacing: 5) {
-            fittedText(title, width: width)
+            fittedText(title, width: width, wraps: wrapsTitles)
             Image(systemName: "chevron.down").font(.caption)
         }.frame(minHeight: 44)
     }
@@ -85,11 +89,13 @@ struct TabletBreadcrumb: View {
 
 /// A label clamps only when its measured width was actually reduced. Otherwise it keeps its
 /// own size: a hard frame at the measured width truncates whenever SwiftUI's text is a hair wider.
-@ViewBuilder func fittedText(_ text: String, width: CGFloat) -> some View {
+@ViewBuilder func fittedText(_ text: String, width: CGFloat, wraps: Bool = false) -> some View {
     if width >= TabletBreadcrumb.textWidth(text) {
         Text(text).lineLimit(1).fixedSize()
     } else {
-        Text(text).lineLimit(1).truncationMode(.tail).frame(width: width, alignment: .leading)
+        Text(text).lineLimit(wraps ? 2 : 1).truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: wraps)
+            .frame(width: width, alignment: .leading)
     }
 }
 
@@ -117,7 +123,7 @@ struct TabletWorksheetTitle: View {
     let maximumWidth: CGFloat
 
     var body: some View {
-        fittedText(title, width: max(0, maximumWidth - 20))
+        fittedText(title, width: max(0, maximumWidth - 20), wraps: true)
             .font(.subheadline)
             .padding(.horizontal, 10)
             .frame(minHeight: 44)

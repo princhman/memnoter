@@ -33,14 +33,26 @@ test('PDF crops create nested revisioned questions through the gated real core a
     const url=`http://localhost:${server.httpServer.address().port}/tests/browser/question-bank.html?module=${module}&pdf=${pdf.id}`;
     await page.goto(url);
     await page.getByRole('region',{name:'Question bank',exact:true}).waitFor();
-    const crop=async()=>{
+    const crop=async({waitForDialog=true}={})=>{
       const tool = page.getByRole('button',{name:'Crop question',exact:true});
       if (await tool.getAttribute('aria-pressed') !== 'true') await tool.click();
       const area=page.getByLabel('Drag a region on this PDF page').first();await area.waitFor();
       const box=await area.boundingBox();await page.mouse.move(box.x+box.width*.25,box.y+box.height*.25);await page.mouse.down();await page.mouse.move(box.x+box.width*.75,box.y+box.height*.75);await page.mouse.up();
-      await page.getByRole('dialog',{name:'Add crop to question bank'}).waitFor();
+      if(waitForDialog)await page.getByRole('dialog',{name:'Add crop to question bank'}).waitFor();
     };
-    await crop();await page.keyboard.press('q');
+    // Send Q at the first enabled dialog commit, without Playwright's polling
+    // giving a late keyboard subscription time to catch up.
+    await page.evaluate(() => {
+      const observer = new MutationObserver(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="Add crop to question bank"]');
+        const button = dialog && [...dialog.querySelectorAll('button')].find(b => b.textContent.startsWith('Question 1'));
+        if (!button || button.disabled) return;
+        observer.disconnect();
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }));
+      });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+    });
+    await crop({waitForDialog:false});
     await page.getByRole('article',{name:'Question 1',exact:true}).getByRole('img').waitFor();
     let bank=await call('question_bank_get',{moduleId:module});const qid=Object.keys(bank.questions)[0]; const first=bank.questions[qid].revisionId;
     const rev=bank.revisions[first]; const firstCrop=Object.values(rev.crops)[0];
@@ -77,6 +89,10 @@ test('PDF crops create nested revisioned questions through the gated real core a
     await page.locator('article[aria-label="Question 1"]').getByRole('button',{name:/^Add next crops to A1/}).first().waitFor();
     bank=await call('question_bank_get',{moduleId:module});assert.equal(bank.questions[qid].title,'A1');
     await page.reload();await page.locator('article img').first().waitFor();
+    await crop();await page.keyboard.press('q');
+    await page.getByRole('article',{name:'Question 2',exact:true}).getByRole('img').waitFor();
+    await page.reload();
+    await page.waitForFunction(()=>document.querySelectorAll('article img').length===4&&[...document.querySelectorAll('article img')].every(img=>img.complete&&img.naturalWidth>0));
     await page.context().setOffline(true);
     assert.equal(await page.locator('article img').evaluateAll(images=>images.every(img=>img.naturalWidth>0)),true);
     assert.ok(await call('question_bank_enabled'));await assert.rejects(call('sync_enable',{account:'no-sync'}),/cannot sync/);

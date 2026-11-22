@@ -42,7 +42,7 @@ struct HomeView: View {
                                     Image(systemName: "doc.text")
                                         .foregroundStyle(.secondary)
                                     Text(module.name)
-                                        .lineLimit(1)
+                                        .lineLimit(UIDevice.current.userInterfaceIdiom == .pad ? 2 : 1)
                                     Spacer(minLength: 0)
                                 }
                                 .font(.subheadline)

@@ -17,7 +17,8 @@ being asked each time:
    the loop; don't ask delegates on visual work to run one first.
 3. Batch: merge the round's ready branches into one
    `batch/<yyyy-mm-dd>-<topic>` branch, `pnpm check:ci` once, and open one PR
-   listing `Fixes PRI-<n>` for each issue. Every PR and every merge to main runs
+   listing `Fixes PRI-<n>` for each issue it finishes (`Refs` for the rest), plus
+   the `Acceptance:` and `Evidence:` lines from the PR template. Every PR and every merge to main runs
    CI (main runs everything, iOS included), so no PR for a single small fix.
    Keep visual and behaviour-only work in separate batches only if one would
    hold the other up; one preview branch then covers all the visual changes.
@@ -31,23 +32,62 @@ being asked each time:
    failure in code the PR didn't touch: rerun the failed job once.
 5. Merge when green, if the user approved the feature. Every ready issue sits
    in Linear **In Review**. A visual PR waits until the user has looked at
-   it; a behaviour-only PR merges on green once the sol loop approves.
+   it; a behaviour-only PR merges on green once the sol loop approves. When
+   the user waives CI for named PRs ("merge, do not wait for ci"), merge those
+   once the rest is satisfied and report the CI state.
+   CI timing claims come from real run timestamps (`gh run view`), never
+   estimates: report the whole run against the user's target.
 6. Offer release notes. Ask before tagging. A `v*` tag runs `release.yml`:
    desktop installers, TestFlight and the Linear release. memnoter.com follows
    the latest GitHub release by itself.
 7. Clean up without being asked, on the Mac and on minipc: remove merged
-   worktrees (`scripts/prune-worktrees.sh --apply`), delete merged local
-   branches with `git branch -d`, stop leftover dev servers and test browsers,
-   and delete proof files and old temp folders. Keep anything with uncommitted
-   or unpushed work, and list it in your report. The orchestrator owns this
-   step, including for work its delegates did.
+   worktrees (`scripts/prune-worktrees.sh --apply`) and unused memnoter sibling
+   checkouts, delete merged local branches with `git branch -d`, stop leftover
+   dev servers and test browsers, and delete proof files and old temp folders.
+   Keep anything with uncommitted or unpushed work or an active session. The
+   report names both machines and what you kept on each. The orchestrator owns
+   this step, including for work its delegates did.
 
-**Testing sessions.** When the user is testing on devices and says "just fix",
-delegates fix only: no tests, no sol loop, no CI waits, no builds while
-`pnpm dev:copy` is running. Install on the device only when the user is testing
-there, and install straight to it: no simulator checks, the user is the
-tester. The editor scroll/caret exception in
-`apps/shared-ui/AGENTS.md` still applies.
+**Testing sessions (pair-fix).** Every brief starts with: "Fix and show only.
+No tests, reviewers, sol loops, simulator passes or CI waits." Show the fix by
+saving into the running `pnpm dev:copy` checkout, or by installing straight to
+the device the user is testing on; the user is the tester. One cheap check
+stays: before handing over a device build, take one screenshot of the exact
+state the user reported, on that build. It should take a minute or two; if it
+would take longer, skip it and say so. Batch related fixes into one device
+build. The editor scroll/caret exception in `apps/shared-ui/AGENTS.md` still
+applies.
+Split the user's feedback by file area into as many parallel delegates as it
+splits into, and show each fix as soon as it lands; edits that touch the same
+files stay with one delegate. These delegates don't build, so the heavy cap
+below doesn't limit them.
+
+## Ownership
+
+Collisions cost the user more than slow work: two orchestrators on one issue,
+two agents editing `RootView.swift` in one checkout, builds of a checkout with
+someone's half-finished edits.
+
+- One owner per issue and per area of code at a time. Give each delegate its own
+  worktree; in a shared checkout, don't hand two delegates the same files.
+- Before another thread takes over an issue, stop the old one first and say so
+  in both.
+- One build operator per device or simulator. It builds a named commit (a branch
+  or a merge of finished branches), never a dirty shared checkout, and reports
+  the build stamp.
+
+## Threads
+
+The orchestrator decides how work splits; the user doesn't have to.
+
+- One thread per outcome, titled after it. Its first message states the outcome,
+  the baseline (where things are now, measured if it's a number) and the stop
+  condition.
+- A bug found along the way gets its own branch and thread, not the current
+  PR. Tell the user it was split off.
+- Experiments get a timebox and a fail-closed result: no receipt (numbers,
+  logs) means it didn't work. Report when the goal looks unreachable instead of
+  continuing.
 
 ## Linear
 
@@ -56,6 +96,13 @@ tester. The editor scroll/caret exception in
 - Waiting on the user (a question, or an issue in **In Review**): call
   `issue_watch` with your thread and machine. Their reply arrives as a new
   message in that thread. Don't schedule polling checks.
+- An issue waiting on the user (a question or a visual approval) gets the
+  `Needs input` label; remove it as soon as they reply.
+- Before moving a batch forward, re-read its issues' states and new replies.
+  An issue the user moved back to **In Progress** goes back to work, whatever
+  was approved before.
+- Agentline comments lead with the result or the decision needed, then only
+  the evidence link or next step. No long write-ups.
 - Create Linear issues only when the user explicitly asks. During live pair
   sessions, track feedback by the user's item numbers in briefs and replies;
   do not create issues or upload their screenshots to Linear automatically.
@@ -77,9 +124,9 @@ tester. The editor scroll/caret exception in
 
 ## Delegating
 
-- Default workhorse: gpt-6.1-sol via `delegate_task`. Delegate by default, small
-  fixes in a live pair session included: one delegate per batch of user feedback,
-  in the checkout the demo runs from. Keep briefs, merging, demo restarts and
+- Default workhorse: gpt-6.2-sol via `delegate_task`. Delegate by default, small
+  fixes in a live pair session included (split as in "Testing sessions"), in
+  the checkout the demo runs from. Keep briefs, merging, demo restarts and
   reporting for yourself.
   If a delegate fails a task once, do it yourself; this matters most for hangs,
   freezes and native-only bugs.
@@ -93,10 +140,11 @@ tester. The editor scroll/caret exception in
 A brief only needs:
 
 1. **Task** and why, quoting the user's complaint where possible.
-2. **Done means**: what the user should see, and on which platform. Name one
-   platform until the user has approved the feature; porting is a later brief.
+2. **Done means**: copied from the Linear issue, or the user's words if there is
+   none, with the platform and evidence level. Name one platform until the user
+   has approved the feature; porting is a later brief.
 3. **Where**: checkout or branch, and whether to commit.
-4. **Mode**: normal, or "fix only, don't test, don't wait for CI".
+4. **Mode**: normal, or the pair-fix line from "Testing sessions", first.
 5. Anything that **overrides** `AGENTS.md`.
 
 Don't restate the stack, commands or rules; the delegate already has them.
@@ -112,9 +160,12 @@ Don't restate the stack, commands or rules; the delegate already has them.
 
 ## Keeping the guides current
 
-- When the user repeats a direction or corrects how agents work, add it to the
-  narrowest guide that needs it (`apps/*/AGENTS.md` before the root file, this
-  file for orchestration only), in the same change. Memory alone doesn't reach
+- When the user repeats a direction or corrects how agents work, add it to a
+  guide. Only rules the user stated or approved: never
+  write an agent's own interpretation or an experiment into a guide. What a
+  feature does goes in its Linear issue's Decisions, not a guide. Put the rule
+  in the narrowest guide (`apps/*/AGENTS.md` before the root file, this file for
+  orchestration only), in the same change. Memory alone doesn't reach
   delegates.
 - Keep the guides short. Remove a rule when it stops being true.
 - READMEs describe how to build, run and test, plus a short architecture note.
@@ -133,12 +184,16 @@ Don't restate the stack, commands or rules; the delegate already has them.
 The skills are general; the per-platform details below are what they look up.
 
 Handoff in this repo: Linear team I build (PRI). An agent waiting on the user
-comments on the issue, adds the `Needs input` label and watches the issue
-(`issue_watch`); it removes the label when it picks the issue up again. Each issue gets its own branch in the main
-checkout; add a worktree only to work issues in parallel, and remove it once the
+comments on the issue, adds the `Needs input` label (see Linear above) and
+watches the issue (`issue_watch`). Each
+issue gets its own branch in the main checkout, but PRs are batched (Ship flow
+step 3), not one per issue; add a worktree only to work issues in parallel, and remove it once the
 branch is pushed.
 
 ## Platforms: show, prove, profile
+
+Prototype recordings use the latest `origin/main` as their base. Fetch and
+compare before recording; preserve local edits when updating the checkout.
 
 | Platform | Show the user | Proof (video or screenshot) | Cost |
 | --- | --- | --- | --- |
@@ -147,6 +202,12 @@ branch is pushed.
 | iPad / iPhone simulator | build for the simulator (below) | `agent-device record start --scope device <file>.mp4`, then `record stop` | expensive (iOS build) |
 | User's iPad / iPhone | `scripts/ios-install.sh [--iphone\|--all]` | only the user can record | expensive |
 
+- **Handing back for the user to test:** the change is already running where
+  they'll test it (`pnpm dev:copy` reloaded on the right branch, or installed
+  on the named device with its build stamp). Confirm it launched, or say
+  exactly what to open. Say what to open, what to do and what they should see.
+  When they ask for comparison proof, give a matched before/after for every
+  item.
 - **Cheap** checks: do them yourself. **Expensive** ones on platforms the issue
   didn't name: ask first.
 - **Chromium/WebKit proof:** `PROOF_DIR=<dir>` makes every page a shared-ui test

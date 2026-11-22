@@ -2,6 +2,7 @@
   "protocol": "memnoter.v1",
   "authPrefix": "auth.",
   "version": 2,
+  "oldestVersion": 2,
   "clientFrames": [
     "hello",
     "push",
@@ -55,6 +56,7 @@
     "key": "/v1/key",
     "sync": "/v1/sync",
     "vault": "/v1/vault",
+    "account": "/v1/account",
     "files": "/v1/files/",
     "blobs": "/v1/blobs/"
   },
