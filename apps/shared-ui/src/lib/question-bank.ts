@@ -1,7 +1,6 @@
 import { createStore, useSelector } from "@tanstack/react-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { call, isNativeHost } from "./backend";
-import { IS_MAC } from "./platform";
+import { call, isNativeHost, isTauri } from "./backend";
 import type { WorksheetRevision, WorksheetCrop, WorksheetPin, WorksheetAnswer } from "./worksheets";
 import { writeOperation, assertWritable } from "./write-lifecycle";
 import { setModulePage } from "./store";
@@ -65,7 +64,7 @@ type BankEditFields = {
 };
 export const bankKey = (moduleId: string) => ["question-bank", moduleId] as const;
 export function useBankGate() {
-  const supported = IS_MAC || isNativeHost();
+  const supported = isTauri() || isNativeHost();
   return useQuery({ queryKey: ["question-bank-enabled"], queryFn: () => call<boolean>("question_bank_enabled"), enabled: supported, staleTime: Infinity, retry: false }).data === true && supported;
 }
 export function useBank(moduleId: string, enabled: boolean) {

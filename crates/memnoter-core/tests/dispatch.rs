@@ -594,7 +594,7 @@ fn drawing_source_and_preview_survive_a_second_device_edit_and_restart() {
     }
     // The core transports opaque source data; actual PencilKit decoding belongs
     // to the native managed-source test, and schema retention to the web test.
-    let source_bytes = br#"{"version":1,"nativeData":"AQID","width":1024,"height":1440}"#.to_vec();
+    let source_bytes = include_bytes!("../../../apps/ios/Tests/Fixtures/portable-drawing.json").to_vec();
     let source = ipad.call("save_file", json!({"moduleId":module,"bytes":source_bytes,"mimeType":"application/vnd.memnoter.drawing+json"}));
     let preview = ipad.call(
         "save_file",
@@ -671,6 +671,14 @@ fn drawing_source_and_preview_survive_a_second_device_edit_and_restart() {
     )
     .unwrap();
     assert_eq!(bytes["bytes"], json!(source_bytes));
+    let backup = desktop.call("backup_now", json!({}));
+    let backup_path = desktop.dir.join("backups").join(backup["id"].as_str().unwrap());
+    assert_eq!(std::fs::read(backup_path.join("files").join(source["id"].as_str().unwrap())).unwrap(), source_bytes);
+    desktop.call("restore_backup", json!({"id":backup["id"]}));
+    assert_eq!(desktop.call("read_file", json!({"moduleId":module,"fileId":source["id"]}))["bytes"], json!(source_bytes));
+    let restored = reopen_note(&desktop, &module);
+    let restored_root = restored.get_or_insert_xml_fragment("default");
+    assert!(restored_root.get_string(&restored.transact()).contains(source["id"].as_str().unwrap()));
 }
 
 #[test]

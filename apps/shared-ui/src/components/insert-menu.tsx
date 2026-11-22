@@ -157,7 +157,7 @@ const ITEMS: InsertItem[] = [
   },
   {
     group: "Blocks", title: "Drawing", keywords: ["drawing", "draw", "ink", "pen", "sketch"], hint: "",
-    when: (_editor, options) => !!options?.insertDrawing && (capabilities.macDrawing || !!options.nativeDrawing),
+    when: (_editor, options) => !!options?.insertDrawing && (capabilities.drawing || !!options.nativeDrawing),
     run: (editor, range, options) => { editor.chain().deleteRange(range).run(); options.insertDrawing?.(editor); },
   },
   {

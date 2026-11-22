@@ -60,6 +60,11 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
   const attempt = bank.attempts[attemptId];
   const [confirmFinish, setConfirmFinish] = useState(false);
+  const [replacement, setReplacement] = useState<{ revisionId: string; partId: string; expected: string } | null>(null);
+  const retryAnswer = async (revisionId: string, partId: string, confirmedBase?: string) => {
+    const expected = await answers.retryAnswer(revisionId, partId, confirmedBase);
+    setReplacement(expected === undefined ? null : { revisionId, partId, expected });
+  };
   // Desktop puts the worksheet's title and controls in the window header (the
   // root layout's slots); iPad/iPhone show them in the native toolbar instead.
   const [slots, setSlots] = useState<{ crumb: HTMLElement | null; actions: HTMLElement | null }>({ crumb: null, actions: null });
@@ -167,7 +172,10 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
     const key = answerKey(attemptId, pin!.revisionId, partId);
     return <WorksheetAnswerEditor readOnly={finished || finishing} moduleId={moduleId} attemptId={attemptId} revisionId={pin!.revisionId} leafPartId={partId} answer={bank.answers[key]}
       flushDurable={() => answers.flushDurable(pin!.revisionId, partId)} key={`${moduleId}:${key}:text:${answers.resets[key] || 0}`} label={partLabel}
-      load={() => answers.loadDocument(pin!.revisionId, partId)} save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
+      hasDraft={!!answers.drafts[key]}
+      load={() => answers.loadDocument(pin!.revisionId, partId)}
+      refresh={(...args) => answers.refreshDocument(pin!.revisionId, partId, ...args)}
+      save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
   };
   return <section ref={page} aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
     <Dialog open={confirmFinish} onOpenChange={open => { if (!finishing) setConfirmFinish(open); }}>
@@ -175,6 +183,17 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
         <p className="text-sm text-muted-foreground">Answers become read-only.</p>
         {finishError && <p role="alert" className="text-sm text-destructive">{finishError}</p>}
         <div className="flex justify-end gap-2"><Button variant="ghost" disabled={finishing} onClick={() => setConfirmFinish(false)}>Cancel</Button><Button disabled={finishing} onClick={() => void finish()}>{finishing ? "Finishing…" : "Finish"}</Button></div>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={replacement !== null} onOpenChange={open => { if (!open) setReplacement(null); }}>
+      <DialogContent><DialogTitle>Replace the synced answer?</DialogTitle>
+        <p className="text-sm text-muted-foreground">Your local draft will replace the text and drawings saved on the other device.</p>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setReplacement(null)}>Cancel</Button>
+          <Button variant="destructive" disabled={answers.saving} onClick={() => {
+            if (replacement) void retryAnswer(replacement.revisionId, replacement.partId, replacement.expected);
+          }}>Replace answer</Button>
+        </div>
       </DialogContent>
     </Dialog>
     {slots.crumb && createPortal(<div className="flex min-w-0 items-center gap-0.5">
@@ -243,7 +262,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
           {!cropIds.length && !root && <p className="py-1 text-sm text-muted-foreground">No crops yet</p>}
           {part.leaf && <>
             {answerEditor(part.id, part.label)}
-            {answers.errors[key] && <p role="alert" className="text-sm text-destructive">Couldn't save: {answers.errors[key]} <Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => void answers.retryAnswer(pin.revisionId, part.id)}>Retry</Button><Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => answers.discardAnswer(pin.revisionId, part.id)}>Discard</Button></p>}
+            {answers.errors[key] && <p role="alert" className="text-sm text-destructive">Couldn't save: {answers.errors[key]} <Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => void retryAnswer(pin.revisionId, part.id)}>Retry</Button><Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => answers.discardAnswer(pin.revisionId, part.id)}>Discard</Button></p>}
           </>}
           </div>
         </section>;
