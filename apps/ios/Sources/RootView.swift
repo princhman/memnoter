@@ -73,7 +73,16 @@ struct RootView: View {
         return reader.fullscreen || (reader.activeId != nil && reader.activeId == primaryLibraryDocumentId)
     }
     private var tabletBreadcrumbWidth: CGFloat {
-        max(100, min(session?.pdfReader != nil ? 320 : 560, detailWidth - 420))
+        let leading: CGFloat = tabletShowsSidebarButton ? 100 : 48
+        let trailing: CGFloat
+        if session?.pdfReader != nil {
+            trailing = detailWidth >= 760 ? 340 : 260
+        } else if selected == "questions" {
+            trailing = 180
+        } else {
+            trailing = module == nil ? 48 : 250
+        }
+        return max(100, detailWidth - leading - trailing)
     }
     private var currentSection: String {
         if selected == "questions" { return primaryFileContent ? "files" : "questions" }
@@ -607,7 +616,7 @@ struct RootView: View {
                                     ForEach(0..<chrome.count, id: \.self) { index in
                                         Button("Question \(chrome.label(index))") { session?.worksheetQuestion(index) }
                                     }
-                                } label: { Text("\(chrome.label(chrome.index)) · \(chrome.index + 1)/\(chrome.count)") }
+                                } label: { Text("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))") }
                             }
                             Button { session?.worksheetQuestion(chrome.index + 1) } label: { Image(systemName: "chevron.right") }
                                 .disabled(chrome.index + 1 >= chrome.count).accessibilityLabel("Next question")
@@ -709,7 +718,7 @@ struct RootView: View {
                                     Button("Question \(chrome.label(index))") { session.worksheetQuestion(index) }
                                 }
                             } label: {
-                                Text("\(chrome.label(chrome.index)) · \(chrome.index + 1)/\(chrome.count)").font(.subheadline.weight(.medium))
+                                Text("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))").font(.subheadline.weight(.medium))
                             }
                             .accessibilityLabel("Question \(chrome.label(chrome.index)), \(chrome.index + 1) of \(chrome.count)")
                         }
@@ -790,12 +799,17 @@ struct RootView: View {
     }
     @ViewBuilder private var tabletBreadcrumb: some View {
         if selected == "questions", !primaryFileContent, let worksheet = session?.worksheetChrome {
-            TabletWorksheetTitle(title: worksheet.title ?? "Worksheet", maximumWidth: max(140, min(500, detailWidth - 500)))
+            let leading: CGFloat = tabletShowsSidebarButton ? 130 : 80
+            let history: CGFloat = session?.worksheetAnswerFocused == true && session?.worksheetDrawing.request == nil ? 88 : 0
+            let navigation: CGFloat = worksheet.count <= 3 && detailWidth >= 650 ? 92 + CGFloat(worksheet.count) * 46 : 174
+            let finish: CGFloat = worksheet.status == "Save failed" ? 132 : 92
+            TabletWorksheetTitle(title: worksheet.title ?? "Worksheet",
+                                 maximumWidth: max(100, detailWidth - leading - history - navigation - finish))
         } else {
             TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
                              item: breadcrumbItem,
                              questionsEnabled: session != nil,
-                             maximumWidth: tabletBreadcrumbWidth,
+                             maximumWidth: tabletBreadcrumbWidth, wrapsTitles: true,
                              changeScope: changeSectionScope, changeSection: selectSection)
                 .disabled(busy)
         }
@@ -1109,6 +1123,9 @@ struct RootView: View {
         } label: {
             Label {
                 Text(item.name ?? "")
+                    .lineLimit(isPhone ? 1 : nil)
+                    .fixedSize(horizontal: false, vertical: !isPhone)
+                    .padding(.trailing, isPhone ? 0 : 16)
             } icon: {
                 Image(systemName: item.collapsed ? "folder" : "folder.fill")
             }
@@ -1133,7 +1150,10 @@ struct RootView: View {
     }
     @ViewBuilder private func moduleRow(_ module: NoteModule, inFolder: Bool) -> some View {
         destinationLink(module.id) {
-            Text(module.name).badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
+            Text(module.name)
+                .lineLimit(isPhone ? 1 : nil)
+                .fixedSize(horizontal: false, vertical: !isPhone)
+                .badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
                 .padding(.leading, inFolder ? 20 : 0)
         }
         .contextMenu { moduleActions(module) }
@@ -1343,7 +1363,7 @@ private struct PdfPageButton: View {
             asking = true
         } label: {
             if compact {
-                Label("Page \(reader.page) of \(reader.pageCount) · Go to page", image: "Pdf-file-text")
+                Label("Go to page (\(reader.page) of \(reader.pageCount))", image: "Pdf-file-text")
             } else {
                 HStack(spacing: 3) {
                     Text("\(reader.page)").fontWeight(.semibold)

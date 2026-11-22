@@ -13,7 +13,7 @@ import { maskCards, validMasks } from "@/lib/occlusion";
 import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
 import { CropDialog, type Crop as ImageCrop } from "./image-crop-dialog";
 import { copyImageAttrs } from "@/lib/editor-schema/images";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
@@ -49,6 +49,7 @@ export const FilesContext = createContext<FilesContextValue>({
 });
 
 const visiblePreviews = new Set<HTMLElement>();
+const worksheetPreviewSizes = new Map<string, { width: number; height: number }>();
 
 export function SavedImageView(props: NodeViewProps) {
   const environment = useEditorHost();
@@ -261,7 +262,17 @@ export function SavedImageView(props: NodeViewProps) {
       setDisplayedImage({ source: src, url: img.style.opacity === "0" ? "" : img.src });
     }
     img.onerror = () => setFailedSource(src);
-    img.onload = () => { setFailedSource(null); setLoadedSrc(src); };
+    img.onload = () => {
+      if (drawing?.previewId && img.naturalWidth && img.naturalHeight && img.closest("[data-worksheet-answer]")) {
+        worksheetPreviewSizes.set(drawing.previewId, { width: img.naturalWidth, height: img.naturalHeight });
+        if (worksheetPreviewSizes.size > 128) {
+          const oldest = worksheetPreviewSizes.keys().next().value;
+          if (oldest !== undefined) worksheetPreviewSizes.delete(oldest);
+        }
+      }
+      setFailedSource(null);
+      setLoadedSrc(src);
+    };
     return () => { img.onload = null; img.onerror = null; };
   }, [src]);
 
@@ -271,6 +282,7 @@ export function SavedImageView(props: NodeViewProps) {
     image.current.title = node.attrs.title ?? "";
     image.current.style.width = node.attrs.width ? `${node.attrs.width}px` : "";
     image.current.style.height = "auto";
+    image.current.style.aspectRatio = node.attrs.width > 0 && node.attrs.height > 0 ? `${node.attrs.width} / ${node.attrs.height}` : "";
   }, [src, node.attrs.alt, node.attrs.title, node.attrs.width, node.attrs.height]);
 
   // Recolored on the fly rather than saved, so it follows theme changes.
@@ -457,8 +469,14 @@ export function SavedImageView(props: NodeViewProps) {
     }
   });
 
+  const previewSize = drawing && (node.attrs.width > 0 && node.attrs.height > 0
+    ? { width: node.attrs.width, height: node.attrs.height }
+    : drawing.previewId && worksheetPreviewSizes.get(drawing.previewId));
+  const drawingSize = previewSize
+    ? { "--drawing-width": `${previewSize.width}px`, "--drawing-ratio": `${previewSize.width} / ${previewSize.height}` } as CSSProperties
+    : undefined;
   return (
-    <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-loading={loading || undefined} aria-busy={loading || undefined} data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
+    <NodeViewWrapper style={drawingSize} data-drawing={drawing ? true : undefined} as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-loading={loading || undefined} aria-busy={loading || undefined} data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
       <span ref={infoHost} className="contents" />
       {isInline
         ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && !canEditDrawing && src && !failed) { setPreviewOpen(true); } }} />

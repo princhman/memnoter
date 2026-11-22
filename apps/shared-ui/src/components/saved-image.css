@@ -26,3 +26,19 @@
   overscroll-behavior: contain;
   visibility: hidden;
 }
+
+/* Worksheet previews can be unresolved when their answer editor first mounts. */
+[data-worksheet-answer] .note-image-block[data-drawing][data-loading] {
+    width: var(--drawing-width, 16rem);
+    aspect-ratio: var(--drawing-ratio, 8 / 3);
+    min-height: 0;
+}
+[data-worksheet-answer] .note-image-block[data-drawing][data-loading] .note-image-loading > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
