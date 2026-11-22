@@ -53,8 +53,10 @@ test("cloze clipboard through the desktop editor", async t => {
       dueAt: lastReviewAt + 7 * 86_400_000, stability: 7.25, stabilityFast: 0.2, difficulty: 4.5,
       scheduledDays: 7, learningStep: 0, state: 2, scheduleStatus: "review", lastReviewAt, reps: 1, lapses: 0,
     };
+    // Pass index: false for cards the open editor has already indexed.
     const review = async (moduleId, ...ids) => {
-      await call("sync_cards", { moduleId, cards: ids.map(id => ({ id, kind: "cloze", front: [], back: [] })) });
+      const index = typeof ids.at(-1) === "object" ? ids.pop().index : true;
+      if (index) await call("sync_cards", { moduleId, cards: ids.map(id => ({ id, kind: "cloze", front: [], back: [] })) });
       for (const cardId of ids) {
         await call("review_card", {
           cardId, expectedReps: 0, card: reviewed,
@@ -445,6 +447,75 @@ test("cloze clipboard through the desktop editor", async t => {
       await waitForCards(editor, source, cards => cards.length === 1 && cards[0].id === id);
       const [card] = await dueCards(source);
       assert.equal(card.reps, 1);
+    });
+
+    await t.test("a cloze added to the emptied block keeps its schedule and the cut pastes as new", async subtest => {
+      const id = "refilled:c1";
+      const { source, page, editor } = await openEditor(
+        subtest, "Refilled block", [paragraphWithClozes(cloze, "refilled", "Paris"), "Destination"], [id],
+      );
+      await select(editor, cloze);
+      await page.keyboard.press("Control+x");
+      await waitForCards(editor, source, cards => cards.length === 0);
+      await page.keyboard.type("Rome is in {{Italy}}");
+      await waitForCards(editor, source, cards => cards.length === 1);
+      const [{ id: rome }] = await call("card_schedules", { moduleId: source });
+      assert.match(rome, /^refilled:/);
+      await review(source, rome, { index: false });
+      await pasteBelow(editor, "Destination");
+      await waitForCards(editor, source, cards => cards.length === 2);
+      const cards = await dueCards(source);
+      assert.equal(cards.find(card => card.id === rome)?.reps, 1);
+      const pasted = cards.find(card => card.id !== rome);
+      assert.notEqual(pasted.id, id);
+      assert.equal(pasted.reps, 0);
+    });
+
+    await t.test("pasting inside a grouped card opener lands before it", async subtest => {
+      const id = "beside-group:c1";
+      const opener = "Question ::block";
+      const { source, page, editor } = await openEditor(
+        subtest, "Grouped card", [paragraphWithClozes(cloze, "beside-group", "Paris"), opener, "Answer", "::end"], [id],
+      );
+      await waitForCards(editor, source, cards => cards.length === 2);
+      const group = (await call("card_schedules", { moduleId: source })).find(card => card.id !== id).id;
+      await review(source, group, { index: false });
+      await select(editor, cloze);
+      await page.keyboard.press("Control+x");
+      await waitForCards(editor, source, cards => cards.length === 1);
+      await select(editor, opener, "", opener.indexOf("l"));
+      await page.keyboard.press("Control+v");
+      await waitForCards(editor, source, cards => cards.length === 2 && cards.some(card => card.id === id));
+      const cards = await dueCards(source);
+      for (const kept of [id, group]) assert.equal(cards.find(card => card.id === kept)?.reps, 1, kept);
+      assert.deepEqual(await editor.evaluate(el => {
+        const blocks = [];
+        el.editor.state.doc.forEach(block => blocks.push(block.textContent));
+        return blocks;
+      }), ["", cloze, opener, "Answer", "::end"]);
+    });
+
+    await t.test("a clipboard whose text no longer matches the cut pastes as new", async subtest => {
+      const id = "rewritten:c1";
+      const { source, page, editor } = await openEditor(
+        subtest, "Rewritten clipboard", [paragraphWithClozes(cloze, "rewritten", "Paris"), "Destination"], [id],
+      );
+      await select(editor, cloze);
+      await page.keyboard.press("Control+x");
+      await waitForCards(editor, source, cards => cards.length === 0);
+      await page.evaluate(async () => {
+        const [item] = await navigator.clipboard.read();
+        const html = (await (await item.getType("text/html")).text()).replaceAll("Paris", "Tokyo");
+        const text = (await (await item.getType("text/plain")).text()).replaceAll("Paris", "Tokyo");
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }),
+        })]);
+      });
+      await pasteBelow(editor, "Destination");
+      await waitForCards(editor, source, cards => cards.length === 1);
+      const [pasted] = await dueCards(source);
+      assert.notEqual(pasted.id, id);
+      assert.equal(pasted.reps, 0);
     });
   } finally {
     await browser?.close();
