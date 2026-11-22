@@ -54,7 +54,11 @@ class SelectionTests(unittest.TestCase):
 
     def test_domains_on_both_event_diffs(self):
         cases = {
-            'docs/guide.md': set(), 'AGENTS.md': set(),
+            'docs/guide.md': set(), 'AGENTS.md': set(), 'DESIGN.md': set(),
+            'apps/shared-ui/AGENTS.md': set(), 'apps/ios/README.md': set(),
+            '.github/pull_request_template.md': set(),
+            '.github/workflows/pr-description.yml': set(),
+            'scripts/ci/check-pr-description.py': set(),
             '.codex/config.toml': set(), 'scripts/agent-hooks/run.sh': set(),
             'apps/marketing/src/page.ts': {'frontend'},
             'apps/desktop/src/lib.rs': {'frontend', 'rust'},

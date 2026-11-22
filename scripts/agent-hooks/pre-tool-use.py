@@ -5,9 +5,27 @@ import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 
-MAIN = Path('/Users/vladyslavnalyvaiko/Projects/notes').resolve()
+
+
+def main_checkout():
+    """The primary checkout of this repository, wherever it is cloned."""
+    override = os.environ.get('MEMNOTER_MAIN_CHECKOUT')
+    if override:
+        return Path(override).resolve()
+    here = Path(__file__).resolve().parent
+    try:
+        common = subprocess.check_output(
+            ['git', '-C', str(here), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+            stderr=subprocess.DEVNULL, timeout=5).decode().strip()
+        return Path(common).parent.resolve()
+    except (OSError, subprocess.SubprocessError):
+        return here.parents[1]
+
+
+MAIN = main_checkout()
 GIT_MESSAGE = ('Blocked: destructive Git command targets the shared main checkout. '
                'Other agents may own its changes; stash/pop can also leave stale Rust mtimes. '
                'Use git status/diff and commit only your own paths, or use an isolated worktree.')
@@ -267,6 +285,11 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (PermissionError, ValueError, TypeError) as error:
-        print(str(error) + ' Rephrase as simple literal commands if parsing failed.', file=sys.stderr)
+    except PermissionError as error:
+        print(str(error), file=sys.stderr)
         sys.exit(2)
+    except (ValueError, TypeError) as error:
+        # Heredocs and other syntax the parser can't follow are common and almost always
+        # harmless, so let them run and only say the guard didn't check them.
+        print(f'Warning: the git and dev-launch guard could not check this command ({error}). '
+              'It ran unchecked.', file=sys.stderr)

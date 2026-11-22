@@ -61,18 +61,6 @@ This code ships to desktop, iPad and iPhone at once.
 - **Editor host on iOS** (`src/editor-host/`): scroll, keyboard and caret changes
   always need `tests/editor-host.test.mjs` coverage, even in "don't test" mode.
   Untested fixes here keep bringing old bugs back.
-- **Worksheet answers.** Reuse the shared editor extensions and math views from
-  notes. Do not build a separate LaTeX parser or Write/Preview editor.
-  Keep the answer field compact with a subtle border and an empty-state typing
-  and drawing hint, so the editable area is visible beneath each question.
-  Answers are edited inline under their question on every platform, so the
-  whole question stays in view; no answer modal or click-to-answer preview.
-  Desktop mirrors the iPad toolbar in the window header: the
-  breadcrumb becomes a back chevron and the worksheet title; the top right
-  holds previous/next with question pills (menu above 3) and a purple Finish
-  pill. No in-page title, footer, module heading or "Saved" line.
-  Worksheet questions use the QuestionBank reading layout: saved root names,
-  own parenthesized part labels, identical width, typography, crop gutter and
-  nesting gaps. Keep compact leaf answers below crops in the content column.
-  Pinned crops stay read-only; folding hides crops, answers and descendants
-  without unmounting answer editors or losing their autosave state.
+- **Question bank and worksheets.** The approved behaviour is in the Decisions
+  section of Linear PRI-324. Read it before changing those screens, and add
+  new decisions there, not here.
