@@ -455,7 +455,8 @@ pub(crate) fn load_through(conn: &Connection, module: &str, update_id: i64) -> C
     let doc = Doc::new();
     let state: Vec<u8> = conn
         .query_row(
-            "select state from contents where module_id=?1",
+            "select coalesce(contents.state, X'') from modules
+             left join contents on contents.module_id = modules.id where modules.id=?1",
             [module],
             |r| r.get(0),
         )

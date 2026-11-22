@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { isNativeHost, postNativeEvent } from "@/lib/backend";
+import { editorHost } from "@/lib/editor-host";
 import { useSyncedImageUrl } from "@/lib/synced-image";
 import { partOutline, questionLabel, type Bank } from "@/lib/question-bank";
 import type { WorksheetRevision } from "@/lib/worksheets";
@@ -96,8 +97,43 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
   });
   const labelsKey = questionLabels.join("\n");
   const currentIndex = Math.min(index, Math.max(0, questionCount - 1));
-  const actions = useRef({ close, finish: () => setConfirmFinish(true), retry: () => { void answers.flush(); } });
-  actions.current = { close, finish: () => { if (!finished) setConfirmFinish(true); }, retry: () => { void answers.flush(); } };
+  const page = useRef<HTMLElement>(null);
+  const questionScroll = useRef(new Map<number, number>());
+  const pendingScroll = useRef<number | null>(null);
+  const goToQuestion = (next: number) => {
+    if (!Number.isInteger(next) || next < 0 || next >= questionCount || next === currentIndex) return;
+    const scroller = page.current && editorHost.scrollContainer(page.current);
+    if (scroller) questionScroll.current.set(currentIndex, pendingScroll.current ?? scroller.scrollTop);
+    setIndex(next);
+  };
+  useLayoutEffect(() => {
+    const content = page.current;
+    const scroller = content && editorHost.scrollContainer(content);
+    if (!content || !scroller) return;
+    const top = questionScroll.current.get(currentIndex) ?? 0;
+    pendingScroll.current = top;
+    const stop = () => {
+      pendingScroll.current = null;
+      observer.disconnect();
+    };
+    const restore = () => {
+      scroller.scrollTop = top;
+      if (Math.abs(scroller.scrollTop - top) < 1) stop();
+    };
+    // A revisited question can be too short until its answers and crops load.
+    const observer = new ResizeObserver(restore);
+    observer.observe(content);
+    observer.observe(scroller);
+    const input = ["pointerdown", "touchstart", "wheel", "keydown"] as const;
+    for (const event of input) scroller.addEventListener(event, stop, { passive: true });
+    restore();
+    return () => {
+      stop();
+      for (const event of input) scroller.removeEventListener(event, stop);
+    };
+  }, [currentIndex]);
+  const actions = useRef({ close, goToQuestion, finish: () => setConfirmFinish(true), retry: () => { void answers.flush(); } });
+  actions.current = { close, goToQuestion, finish: () => { if (!finished) setConfirmFinish(true); }, retry: () => { void answers.flush(); } };
   useEffect(() => {
     if (!isNativeHost()) return;
     const back = () => actions.current.close();
@@ -105,7 +141,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
     const retry = () => actions.current.retry();
     const question = (event: Event) => {
       const next = Number((event as CustomEvent).detail);
-      if (Number.isInteger(next) && next >= 0) setIndex(next);
+      actions.current.goToQuestion(next);
     };
     window.addEventListener("worksheet-question", question);
     window.addEventListener("worksheet-back", back);
@@ -133,7 +169,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
       flushDurable={() => answers.flushDurable(pin!.revisionId, partId)} key={`${moduleId}:${key}:text:${answers.resets[key] || 0}`} label={partLabel}
       load={() => answers.loadDocument(pin!.revisionId, partId)} save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
   };
-  return <section aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
+  return <section ref={page} aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
     <Dialog open={confirmFinish} onOpenChange={open => { if (!finishing) setConfirmFinish(open); }}>
       <DialogContent><DialogTitle>Finish worksheet?</DialogTitle>
         <p className="text-sm text-muted-foreground">Answers become read-only.</p>
@@ -149,17 +185,17 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
       {answers.saving || pending ? <span role="status" className="mr-1 text-xs text-muted-foreground">Saving…</span> : null}
       {answers.error && <IconTooltip label="Save failed. Retry"><Button size="icon-sm" variant="ghost" className="text-destructive" aria-label="Save failed. Retry" onClick={() => void answers.flush()}><AlertTriangle /></Button></IconTooltip>}
       {questionCount > 0 && <nav aria-label="Worksheet questions" className="flex items-center gap-0.5">
-        <IconTooltip label="Previous question"><Button size="icon-xs" variant="ghost" aria-label="Previous question" disabled={currentIndex === 0} onClick={() => setIndex(currentIndex - 1)}><ChevronLeft /></Button></IconTooltip>
-        {questionCount <= 3 ? attempt.questions.map((question, number) => <Button key={`${question.revisionId}:${number}`} size="xs" className="min-w-6 px-1.5 tabular-nums" variant={number === currentIndex ? "default" : "ghost"} aria-label={`Question ${questionLabels[number]}`} aria-current={number === currentIndex ? "step" : undefined} onClick={() => setIndex(number)}>{questionLabels[number]}</Button>)
+        <IconTooltip label="Previous question"><Button size="icon-xs" variant="ghost" aria-label="Previous question" disabled={currentIndex === 0} onClick={() => goToQuestion(currentIndex - 1)}><ChevronLeft /></Button></IconTooltip>
+        {questionCount <= 3 ? attempt.questions.map((question, number) => <Button key={`${question.revisionId}:${number}`} size="xs" className="min-w-6 px-1.5 tabular-nums" variant={number === currentIndex ? "default" : "ghost"} aria-label={`Question ${questionLabels[number]}`} aria-current={number === currentIndex ? "step" : undefined} onClick={() => goToQuestion(number)}>{questionLabels[number]}</Button>)
           : <DropdownMenu>
             <DropdownMenuTrigger render={<Button size="xs" variant="ghost" className="gap-1 tabular-nums" aria-label="Choose question"><span className="font-semibold">{questionLabels[currentIndex]}</span><span className="text-muted-foreground">{currentIndex + 1}/{questionCount}</span><ChevronDown className="size-3" /></Button>} />
             <DropdownMenuContent align="end" className="max-h-80 min-w-36">
-              <DropdownMenuRadioGroup value={String(currentIndex)} onValueChange={value => setIndex(Number(value))}>
+              <DropdownMenuRadioGroup value={String(currentIndex)} onValueChange={value => goToQuestion(Number(value))}>
                 {attempt.questions.map((question, number) => <DropdownMenuRadioItem key={`${question.revisionId}:${number}`} value={String(number)} showIndicator={false} closeOnClick>Question {questionLabels[number]}</DropdownMenuRadioItem>)}
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>}
-        <IconTooltip label="Next question"><Button size="icon-xs" variant="ghost" aria-label="Next question" disabled={currentIndex + 1 >= questionCount} onClick={() => setIndex(currentIndex + 1)}><ChevronRight /></Button></IconTooltip>
+        <IconTooltip label="Next question"><Button size="icon-xs" variant="ghost" aria-label="Next question" disabled={currentIndex + 1 >= questionCount} onClick={() => goToQuestion(currentIndex + 1)}><ChevronRight /></Button></IconTooltip>
       </nav>}
       {finished ? <IconTooltip label="Close worksheet"><Button size="icon-xs" variant="ghost" aria-label="Close worksheet" onClick={close}><X /></Button></IconTooltip>
         : <Button size="xs" className="ml-1 rounded-full px-3" disabled={finishing} onClick={() => setConfirmFinish(true)}>Finish</Button>}

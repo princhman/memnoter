@@ -13,12 +13,12 @@ import { maskCards, validMasks } from "@/lib/occlusion";
 import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
 import { CropDialog, type Crop as ImageCrop } from "./image-crop-dialog";
 import { copyImageAttrs } from "@/lib/editor-schema/images";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { call as invoke, fileUrl as convertFileSrc, postNativeEvent } from "../lib/backend.ts";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Scan, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Scan, Scaling, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
 import type { FileType } from "@/lib/content";
@@ -49,9 +49,11 @@ export const FilesContext = createContext<FilesContextValue>({
 });
 
 const visiblePreviews = new Set<HTMLElement>();
+const worksheetPreviewSizes = new Map<string, { width: number; height: number }>();
 
 export function SavedImageView(props: NodeViewProps) {
   const environment = useEditorHost();
+  const isNativeTablet = environment.isNative && document.documentElement.classList.contains("native-tablet");
   const { node, editor, updateAttributes, deleteNode } = props;
   const selected = useEditorState({
     editor,
@@ -105,6 +107,7 @@ export function SavedImageView(props: NodeViewProps) {
     return Math.max(0, container.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight));
   };
   const image = useRef<HTMLImageElement | null>(null);
+  const [controlsAnchor, setControlsAnchor] = useState<HTMLElement | null>(null);
   const mounted = useRef(true);
   // Ends an image drag still in progress if this view goes away (editor destroyed).
   const cancelMove = useRef<(() => void) | null>(null);
@@ -190,7 +193,10 @@ export function SavedImageView(props: NodeViewProps) {
   const hasSrc = !!src;
   // Preview revisions must not detach editor DOM while a text caret is active.
   useEffect(() => {
-    if (!host.current || !hasSrc) return;
+    if (!host.current || !hasSrc) {
+      setControlsAnchor(null);
+      return;
+    }
     const img = document.createElement("img");
     image.current = img;
     img.className = "note-image";
@@ -233,6 +239,7 @@ export function SavedImageView(props: NodeViewProps) {
     // Keep proportions when a saved image is wider than the current editor.
     img.style.height = "auto";
     host.current.appendChild(view.dom);
+    setControlsAnchor(img.parentElement);
     return () => {
       img.onload = null;
       img.onerror = null;
@@ -261,7 +268,17 @@ export function SavedImageView(props: NodeViewProps) {
       setDisplayedImage({ source: src, url: img.style.opacity === "0" ? "" : img.src });
     }
     img.onerror = () => setFailedSource(src);
-    img.onload = () => { setFailedSource(null); setLoadedSrc(src); };
+    img.onload = () => {
+      if (drawing?.previewId && img.naturalWidth && img.naturalHeight && img.closest("[data-worksheet-answer]")) {
+        worksheetPreviewSizes.set(drawing.previewId, { width: img.naturalWidth, height: img.naturalHeight });
+        if (worksheetPreviewSizes.size > 128) {
+          const oldest = worksheetPreviewSizes.keys().next().value;
+          if (oldest !== undefined) worksheetPreviewSizes.delete(oldest);
+        }
+      }
+      setFailedSource(null);
+      setLoadedSrc(src);
+    };
     return () => { img.onload = null; img.onerror = null; };
   }, [src]);
 
@@ -271,6 +288,7 @@ export function SavedImageView(props: NodeViewProps) {
     image.current.title = node.attrs.title ?? "";
     image.current.style.width = node.attrs.width ? `${node.attrs.width}px` : "";
     image.current.style.height = "auto";
+    image.current.style.aspectRatio = node.attrs.width > 0 && node.attrs.height > 0 ? `${node.attrs.width} / ${node.attrs.height}` : "";
   }, [src, node.attrs.alt, node.attrs.title, node.attrs.width, node.attrs.height]);
 
   // Recolored on the fly rather than saved, so it follows theme changes.
@@ -457,8 +475,16 @@ export function SavedImageView(props: NodeViewProps) {
     }
   });
 
+  const hasImage = !!src && !failed;
+  const canCrop = !drawing && hasImage && !!node.attrs.fileId;
+  const previewSize = drawing && (node.attrs.width > 0 && node.attrs.height > 0
+    ? { width: node.attrs.width, height: node.attrs.height }
+    : drawing.previewId && worksheetPreviewSizes.get(drawing.previewId));
+  const drawingSize = previewSize
+    ? { "--drawing-width": `${previewSize.width}px`, "--drawing-ratio": `${previewSize.width} / ${previewSize.height}` } as CSSProperties
+    : undefined;
   return (
-    <NodeViewWrapper as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-loading={loading || undefined} aria-busy={loading || undefined} data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
+    <NodeViewWrapper style={drawingSize} data-drawing={drawing ? true : undefined} as={isInline ? "span" : "div"} contentEditable={false} className="note-image-block" data-loading={loading || undefined} aria-busy={loading || undefined} data-inline={isInline || undefined} data-wrap={layout === "wrap" || undefined} data-selected={selected} data-range-selected={props.selected && !selected || undefined} data-align={isInline ? undefined : node.attrs.alignment}>
       <span ref={infoHost} className="contents" />
       {isInline
         ? <span ref={host as RefObject<HTMLSpanElement>} className="note-image-host" onPointerDown={pressImage} onPointerMove={event => { const down = imagePress.current; if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > TAP_MOVEMENT_PX) { imagePress.current = null; lastTap.current = null; } }} onPointerUp={event => endImageTap(event)} onPointerCancel={event => endImageTap(event, true)} onClick={selectImage} onDoubleClick={() => { if (!environment.isNative && !canEditDrawing && src && !failed) { setPreviewOpen(true); } }} />
@@ -470,48 +496,49 @@ export function SavedImageView(props: NodeViewProps) {
         : <span className="text-sm text-muted-foreground">Image unavailable</span>)}
       {node.attrs.pdfSource && <PdfSourceCaption value={node.attrs.pdfSource} />}
       {selected && editor.isEditable && (
-        <ImageControlsLayer anchor={host}>
-          <ImageActionsMenu label="Image actions" finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}>
-              <DropdownMenuItem disabled={!src || failed} onClick={() => setPreviewOpen(true)}><Maximize2 />Open image full screen</DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <Menu.SubmenuRoot>
-                <Menu.SubmenuTrigger render={<DropdownMenuItem />} disabled={!src || failed}><Maximize2 />Size<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-48">
+        <ImageControlsLayer anchor={controlsAnchor}>
+          <ImageActionsMenu label="Image actions" className="note-image-actions-menu w-60" sideOffset={isNativeTablet ? 10 : undefined} finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}>
+              {isNativeTablet && canEditDrawing && <DropdownMenuItem onClick={openDrawing}><Pencil />Edit drawing</DropdownMenuItem>}
+              {(!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!hasImage} onClick={() => setPreviewOpen(true)}><Maximize2 />Open image full screen</DropdownMenuItem>}
+              {(!isNativeTablet || canEditDrawing || hasImage) && <DropdownMenuSeparator />}
+              {(!isNativeTablet || hasImage) && <Menu.SubmenuRoot>
+                <Menu.SubmenuTrigger render={<DropdownMenuItem />} disabled={!hasImage}><Scaling />Size<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="note-image-actions-submenu w-48">
                   {IMAGE_SIZES.map(([fraction, label]) => <DropdownMenuItem key={label} onClick={() => resizeTo(fraction)}>{label}</DropdownMenuItem>)}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => updateAttributes({ width: null, height: null })}>Original size</DropdownMenuItem>
                 </DropdownMenuContent>
-              </Menu.SubmenuRoot>
+              </Menu.SubmenuRoot>}
               <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />}><WrapText />Text wrapping<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-48">
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="note-image-actions-submenu w-48">
                   <DropdownMenuRadioGroup value={layout}>
-                    {IMAGE_LAYOUTS.map(([value, label, hint, Icon]) => <DropdownMenuRadioItem closeOnClick key={value} value={value} title={hint} disabled={inTableCell && value === "wrap"} onClick={() => setLayout(value)}><Icon />{label}</DropdownMenuRadioItem>)}
+                    {IMAGE_LAYOUTS.filter(([value]) => !isNativeTablet || !inTableCell || value !== "wrap").map(([value, label, hint, Icon]) => <DropdownMenuRadioItem closeOnClick key={value} value={value} title={hint} disabled={inTableCell && value === "wrap"} onClick={() => setLayout(value)}><Icon />{label}</DropdownMenuRadioItem>)}
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </Menu.SubmenuRoot>
               {!isInline && <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />}><AlignLeft />Alignment<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
-                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="w-60">
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="note-image-actions-submenu w-60">
                   <DropdownMenuRadioGroup value={node.attrs.alignment}>
                     {IMAGE_ALIGNMENTS.filter(([alignment]) => layout !== "wrap" || alignment !== "center").map(([alignment, label, Icon]) => <DropdownMenuRadioItem closeOnClick key={alignment} value={alignment} onClick={() => updateAttributes({ alignment })}><Icon />{layout === "wrap" ? `Image on the ${alignment}, text beside it` : label}</DropdownMenuRadioItem>)}
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </Menu.SubmenuRoot>}
-              {!(environment.isNative && drawing) && <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>}
-              <DropdownMenuSeparator />
-              {flashcards && <DropdownMenuItem disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => setOcclusionOpen(true)}><Scan />Occlusion ({validMasks(node.attrs.masks).length})</DropdownMenuItem>}
-              <DropdownMenuItem disabled={!!drawing || !src || failed || !node.attrs.fileId} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop />Crop</DropdownMenuItem>
+              {!(environment.isNative && drawing) && (!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!src || failed} onClick={() => updateAttributes({ adaptive: !adaptive })}><Contrast />{adaptive ? "Stop adapting to theme" : "Adapt to theme"}</DropdownMenuItem>}
+              {!isNativeTablet && <DropdownMenuSeparator />}
+              {flashcards && (!isNativeTablet || canCrop) && <DropdownMenuItem disabled={!canCrop} onClick={() => setOcclusionOpen(true)}><Scan />Occlusion ({validMasks(node.attrs.masks).length})</DropdownMenuItem>}
+              {(!isNativeTablet || canCrop) && <DropdownMenuItem disabled={!canCrop} onClick={() => { if (!validMasks(node.attrs.masks).length || window.confirm("Applying a crop resets all occlusion masks and retires their cards. Undo restores them. Continue to crop?")) setCropOpen(true); }}><Crop />Crop</DropdownMenuItem>}
               <DropdownMenuItem onClick={() => setDescribing(open => !open)}><Captions />Alt text and title</DropdownMenuItem>
-              {drawing && <DropdownMenuItem disabled={!canEditDrawing} onClick={openDrawing}><Pencil />{canEditDrawing ? "Edit drawing" : "Edit on iPad"}</DropdownMenuItem>}
+              {!isNativeTablet && drawing && <DropdownMenuItem disabled={!canEditDrawing} onClick={openDrawing}><Pencil />{canEditDrawing ? "Edit drawing" : "Edit on iPad"}</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onClick={deleteNode}><Trash2 />Remove image</DropdownMenuItem>
           </ImageActionsMenu>
           {describing && (
-            <div className="note-image-description">
+            <span className="note-image-description">
               <label>Alt text<input key={`alt-${node.attrs.alt}`} defaultValue={node.attrs.alt ?? ""} placeholder="Describe the image" onBlur={(event) => { if (event.target.value !== (node.attrs.alt ?? "")) updateAttributes({ alt: event.target.value }); }} /></label>
               <label>Title<input key={`title-${node.attrs.title}`} defaultValue={node.attrs.title ?? ""} placeholder="Shown when hovering over the image" onBlur={(event) => { if (event.target.value !== (node.attrs.title ?? "")) updateAttributes({ title: event.target.value }); }} /></label>
-            </div>
+            </span>
           )}
         </ImageControlsLayer>
       )}

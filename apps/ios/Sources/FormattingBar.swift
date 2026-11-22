@@ -282,7 +282,7 @@ private struct FormatInsertMenu: View {
             Button("Foldable block", systemImage: "rectangle.expand.vertical") { session.exec(.insertFoldableBlock) }
             Button("Photo", systemImage: "photo.badge.plus") { pickingImage = true }
                 .disabled(busy)
-            if session.worksheetAnswerFocused {
+            if session.worksheetAnswerFocused && UIDevice.current.userInterfaceIdiom != .pad {
                 Button("Drawing", systemImage: "pencil.tip.crop.circle") { session.insertWorksheetDrawing() }
                     .disabled(busy)
             }

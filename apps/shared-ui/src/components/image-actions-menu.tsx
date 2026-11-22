@@ -8,15 +8,16 @@ import { ImagePreview } from "@/components/image-preview";
 type ContentProps = ComponentProps<typeof DropdownMenuContent>;
 
 /** The round "…" button and menu shared by note images and question crops. */
-export function ImageActionsMenu({ label, finalFocus, className, children }: {
+export function ImageActionsMenu({ label, finalFocus, className, sideOffset, children }: {
   label: string;
   finalFocus?: ContentProps["finalFocus"];
   className?: string;
+  sideOffset?: ContentProps["sideOffset"];
   children: ReactNode;
 }) {
   return <DropdownMenu>
     <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" className="note-image-menu-button" aria-label={label} />}><Ellipsis /></DropdownMenuTrigger>
-    <DropdownMenuContent align="end" className={className ?? "w-60"} finalFocus={finalFocus}>{children}</DropdownMenuContent>
+    <DropdownMenuContent align="end" sideOffset={sideOffset} className={className ?? "w-60"} finalFocus={finalFocus}>{children}</DropdownMenuContent>
   </DropdownMenu>;
 }
 
