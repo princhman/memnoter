@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import type { Editor } from "@tiptap/core";
+import { CommandManager, type Editor, type EditorEvents } from "@tiptap/core";
+import { changesOutsideSection, getFocusedSectionRange, sectionContainsRange } from "./section-focus";
 import * as Y from "yjs";
 import { ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -155,9 +156,36 @@ export function useNoteDocument(moduleId: string) {
     if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
     // Keep mapped position and per-file receipts across retries. The original
     // editor is the target; navigation never redirects these files to a new note.
+    const section = getFocusedSectionRange(currentEditor.state);
+    let headingPos = section?.from;
+    const { doc } = currentEditor.state;
     let insertAt = position;
-    const mapPosition = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => {
-      insertAt = transaction.mapping.map(insertAt);
+    if (section && position >= section.from && position <= section.from + 1) {
+      // A block inserted at the start of a heading otherwise lands before it.
+      insertAt = section.from + doc.nodeAt(section.from)!.nodeSize;
+    }
+    const mapPosition = ({ transaction, appendedTransactions }: EditorEvents["transaction"]) => {
+      for (const tr of [transaction, ...appendedTransactions]) {
+        insertAt = tr.mapping.map(insertAt);
+        if (headingPos !== undefined) headingPos = tr.mapping.map(headingPos);
+      }
+    };
+    const prepareInsertion = (file: File, fileId?: string) => {
+      const { state } = currentEditor;
+      const range = getFocusedSectionRange(state);
+      if ((headingPos !== undefined && range?.from !== headingPos) ||
+          (range && !sectionContainsRange(range, { from: insertAt, to: insertAt }))) {
+        throw new Error("The image destination is outside the focused section.");
+      }
+      const tr = state.tr;
+      const inserted = new CommandManager({ editor: currentEditor }).createChain(tr)
+        .insertContentAt(insertAt, { type: "image", attrs: { fileId, alt: file.name } })
+        .run();
+      if (!inserted || !tr.docChanged) throw new Error("Could not insert the uploaded image.");
+      if (range && changesOutsideSection(tr, range)) {
+        throw new Error("The image destination is outside the focused section.");
+      }
+      return tr;
     };
     currentEditor.on("transaction", mapPosition);
     return imageFilesOperation(files, {
@@ -167,13 +195,12 @@ export function useNoteDocument(moduleId: string) {
           throw new Error("The original note is closed. Reopen it and add the remaining images, then discard this failed operation.");
         }
       },
-      upload: (file, permit) => uploadFileMutation.mutateAsync({ file, permit }),
+      upload: (file, permit) => {
+        prepareInsertion(file);
+        return uploadFileMutation.mutateAsync({ file, permit });
+      },
       insert: (saved, file) => {
-        // Owned retries use programmatic commands while user admission is closed.
-        const inserted = currentEditor.chain().insertContentAt(insertAt, {
-          type: "image", attrs: { fileId: saved.id, alt: file.name },
-        }).run();
-        if (!inserted) throw new Error("Could not insert the uploaded image.");
+        currentEditor.view.dispatch(prepareInsertion(file, saved.id));
       },
       dispose: () => currentEditor.off("transaction", mapPosition),
     })

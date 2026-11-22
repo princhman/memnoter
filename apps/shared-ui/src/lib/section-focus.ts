@@ -1,7 +1,8 @@
 import { headingId, outline } from "./outline.ts";
 import { Extension, isiOS, isMacOS } from "@tiptap/core";
 import { AllSelection, type EditorState, PluginKey, Plugin, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
-import { ReplaceStep, StepMap, type Mappable } from "@tiptap/pm/transform";
+import { isHistoryTransaction } from "@tiptap/pm/history";
+import { StepMap, type Mappable } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { Editor } from "@tiptap/core";
 import { ProsemirrorBinding, ySyncPluginKey } from "@tiptap/y-tiptap";
@@ -146,19 +147,88 @@ export function changesHiddenContent(transaction: Transaction, range: SectionRan
   return false;
 }
 
-// Commands such as toggleList can join the newly formatted block with a
-// neighbour even though they received a selection confined to the section.
-function joinsAcrossBoundary(transaction: Transaction, range: { from: number; to: number }) {
-  let { from, to } = range;
-  for (const [index, step] of transaction.steps.entries()) {
-    if (step instanceof ReplaceStep && step.slice.size === 0 &&
-        ((step.from < from && step.to > from) || (step.from < to && step.to > to)) &&
-        step.toJSON().structure === true) return true;
-    const map = transaction.mapping.maps[index];
-    from = map.map(from, -1);
-    to = map.map(to, 1);
+// Inserting at the opening boundary can leave the original heading in
+// place and add a block before it, which belongs to the previous section.
+function insertsBeforeFocusedHeading(transaction: Transaction, range: SectionRange) {
+  const start = transaction.mapping.map(range.from, -1);
+  const heading = transaction.mapping.mapResult(range.from, 1);
+  if (heading.deleted || heading.pos <= start) return false;
+  const $heading = transaction.doc.resolve(heading.pos);
+  return $heading.depth === 0 && $heading.nodeAfter?.type.name === "heading";
+}
+
+export function changesOutsideSection(transaction: Transaction, range: SectionRange) {
+  return changesHiddenContent(transaction, range) || insertsBeforeFocusedHeading(transaction, range);
+}
+
+const editorInputEvents = [
+  "keydown", "keypress", "beforeinput", "input",
+  "compositionstart", "compositionupdate", "compositionend", "cut", "paste", "drop",
+];
+const directInput = "section-focus-direct-input";
+const editorInput = new WeakMap<EditorView, ReturnType<typeof trackEditorInput>>();
+
+function trackEditorInput(view: EditorView, deferringComposition: () => boolean) {
+  let events: Event[] = [];
+  const dispatching = (event: Event) => event.eventPhase !== Event.NONE;
+  const capture = (event: Event) => {
+    events = events.filter(dispatching);
+    events.push(event);
+  };
+  for (const type of editorInputEvents) view.dom.addEventListener(type, capture, true);
+
+  let readingDOM = false;
+  let discardingDOM = false;
+  let dispatchingInput = false;
+  const observer = "domObserver" in view ? view.domObserver : null;
+  let discardDOM = () => {};
+  let restoreObserver = () => {};
+  // PM can read input after its DOM event has ended. Scope provenance to the
+  // observer callback. For a full section composition, let native preedit run
+  // in the DOM and repaint it from editor state before committing the text.
+  if (observer && typeof observer === "object" && "flush" in observer &&
+      typeof observer.flush === "function" && "handleDOMChange" in observer &&
+      typeof observer.handleDOMChange === "function") {
+    const { flush, handleDOMChange } = observer;
+    observer.flush = () => { if (!deferringComposition()) flush.call(observer); };
+    observer.handleDOMChange = (...args: unknown[]) => {
+      if (discardingDOM) return;
+      const wasReading = readingDOM;
+      readingDOM = true;
+      try { handleDOMChange.apply(observer, args); }
+      finally { readingDOM = wasReading; }
+    };
+    discardDOM = () => {
+      discardingDOM = true;
+      try {
+        if ("forceFlush" in observer && typeof observer.forceFlush === "function") observer.forceFlush();
+        flush.call(observer);
+      } finally { discardingDOM = false; }
+    };
+    restoreObserver = () => {
+      observer.flush = flush;
+      observer.handleDOMChange = handleDOMChange;
+    };
   }
-  return false;
+
+  return {
+    discardDOM,
+    dispatch(transaction: Transaction, next: (tr: Transaction) => void) {
+      if (!transaction.docChanged || dispatchingInput || !(readingDOM || events.some(dispatching)) ||
+          transaction.getMeta(ySyncPluginKey) || transaction.getMeta(sectionFocusBackground) ||
+          isHistoryTransaction(transaction)) {
+        next(transaction);
+        return;
+      }
+      dispatchingInput = true;
+      try { next(transaction.setMeta(directInput, true)); }
+      finally { dispatchingInput = false; }
+    },
+    destroy() {
+      for (const type of editorInputEvents) view.dom.removeEventListener(type, capture, true);
+      restoreObserver();
+    },
+  };
 }
 
 // Text selections need inline endpoints. A section ending in a block atom
@@ -269,13 +339,29 @@ export const SectionFocus = Extension.create({
         },
     };
   },
+  dispatchTransaction({ transaction, next }) {
+    const input = editorInput.get(this.editor.view);
+    if (input) input.dispatch(transaction, next);
+    else next(transaction);
+  },
   addProseMirrorPlugins() {
     let syncedHeading: XmlElement | null = null;
-    let keydown: KeyboardEvent | null = null;
+    let composingSelection: SectionSelection | null = null;
+    const finishComposition = (view: EditorView, text: string) => {
+      const selection = composingSelection;
+      composingSelection = null;
+      editorInput.get(view)?.discardDOM();
+      const { state } = view;
+      if (selection?.$anchor.doc !== state.doc || !selection.eq(state.selection)) return;
+      if (text) view.dispatch(state.tr.insertText(text).scrollIntoView());
+      else if (view.hasFocus()) view.focus();
+    };
     return [
       new Plugin<number | null>({
         key: sectionFocusKey,
         view(view) {
+          const input = trackEditorInput(view, () => composingSelection !== null);
+          editorInput.set(view, input);
           const binding: unknown = ySyncPluginKey.getState(view.state)?.binding;
 
           // Capture the item while PM still reflects the pre-sync fragment.
@@ -295,6 +381,12 @@ export const SectionFocus = Extension.create({
           }
           return {
             update(view) {
+              if (composingSelection) {
+                if (composingSelection.$anchor.doc !== view.state.doc || !composingSelection.eq(view.state.selection)) {
+                  finishComposition(view, "");
+                }
+                return;
+              }
               // If clamping returns the previous PM selection, PM may leave an
               // escaped native range in place (e.g. Shift+Arrow at the edge).
               const range = getFocusedSectionRange(view.state);
@@ -303,6 +395,9 @@ export const SectionFocus = Extension.create({
               }
             },
             destroy() {
+              input.destroy();
+              editorInput.delete(view);
+              composingSelection = null;
               if (!(binding instanceof ProsemirrorBinding)) return;
               binding.doc.off("beforeTransaction", capture);
               binding.doc.off("afterAllTransactions", clear);
@@ -312,7 +407,6 @@ export const SectionFocus = Extension.create({
         props: {
           handleDOMEvents: {
             keydown(view, event) {
-              keydown = sectionFocusKey.getState(view.state) == null ? null : event;
               if (!view.composing && !event.isComposing) return false;
               if (event.key === "Delete" && deletesAcrossBoundary(view.state, 1) ||
                   event.key === "Backspace" && deletesAcrossBoundary(view.state, -1)) {
@@ -322,7 +416,6 @@ export const SectionFocus = Extension.create({
               return blockInputOverHiddenSelection(view, event);
             },
             beforeinput(view, event) {
-              if (!event.cancelable) return false;
               const range = getFocusedSectionRange(view.state);
               if (!range) return false;
 
@@ -338,7 +431,8 @@ export const SectionFocus = Extension.create({
               const externalInsert = inputType === "insertFromPaste" || inputType === "insertFromDrop";
               const boundaryDelete = inputType.endsWith("Forward") && deletesAcrossBoundary(view.state, 1) ||
                 inputType.endsWith("Backward") && deletesAcrossBoundary(view.state, -1);
-              const replaceSection = inputType === "insertReplacementText" && view.editable &&
+              const replaceSection = (inputType === "insertReplacementText" || inputType === "insertText") && view.editable &&
+                !composingSelection &&
                 !view.composing && !event.isComposing && view.state.selection instanceof SectionSelection;
               if (outside || boundaryDelete ||
                   ((deleting || externalInsert || event.isComposing || replaceSection) &&
@@ -346,7 +440,7 @@ export const SectionFocus = Extension.create({
                 event.preventDefault();
                 return true;
               }
-              if (replaceSection) {
+              if (replaceSection && event.cancelable) {
                 const text = event.data ?? (event.dataTransfer?.getData("text/plain") || null);
                 if (text != null) {
                   // The native replacement range can omit a selected block atom.
@@ -359,8 +453,33 @@ export const SectionFocus = Extension.create({
             },
             // Composition start can delete a spanning selection before
             // ProseMirror starts tagging its transactions as composition.
-            compositionstart: blockInputOverHiddenSelection,
-            compositionupdate: blockInputOverHiddenSelection,
+            compositionstart(view, event) {
+              if (blockInputOverHiddenSelection(view, event)) return true;
+              const { selection } = view.state;
+              if (!view.editable || view.composing || !getFocusedSectionRange(view.state) ||
+                  !(selection instanceof SectionSelection)) return false;
+              // Keep the browser's preedit in one text block. The PM selection
+              // still includes the whole section until the committed text arrives.
+              const caret = Selection.findFrom(selection.$from, 1, true);
+              const native = view.dom.ownerDocument.getSelection();
+              if (!caret || caret.from >= selection.to || !native) return false;
+              const { node, offset } = view.domAtPos(caret.from, 1);
+              composingSelection = selection;
+              native.collapse(node, offset);
+              return true;
+            },
+            compositionupdate(view, event) {
+              return blockInputOverHiddenSelection(view, event) || composingSelection !== null;
+            },
+            compositionend(view, event) {
+              if (!composingSelection) return false;
+              finishComposition(view, event.data);
+              return true;
+            },
+            blur(view) {
+              if (composingSelection) finishComposition(view, "");
+              return false;
+            },
             cut: blockInputOverHiddenSelection,
             paste: blockInputOverHiddenSelection,
             drop(view, event) {
@@ -374,15 +493,9 @@ export const SectionFocus = Extension.create({
           },
         },
         filterTransaction(transaction, state) {
-          if (!transaction.docChanged) return true;
-          const input = transaction.getMeta("uiEvent");
-          const guardedInput = transaction.getMeta("composition") || input === "cut" || input === "paste" || input === "drop";
-          // eventPhase resets when DOM dispatch ends. A command called later
-          // through the editor API must keep its ordinary programmatic behavior.
-          const keyboard = keydown && keydown.eventPhase !== Event.NONE && !transaction.getMeta(ySyncPluginKey);
-          if (!guardedInput && !keyboard) return true;
+          if (!transaction.getMeta(directInput)) return true;
           const range = getFocusedSectionRange(state);
-          return !range || !(guardedInput ? changesHiddenContent(transaction, range) : joinsAcrossBoundary(transaction, range));
+          return !range || !changesOutsideSection(transaction, range);
         },
         appendTransaction(transactions, oldState, state) {
           // Clamp the final selection for every route, including selections
