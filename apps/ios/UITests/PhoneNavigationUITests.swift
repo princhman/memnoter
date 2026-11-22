@@ -63,9 +63,14 @@ final class PhoneNavigationUITests: XCTestCase {
         let review = app.buttons.containing(.staticText, identifier: "Review").firstMatch
         XCTAssertTrue(review.existsOrWait(timeout: 5))
         review.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["review.counts"].existsOrWait(timeout: 10))
+        // Review starts a new web view. Wait for the persisted card to render,
+        // since the native counts toolbar is present before the queue loads.
+        let question = app.webViews.staticTexts["Question"]
+        XCTAssertTrue(question.waitForExistence(timeout: 40), "Review must show the saved card after relaunch")
+        XCTAssertTrue(app.descendants(matching: .any)["review.counts"].exists)
         let reveal = app.buttons["Show answer"]
-        XCTAssertTrue(reveal.existsOrWait(timeout: 10))
+        let readyToReveal = NSPredicate(format: "exists == true AND enabled == true")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: readyToReveal, object: reveal)], timeout: 5), .completed)
         reveal.tap()
         let good = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Good")).firstMatch
         XCTAssertTrue(good.existsOrWait(timeout: 5))

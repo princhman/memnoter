@@ -29,6 +29,11 @@ struct ReviewView: View {
 
         }
         .background(Color(uiColor: .systemBackground))
+        .overlay {
+            if session?.ready != true, session?.error == nil {
+                ProgressView("Loading cards…")
+            }
+        }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
         .toolbar {
             // Break the shared glass background after RootView's sidebar control.
@@ -60,14 +65,19 @@ struct ReviewView: View {
             }
             if horizontalSizeClass != .compact { countsToolbar }
         }
-        .task {
+        .onAppear {
+            guard session == nil else { return }
             let web = WebSession(client: client, directory: directory, entry: BridgeProtocol.reviewEntry, preferences: preferences)
             web.onReady = { command(.load, ["scope": moduleId as Any? ?? NSNull()], parameters: ["scope"]) }
             session = web
         }
         .onChange(of: skipCardsCreatedToday) { _, _ in Task { await session?.updateCardPreference() } }
         .onChange(of: moduleId) { _, _ in command(.load, ["scope": moduleId as Any? ?? NSNull()], parameters: ["scope"]) }
-        .onDisappear { session?.dispose() }
+        .onDisappear {
+            session?.web.stopLoading()
+            session?.dispose()
+            session = nil
+        }
     }
     @ToolbarContentBuilder private var countsToolbar: some ToolbarContent {
         if #available(iOS 26.0, *) {
