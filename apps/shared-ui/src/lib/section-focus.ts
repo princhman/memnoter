@@ -2,7 +2,7 @@ import { headingId, outline } from "./outline.ts";
 import { Extension, isiOS, isMacOS } from "@tiptap/core";
 import { AllSelection, type EditorState, PluginKey, Plugin, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { isHistoryTransaction } from "@tiptap/pm/history";
-import { StepMap, type Mappable } from "@tiptap/pm/transform";
+import { StepMap } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { Editor } from "@tiptap/core";
 import { ProsemirrorBinding, ySyncPluginKey } from "@tiptap/y-tiptap";
@@ -161,60 +161,61 @@ export function changesOutsideSection(transaction: Transaction, range: SectionRa
   return changesHiddenContent(transaction, range) || insertsBeforeFocusedHeading(transaction, range);
 }
 
-const editorInputEvents = [
+const editorInputEvents = new Set([
   "keydown", "keypress", "beforeinput", "input",
   "compositionstart", "compositionupdate", "compositionend", "cut", "paste", "drop",
-];
+]);
 const directInput = "section-focus-direct-input";
 const editorInput = new WeakMap<EditorView, ReturnType<typeof trackEditorInput>>();
+const scopedHandlers = new WeakSet<EventListener>();
 
-function trackEditorInput(view: EditorView, deferringComposition: () => boolean) {
-  let events: Event[] = [];
-  const dispatching = (event: Event) => event.eventPhase !== Event.NONE;
-  const capture = (event: Event) => {
-    events = events.filter(dispatching);
-    events.push(event);
-  };
-  for (const type of editorInputEvents) view.dom.addEventListener(type, capture, true);
+function scopeInputHandlers(view: EditorView) {
+  if (!("input" in view) || !view.input || typeof view.input !== "object" ||
+      !("eventHandlers" in view.input) || !view.input.eventHandlers ||
+      typeof view.input.eventHandlers !== "object") return;
+  const handlers = view.input.eventHandlers;
+  const entries: [string, unknown][] = Object.entries(handlers);
+  // Keep the wrapper in PM's listener registry so PM owns its teardown.
+  // Other native listeners can run microtasks while the event is still active.
+  for (const [type, listener] of entries) {
+    if (!editorInputEvents.has(type) || typeof listener !== "function") continue;
+    const handler = listener as EventListener;
+    if (scopedHandlers.has(handler)) continue;
+    const scoped = (event: Event) => {
+      const input = editorInput.get(view);
+      if (input) input.run(() => handler(event));
+      else handler(event);
+    };
+    scopedHandlers.add(scoped);
+    view.dom.removeEventListener(type, handler);
+    Object.assign(handlers, { [type]: scoped });
+    view.dom.addEventListener(type, scoped);
+  }
+}
 
-  let readingDOM = false;
-  let discardingDOM = false;
+function trackEditorInput(view: EditorView) {
+  let handlingInput = false;
   let dispatchingInput = false;
+  const run = (handler: () => void) => {
+    const wasHandling = handlingInput;
+    handlingInput = true;
+    try { handler(); }
+    finally { handlingInput = wasHandling; }
+  };
   const observer = "domObserver" in view ? view.domObserver : null;
-  let discardDOM = () => {};
   let restoreObserver = () => {};
-  // PM can read input after its DOM event has ended. Scope provenance to the
-  // observer callback. For a full section composition, let native preedit run
-  // in the DOM and repaint it from editor state before committing the text.
-  if (observer && typeof observer === "object" && "flush" in observer &&
-      typeof observer.flush === "function" && "handleDOMChange" in observer &&
+  // Native DOM edits can be reconciled after the original event has returned.
+  if (observer && typeof observer === "object" && "handleDOMChange" in observer &&
       typeof observer.handleDOMChange === "function") {
-    const { flush, handleDOMChange } = observer;
-    observer.flush = () => { if (!deferringComposition()) flush.call(observer); };
-    observer.handleDOMChange = (...args: unknown[]) => {
-      if (discardingDOM) return;
-      const wasReading = readingDOM;
-      readingDOM = true;
-      try { handleDOMChange.apply(observer, args); }
-      finally { readingDOM = wasReading; }
-    };
-    discardDOM = () => {
-      discardingDOM = true;
-      try {
-        if ("forceFlush" in observer && typeof observer.forceFlush === "function") observer.forceFlush();
-        flush.call(observer);
-      } finally { discardingDOM = false; }
-    };
-    restoreObserver = () => {
-      observer.flush = flush;
-      observer.handleDOMChange = handleDOMChange;
-    };
+    const { handleDOMChange } = observer;
+    observer.handleDOMChange = (...args: unknown[]) => run(() => handleDOMChange.apply(observer, args));
+    restoreObserver = () => { observer.handleDOMChange = handleDOMChange; };
   }
 
   return {
-    discardDOM,
+    run,
     dispatch(transaction: Transaction, next: (tr: Transaction) => void) {
-      if (!transaction.docChanged || dispatchingInput || !(readingDOM || events.some(dispatching)) ||
+      if (!transaction.docChanged || dispatchingInput || !handlingInput ||
           transaction.getMeta(ySyncPluginKey) || transaction.getMeta(sectionFocusBackground) ||
           isHistoryTransaction(transaction)) {
         next(transaction);
@@ -224,38 +225,9 @@ function trackEditorInput(view: EditorView, deferringComposition: () => boolean)
       try { next(transaction.setMeta(directInput, true)); }
       finally { dispatchingInput = false; }
     },
-    destroy() {
-      for (const type of editorInputEvents) view.dom.removeEventListener(type, capture, true);
-      restoreObserver();
-    },
+    destroy: restoreObserver,
   };
 }
-
-// Text selections need inline endpoints. A section ending in a block atom
-// needs a selection whose endpoint can sit after that atom at the document level.
-export class SectionSelection extends Selection {
-  eq(other: Selection) {
-    return other instanceof SectionSelection && this.anchor === other.anchor && this.head === other.head;
-  }
-
-  map(doc: EditorState["doc"], mapping: Mappable): Selection {
-    const direction = this.anchor < this.head ? 1 : -1;
-    const anchor = mapping.map(this.anchor, direction);
-    const head = mapping.map(this.head, -direction);
-    return (head - anchor) * direction > 0
-      ? new SectionSelection(doc.resolve(anchor), doc.resolve(head))
-      : Selection.near(doc.resolve(anchor));
-  }
-
-  toJSON() {
-    return { type: "section-selection", anchor: this.anchor, head: this.head };
-  }
-
-  static fromJSON(doc: EditorState["doc"], json: { anchor: number; head: number }) {
-    return new SectionSelection(doc.resolve(json.anchor), doc.resolve(json.head));
-  }
-}
-Selection.jsonID("section-selection", SectionSelection);
 
 function selectionInSection(state: EditorState, range: { from: number; to: number }, entering: boolean) {
   const { doc, selection } = state;
@@ -263,29 +235,17 @@ function selectionInSection(state: EditorState, range: { from: number; to: numbe
       (!selection.empty || (selection.from > range.from && selection.to < range.to))) return selection;
 
   const $start = doc.resolve(range.from + 1);
-  const $boundary = doc.resolve(range.to);
-  if (selection instanceof AllSelection) {
-    const end = Selection.findFrom($boundary, -1);
-    return end instanceof TextSelection
-      ? TextSelection.create(doc, $start.pos, end.to)
-      : new SectionSelection(doc.resolve(range.from), $boundary);
-  }
   if (selection.to <= range.from || (entering && selection.from >= range.to)) {
     return new TextSelection($start);
   }
-  if (selection.from >= range.to) {
-    return Selection.findFrom($boundary, -1, true) ?? new TextSelection($start);
-  }
+  const $end = Selection.findFrom(doc.resolve(range.to), -1, true)?.$head ?? $start;
+  if (selection.from >= range.to) return new TextSelection($end);
 
-  const from = Math.max(selection.from, $start.pos);
-  const end = selection.to >= range.to ? Selection.findFrom($boundary, -1) : null;
-  const to = end instanceof TextSelection ? end.to : Math.min(selection.to, range.to);
-  const forward = selection.anchor <= selection.head;
-  const $anchor = doc.resolve(forward ? from : to);
-  const $head = doc.resolve(forward ? to : from);
-  return $anchor.parent.inlineContent && $head.parent.inlineContent
-    ? new TextSelection($anchor, $head)
-    : new SectionSelection($anchor, $head);
+  const $from = selection.from <= range.from ? $start : selection.$from;
+  const $to = selection.to >= range.to ? $end : selection.$to;
+  return selection.anchor <= selection.head
+    ? TextSelection.between($from, $to)
+    : TextSelection.between($to, $from);
 }
 
 export const SectionFocus = Extension.create({
@@ -346,22 +306,13 @@ export const SectionFocus = Extension.create({
   },
   addProseMirrorPlugins() {
     let syncedHeading: XmlElement | null = null;
-    let composingSelection: SectionSelection | null = null;
-    const finishComposition = (view: EditorView, text: string) => {
-      const selection = composingSelection;
-      composingSelection = null;
-      editorInput.get(view)?.discardDOM();
-      const { state } = view;
-      if (selection?.$anchor.doc !== state.doc || !selection.eq(state.selection)) return;
-      if (text) view.dispatch(state.tr.insertText(text).scrollIntoView());
-      else if (view.hasFocus()) view.focus();
-    };
     return [
       new Plugin<number | null>({
         key: sectionFocusKey,
         view(view) {
-          const input = trackEditorInput(view, () => composingSelection !== null);
+          const input = trackEditorInput(view);
           editorInput.set(view, input);
+          scopeInputHandlers(view);
           const binding: unknown = ySyncPluginKey.getState(view.state)?.binding;
 
           // Capture the item while PM still reflects the pre-sync fragment.
@@ -381,12 +332,6 @@ export const SectionFocus = Extension.create({
           }
           return {
             update(view) {
-              if (composingSelection) {
-                if (composingSelection.$anchor.doc !== view.state.doc || !composingSelection.eq(view.state.selection)) {
-                  finishComposition(view, "");
-                }
-                return;
-              }
               // If clamping returns the previous PM selection, PM may leave an
               // escaped native range in place (e.g. Shift+Arrow at the edge).
               const range = getFocusedSectionRange(view.state);
@@ -397,7 +342,6 @@ export const SectionFocus = Extension.create({
             destroy() {
               input.destroy();
               editorInput.delete(view);
-              composingSelection = null;
               if (!(binding instanceof ProsemirrorBinding)) return;
               binding.doc.off("beforeTransaction", capture);
               binding.doc.off("afterAllTransactions", clear);
@@ -431,55 +375,16 @@ export const SectionFocus = Extension.create({
               const externalInsert = inputType === "insertFromPaste" || inputType === "insertFromDrop";
               const boundaryDelete = inputType.endsWith("Forward") && deletesAcrossBoundary(view.state, 1) ||
                 inputType.endsWith("Backward") && deletesAcrossBoundary(view.state, -1);
-              const replaceSection = (inputType === "insertReplacementText" || inputType === "insertText") && view.editable &&
-                !composingSelection &&
-                !view.composing && !event.isComposing && view.state.selection instanceof SectionSelection;
               if (outside || boundaryDelete ||
-                  ((deleting || externalInsert || event.isComposing || replaceSection) &&
+                  ((deleting || externalInsert || event.isComposing) &&
                     nativeSelectionCrossesBoundary(view, range))) {
                 event.preventDefault();
                 return true;
               }
-              if (replaceSection && event.cancelable) {
-                const text = event.data ?? (event.dataTransfer?.getData("text/plain") || null);
-                if (text != null) {
-                  // The native replacement range can omit a selected block atom.
-                  event.preventDefault();
-                  view.dispatch(view.state.tr.insertText(text).scrollIntoView());
-                  return true;
-                }
-              }
               return false;
             },
-            // Composition start can delete a spanning selection before
-            // ProseMirror starts tagging its transactions as composition.
-            compositionstart(view, event) {
-              if (blockInputOverHiddenSelection(view, event)) return true;
-              const { selection } = view.state;
-              if (!view.editable || view.composing || !getFocusedSectionRange(view.state) ||
-                  !(selection instanceof SectionSelection)) return false;
-              // Keep the browser's preedit in one text block. The PM selection
-              // still includes the whole section until the committed text arrives.
-              const caret = Selection.findFrom(selection.$from, 1, true);
-              const native = view.dom.ownerDocument.getSelection();
-              if (!caret || caret.from >= selection.to || !native) return false;
-              const { node, offset } = view.domAtPos(caret.from, 1);
-              composingSelection = selection;
-              native.collapse(node, offset);
-              return true;
-            },
-            compositionupdate(view, event) {
-              return blockInputOverHiddenSelection(view, event) || composingSelection !== null;
-            },
-            compositionend(view, event) {
-              if (!composingSelection) return false;
-              finishComposition(view, event.data);
-              return true;
-            },
-            blur(view) {
-              if (composingSelection) finishComposition(view, "");
-              return false;
-            },
+            compositionstart: blockInputOverHiddenSelection,
+            compositionupdate: blockInputOverHiddenSelection,
             cut: blockInputOverHiddenSelection,
             paste: blockInputOverHiddenSelection,
             drop(view, event) {
@@ -497,21 +402,13 @@ export const SectionFocus = Extension.create({
           const range = getFocusedSectionRange(state);
           return !range || !changesOutsideSection(transaction, range);
         },
-        appendTransaction(transactions, oldState, state) {
+        appendTransaction(transactions, _oldState, state) {
           // Clamp the final selection for every route, including selections
           // mapped through a document edit, before the view can accept input.
           const range = getFocusedSectionRange(state);
           if (!range) return null;
-          const source = transactions[0];
-          const sync = source.getMeta(ySyncPluginKey);
-          const previous = oldState.selection;
-          const before = previous instanceof SectionSelection ? getFocusedSectionRange(oldState) : null;
-          // Yjs restores text endpoints, which cannot sit after a block atom.
-          const restoreSection = sync?.isChangeOrigin && !sync.isUndoRedoOperation &&
-            before && previous.from === before.from && previous.to === before.to;
-          const selection = restoreSection
-            ? new SectionSelection(state.doc.resolve(range.from), state.doc.resolve(range.to))
-            : selectionInSection(state, range, transactions.some(tr => tr.getMeta(sectionFocusKey)?.type === "show"));
+          const selection = selectionInSection(state, range,
+            transactions.some(tr => tr.getMeta(sectionFocusKey)?.type === "show"));
           if (selection.eq(state.selection)) return null;
 
           const tr = state.tr.setSelection(selection);

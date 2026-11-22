@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { CommandManager, type Editor, type EditorEvents } from "@tiptap/core";
+import { CommandManager, type Editor } from "@tiptap/core";
 import { changesOutsideSection, getFocusedSectionRange, sectionContainsRange } from "./section-focus";
 import * as Y from "yjs";
-import { ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
+import { absolutePositionToRelativePosition, ProsemirrorBinding, relativePositionToAbsolutePosition, ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "./backend";
 import { applyPendingSaves, saveQueue } from "./saves";
@@ -154,40 +154,38 @@ export function useNoteDocument(moduleId: string) {
     position: number,
   ) {
     if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
-    // Keep mapped position and per-file receipts across retries. The original
-    // editor is the target; navigation never redirects these files to a new note.
-    const section = getFocusedSectionRange(currentEditor.state);
-    let headingPos = section?.from;
-    const { doc } = currentEditor.state;
-    let insertAt = position;
-    if (section && position >= section.from && position <= section.from + 1) {
-      // A block inserted at the start of a heading otherwise lands before it.
-      insertAt = section.from + doc.nodeAt(section.from)!.nodeSize;
-    }
-    const mapPosition = ({ transaction, appendedTransactions }: EditorEvents["transaction"]) => {
-      for (const tr of [transaction, ...appendedTransactions]) {
-        insertAt = tr.mapping.map(insertAt);
-        if (headingPos !== undefined) headingPos = tr.mapping.map(headingPos);
-      }
-    };
+    const { state } = currentEditor;
+    const binding: unknown = ySyncPluginKey.getState(state)?.binding;
+    if (!(binding instanceof ProsemirrorBinding) || binding.doc !== yDoc) return;
+    const section = getFocusedSectionRange(state);
+    // The binding keeps the same Yjs heading item when peer edits move it.
+    const heading = section ? binding.type.get(state.doc.resolve(section.from).index()) : null;
+    // A block inserted at the start of a heading otherwise lands before it.
+    const insertAt = section && position >= section.from && position <= section.from + 1
+      ? section.from + state.doc.nodeAt(section.from)!.nodeSize
+      : position;
+    let destination: Y.RelativePosition = absolutePositionToRelativePosition(insertAt, binding.type, binding.mapping);
+
     const prepareInsertion = (file: File, fileId?: string) => {
       const { state } = currentEditor;
       const range = getFocusedSectionRange(state);
-      if ((headingPos !== undefined && range?.from !== headingPos) ||
-          (range && !sectionContainsRange(range, { from: insertAt, to: insertAt }))) {
+      const position = relativePositionToAbsolutePosition(yDoc, binding.type, destination, binding.mapping);
+      if (position === null) throw new Error("The image destination was removed.");
+      if ((section && (!range || !(heading instanceof Y.XmlElement) ||
+            binding.mapping.get(heading) !== state.doc.nodeAt(range.from))) ||
+          (range && !sectionContainsRange(range, { from: position, to: position }))) {
         throw new Error("The image destination is outside the focused section.");
       }
       const tr = state.tr;
       const inserted = new CommandManager({ editor: currentEditor }).createChain(tr)
-        .insertContentAt(insertAt, { type: "image", attrs: { fileId, alt: file.name } })
+        .insertContentAt(position, { type: "image", attrs: { fileId, alt: file.name } })
         .run();
       if (!inserted || !tr.docChanged) throw new Error("Could not insert the uploaded image.");
       if (range && changesOutsideSection(tr, range)) {
         throw new Error("The image destination is outside the focused section.");
       }
-      return tr;
+      return { tr, nextPosition: tr.mapping.map(position) };
     };
-    currentEditor.on("transaction", mapPosition);
     return imageFilesOperation(files, {
       checkTarget: permit => {
         assertWritable(permit);
@@ -200,9 +198,11 @@ export function useNoteDocument(moduleId: string) {
         return uploadFileMutation.mutateAsync({ file, permit });
       },
       insert: (saved, file) => {
-        currentEditor.view.dispatch(prepareInsertion(file, saved.id));
+        const { tr, nextPosition } = prepareInsertion(file, saved.id);
+        currentEditor.view.dispatch(tr);
+        if (currentEditor.state.doc === tr.before) throw new Error("Could not insert the uploaded image.");
+        destination = absolutePositionToRelativePosition(nextPosition, binding.type, binding.mapping);
       },
-      dispose: () => currentEditor.off("transaction", mapPosition),
     })
       .catch(error => console.error("Failed to insert image:", error));
   }
