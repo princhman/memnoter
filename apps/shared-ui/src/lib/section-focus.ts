@@ -4,7 +4,9 @@ import { AllSelection, type EditorState, PluginKey, Plugin, Selection, TextSelec
 import { StepMap, type Mappable } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { Editor } from "@tiptap/core";
-import { ySyncPluginKey } from "@tiptap/y-tiptap";
+import { ProsemirrorBinding, ySyncPluginKey } from "@tiptap/y-tiptap";
+import { XmlElement, type Transaction as YTransaction } from "yjs";
+import { backspaceHeading } from "./heading-hierarchy";
 
 export const sectionFocusKey = new PluginKey<number | null>("section-focus");
 
@@ -157,11 +159,8 @@ export class SectionSelection extends Selection {
 }
 Selection.jsonID("section-selection", SectionSelection);
 
-export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boolean }>({
+export const SectionFocus = Extension.create({
   name: "section-focus",
-  addOptions() {
-    return { sidebarSectionsEnabled: () => false };
-  },
   // Intercept boundary input before MarkdownPaste and the default keymaps.
   priority: 1101,
   addKeyboardShortcuts() {
@@ -170,7 +169,13 @@ export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boo
     return {
       Delete: forward,
       "Mod-Delete": forward,
-      Backspace: backward,
+      Backspace: () => {
+        if (!backward()) return false;
+        // Give the visible heading conversion the same chance as in the full
+        // note. Consume the key even if it fails so the fallback cannot join.
+        if (!selectionCrossesBoundary(this.editor.state)) backspaceHeading(this.editor);
+        return true;
+      },
       "Mod-Backspace": backward,
       "Shift-Backspace": backward,
       ...((isMacOS() || isiOS()) && {
@@ -206,10 +211,33 @@ export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boo
     };
   },
   addProseMirrorPlugins() {
-    const sidebarSectionsEnabled = this.options.sidebarSectionsEnabled;
+    let syncedHeading: XmlElement | null = null;
     return [
       new Plugin<number | null>({
         key: sectionFocusKey,
+        view(view) {
+          const binding: unknown = ySyncPluginKey.getState(view.state)?.binding;
+          if (!(binding instanceof ProsemirrorBinding)) return {};
+          // Capture the item while PM still reflects the pre-sync fragment.
+          // Local PM writes already have their own transaction mapping.
+          const capture = (transaction: YTransaction) => {
+            const { state } = view;
+            const pos = sectionFocusKey.getState(state);
+            if (pos == null || transaction.origin === ySyncPluginKey ||
+                binding.type.length !== state.doc.childCount) return;
+            const item = binding.type.get(state.doc.resolve(pos).index());
+            if (item instanceof XmlElement) syncedHeading = item;
+          };
+          const clear = () => { syncedHeading = null; };
+          binding.doc.on("beforeTransaction", capture);
+          binding.doc.on("afterAllTransactions", clear);
+          return {
+            destroy() {
+              binding.doc.off("beforeTransaction", capture);
+              binding.doc.off("afterAllTransactions", clear);
+            },
+          };
+        },
         props: {
           handleTextInput(view, from, to) {
             const range = getFocusedSectionRange(view.state);
@@ -255,10 +283,17 @@ export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boo
           const range = getFocusedSectionRange(state);
           return !range || !changesHiddenContent(transaction, range);
         },
-        appendTransaction(_transactions, _old, state) {
-          if (!(state.selection instanceof AllSelection)) return null;
+        appendTransaction(transactions, oldState, state) {
+          const selectAll = state.selection instanceof AllSelection;
+          const sync = transactions[0]?.getMeta(ySyncPluginKey);
+          const restore = oldState.selection instanceof SectionSelection && sync?.isChangeOrigin && !sync.isUndoRedoOperation;
+          if (!selectAll && !restore) return null;
           const range = getFocusedSectionRange(state);
           if (!range) return null;
+          if (restore) {
+            // Yjs restores text endpoints, which cannot sit after a block atom.
+            return state.tr.setSelection(new SectionSelection(state.doc.resolve(range.from), state.doc.resolve(range.to)));
+          }
           const end = Selection.findFrom(state.doc.resolve(range.to), -1);
           const selection = end instanceof TextSelection
             ? TextSelection.create(state.doc, range.from + 1, end.to)
@@ -284,37 +319,35 @@ export const SectionFocus = Extension.create<{ sidebarSectionsEnabled: () => boo
               const before = getSectionRange(oldState.doc, currentPosition);
               if (!before) return null;
               const sync = transaction.getMeta(ySyncPluginKey);
-              let position = transaction.mapping.map(currentPosition, -1);
+              let position = transaction.mapping.map(currentPosition, 1);
               if (sync?.isChangeOrigin) {
                 // The binding renders a full replacement, even for a one-letter change.
+                const binding: unknown = ySyncPluginKey.getState(oldState)?.binding;
+                const survivingNode = syncedHeading && binding instanceof ProsemirrorBinding
+                  ? binding.mapping.get(syncedHeading) : null;
                 const heading = oldState.doc.nodeAt(currentPosition);
                 if (!heading) return null;
                 const id = headingId(heading);
-                const matches = outline(transaction.doc).filter(item =>
-                  id ? item.id === id : item.id == null && transaction.doc.nodeAt(item.pos)?.eq(heading));
+                const matches = outline(transaction.doc).filter(item => {
+                  if (survivingNode) return transaction.doc.nodeAt(item.pos) === survivingNode;
+                  return id ? item.id === id : item.id == null && transaction.doc.nodeAt(item.pos)?.eq(heading);
+                });
                 if (matches.length !== 1) return null;
                 position = matches[0].pos;
               }
               const after = getSectionRange(transaction.doc, position);
               if (!after) return null;
               const background = sync?.isChangeOrigin ? !sync.isUndoRedoOperation :
-                transaction.getMeta("appendedTransaction") || transaction.getMeta(sectionFocusBackground) ||
-                transaction.getMeta("addToHistory") === false;
+                transaction.getMeta("appendedTransaction") || transaction.getMeta(sectionFocusBackground);
               if (!background) {
                 const oldDoc = oldState.doc.content;
                 const newDoc = transaction.doc.content;
                 // Compare both hidden sides, including inserts at the section ends.
                 const mayChangeHidden = sync?.isChangeOrigin ||
+                  transaction.mapping.map(before.from, -1) !== after.from ||
                   transaction.mapping.map(before.to, 1) !== after.to || changesHiddenContent(transaction, before);
                 if (mayChangeHidden && (!oldDoc.cut(0, before.from).eq(newDoc.cut(0, after.from)) ||
                     !oldDoc.cut(before.to).eq(newDoc.cut(after.to)))) return null;
-
-                const selected = transaction.selection.$from;
-                const heading = selected.depth === 1 ? selected.parent : null;
-                const focused = transaction.doc.nodeAt(position);
-                if (sidebarSectionsEnabled() && heading?.type.name === "heading" && focused?.type.name === "heading" &&
-                  Number(heading.attrs.level) <= Number(focused.attrs.level) &&
-                  (selected.pos < after.from || selected.pos >= after.to)) return null;
               }
               return position;
             }

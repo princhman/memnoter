@@ -94,7 +94,7 @@ export function noteExtensions({
     ...FoldableBlock,
     ...(reduced ? [HeadingFold.extend({ addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] })] : [
       HeadingHieararchy,
-      SectionFocus.configure({ sidebarSectionsEnabled }),
+      SectionFocus,
       Sections.configure({ sidebarSectionsEnabled }),
       HeadingFold,
       HeadingNumbering,

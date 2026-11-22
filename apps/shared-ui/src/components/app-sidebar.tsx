@@ -17,10 +17,10 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
-import { Link, useMatchRoute, useNavigate, useRouter } from "@tanstack/react-router";
+import { Link, useMatchRoute, useRouter } from "@tanstack/react-router";
 import { SidebarModules } from "./sidebar-modules";
 import { ChevronRight, Ellipsis, FilePlus, FileText, House, Files, CircleHelp, Layers, Pencil, Plus, Settings, Trash2 } from "lucide-react";
-import { addSidebarSection, openSidebarSection, SidebarSectionNavigation, useSidebarSections } from "@/lib/sidebar-sections";
+import { openSidebarSection, SidebarSectionNavigation, useSidebarSections } from "@/lib/sidebar-sections";
 import type { Module } from "@/lib/types";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "@/lib/store";
@@ -66,7 +66,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
   const items = (Item: typeof DropdownMenuItem | typeof ContextMenuItem) => (
     <>
       {sidebarSections && <Item onClick={() => {
-        addSidebarSection(moduleId, router);
+        openSidebarSection(moduleId, { kind: "add" }, router);
       }}><Plus className="size-3" />Add section</Item>}
       {isTauri() && <Item onClick={() => pickPdfs(moduleId)}><FilePlus className="size-3" />Add PDF…</Item>}
       <Item onClick={() => setRenameOpen(true)}>
@@ -131,7 +131,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
 function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }) {
   const [expanded, setExpanded] = useState(isActive);
   const { sections, focusedKey, canReorder, loading, error } = useSidebarSections(module.id, expanded);
-  const navigate = useNavigate();
+  const router = useRouter();
   const sectionsId = `sidebar-sections-${module.id}`;
   useEffect(() => { if (isActive) setExpanded(true); }, [isActive]);
 
@@ -147,8 +147,9 @@ function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }
     <SidebarMenuButton className="pl-7" isActive={isActive && !focusedKey}
       render={<Link to="/$moduleId" params={{ moduleId: module.id }} />}
       onClick={event => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        openSidebarSection(module.id, { kind: "document" });
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        openSidebarSection(module.id, { kind: "document" }, router);
       }}>
       <MiddleTruncate text={module.name} />
     </SidebarMenuButton>
@@ -162,10 +163,7 @@ function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }
           moduleId={module.id} headingId={section.target.kind === "heading" ? section.target.id : null} title={section.title}
           number={module.heading_numbering ? section.number : undefined}
           selected={isActive && focusedKey === section.key} canReorder={canReorder}
-          onClick={() => {
-            openSidebarSection(module.id, section.target);
-            void navigate({ to: "/$moduleId", params: { moduleId: module.id } });
-          }}
+          onClick={() => openSidebarSection(module.id, section.target, router)}
         />)}
     </ul>}
   </ModuleMenu>;

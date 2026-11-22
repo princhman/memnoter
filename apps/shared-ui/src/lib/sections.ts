@@ -3,7 +3,7 @@ import { outline, TOC_ID_ATTRIBUTE } from "./outline.ts";
 import { Extension } from "@tiptap/core";
 import type { EditorState } from "@tiptap/pm/state";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
-import { getSectionRange, sectionFocusKey } from "./section-focus.ts";
+import { getSectionRange, sectionFocusBackground, sectionFocusKey } from "./section-focus.ts";
 
 export type SectionKind = "sibling" | "subsection";
 
@@ -144,5 +144,5 @@ function emptyHeadingIds(state: EditorState) {
     seen.add(fresh);
     tr.setNodeMarkup(pos, undefined, { ...node.attrs, [TOC_ID_ATTRIBUTE]: fresh, id: fresh });
   });
-  return tr.docChanged ? tr.setMeta("addToHistory", false) : null;
+  return tr.docChanged ? tr.setMeta(sectionFocusBackground, true).setMeta("addToHistory", false) : null;
 }

@@ -16,6 +16,7 @@ import { beginHostNavigation, editorHost } from "./editor-host";
 import { stopScrollRestore } from "./view-persistence";
 import { setModulePage } from "./store";
 import { headingNumbers, numberHeadings } from "./heading-numbering";
+import { isNoteFromNewerVersion } from "./editor-schema";
 import { toast } from "sonner";
 
 type SectionTarget = { kind: "heading"; id: string } | { kind: "legacy-heading"; chapterIndex: number };
@@ -23,25 +24,18 @@ type Section = { target: SectionTarget; key: string; title: string; number: stri
 type SidebarTarget = SectionTarget | { kind: "document" } | { kind: "add" };
 type SidebarRequest = { moduleId: string; target: SidebarTarget };
 const destination = createStore<SidebarRequest | null>(null);
-let pendingAdd: { pathname: string; cancel: () => void } | null = null;
+let pendingRequest: { pathname: string; cancel: () => void } | null = null;
 
-export function openSidebarSection(moduleId: string, target: Exclude<SidebarTarget, { kind: "add" }>) {
-  pendingAdd?.cancel();
-  setModulePage(moduleId, "notes");
-  destination.setState(() => ({ moduleId, target }));
+export function pendingSidebarSectionCancellation(pathname: string, action: string) {
+  const pending = pendingRequest;
+  if (pending?.pathname === pathname && (action === "PUSH" || action === "REPLACE")) return pending.cancel;
+  // Starting a different navigation supersedes the request even while saves drain.
+  pending?.cancel();
 }
 
-export function pendingSidebarAddCancellation(pathname: string) {
-  const add = pendingAdd;
-  if (!add || add.pathname === pathname) return add?.cancel;
-  // Starting a different navigation supersedes the Add, even while saves drain.
-  add.cancel();
-}
-
-export function addSidebarSection(moduleId: string, router: RegisteredRouter) {
-  pendingAdd?.cancel();
-  destination.setState(() => null);
-  const request: SidebarRequest = { moduleId, target: { kind: "add" } };
+export function openSidebarSection(moduleId: string, target: SidebarTarget, router: RegisteredRouter) {
+  pendingRequest?.cancel();
+  const request: SidebarRequest = { moduleId, target };
   const id = crypto.randomUUID();
   const route = { to: "/$moduleId", params: { moduleId } } as const;
   const { pathname, publicHref } = router.buildLocation(route);
@@ -51,11 +45,11 @@ export function addSidebarSection(moduleId: string, router: RegisteredRouter) {
   };
   const cancel = () => {
     unsubscribe();
-    if (pendingAdd?.cancel === cancel) pendingAdd = null;
+    if (pendingRequest?.cancel === cancel) pendingRequest = null;
     if (destination.state === request) destination.setState(() => null);
   };
   const unsubscribe = router.history.subscribe(({ location, action }) => {
-    // Only the first commit of this Add navigation can arm the request.
+    // Only the first commit of this navigation can arm the request.
     // A different navigation, including Back, cancels it even during loading.
     if (destination.state === request || (action.type !== "PUSH" && action.type !== "REPLACE") ||
       !("sidebarSectionRequest" in location.state) || location.state.sidebarSectionRequest !== id) {
@@ -64,7 +58,7 @@ export function addSidebarSection(moduleId: string, router: RegisteredRouter) {
     }
     publish();
   });
-  pendingAdd = { pathname, cancel };
+  pendingRequest = { pathname, cancel };
   if (router.history.location.href === publicHref) {
     publish();
     return;
@@ -113,7 +107,7 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
     enabled: expanded && !editor,
     staleTime: Infinity,
   });
-  const sections = useMemo<Section[]>(() => {
+  const sections = useMemo<Section[] | null>(() => {
     if (live) {
       const numbers = headingNumbers(live);
       // Every numbered H1 is listed, so the sidebar never skips a chapter number.
@@ -128,6 +122,7 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
       applySavedContent(doc, query.data);
       applyPendingSaves(doc, saveQueue.pending(moduleId));
       if (doc.store.pendingStructs || doc.store.pendingDs) return [];
+      if (isNoteFromNewerVersion(doc)) return null;
       const saved: JSONContent = yDocToProsemirrorJSON(doc, "default");
       const content = saved.content ?? [];
       const numbers = numberHeadings(content.flatMap((node, pos) => node.type === "heading" ? [{ pos, level: Number(node.attrs?.level) }] : []));
@@ -139,9 +134,17 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
         const target = sectionTarget(typeof id === "string" ? id : null, index);
         return { target, key: sectionKey(target), title: text(node).trim() || UNTITLED_SECTION, number: numbers.get(pos) ?? "" };
       });
+    } catch {
+      return null;
     } finally { doc.destroy(); }
   }, [live, query.data, moduleId]);
-  return { sections, focusedKey, canReorder: !!editor?.isEditable, loading: !editor && query.isPending, error: !editor && query.error };
+  return {
+    sections: sections ?? [],
+    focusedKey,
+    canReorder: !!editor?.isEditable,
+    loading: !editor && query.isPending,
+    error: !editor && (query.isError || sections === null),
+  };
 }
 
 // Wait for the destination editor and its saved view before applying navigation.
@@ -154,7 +157,7 @@ export function SidebarSectionNavigation() {
     const { target } = request;
     if (target.kind === "add" && !editor.isEditable) {
       toast.error("This note is read-only. A section could not be added.");
-      pendingAdd?.cancel();
+      pendingRequest?.cancel();
       return;
     }
     stopScrollRestore();
@@ -186,8 +189,7 @@ export function SidebarSectionNavigation() {
         if (element instanceof HTMLElement) element.scrollIntoView({ block: "start", behavior: "instant" });
       }
     }
-    if (target.kind === "add") pendingAdd?.cancel();
-    else destination.setState(() => null);
+    if (destination.state === request) pendingRequest?.cancel();
   }, [request, activeEditor]);
   return null;
 }

@@ -290,7 +290,7 @@ test("deletion respects the focused section boundaries", async () => {
       { key: "Delete", selection: "end" },
       { key: "Control+d", selection: "end" },
       { key: "Delete", selection: "across" },
-      { key: "Backspace", selection: "start" },
+      { key: "Backspace", selection: "start", expected: original.replace("<h1>Focused</h1>", "<p>Focused</p>") },
       { key: "Delete", selection: "tail", expected: original.replace("Section text", "Section tex") },
       { key: "Delete", selection: "inside", expected: original.replace("Section text", "ection text") },
       { key: "Delete", selection: "end", focused: false, expected: original.replace("Section text</p><h1>After</h1>", "Section textAfter</p>") },

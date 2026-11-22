@@ -295,12 +295,138 @@ test("a closed note's legacy untitled section opens in section focus", async () 
   }
 });
 
+test("expanding a newer-format note reports an error only in its sidebar row", async () => {
+  const moduleId = await createModule("Future sections", ["First"], fragment => {
+    const future = new Y.XmlElement("futureBlock");
+    future.insert(0, [new Y.XmlFragment()]);
+    fragment.insert(2, [future]);
+  });
+  const page = await openNote(course, { sections: true });
+  try {
+    await page.getByRole("button", { name: "Expand sections of Future sections" }).click();
+    const rows = page.getByRole("list", { name: "Sections of Future sections" });
+    await rows.getByRole("alert").filter({ hasText: "Could not load sections." }).waitFor();
+    await page.locator(".tiptap[contenteditable=true]").getByText("Notes for Complexity.", { exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, `/${course}`);
+
+    await page.getByRole("link", { name: "Future sections", exact: true }).click();
+    await page.getByRole("status").filter({ hasText: "This note was edited with a newer version" }).waitFor();
+    await page.locator(".tiptap[contenteditable=false]").waitFor({ state: "attached" });
+    assert.equal(new URL(page.url()).pathname, `/${moduleId}`);
+  } finally {
+    await page.close();
+  }
+});
+
 async function focusMiddleSection(page) {
   const contents = page.getByRole("navigation", { name: "Table of contents" });
   await contents.getByRole("button", { name: "2 Middle", exact: true }).hover();
   await contents.getByRole("button", { name: "Focus on Middle", exact: true }).press("Enter");
   await page.locator(".tiptap > p").filter({ hasText: "Notes for Middle." }).click();
 }
+
+test("Backspace at the focused heading converts it without joining the hidden chapter", async () => {
+  const moduleId = await createModule("Heading Backspace", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  try {
+    await focusMiddleSection(page);
+    const editor = page.locator(".tiptap");
+    await editor.locator(":scope > h1.section-focus-start").evaluate(node => {
+      const { editor } = node.parentElement;
+      editor.commands.setTextSelection(editor.view.posAtDOM(node, 0));
+    });
+    await page.keyboard.press("Backspace");
+    assert.deepEqual(await editor.locator(":scope > h1").allTextContents(), ["1\u00a0Before", "2\u00a0After"]);
+    assert.deepEqual(await editor.locator(":scope > p").allTextContents(),
+      ["Notes for Before.", "Middle", "Notes for Middle.", "Notes for After."]);
+  } finally {
+    await page.close();
+  }
+});
+
+test("forward Delete at the focused end keeps the next chapter intact", async () => {
+  const moduleId = await createModule("Forward Delete", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  try {
+    await focusMiddleSection(page);
+    const editor = page.locator(".tiptap");
+    const snapshot = () => editor.evaluate(({ editor }) => editor.getJSON());
+    const before = await snapshot();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Delete");
+    assert.deepEqual(await snapshot(), before);
+    await editor.locator(":scope > h1.section-focus-start").waitFor();
+  } finally {
+    await page.close();
+  }
+});
+
+test("a programmatic edit reveals hidden changes regardless of caret placement", async () => {
+  const moduleId = await createModule("Programmatic edits", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId, { sections: true });
+  try {
+    await focusMiddleSection(page);
+    const editor = page.locator(".tiptap");
+    await editor.evaluate(({ editor }) => {
+      const { doc } = editor.state;
+      editor.commands.setTextSelection(2);
+      const position = doc.child(0).nodeSize + doc.child(1).nodeSize + doc.child(2).nodeSize + 1;
+      editor.view.dispatch(editor.state.tr.insertText("Visible edit. ", position));
+    });
+    await editor.getByText("Visible edit. Notes for Middle.", { exact: true }).waitFor();
+    assert.deepEqual(await editor.locator(":scope > h1").filter({ visible: true }).allTextContents(), ["2\u00a0Middle"]);
+
+    await editor.evaluate(({ editor }) => {
+      const { doc } = editor.state;
+      const position = doc.child(0).nodeSize + 1;
+      editor.commands.setTextSelection(doc.child(0).nodeSize + doc.child(1).nodeSize + 1);
+      editor.view.dispatch(editor.state.tr.insertText("Hidden edit. ", position).setMeta("addToHistory", false));
+    });
+    await editor.getByText("Hidden edit. Notes for Before.", { exact: true }).waitFor();
+    assert.equal(await editor.locator(":scope > h1").filter({ visible: true }).count(), 3);
+  } finally {
+    await page.close();
+  }
+});
+
+async function syncPeerEdit(page, moduleId, edit) {
+  const peer = new Y.Doc();
+  try {
+    const { state, updates } = await call("get_content", { moduleId });
+    Y.applyUpdate(peer, Uint8Array.from(state));
+    for (const { bytes } of updates) Y.applyUpdate(peer, Uint8Array.from(bytes));
+    const base = Y.encodeStateVector(peer);
+    edit(peer.getXmlFragment("default"));
+    const bytes = Array.from(Y.encodeStateAsUpdate(peer, base));
+    await page.evaluate(async ({ moduleId, bytes }) => {
+      const { onRemote } = await import("/src/lib/sync/apply-remote.ts");
+      onRemote({ updates: [{ moduleId, update: { id: 9000, bytes } }], modulesChanged: false,
+        deleted: [], reviewsChanged: false, filesChanged: false });
+    }, { moduleId, bytes });
+  } finally {
+    peer.destroy();
+  }
+}
+
+test("a synced outline id change keeps focus on the surviving heading", async () => {
+  const moduleId = await createModule("Remote outline", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId, { sections: true });
+  try {
+    await focusMiddleSection(page);
+    await syncPeerEdit(page, moduleId, fragment => {
+      fragment.get(1).get(0).insert(0, "Peer edit. ");
+      const heading = fragment.get(2);
+      heading.setAttribute("data-toc-id", "peer-middle-id");
+      heading.setAttribute("id", "peer-middle-id");
+    });
+    const editor = page.locator(".tiptap");
+    await editor.locator('[data-toc-id="peer-middle-id"]').waitFor({ state: "attached" });
+    assert.deepEqual(await editor.locator(":scope > h1").filter({ visible: true }).allTextContents(), ["2\u00a0Middle"]);
+    assert.equal(await editor.getByText("Peer edit. Notes for Before.", { exact: true }).count(), 1);
+  } finally {
+    await page.close();
+  }
+});
 
 test("Select All selects only the focused section and restores whole-note selection after clearing focus", async () => {
   const moduleId = await createModule("Selection", ["Before", "Middle", "After"]);
@@ -455,51 +581,71 @@ test("undo and redo reveal edits in a hidden chapter", async () => {
   }
 });
 
-test("a blocked Add section cannot insert on Back, and a fresh request can add across notes", async () => {
-  const a = await createModule("Save source", ["Before"]);
-  const b = await createModule("Add destination", ["Existing"]);
-  let failing = false;
-  const page = await openNote(b, { sections: true, invoke(command, args) {
-    if (failing && command === "sync_cards" && args.moduleId === a) throw new Error("test card save failure");
-    return call(command, args);
-  } });
-  const editor = page.locator(".tiptap[contenteditable=true]");
-  const destination = page.getByRole("link", { name: "Add destination", exact: true });
-  const add = async () => {
-    await destination.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Add section", exact: true }).click();
-  };
-  try {
-    await page.getByRole("link", { name: "Save source", exact: true }).click();
-    await editor.getByText("Notes for Before.", { exact: true }).waitFor();
-    failing = true;
-    await editor.locator(":scope > p").click();
-    await page.keyboard.press("End");
-    await page.keyboard.type(" Prompt :: answer");
-    const blocked = page.waitForEvent("dialog");
-    const attempted = add();
-    const dialog = await blocked;
-    assert.match(dialog.message(), /Could not save flashcards/);
-    await dialog.accept();
-    await attempted;
-    assert.equal(new URL(page.url()).pathname, `/${a}`);
+for (const target of ["Add section", "section row", "module title"]) {
+  test(`a blocked ${target} request cannot replay on Back and a fresh request works`, async () => {
+    const sourceName = `Save source (${target})`;
+    const destinationName = `Destination (${target})`;
+    const a = await createModule(sourceName, ["Before"]);
+    const b = await createModule(destinationName, ["Existing", "Next"]);
+    let failing = false;
+    const page = await openNote(b, { sections: true, invoke(command, args) {
+      if (failing && command === "sync_cards" && args.moduleId === a) throw new Error("test card save failure");
+      return call(command, args);
+    } });
+    const editor = page.locator(".tiptap[contenteditable=true]");
+    const source = page.getByRole("link", { name: sourceName, exact: true });
+    const destination = page.getByRole("link", { name: destinationName, exact: true });
+    const row = name => page.getByRole("list", { name: `Sections of ${destinationName}` })
+      .getByRole("button", { name, exact: true });
+    const request = async () => {
+      if (target === "section row") return row("2 Next").click();
+      if (target === "module title") return destination.click();
+      await destination.click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Add section", exact: true }).click();
+    };
+    try {
+      if (target === "module title") {
+        await row("1 Existing").click();
+        await editor.locator(":scope > h1.section-focus-start").waitFor();
+      }
+      await source.click();
+      await editor.getByText("Notes for Before.", { exact: true }).waitFor();
+      failing = true;
+      await editor.locator(":scope > p").click();
+      await page.keyboard.press("End");
+      await page.keyboard.type(" Prompt :: answer");
+      const blocked = page.waitForEvent("dialog");
+      const attempted = request();
+      const dialog = await blocked;
+      assert.match(dialog.message(), /Could not save flashcards/);
+      await dialog.accept();
+      await attempted;
+      assert.equal(new URL(page.url()).pathname, `/${a}`);
 
-    failing = false;
-    await page.evaluate(() => history.back());
-    await editor.getByText("Notes for Existing.", { exact: true }).waitFor();
-    assert.equal(await editor.locator(":scope > h1").count(), 1);
+      failing = false;
+      await page.evaluate(() => history.back());
+      await editor.getByText("Notes for Existing.", { exact: true }).waitFor();
+      const visible = () => editor.locator(":scope > h1").filter({ visible: true }).allTextContents();
+      assert.deepEqual(await visible(), target === "module title" ? ["1\u00a0Existing"] : ["1\u00a0Existing", "2\u00a0Next"]);
 
-    await page.getByRole("link", { name: "Save source", exact: true }).click();
-    await page.waitForURL(`**/${a}`);
-    await editor.locator(":scope > p").filter({ hasText: "Prompt" }).waitFor();
-    await add();
-    await editor.locator(":scope > h1").nth(1).waitFor();
-    await page.keyboard.type("Added");
-    assert.deepEqual(await editor.locator(":scope > h1").allTextContents(), ["1\u00a0Existing", "2\u00a0Added"]);
-  } finally {
-    await page.close();
-  }
-});
+      await source.click();
+      await page.waitForURL(`**/${a}`);
+      await editor.locator(":scope > p").filter({ hasText: "Prompt" }).waitFor();
+      await request();
+      await page.waitForURL(`**/${b}`);
+      if (target === "Add section") {
+        await editor.locator(":scope > h1").nth(2).waitFor();
+        await page.keyboard.type("Added");
+        assert.deepEqual(await visible(), ["1\u00a0Existing", "2\u00a0Next", "3\u00a0Added"]);
+      } else {
+        await editor.getByText("Notes for Next.", { exact: true }).waitFor();
+        assert.deepEqual(await visible(), target === "section row" ? ["2\u00a0Next"] : ["1\u00a0Existing", "2\u00a0Next"]);
+      }
+    } finally {
+      await page.close();
+    }
+  });
+}
 
 test("card ID conflict repair indexes a hidden card without leaving section focus", async () => {
   const cardId = crypto.randomUUID();
@@ -563,7 +709,7 @@ test("Insert heading above adopts the hidden next chapter with sidebar sections 
   }
 });
 
-test("focused Select All includes a trailing block image without selecting the next chapter", async () => {
+test("focused Select All keeps a trailing block image selected across sync", async () => {
   const moduleId = await createModule("Image selection", ["Before", "Middle", "After"], fragment => {
     fragment.insert(4, [new Y.XmlElement("image")]);
   });
@@ -571,11 +717,18 @@ test("focused Select All includes a trailing block image without selecting the n
   try {
     await focusMiddleSection(page);
     await page.keyboard.press("Meta+a");
-    const selected = await page.locator(".tiptap").evaluate(({ editor }) =>
-      editor.state.selection.content().content.toJSON().map(node => node.type));
-    assert.deepEqual(selected, ["heading", "paragraph", "image"]);
+    const editor = page.locator(".tiptap");
+    const selected = () => editor.evaluate(({ editor }) => ({
+      type: editor.state.selection.toJSON().type,
+      blocks: editor.state.selection.content().content.toJSON().map(node => node.type),
+    }));
+    const expected = { type: "section-selection", blocks: ["heading", "paragraph", "image"] };
+    assert.deepEqual(await selected(), expected);
     const highlights = await page.locator(".tiptap .text-range-selected").allTextContents();
     assert.deepEqual(highlights, ["Middle", "Notes for Middle."]);
+    await syncPeerEdit(page, moduleId, fragment => fragment.get(3).get(0).insert(0, "Peer edit. "));
+    await editor.getByText("Peer edit. Notes for Middle.", { exact: true }).waitFor();
+    assert.deepEqual(await selected(), expected);
     await page.keyboard.press("Backspace");
     const remaining = await page.locator(".tiptap > h1").allTextContents();
     assert.deepEqual(remaining, ["1\u00a0Before", "2\u00a0After"]);
