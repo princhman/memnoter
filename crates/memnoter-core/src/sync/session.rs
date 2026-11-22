@@ -256,6 +256,9 @@ impl Session {
     ) -> CommandResult<Vec<Action>> {
         let mut actions = vec![];
         let frame = if let Some(bytes) = bytes {
+            if bytes.is_empty() {
+                return Ok(actions);
+            }
             let blob =
                 self.storable(crypto::encrypt_blob(&self.key, doc, &bytes)?, &mut actions)?;
             json!({"t":"compact","doc":doc,"upTo":cursor,"data":B64.encode(blob)})
