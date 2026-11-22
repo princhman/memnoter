@@ -2,7 +2,7 @@ import { Fragment, Slice, type Node } from "@tiptap/pm/model";
 import { Selection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
-import { clozeNotesOf, extractCards, groupOpener, isCardBlock, parseBlock, validatedClozeIds, validatedClozeNote } from "./cards";
+import { cardGroupsOf, clozeNotesOf, extractCards, isCardBlock, parseBlock, validatedClozeIds, validatedClozeNote } from "./cards";
 
 export const literalPasteMeta = "literal-paste";
 
@@ -40,6 +40,8 @@ export type CutClozeOptions = {
 type Cut = {
   token: string;
   text: string;
+  // What the editor will insert, to compare against the parsed clipboard.
+  content: string;
   source: string;
   cardIds: readonly string[];
   blockIds: ReadonlySet<string>;
@@ -112,7 +114,8 @@ export function clozeClipboard(options: CutClozeOptions) {
       history?.stopCapturing();
       view.dispatch(tr.scrollIntoView().setMeta("uiEvent", "cut"));
       history?.stopCapturing();
-      latestCut = lastCut = { token, text: clipboard.text, source: options.moduleId, cardIds: moved.map(card => card.id), blockIds };
+      const cutContent = selection.content().content;
+      latestCut = lastCut = { token, text: clipboard.text, content: cutContent.textBetween(0, cutContent.size, "\n"), source: options.moduleId, cardIds: moved.map(card => card.id), blockIds };
       return true;
     },
 
@@ -126,9 +129,7 @@ export function clozeClipboard(options: CutClozeOptions) {
         return false;
       }
       if (!hasCutToken(cut, html)) return false;
-      // The marker proves the cut came from this session; the text proves the
-      // clipboard still holds what was cut.
-      paste = { cut, claim: cut === latestCut && matchesPlainCut(cut, data.getData("text/plain")) };
+      paste = { cut, claim: cut === latestCut };
       queueMicrotask(() => { paste = undefined; });
       return false;
     },
@@ -144,18 +145,21 @@ export function clozeClipboard(options: CutClozeOptions) {
       const current = paste;
       if (!current) return false;
       paste = undefined;
-      const { cut, claim } = current;
+      // The marker proves the cut came from this session; the parsed content
+      // proves the clipboard still holds what was cut.
+      const { cut } = current;
+      const claim = current.claim && slice.content.textBetween(0, slice.content.size, "\n") === cut.content;
 
       const { state } = view;
       const { from, to, $from } = state.selection;
       let insertAt: number | undefined;
       const protect = (node: Node, pos: number) => {
-        if (!isCardBlock(node)) return;
-        // After an opener is inside its group, so a pasted card goes before it.
-        if (groupOpener(node)) insertAt = pos;
-        else if (parseBlock(node).cards.length) insertAt = pos + node.nodeSize;
+        if (isCardBlock(node) && parseBlock(node).cards.length) insertAt = pos + node.nodeSize;
       };
-      if (from === to && $from.depth) protect($from.parent, $from.before());
+      // Anything pasted inside a grouped card joins it, so go before its opener.
+      const group = cardGroupsOf(state.doc).find(group => from < group.to && to > group.from);
+      if (group) insertAt = group.from;
+      else if (from === to && $from.depth) protect($from.parent, $from.before());
       else state.doc.nodesBetween(from, to, protect);
 
       const sameNote = cut.source === options.moduleId;

@@ -495,28 +495,59 @@ test("cloze clipboard through the desktop editor", async t => {
       }), ["", cloze, opener, "Answer", "::end"]);
     });
 
-    await t.test("a clipboard whose text no longer matches the cut pastes as new", async subtest => {
-      const id = "rewritten:c1";
+    await t.test("pasting inside a grouped card answer lands before the group and keeps the schedule", async subtest => {
+      const id = "group-answer:c1";
       const { source, page, editor } = await openEditor(
-        subtest, "Rewritten clipboard", [paragraphWithClozes(cloze, "rewritten", "Paris"), "Destination"], [id],
+        subtest, "Grouped answer", [paragraphWithClozes(cloze, "group-answer", "Paris"), "Question ::block", "Answer", "::end"], [id],
       );
+      await waitForCards(editor, source, cards => cards.length === 2);
       await select(editor, cloze);
       await page.keyboard.press("Control+x");
-      await waitForCards(editor, source, cards => cards.length === 0);
-      await page.evaluate(async () => {
-        const [item] = await navigator.clipboard.read();
-        const html = (await (await item.getType("text/html")).text()).replaceAll("Paris", "Tokyo");
-        const text = (await (await item.getType("text/plain")).text()).replaceAll("Paris", "Tokyo");
-        await navigator.clipboard.write([new ClipboardItem({
-          "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }),
-        })]);
-      });
-      await pasteBelow(editor, "Destination");
       await waitForCards(editor, source, cards => cards.length === 1);
-      const [pasted] = await dueCards(source);
-      assert.notEqual(pasted.id, id);
-      assert.equal(pasted.reps, 0);
+      await select(editor, "Answer", "", 3);
+      await page.keyboard.press("Control+v");
+      await waitForCards(editor, source, cards => cards.length === 2 && cards.some(card => card.id === id));
+      assert.equal((await dueCards(source)).find(card => card.id === id).reps, 1);
+      assert.deepEqual(await editor.evaluate(el => {
+        const blocks = [];
+        el.editor.state.doc.forEach(block => blocks.push(block.textContent));
+        return blocks;
+      }), ["", cloze, "Question ::block", "Answer", "::end"]);
     });
+
+    for (const [name, rewrite] of [["rich", "text/html"], ["plain", "text/plain"]]) {
+      await t.test(`rewriting only the ${name} clipboard text decides the claim by what is pasted`, async subtest => {
+        const blockId = `rewrite-${name}`;
+        const id = `${blockId}:c1`;
+        const { source, page, editor } = await openEditor(
+          subtest, `Rewrite ${name}`, [paragraphWithClozes(cloze, blockId, "Paris"), "Destination"], [id],
+        );
+        await select(editor, cloze);
+        await page.keyboard.press("Control+x");
+        await waitForCards(editor, source, cards => cards.length === 0);
+        await page.evaluate(async rewrite => {
+          const [item] = await navigator.clipboard.read();
+          const read = async type => (await (await item.getType(type)).text());
+          const html = await read("text/html");
+          const text = await read("text/plain");
+          await navigator.clipboard.write([new ClipboardItem({
+            "text/html": new Blob([rewrite === "text/html" ? html.replaceAll("Paris", "Tokyo") : html], { type: "text/html" }),
+            "text/plain": new Blob([rewrite === "text/plain" ? text.replaceAll("Paris", "Tokyo") : text], { type: "text/plain" }),
+          })]);
+        }, rewrite);
+        await pasteBelow(editor, "Destination");
+        await waitForCards(editor, source, cards => cards.length === 1);
+        const [pasted] = await dueCards(source);
+        // The editor inserts the rich content, so only that decides.
+        if (name === "rich") {
+          assert.notEqual(pasted.id, id);
+          assert.equal(pasted.reps, 0);
+        } else {
+          assert.equal(pasted.id, id);
+          assert.equal(pasted.reps, 1);
+        }
+      });
+    }
   } finally {
     await browser?.close();
     await server?.close();
