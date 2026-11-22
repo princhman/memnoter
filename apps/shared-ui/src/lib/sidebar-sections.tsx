@@ -141,7 +141,6 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
   return {
     sections: sections ?? [],
     focusedKey,
-    canReorder: !!editor?.isEditable,
     loading: !editor && query.isPending,
     error: !editor && (query.isError || sections === null),
   };
