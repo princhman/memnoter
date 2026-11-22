@@ -28,7 +28,9 @@ tests = list(cases(json.load(open(path))))
 if not tests:
     raise SystemExit(f"No native tests ran in {suite}")
 failed = [test for test in tests if test.get("result") != "Passed"]
-blocking = [test for test in failed if not any(name in test.get("name", "") for name in NON_BLOCKING)]
+# Only a real failure is forgiven; a skipped or unrun flaky test still blocks.
+blocking = [test for test in failed
+            if test.get("result") != "Failed" or not any(name in test.get("name", "") for name in NON_BLOCKING)]
 for test in failed:
     if test not in blocking:
         message = f"Non-blocking flaky test failed in {suite}: {test.get('name')}"
@@ -45,7 +47,6 @@ required = {
         "testContentsHierarchyFocusAndUnfocusRestoreWholeNote",
     ],
     "phone": ["testReopeningSameNoteAndRelaunchPreserveEdits"],
-    "drawing": ["testDrawingReturnsWithoutImageSelectionAfterDoneAndClose"],
 }.get(suite, [])
 for name in required:
     if not any(name in test.get("name", "") for test in tests):
