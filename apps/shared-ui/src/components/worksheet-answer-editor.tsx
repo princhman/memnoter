@@ -1,7 +1,6 @@
 import { registerWorksheetEditor } from "@/editor-host/worksheet-editor";
 import { useEffect, useRef, useState } from "react";
 import { Pencil } from "lucide-react";
-import { Selection } from "@tiptap/pm/state";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import * as Y from "yjs";
 import { noteExtensions, isNoteFromNewerVersion } from "@/lib/editor-schema";
@@ -133,7 +132,7 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
           }
         });
         if (target && !hasDrawing(current, draft)) { forgetDeletedDrawing(draft); return; }
-        if (!target) beginDrawing(current, draft.imageId, append ? Selection.atEnd(current.state.doc).to : undefined);
+        if (!target) beginDrawing(current, draft.imageId, append ? current.state.doc.content.size : undefined);
         retain(pendingRef.current?.imageId === draft.imageId ? { ...pendingRef.current, ...draft } : draft);
         await owner.flushDurable();
         if (isNativeHost()) {
