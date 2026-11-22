@@ -3,7 +3,7 @@ import type { RegisteredRouter } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { createStore, useSelector } from "@tanstack/react-store";
 import type { JSONContent } from "@tiptap/core";
-import { yDocToProsemirrorJSON } from "@tiptap/y-tiptap";
+import { ProsemirrorBinding, yDocToProsemirrorJSON, ySyncPluginKey } from "@tiptap/y-tiptap";
 import * as Y from "yjs";
 import { useActiveEditor } from "./active-editor-context";
 import { call } from "./backend";
@@ -19,7 +19,7 @@ import { headingNumbers, numberHeadings } from "./heading-numbering";
 import { isNoteFromNewerVersion } from "./editor-schema";
 import { toast } from "sonner";
 
-type SectionTarget = { kind: "heading"; id: string } | { kind: "legacy-heading"; chapterIndex: number };
+type SectionTarget = { kind: "heading"; id: string } | { kind: "legacy-heading"; itemId: Y.ID };
 type Section = { target: SectionTarget; key: string; title: string; number: string };
 type SidebarTarget = SectionTarget | { kind: "document" } | { kind: "add" };
 type SidebarRequest = { moduleId: string; target: SidebarTarget };
@@ -74,12 +74,17 @@ export function openSidebarSection(moduleId: string, target: SidebarTarget, rout
   }).catch(cancel);
 }
 
-function sectionTarget(id: string | null, chapterIndex: number): SectionTarget {
-  return id ? { kind: "heading", id } : { kind: "legacy-heading", chapterIndex };
+function sectionTarget(id: string | null, getItem: () => unknown): SectionTarget | null {
+  if (id) return { kind: "heading", id };
+  const item = getItem();
+  if (!(item instanceof Y.XmlElement)) return null;
+  // Anchor to the heading element itself, independent of its text or neighbours.
+  const { type: itemId } = Y.createRelativePositionFromTypeIndex(item, 0, -1);
+  return itemId ? { kind: "legacy-heading", itemId } : null;
 }
 
 function sectionKey(target: SectionTarget) {
-  return target.kind === "heading" ? target.id : `chapter-${target.chapterIndex}`;
+  return target.kind === "heading" ? target.id : `chapter-${target.itemId.client}-${target.itemId.clock}`;
 }
 
 export function useSidebarSections(moduleId: string, expanded: boolean) {
@@ -96,15 +101,18 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
   const snapshot = useCallback(() => editor && !editor.isDestroyed ? editor.state : null, [editor]);
   const liveState = useSyncExternalStore(subscribe, snapshot, () => null);
   const live = liveState?.doc ?? null;
+  const binding: unknown = liveState && ySyncPluginKey.getState(liveState)?.binding;
+  const fragment = binding instanceof ProsemirrorBinding ? binding.type : null;
   const focusedKey = useMemo(() => {
     if (!liveState) return null;
     const pos = sectionFocusKey.getState(liveState);
     // Highlight the parent H1 even when a subsection was focused from Contents.
     if (pos == null) return null;
-    const chapters = outline(liveState.doc).filter(item => item.level === 1);
-    const index = chapters.findIndex(item => item.pos <= pos && item.end > pos);
-    return index < 0 ? null : sectionKey(sectionTarget(chapters[index].id, index));
-  }, [liveState]);
+    const chapter = outline(liveState.doc).find(item => item.level === 1 && item.pos <= pos && item.end > pos);
+    if (!chapter) return null;
+    const target = sectionTarget(chapter.id, () => fragment?.get(liveState.doc.resolve(chapter.pos).index()));
+    return target ? sectionKey(target) : null;
+  }, [liveState, fragment]);
   const query = useQuery({
     ...contentQueryOptions(moduleId),
     queryKey: sidebarSectionsKey(moduleId),
@@ -116,9 +124,9 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
     if (live) {
       const numbers = headingNumbers(live);
       // Every numbered H1 is listed, so the sidebar never skips a chapter number.
-      return outline(live).filter(item => item.level === 1).map((item, index) => {
-        const target = sectionTarget(item.id, index);
-        return { target, key: sectionKey(target), title: item.title, number: numbers.get(item.pos) ?? "" };
+      return outline(live).filter(item => item.level === 1).flatMap(item => {
+        const target = sectionTarget(item.id, () => fragment?.get(live.resolve(item.pos).index()));
+        return target ? [{ target, key: sectionKey(target), title: item.title, number: numbers.get(item.pos) ?? "" }] : [];
       });
     }
     if (!query.data) return [];
@@ -133,7 +141,7 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
       const seenIds = new Set<string>();
       const duplicateIds = new Set<string>();
       // The editor's TOC repairs duplicate IDs across the whole document.
-      // Use chapter order whenever that repair could change a sidebar target.
+      // Use Yjs identity whenever that repair could change a sidebar target.
       function collectIds(node: JSONContent) {
         if (node.type === "heading") {
           const id = node.attrs?.[TOC_ID_ATTRIBUTE];
@@ -154,14 +162,15 @@ export function useSidebarSections(moduleId: string, expanded: boolean) {
       const numbers = numberHeadings(headings);
       const chapters = headings.filter(({ level }) => level === 1);
       const text = (item: JSONContent): string => item.text ?? (item.content ?? []).map(text).join("");
-      return chapters.map(({ node, pos, id }, index) => {
-        const target = sectionTarget(id && !duplicateIds.has(id) ? id : null, index);
-        return { target, key: sectionKey(target), title: text(node).trim() || UNTITLED_SECTION, number: numbers.get(pos) ?? "" };
+      const blocks = doc.getXmlFragment("default").toArray();
+      return chapters.flatMap(({ node, pos, id }) => {
+        const target = sectionTarget(id && !duplicateIds.has(id) ? id : null, () => blocks[pos]);
+        return target ? [{ target, key: sectionKey(target), title: text(node).trim() || UNTITLED_SECTION, number: numbers.get(pos) ?? "" }] : [];
       });
     } catch {
       return null;
     } finally { doc.destroy(); }
-  }, [live, query.data, moduleId]);
+  }, [live, fragment, query.data, moduleId]);
   return {
     sections: sections ?? [],
     focusedKey,
@@ -198,12 +207,20 @@ export function SidebarSectionNavigation() {
       editor.commands.showDocument();
       if (container && heading instanceof HTMLElement && before !== null) container.scrollTop += heading.getBoundingClientRect().top - before;
     } else {
-      const headings = outline(editor.state.doc);
-      // Loading assigns ids to legacy headings. Their top-level chapter order
-      // identifies them across that assignment.
+      const { state } = editor;
+      const chapters = outline(state.doc).filter(item => item.level === 1);
+      const binding: unknown = ySyncPluginKey.getState(state)?.binding;
+      let legacyNode: unknown;
+      if (target.kind === "legacy-heading" && binding instanceof ProsemirrorBinding) {
+        const anchor = new Y.RelativePosition(target.itemId, null, null);
+        const resolved = Y.createAbsolutePositionFromRelativePosition(anchor, binding.doc, false);
+        if (resolved?.type instanceof Y.XmlElement && resolved.type.parent === binding.type) {
+          legacyNode = binding.mapping.get(resolved.type);
+        }
+      }
       const heading = target.kind === "heading"
-        ? headings.find(item => item.id === target.id)
-        : headings.filter(item => item.level === 1)[target.chapterIndex];
+        ? chapters.find(item => item.id === target.id)
+        : chapters.find(item => state.doc.nodeAt(item.pos) === legacyNode);
       if (heading) {
         const hidden = new Set(getFoldedRanges(editor.state).filter(range => range.heading === heading.pos || (heading.pos >= range.from && heading.pos < range.to)).map(range => range.id));
         if (hidden.size) editor.commands.setFolds(getFoldedIds(editor.state).filter(id => !hidden.has(id)));

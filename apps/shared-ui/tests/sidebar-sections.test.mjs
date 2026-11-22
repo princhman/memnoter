@@ -414,7 +414,7 @@ test("a programmatic edit reveals hidden changes regardless of caret placement",
   }
 });
 
-async function syncPeerEdit(page, moduleId, edit) {
+async function syncPeerEdit(page, moduleId, edit, { persist = false } = {}) {
   const peer = new Y.Doc();
   try {
     const { state, updates } = await call("get_content", { moduleId });
@@ -423,11 +423,12 @@ async function syncPeerEdit(page, moduleId, edit) {
     const base = Y.encodeStateVector(peer);
     edit(peer.getXmlFragment("default"));
     const bytes = Array.from(Y.encodeStateAsUpdate(peer, base));
-    await page.evaluate(async ({ moduleId, bytes }) => {
+    const update = persist ? await call("add_update", { moduleId, bytes }) : { id: 9000, bytes };
+    await page.evaluate(async ({ moduleId, update }) => {
       const { onRemote } = await import("/src/lib/sync/apply-remote.ts");
-      onRemote({ updates: [{ moduleId, update: { id: 9000, bytes } }], modulesChanged: false,
+      onRemote({ updates: [{ moduleId, update }], modulesChanged: false,
         deleted: [], reviewsChanged: false, filesChanged: false });
-    }, { moduleId, bytes });
+    }, { moduleId, update });
   } finally {
     peer.destroy();
   }
@@ -939,6 +940,179 @@ test("focused Select All keeps a trailing block image selected across sync", asy
     const remaining = await page.locator(".tiptap > h1").allTextContents();
     assert.deepEqual(remaining, ["1\u00a0Before", "2\u00a0After"]);
   } finally {
+    await page.close();
+  }
+});
+
+async function dispatchReplacement(block, { start, end, data, applyDefault = false }) {
+  return block.evaluate((element, { start, end, data, applyDefault }) => {
+    const text = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode();
+    const range = new StaticRange({ startContainer: text, startOffset: start, endContainer: text, endOffset: end });
+    const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertReplacementText", data });
+    // InputEventInit cannot supply target ranges. Emulate the browser's text
+    // mutation when testing a range that leaves out the trailing block atom.
+    Object.defineProperty(event, "getTargetRanges", { value: () => [range] });
+    if (element.closest(".tiptap").dispatchEvent(event) && applyDefault) {
+      text.replaceData(start, end - start, data);
+    }
+    return event.defaultPrevented;
+  }, { start, end, data, applyDefault });
+}
+
+for (const engine of ["Chromium", "WebKit"]) {
+  test(`${engine}: an image drop before the focused heading neither previews nor moves the image`, async () => {
+    const moduleId = await createModule("Image drop boundary", ["Before", "Middle", "After"], fragment => {
+      const image = new Y.XmlElement("image");
+      image.setAttribute("src", "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
+      image.setAttribute("width", 100);
+      image.setAttribute("height", 100);
+      fragment.insert(4, [image]);
+    });
+    const page = await openNote(moduleId, { engine });
+    try {
+      await focusMiddleSection(page);
+      const before = await savedBlocks(moduleId);
+      const image = page.locator(".tiptap .note-image-host img");
+      await image.waitFor();
+      const box = await image.boundingBox();
+      const heading = await page.locator(".section-focus-start").boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(heading.x + 1, heading.y + 1, { steps: 10 });
+      await page.locator("[data-moving]").waitFor();
+      const markerVisible = await page.locator(".note-image-drop-indicator").isVisible();
+      await page.mouse.up();
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await page.locator(".tiptap").waitFor({ state: "detached" });
+      const saved = await savedBlocks(moduleId);
+      assert.deepEqual({ markerVisible, saved }, { markerVisible: false, saved: before });
+    } finally {
+      await page.close();
+    }
+  });
+
+  test(`${engine}: replacement text cannot write to a hidden code target from a visible caret`, async () => {
+    const moduleId = await createModule("Hidden code target", ["Before", "Middle", "After"], fragment => {
+      const code = new Y.XmlElement("codeBlock");
+      const text = new Y.XmlText();
+      text.insert(0, "value ");
+      code.insert(0, [text]);
+      fragment.insert(2, [code]);
+    });
+    const page = await openNote(moduleId, { engine });
+    try {
+      await focusMiddleSection(page);
+      const prevented = await dispatchReplacement(page.locator(".tiptap pre code"), { start: 5, end: 6, data: ". " });
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await page.locator(".tiptap").waitFor({ state: "detached" });
+      const code = (await savedBlocks(moduleId)).find(block => block.startsWith("<codeblock"));
+      assert.equal(prevented, true);
+      assert.match(code, />value <\/codeblock>$/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test(`${engine}: native replacement of a focused Select All removes its trailing image`, async () => {
+    const moduleId = await createModule("Replace image selection", ["Before", "Middle", "After"], fragment => {
+      fragment.insert(4, [new Y.XmlElement("image")]);
+    });
+    const page = await openNote(moduleId, { engine });
+    try {
+      await focusMiddleSection(page);
+      await page.keyboard.press("Meta+a");
+      const block = page.locator(".tiptap > p").filter({ hasText: "Notes for Middle." });
+      await dispatchReplacement(block, { start: 0, end: "Notes for Middle.".length, data: "Corrected", applyDefault: true });
+      await page.locator(".tiptap > p").filter({ hasText: /^Corrected$/ }).waitFor();
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await page.locator(".tiptap").waitFor({ state: "detached" });
+      const before = await savedBlocks(moduleId);
+      assert.deepEqual(before.map(block => block.replace(/^<([^ >]+)[^>]*>/, "<$1>")), [
+        "<heading>Before</heading>", "<paragraph>Notes for Before.</paragraph>", "<paragraph>Corrected</paragraph>",
+        "<heading>After</heading>", "<paragraph>Notes for After.</paragraph>",
+      ]);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+for (const all of [false, true]) {
+  test(all ? "Replace All reveals the whole note before editing hidden matches" : "Replace reveals a hidden current match before changing it", async () => {
+    const name = all ? "Replace all sections" : "Replace in sections";
+    const moduleId = await createModule(name, ["Before", "Middle", "After"]);
+    const page = await openNote(moduleId, { sections: true });
+    try {
+      await page.keyboard.press("Meta+Alt+f");
+      await page.getByRole("textbox", { name: "Find", exact: true }).fill("Notes for");
+      await page.getByRole("textbox", { name: "Replace with" }).fill("Summary of");
+      await page.getByText("Match 1 of 3", { exact: true }).waitFor();
+      await page.getByRole("list", { name: `Sections of ${name}` })
+        .getByRole("button", { name: "2 Middle", exact: true }).click();
+      const editor = page.locator(".tiptap");
+      await editor.locator(".section-focus-start").waitFor();
+      const replace = page.getByRole("button", { name: all ? "Replace all" : "Replace", exact: true });
+      // Observe what is visible at the first write, before any follow-up reveal.
+      await editor.evaluate(element => {
+        element.editor.on("beforeTransaction", ({ transaction }) => {
+          if (transaction.docChanged && !("focusedAtReplace" in element.dataset)) {
+            element.dataset.focusedAtReplace = String(element.classList.contains("section-focused"));
+          }
+        });
+      });
+      await replace.click();
+      if (!all) {
+        await editor.locator(":scope > h1").first().waitFor();
+        assert.equal(await editor.locator(":scope > p").first().textContent(), "Notes for Before.");
+        await replace.click();
+      }
+      assert.equal(await editor.getAttribute("data-focused-at-replace"), "false");
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await editor.waitFor({ state: "detached" });
+      assert.deepEqual((await savedBlocks(moduleId)).filter(block => block.startsWith("<paragraph")).map(block => block.replace(/<[^>]+>/g, "")),
+        ["Summary of Before.", all ? "Summary of Middle." : "Notes for Middle.", all ? "Summary of After." : "Notes for After."]);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+test("a closed untitled section click follows its heading when a peer inserts an earlier chapter", async () => {
+  const name = "Untitled during sync";
+  const moduleId = await createModule(name, ["First", "", "Last"]);
+  const { promise: readStarted, resolve: startRead } = Promise.withResolvers();
+  const { promise: releaseRead, resolve: finishRead } = Promise.withResolvers();
+  let loading = false;
+  const page = await openNote(course, { sections: true, async invoke(command, args) {
+    if (command === "get_content" && args.moduleId === moduleId && loading) {
+      startRead();
+      await releaseRead;
+    }
+    return call(command, args);
+  } });
+  try {
+    await page.getByRole("button", { name: `Expand sections of ${name}` }).click();
+    const row = page.getByRole("list", { name: `Sections of ${name}` })
+      .getByRole("button", { name: "2 Untitled section", exact: true });
+    await row.waitFor();
+    loading = true;
+    await row.click();
+    const editor = page.locator(".tiptap");
+    await readStarted;
+    await syncPeerEdit(page, moduleId, fragment => {
+      const heading = new Y.XmlElement("heading");
+      heading.setAttribute("level", 1);
+      const text = new Y.XmlText();
+      text.insert(0, "Peer chapter");
+      heading.insert(0, [text]);
+      fragment.insert(0, [heading]);
+    }, { persist: true });
+    finishRead();
+    await editor.locator(".section-focus-start").waitFor();
+    assert.deepEqual(await editor.locator(":scope > h1:visible").allTextContents(), ["3\u00a0"]);
+    assert.equal(await editor.getByText("An unfinished chapter.", { exact: true }).isVisible(), true);
+  } finally {
+    finishRead();
     await page.close();
   }
 });

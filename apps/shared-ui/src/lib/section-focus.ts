@@ -10,6 +10,12 @@ import { backspaceHeading } from "./heading-hierarchy";
 
 export const sectionFocusKey = new PluginKey<number | null>("section-focus");
 
+type SectionRange = { from: number; to: number };
+
+export function sectionContainsRange(section: SectionRange, target: SectionRange) {
+  return target.from >= section.from && target.to <= section.to;
+}
+
 function isHeadingPosition(
   doc: EditorState["doc"],
   position: unknown,
@@ -46,7 +52,7 @@ export function getFocusedSectionPath(editor: Editor): SectionCrumb[] {
 // The focused heading and everything up to the next heading at its level or higher.
 export function getFocusedSectionRange(
   state: EditorState,
-): { from: number; to: number } | null {
+): SectionRange | null {
   return getSectionRange(state.doc, sectionFocusKey.getState(state));
 }
 
@@ -54,7 +60,7 @@ export function getFocusedSectionRange(
 export function getSectionRange(
   doc: EditorState["doc"],
   headingPos: unknown,
-): { from: number; to: number } | null {
+): SectionRange | null {
   if (typeof headingPos !== "number") return null;
   const heading = outline(doc).find(item => item.pos === headingPos);
   return heading ? { from: heading.pos, to: heading.end } : null;
@@ -120,7 +126,7 @@ function deletesAcrossBoundary(state: EditorState, direction: -1 | 1) {
     ($head.pos === edge || $head.pos + direction * $head.depth === edge);
 }
 
-function changesHiddenContent(transaction: Transaction, range: { from: number; to: number }) {
+export function changesHiddenContent(transaction: Transaction, range: SectionRange) {
   let { from, to } = range;
   for (const [index, step] of transaction.steps.entries()) {
     const map = step.getMap();
@@ -183,7 +189,7 @@ Selection.jsonID("section-selection", SectionSelection);
 
 function selectionInSection(state: EditorState, range: { from: number; to: number }, entering: boolean) {
   const { doc, selection } = state;
-  if (!(selection instanceof AllSelection) && selection.from >= range.from && selection.to <= range.to &&
+  if (!(selection instanceof AllSelection) && sectionContainsRange(range, selection) &&
       (!selection.empty || (selection.from > range.from && selection.to < range.to))) return selection;
 
   const $start = doc.resolve(range.from + 1);
@@ -316,21 +322,40 @@ export const SectionFocus = Extension.create({
               return blockInputOverHiddenSelection(view, event);
             },
             beforeinput(view, event) {
+              if (!event.cancelable) return false;
+              const range = getFocusedSectionRange(view.state);
+              if (!range) return false;
+
+              const outside = event.getTargetRanges?.().some(({ startContainer, startOffset, endContainer, endOffset }) => {
+                if (!view.dom.contains(startContainer) || !view.dom.contains(endContainer)) return true;
+                const from = view.posAtDOM(startContainer, startOffset);
+                const to = view.posAtDOM(endContainer, endOffset);
+                return !sectionContainsRange(range, { from, to }) ||
+                  (from === to && (from === range.from || from === range.to));
+              });
               const { inputType } = event;
               const deleting = inputType.startsWith("delete");
               const externalInsert = inputType === "insertFromPaste" || inputType === "insertFromDrop";
-              if (!deleting && !externalInsert && !event.isComposing) return false;
-              const range = getFocusedSectionRange(view.state);
-              if (!range) return false;
-              const outside = event.getTargetRanges?.().some(({ startContainer, startOffset, endContainer, endOffset }) =>
-                view.dom.contains(startContainer) && view.dom.contains(endContainer) &&
-                (view.posAtDOM(startContainer, startOffset) < range.from ||
-                 view.posAtDOM(endContainer, endOffset) > range.to));
               const boundaryDelete = inputType.endsWith("Forward") && deletesAcrossBoundary(view.state, 1) ||
                 inputType.endsWith("Backward") && deletesAcrossBoundary(view.state, -1);
-              if (!event.cancelable || !(outside || boundaryDelete || nativeSelectionCrossesBoundary(view, range))) return false;
-              event.preventDefault();
-              return true;
+              const replaceSection = inputType === "insertReplacementText" && view.editable &&
+                !view.composing && !event.isComposing && view.state.selection instanceof SectionSelection;
+              if (outside || boundaryDelete ||
+                  ((deleting || externalInsert || event.isComposing || replaceSection) &&
+                    nativeSelectionCrossesBoundary(view, range))) {
+                event.preventDefault();
+                return true;
+              }
+              if (replaceSection) {
+                const text = event.data ?? (event.dataTransfer?.getData("text/plain") || null);
+                if (text != null) {
+                  // The native replacement range can omit a selected block atom.
+                  event.preventDefault();
+                  view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+                  return true;
+                }
+              }
+              return false;
             },
             // Composition start can delete a spanning selection before
             // ProseMirror starts tagging its transactions as composition.

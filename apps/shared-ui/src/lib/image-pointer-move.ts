@@ -1,4 +1,5 @@
 import { editorHost } from "@/lib/editor-host";
+import { getFocusedSectionRange, sectionContainsRange } from "@/lib/section-focus";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { dropPoint } from "@tiptap/pm/transform";
@@ -18,6 +19,10 @@ function imageDropPosition(state: EditorState, from: number, target: number) {
   const insert = dropPoint(state.doc, target, new Slice(Fragment.from(node), 0, 0));
   // Dropping on or right next to itself leaves it where it is.
   if (insert === null || (insert >= from && insert <= from + node.nodeSize)) return null;
+  const section = getFocusedSectionRange(state);
+  // At the start the block would land before the heading, in the prior chapter.
+  if (section && (insert <= section.from || insert > section.to ||
+      !sectionContainsRange(section, { from, to: from + node.nodeSize }))) return null;
   return insert;
 }
 

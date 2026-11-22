@@ -26,7 +26,7 @@ import {
 import type { Editor } from "@tiptap/core";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { getFoldedRanges, headingFoldKey } from "@/lib/heading-fold";
-import { getFocusedSectionRange } from "@/lib/section-focus";
+import { changesHiddenContent, getFocusedSectionRange, sectionContainsRange } from "@/lib/section-focus";
 import { scrollCurrentResultIntoView } from "@/lib/find-highlights";
 import { clearFindRequest, findInInlineMath, findRequestStore } from "@/lib/find-request";
 import { stopScrollRestore } from "@/lib/view-persistence";
@@ -48,7 +48,7 @@ function revealCurrentResult(editor: Editor) {
 
 function unhide(editor: Editor, match: { from: number; to: number }) {
   const focused = getFocusedSectionRange(editor.state);
-  if (focused && (match.from < focused.from || match.to > focused.to)) {
+  if (focused && !sectionContainsRange(focused, match)) {
     editor.commands.showDocument();
   }
   // Unfold only what covers the match; other ids stay, even ones kept for undo.
@@ -285,10 +285,32 @@ export function FindBar() {
     }
   };
 
-  const replace = () => {
-    editor.commands.replace();
-    revealCurrentResult(editor);
+  const replaceMatches = (all: boolean) => {
+    const command = all ? editor.commands.replaceAll : editor.commands.replace;
+    const focused = getFocusedSectionRange(editor.state);
+    if (!focused) {
+      command();
+    } else {
+      // The command can consume a debounced search term and target a different
+      // match from the one currently highlighted. Check the edits it prepares.
+      const transaction = editor.captureTransaction(command);
+      if (!transaction) return;
+      if (changesHiddenContent(transaction, focused)) {
+        if (!all) {
+          const term = transaction.getMeta(FindAndReplacePluginKey)?.searchTerm;
+          if (typeof term === "string") {
+            editor.view.dispatch(editor.state.tr.setMeta(FindAndReplacePluginKey, { searchTerm: term, currentIndex: 0 }));
+          }
+          revealCurrentResult(editor);
+          return;
+        }
+        editor.commands.showDocument();
+      }
+      editor.view.dispatch(transaction);
+    }
+    if (!all) revealCurrentResult(editor);
   };
+  const replace = () => replaceMatches(false);
 
   return (
     <div className={`${surfaceClass} absolute top-10 right-4 z-40 flex w-80 flex-col gap-1 p-1`}>
@@ -419,7 +441,7 @@ export function FindBar() {
               variant="ghost"
               aria-label="Replace all"
               disabled={!hasResults}
-              onClick={() => editor.commands.replaceAll()}
+              onClick={() => replaceMatches(true)}
             >
               <ReplaceAll />
             </Button>
