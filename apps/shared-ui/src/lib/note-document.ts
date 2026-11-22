@@ -158,13 +158,14 @@ export function useNoteDocument(moduleId: string) {
     const binding: unknown = ySyncPluginKey.getState(state)?.binding;
     if (!(binding instanceof ProsemirrorBinding) || binding.doc !== yDoc) return;
     const section = getFocusedSectionRange(state);
+    const $heading = section ? state.doc.resolve(section.from) : null;
     // The binding keeps the same Yjs heading item when peer edits move it.
-    const heading = section ? binding.type.get(state.doc.resolve(section.from).index()) : null;
-    // A block inserted at the start of a heading otherwise lands before it.
-    const insertAt = section && position >= section.from && position <= section.from + 1
-      ? section.from + state.doc.nodeAt(section.from)!.nodeSize
-      : position;
-    let destination: Y.RelativePosition = absolutePositionToRelativePosition(insertAt, binding.type, binding.mapping);
+    const heading = $heading ? binding.type.get($heading.index()) : null;
+    // Put images from the start of the title after the heading. Anchor to the
+    // heading's trailing edge so a peer's new chapter cannot move the destination.
+    let destination: Y.RelativePosition = $heading && position >= $heading.pos && position <= $heading.pos + 1
+      ? Y.createRelativePositionFromTypeIndex(binding.type, $heading.index() + 1, -1)
+      : absolutePositionToRelativePosition(position, binding.type, binding.mapping);
 
     const prepareInsertion = (file: File, fileId?: string) => {
       const { state } = currentEditor;

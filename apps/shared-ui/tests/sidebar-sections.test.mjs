@@ -1100,6 +1100,69 @@ for (const moveFocus of [false, true]) {
   });
 }
 
+for (const sections of [true, false]) {
+  test(`Chromium: a pending image pasted at a focused title stays before a peer's new chapter (${sections ? "sidebar" : "Contents"})`, async () => {
+    const name = "Chapter boundary image";
+    const moduleId = await createModule(name, ["Before", "Middle", "After"], fragment => fragment.delete(3, 1));
+    const uploading = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const page = await openNote(moduleId, {
+      sections,
+      invoke: async (command, args) => {
+        if (command === "save_file") {
+          uploading.resolve();
+          await release.promise;
+        }
+        return call(command, args);
+      },
+    });
+    try {
+      if (sections) {
+        await page.getByRole("list", { name: `Sections of ${name}` })
+          .getByRole("button", { name: "2 Middle", exact: true }).click();
+      } else {
+        const contents = page.getByRole("navigation", { name: "Table of contents" });
+        await contents.getByRole("button", { name: "2 Middle", exact: true }).hover();
+        await contents.getByRole("button", { name: "Focus on Middle", exact: true }).press("Enter");
+      }
+      const focused = page.locator(".tiptap > h1.section-focus-start").filter({ hasText: "Middle" });
+      await focused.click();
+      await page.keyboard.press("Home");
+      assert.equal(await focused.evaluate(node => {
+        const { selection } = node.parentElement.editor.state;
+        return selection.empty && selection.$from.parentOffset === 0;
+      }), true, "caret at the start of the focused title");
+      await pastePng(page);
+      await uploading.promise;
+      await syncPeerEdit(page, moduleId, fragment => {
+        const heading = new Y.XmlElement("heading");
+        heading.setAttribute("level", 1);
+        heading.setAttribute("data-toc-id", "peer-chapter");
+        heading.setAttribute("id", "peer-chapter");
+        const title = new Y.XmlText();
+        title.insert(0, "Peer chapter");
+        heading.insert(0, [title]);
+        fragment.insert(3, [heading]);
+      }, { persist: true });
+      await page.locator(".tiptap > h1").filter({ hasText: "Peer chapter" }).waitFor({ state: "attached" });
+      await focused.waitFor();
+      const beforeImage = await savedBlocks(moduleId);
+      release.resolve();
+      const discard = page.getByRole("button", { name: "Discard failed image operations" });
+      const image = page.locator(".tiptap .note-image-host");
+      await discard.or(image).first().waitFor();
+      assert.equal(await discard.isVisible(), false, "image upload reported a failed operation");
+      await focused.waitFor();
+      const saved = await leaveAndReadSaved(page, moduleId);
+      assert.match(saved[3], /^<image .*fileId=/);
+      assert.deepEqual(saved.filter((_, i) => i !== 3), beforeImage);
+    } finally {
+      release.resolve();
+      await page.close();
+    }
+  });
+}
+
 for (const schedule of ["microtask", "timer"]) {
   test(`Chromium: a programmatic edit queued as a ${schedule} from trusted input reveals its hidden heading`, async () => {
     const moduleId = await createModule("Queued programmatic edit", ["Before", "Middle", "After"]);
