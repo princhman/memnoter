@@ -37,9 +37,12 @@ being asked each time:
    once the rest is satisfied and report the CI state.
    CI timing claims come from real run timestamps (`gh run view`), never
    estimates: report the whole run against the user's target.
-6. Offer release notes. Ask before tagging. A `v*` tag runs `release.yml`:
-   desktop installers, TestFlight and the Linear release. memnoter.com follows
-   the latest GitHub release by itself.
+6. Draft release notes from the issues shipped since the last tag, show them
+   to the user, and ask before tagging. Tag with
+   `scripts/tag-release.sh v<x.y.z> <notes.md>`: the tag message becomes the
+   GitHub and Linear release notes, and `release.yml` refuses a tag without
+   them. The tag runs desktop installers, TestFlight and the Linear release.
+   memnoter.com follows the latest GitHub release by itself.
 7. Clean up without being asked, on the Mac and on minipc: remove merged
    worktrees (`scripts/prune-worktrees.sh --apply`) and unused memnoter sibling
    checkouts, delete merged local branches with `git branch -d`, stop leftover
@@ -115,9 +118,9 @@ The orchestrator decides how work splits; the user doesn't have to.
 - Delegates report the issue ID back with their result.
 - Preserve issue IDs or PR numbers in merge/squash commits. For rebase merges,
   keep `Fixes PRI-<n>` in commit messages so release scanning can find the issues.
-- Release notes come from the shipped issues in Linear. Enable automatic notes
-  and set the notes template in the release pipeline settings; the tag workflow
-  syncs the issues without uploading hand-written notes.
+- Release notes are written from the shipped issues in Linear and carried by
+  the tag (Ship flow step 6). The workflow posts them to the GitHub release
+  and the Linear release (`LINEAR_ACCESS_KEY` secret).
 - In release notes (GitHub release or Linear), refer to an issue by its number
   alone, for example "(316)". Never write `PRI-316`, and don't add `#`: GitHub
   links `#316` to an unrelated issue or PR.

@@ -168,14 +168,15 @@ jobs:
   ios-build:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 25
     permissions:
       actions: read
       contents: read
     env:
       CARGO_BUILD_JOBS: 4
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      # Same Xcode as release.yml's ios-testflight.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -264,7 +265,7 @@ jobs:
   ios-tests:
     needs: [changes, ios-build-started]
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-26
+    runs-on: xcode-27
     permissions:
       actions: read
       contents: read
@@ -277,7 +278,8 @@ jobs:
       matrix:
         suite: [drawing, navigation, phone]
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      # Same Xcode as release.yml's ios-testflight.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
