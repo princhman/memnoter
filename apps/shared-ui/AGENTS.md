@@ -12,7 +12,13 @@ This code ships to desktop, iPad and iPhone at once.
 - **Colour.** The accent is `--primary` in `src/App.css`. No default blue,
   violet or new purple shades. Primary buttons are purple.
 - **No decorative chrome.** No borders, dividers or outlines unless contrast
-  needs them. Don't re-add one that was removed.
+  needs them. Don't re-add one that was removed. Floating panels separate with
+  their shadow only (`surfaceClass` in `src/components/ui/surface`); opening a neighbouring pane
+  or changing state never adds an edge or line behind controls.
+- **Insert commands.** On desktop, every insert command in the slash menu also
+  appears in the right-click Insert menu, from the one list in
+  `src/components/insert-menu.tsx` (iOS keeps its native menu).
+  `tests/editor-context-menu.test.mjs` checks they match.
 - **Question bank controls.** Crop editing belongs in one ellipsis menu over
   the image, styled like regular saved images; don't add side action rails.
   Question and part rename/move/delete actions belong only in context menus,
@@ -42,7 +48,9 @@ This code ships to desktop, iPad and iPhone at once.
   flow; don't reserve large blank gaps to hide movement. This keeps the reading
   position and pointer target stable while moving between reading and editing.
 - **Contrast.** Check light and dark mode; selected and highlighted states must
-  be easy to read.
+  be easy to read. Check text against the actual hover, pressed and highlight
+  fill (`--accent-foreground` on `--accent`); note highlights (`--highlight-*`)
+  must stand out clearly in dark mode.
 - **Section navigation.** Put keyboard hints in hover tooltips, not permanent
   sidebar or menu badges. Highlight selected module/section menu rows instead
   of showing checkmarks. Use Option-N/F/Q/R for the current scope and
@@ -53,22 +61,9 @@ This code ships to desktop, iPad and iPhone at once.
 - **Editor host on iOS** (`src/editor-host/`): scroll, keyboard and caret changes
   always need `tests/editor-host.test.mjs` coverage, even in "don't test" mode.
   Untested fixes here keep bringing old bugs back.
-- **Worksheet answers.** Reuse the shared editor extensions and math views from
-  notes. Do not build a separate LaTeX parser or Write/Preview editor.
-  Keep the answer field compact with a subtle border and an empty-state typing
-  and drawing hint, so the editable area is visible beneath each question.
-  On desktop the field is a read-only preview; clicking it opens the answer in
-  a modal with the part's crops (no inline answer editing). iPad/iPhone keep
-  inline answers. Desktop mirrors the iPad toolbar in the window header: the
-  breadcrumb becomes a back chevron and the worksheet title; the top right
-  holds previous/next with question pills (menu above 3) and a purple Finish
-  pill. No in-page title, footer, module heading or "Saved" line.
-  Worksheet questions use the QuestionBank reading layout: saved root names,
-  own parenthesized part labels, identical width, typography, crop gutter and
-  nesting gaps. Keep compact leaf answers below crops in the content column.
-  Pinned crops stay read-only; folding hides crops, answers and descendants
-  without unmounting answer editors or losing their autosave state.
-
+- **Question bank and worksheets.** The approved behaviour is in the Decisions
+  section of Linear PRI-324. Read it before changing those screens, and add
+  new decisions there, not here.
 - **Portable questions and worksheets.** Question bank and typed worksheets are
   shared across desktop and iOS. Windows/Linux drawings use portable ink;
   Mac/iOS retain native tools. Keep source and preview assets together through

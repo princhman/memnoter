@@ -6,6 +6,7 @@ import { bootstrapNotes } from "@/lib/bootstrap";
 import { onCardsChanged } from "@/lib/card-events";
 import { postNativeEvent } from "@/lib/backend";
 import ReactDOM from "react-dom/client";
+import { flushSync } from "react-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ActiveEditorProvider } from "@/lib/active-editor-context";
 import { queryClient } from "@/lib/query-client";
@@ -26,8 +27,9 @@ function CardBackfill() {
   return null;
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+// Native waits on the bridge installed by this mount, before it can open a note.
+flushSync(() => ReactDOM.createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
     <ActiveEditorProvider><CardBackfill /><Toaster offset={{ bottom: "calc(var(--native-bottom-inset, 0px) + 16px)" }} /><RouterProvider router={editorRouter} /></ActiveEditorProvider>
   </QueryClientProvider>,
-);
+));

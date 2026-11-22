@@ -30,6 +30,33 @@ def main():
         print('  ' + json.dumps(path, ensure_ascii=False))
     print(f'Other worktrees: {others}')
     print('Other agents may share this checkout; preserve their uncommitted work.')
+    for warning in staleness(cwd, branch, git):
+        print('WARNING: ' + warning)
+
+
+def staleness(cwd, branch, git):
+    # Refreshing origin/main only moves a remote-tracking ref; offline, the last fetch is used.
+    try:
+        subprocess.run(['git', '-C', cwd, 'fetch', '--quiet', 'origin', 'main'],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8, check=False)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    warnings = []
+    top = git('rev-parse', '--show-toplevel').strip()
+    if not os.path.exists(os.path.join(top, 'AGENTS.md')):
+        warnings.append('this checkout has no AGENTS.md, so it predates the agent guides. '
+                        'Update it before working.')
+    try:
+        behind = int(git('rev-list', '--count', 'HEAD..origin/main').strip())
+    except (ValueError, subprocess.SubprocessError):
+        return warnings
+    if branch == 'main' and behind:
+        warnings.append(f'main is {behind} commits behind origin/main. Run git pull --ff-only '
+                        'if it is clean, or work in a worktree from origin/main.')
+    elif behind > 50:
+        warnings.append(f'this branch is {behind} commits behind origin/main. Rebase it, '
+                        'or start new work from origin/main.')
+    return warnings
 
 
 if __name__ == '__main__':

@@ -29,6 +29,8 @@ test('failed answer isolation, explicit conflict recovery, and lifecycle drainin
   await page.goto(url);
   const result = await page.evaluate(async cacheDir => {
     const { default: React } = await import(`/@fs/${cacheDir}/deps/react.js`);
+    const { act } = React;
+    window.IS_REACT_ACT_ENVIRONMENT = true;
     const { default: { createRoot } } = await import(`/@fs/${cacheDir}/deps/react-dom_client.js`);
     const { useWorksheetAnswers, flushWorksheetAnswers } = await import('/src/lib/worksheet-session.ts');
     const { exclusiveWrite, flushAll } = await import('/src/lib/write-lifecycle.ts');
@@ -37,34 +39,37 @@ test('failed answer isolation, explicit conflict recovery, and lifecycle drainin
     let answers, legacy, ready = false;
     function Owner() { answers = useWorksheetAnswers('m', 'a'); legacy = useWorksheetAnswers('m', 'legacy'); React.useEffect(() => { ready = true; }, []); return null; }
     const root = createRoot(document.body.appendChild(document.createElement('div')));
-    root.render(React.createElement(Owner));
-    while (!ready) await new Promise(resolve => setTimeout(resolve, 10));
-    answers.setDocument('r', 'bad', [0, 0], 'stale', 'bad', true);
-    answers.setDocument('r', 'good', [0, 0], 'base', 'good', true);
-    await flushWorksheetAnswers();
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await act(async () => { root.render(React.createElement(Owner)); });
+    await act(async () => {
+      answers.setDocument('r', 'bad', [0, 0], 'stale', 'bad', true);
+      answers.setDocument('r', 'good', [0, 0], 'base', 'good', true);
+      await flushWorksheetAnswers();
+    });
     const isolated = window.saved.map(x => x.leafPartId).join(',') === 'bad,good' && Object.keys(answers.errors).length === 1 && Object.keys(answers.drafts).length === 1;
-    await flushAll({ navigation: true });
     let strictBlocked = false;
-    try { await flushAll(); } catch { strictBlocked = true; }
-    await answers.retryAnswer('r', 'bad');
-    try { await legacy.loadDocument('r', 'part'); } catch {}
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await act(async () => {
+      await flushAll({ navigation: true });
+      try { await flushAll(); } catch { strictBlocked = true; }
+      await answers.retryAnswer('r', 'bad');
+      try { await legacy.loadDocument('r', 'part'); } catch {}
+    });
     const legacyRecovery = !!legacy.errors[legacyKey];
-    await legacy.retryAnswer('r', 'part');
-    // Rejected before IPC: a resolved running promise must not wedge future saves.
-    answers.setDocument('r', 'invalid', [255], 'base', 'invalid', true);
-    await flushWorksheetAnswers();
-    answers.discardAnswer('r', 'invalid');
-    answers.setDocument('r', 'last', [0, 0], 'base', 'last edit', true);
     let durableAtExit = false;
-    try { await exclusiveWrite(async () => { durableAtExit = window.saved.some(x => x.leafPartId === 'last'); throw new Error('cancel exit'); }, { kind: 'exit' }); } catch (e) { if (e.message !== 'cancel exit') throw e; }
+    await act(async () => {
+      await legacy.retryAnswer('r', 'part');
+      // Rejected before IPC: a resolved running promise must not wedge future saves.
+      answers.setDocument('r', 'invalid', [255], 'base', 'invalid', true);
+      await flushWorksheetAnswers();
+      answers.discardAnswer('r', 'invalid');
+      answers.setDocument('r', 'last', [0, 0], 'base', 'last edit', true);
+      try { await exclusiveWrite(async () => { durableAtExit = window.saved.some(x => x.leafPartId === 'last'); throw new Error('cancel exit'); }, { kind: 'exit' }); } catch (e) { if (e.message !== 'cancel exit') throw e; }
+    });
     const { WorksheetAnswerEditor } = await import('/src/components/worksheet-answer-editor.tsx');
     let openedEmptyWrites = 0;
-    root.render(React.createElement(WorksheetAnswerEditor, { moduleId: 'm', attemptId: 'empty', revisionId: 'r', leafPartId: 'p', label: 'Empty', load: async () => ({ document: [0, 0], expected: '[]', plainText: '' }), save: () => openedEmptyWrites++, flush: () => {}, flushDurable: async () => {} }));
+    await act(async () => { root.render(React.createElement(WorksheetAnswerEditor, { moduleId: 'm', attemptId: 'empty', revisionId: 'r', leafPartId: 'p', label: 'Empty', load: async () => ({ document: [0, 0], expected: '[]', plainText: '' }), save: () => openedEmptyWrites++, flush: () => {}, flushDurable: async () => {} })); });
     while (!document.querySelector('.tiptap')) await new Promise(resolve => setTimeout(resolve, 10));
-    await new Promise(resolve => setTimeout(resolve, 100));
-    root.unmount();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)); });
+    await act(async () => { root.unmount(); });
     return { isolated, strictBlocked, legacyRecovery, openedEmptyWrites, rebased: window.saved.some(x => x.leafPartId === 'bad' && x.expected === 'fresh'), durableAtExit };
   }, server.config.cacheDir);
   assert.deepEqual(result, { isolated: true, strictBlocked: true, legacyRecovery: true, openedEmptyWrites: 0, rebased: true, durableAtExit: true });

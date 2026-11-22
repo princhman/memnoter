@@ -1,10 +1,11 @@
-import { SELF, env } from "cloudflare:test";
+import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { deriveKey, encryptBlob, newSalt } from "../../shared-ui/src/lib/sync/crypto";
 import { createSyncEngine, type SyncEngine } from "../../shared-ui/src/lib/sync/engine";
 import { PROTOCOL_VERSION, toBase64, type ServerMessage } from "../../shared-ui/src/lib/sync/protocol";
 import { BASE, MemoryDevice, blobStore, connector, signIn, waitFor } from "./helpers";
+import contract from "./fixtures/protocol.json";
 
 const salt = newSalt();
 // Few iterations: the tests check behaviour, not key strength.
@@ -228,6 +229,94 @@ function put(kind: string, id: string, token: string, bytes: Uint8Array) {
     body: bytes,
   });
 }
+
+describe("account deletion", () => {
+  it("erases the vault and account, and leaves a replacement account safe from retries", async () => {
+    const email = "delete-account@example.com";
+    const { token, userId } = await signIn(email);
+    const other = await signIn("keep-account@example.com");
+    const auth = { Authorization: `Bearer ${token}` };
+    const request = (path: string, method = "GET", headers: HeadersInit = auth, body?: string) =>
+      SELF.fetch(BASE + path, { method, headers, body });
+    const remove = () => request("/v1/account", "DELETE");
+    const file = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const gone = "aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff";
+    const bytes = new Uint8Array([1, 2, 3]);
+    const key = JSON.stringify({ salt: "salt", check: "check" });
+
+    expect((await request("/v1/account", "DELETE", { Authorization: "" })).status).toBe(401);
+    expect((await request("/v1/key", "PUT", auth, key)).status).toBe(200);
+    expect((await put("files", file, token, bytes)).status).toBe(200);
+    expect((await put("blobs", "0123456789abcdef".repeat(2), token, bytes)).status).toBe(200);
+    expect((await request(`/v1/files/${gone}`, "DELETE", {
+      ...auth, "X-Memnoter-Protocol-Version": String(PROTOCOL_VERSION),
+    })).status).toBe(200);
+    expect((await put("files", file, other.token, bytes)).status).toBe(200);
+    const pending = await request("/v1/auth/start", "POST", auth, JSON.stringify({ email }));
+    const { devCode } = await pending.json<{ devCode: string }>();
+    expect(devCode).toMatch(/^\d{6}$/);
+
+    const socket = await rawSocket(token);
+    socket.send({ t: "hello", cursor: 0, v: PROTOCOL_VERSION });
+    await waitFor(() => socket.received.some((message) => message.t === "ready"));
+    socket.send({ t: "push", id: 1, entries: [{ doc: "snapshot", data: "AA==" }, { doc: "log", data: "AQ==" }] });
+    await waitFor(() => socket.received.some((message) => message.t === "ack"));
+    socket.send({ t: "compact", doc: "snapshot", upTo: 1, data: "AA==" });
+    const closed = new Promise<number>((resolve) => socket.ws.addEventListener("close", (event) => {
+      socket.ws.close();
+      resolve(event.code);
+    }));
+    const vault = env.VAULT.getByName(userId);
+    await runInDurableObject(vault, async (_instance, state) => {
+      expect(state.storage.sql.exec("select doc from log").toArray()).toEqual([{ doc: "log" }]);
+      expect(state.storage.sql.exec("select doc from snapshots").toArray()).toEqual([{ doc: "snapshot" }]);
+    });
+
+    expect((await remove()).status).toBe(200);
+    expect(await closed).toBe(contract.closeSignedOut);
+    await runInDurableObject(vault, async (instance, state) => {
+      expect(state.storage.sql.exec("select doc from log").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("select doc from snapshots").toArray()).toEqual([]);
+      expect(await instance.getKeyInfo()).toBeNull();
+    });
+    expect((await env.FILES.list({ prefix: `${userId}/` })).objects).toEqual([]);
+    expect((await request(`/v1/files/${file}`, "GET", { Authorization: `Bearer ${other.token}` })).status).toBe(200);
+    expect((await request("/v1/key", "PUT", auth, key)).status).toBe(401);
+    expect((await put("files", file, token, bytes)).status).toBe(401);
+    expect((await request("/v1/sync", "GET", {
+      ...auth, Upgrade: "websocket", "Sec-WebSocket-Protocol": `memnoter.v1, auth.${token}`,
+    })).status).toBe(401);
+    expect((await request("/v1/auth/verify", "POST", auth, JSON.stringify({ email, code: devCode }))).status).toBe(401);
+
+    const fresh = await signIn(email);
+    expect(fresh.userId).not.toBe(userId);
+    const freshAuth = { Authorization: `Bearer ${fresh.token}` };
+    expect(await (await request("/v1/key", "GET", freshAuth)).json()).toEqual({ key: null });
+    expect((await request("/v1/key", "PUT", freshAuth, key)).status).toBe(200);
+    expect((await remove()).status).toBe(200);
+    expect((await signIn(email)).userId).toBe(fresh.userId);
+    expect(await (await request("/v1/key", "GET", freshAuth)).json()).toEqual({ key: JSON.parse(key) });
+  });
+
+  it("resumes after vault cleanup and rejects tokens revoked by an earlier wipe", async () => {
+    const email = "retry-deletion@example.com";
+    const original = await signIn(email);
+    const remove = (path: string, token: string) => SELF.fetch(BASE + path, {
+      method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect((await remove("/v1/vault", original.token)).status).toBe(200);
+    const current = await signIn(email);
+    expect(current.userId).toBe(original.userId);
+    expect((await remove("/v1/account", original.token)).status).toBe(401);
+
+    // Simulate losing the request after the vault phase, before the account record is cleared.
+    expect(await env.VAULT.getByName(current.userId).deleteAccount(current.userId, Date.now())).toBe(true);
+    expect((await signIn(email)).userId).toBe(current.userId);
+    expect((await remove("/v1/account", current.token)).status).toBe(200);
+    expect((await signIn(email)).userId).not.toBe(current.userId);
+  });
+});
 
 describe("images", () => {
   it("deletes only the authenticated user's image and is idempotent", async () => {

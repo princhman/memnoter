@@ -90,6 +90,25 @@ test("right click reuses contextual table actions and slash still works", async 
   assert.equal(await page.evaluate(() => editor.state.doc.textContent.includes("/")), false);
 });
 
+// The user wants every insert command reachable without knowing slash
+// commands (2026-11-15: "why there is no way of adding drawing other than / menu").
+test("right click offers the same insert commands as the slash menu", async () => {
+  const options = () => page.evaluate(() =>
+    [...document.querySelectorAll('[role="listbox"][aria-label="Insert"] [role="option"]')].map(option => option.textContent.trim()));
+  await fresh();
+  await openAt(4);
+  await filter().waitFor();
+  const contextItems = await options();
+  await page.keyboard.press("Escape");
+  await fresh();
+  await page.keyboard.type("/");
+  await page.getByRole("option").first().waitFor();
+  const slashItems = await options();
+  await page.keyboard.press("Escape");
+  assert.ok(slashItems.some(item => item.startsWith("Drawing")), JSON.stringify(slashItems));
+  assert.deepEqual([...contextItems].sort(), [...slashItems].sort());
+});
+
 test("native iOS host and read-only editors keep their native context menu", async () => {
   await fresh();
   await page.evaluate(() => editor.view.dom.setAttribute("data-native-editor", "true"));

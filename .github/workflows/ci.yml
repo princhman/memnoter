@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -12,11 +13,17 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Decides which jobs a PR needs. Pushes to main always run everything.
+  # PR merge-base diff; main push before..HEAD; manual dispatch validates everything.
   changes:
     runs-on: ubuntu-latest
     outputs:
-      code: ${{ steps.diff.outputs.code }}
+      frontend: ${{ steps.diff.outputs.frontend }}
+      rust: ${{ steps.diff.outputs.rust }}
+      browser: ${{ steps.diff.outputs.browser }}
+      benchmark: ${{ steps.diff.outputs.benchmark }}
+      web: ${{ steps.diff.outputs.web }}
+      web-shards: ${{ steps.diff.outputs.web-shards }}
+      sync: ${{ steps.diff.outputs.sync }}
       ios: ${{ steps.diff.outputs.ios }}
     steps:
       - uses: actions/checkout@v4
@@ -24,23 +31,13 @@ jobs:
           fetch-depth: 0
       - id: diff
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -z "$BASE" ]; then
-            echo "code=true" >> "$GITHUB_OUTPUT"; echo "ios=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          files=$(git diff --name-only "$BASE" HEAD)
-          echo "$files"
-          # Docs and agent config only: nothing to build or test.
-          code=$(echo "$files" | grep -vqE '(\.md$|^docs/|^scripts/agent-hooks/|^\.gitignore$)' && echo true || echo false)
-          # The iOS app bundles all of shared-ui, but its own tests exercise the
-          # native bridge; other shared-ui changes are covered by check and by main.
-          ios=$(echo "$files" | grep -qE '^(apps/ios/|apps/apple-shared/|crates/|apps/sync/|apps/shared-ui/src/editor-host/|apps/shared-ui/src/lib/(editor-host|native-)|apps/shared-ui/package\.json|scripts/(build-ios|ios-|ensure-sync|generate-bridge|sync-version)|Cargo\.(toml|lock)|pnpm-lock\.yaml|\.github/workflows/ci\.yml)' && echo true || echo false)
-          echo "code=$code" >> "$GITHUB_OUTPUT"; echo "ios=$ios" >> "$GITHUB_OUTPUT"
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/ci/select-checks.py classify "$EVENT" "$BASE"
 
   frontend:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -48,15 +45,25 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm lint
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_ci_selection.py'
+      - run: node --test scripts/tests/ios-results.test.mjs
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_wait_ios_artifact.py'
+      - uses: actions/upload-artifact@v4
+        if: needs.changes.outputs.ios == 'true'
+        with:
+          name: shared-ui-dist
+          path: apps/shared-ui/dist
+          if-no-files-found: error
+          retention-days: 1
 
   rust:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -67,19 +74,22 @@ jobs:
         with:
           components: clippy
       - uses: swatinem/rust-cache@v2
+      - name: Normalize Ubuntu cloud mirrors
+        run: sudo python3 scripts/ci/normalize-ubuntu-mirrors.py
       - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   web:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: macos-latest
+    if: needs.changes.outputs.web == 'true'
+    # Keep browser dependencies on a stable base instead of latest's OS upgrades.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: ${{ fromJSON(needs.changes.outputs.web-shards || '[1]') }}
     env:
       CARGO_BUILD_JOBS: 4
     steps:
@@ -87,38 +97,53 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: pnpm
       # Anki dialog coverage uses the real Rust command harness.
       - uses: dtolnay/rust-toolchain@stable
+        if: matrix.shard != 'benchmark'
       - uses: swatinem/rust-cache@v2
+        if: matrix.shard != 'benchmark'
+        with:
+          shared-key: web-ubuntu24
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/tests/ios-live-plist.test.mjs
-        if: matrix.shard == 1
-      - run: pnpm --filter memnoter-shared-ui exec playwright install webkit chromium
-      - run: pnpm --filter memnoter-shared-ui test:ci --test-shard=${{ matrix.shard }}/2
+      - name: Skip command-suggestion index maintenance
+        if: matrix.shard != 'benchmark'
+        run: sudo rm -f /etc/apt/apt.conf.d/50command-not-found
+      - name: Normalize Ubuntu cloud mirrors
+        if: matrix.shard != 'benchmark'
+        # Runner cloud mirrors can stall dependency installation before tests start.
+        run: sudo python3 scripts/ci/normalize-ubuntu-mirrors.py
+      - run: pnpm --filter memnoter-shared-ui exec playwright install --with-deps webkit chromium
+        if: matrix.shard != 'benchmark'
+      - run: pnpm --filter memnoter-shared-ui test:ci --skip-benchmark --test-shard=${{ matrix.shard }}/16
+        if: matrix.shard != 'benchmark'
+      - name: Run the benchmark with preinstalled browsers
+        if: matrix.shard == 'benchmark'
+        working-directory: apps/shared-ui
+        run: |
+          playwright_version=$(node -p "require('playwright/package.json').version")
+          docker run --rm --init --ipc=host --env CI \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --workdir "$GITHUB_WORKSPACE/apps/shared-ui" \
+            "mcr.microsoft.com/playwright:v$playwright_version-noble" \
+            node --experimental-strip-types --import ./tests/support/register.mjs \
+            --test --test-timeout=240000 tests/copy-large-note.bench.mjs
 
   # Preserve the existing required check name across the job split.
   check:
-    needs: [changes, frontend, rust, web]
+    needs: [changes, frontend, rust, web, sync-server]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - env:
-          CHANGES: ${{ needs.changes.result }}
-          CODE: ${{ needs.changes.outputs.code }}
-          FRONTEND: ${{ needs.frontend.result }}
-          RUST: ${{ needs.rust.result }}
-          WEB: ${{ needs.web.result }}
-        run: |
-          test "$CHANGES" = success
-          if [ "$CODE" = true ]; then
-            test "$FRONTEND" = success
-            test "$RUST" = success
-            test "$WEB" = success
-          fi
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-checks.py gate check
 
   sync-server:
+    needs: changes
+    if: needs.changes.outputs.sync == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -131,7 +156,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -140,44 +165,30 @@ jobs:
       # through the app's sync engine.
       - run: pnpm test
 
-  ios:
+  ios-build:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    # The core script produces an arm64 simulator XCFramework slice.
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
     env:
       CARGO_BUILD_JOBS: 4
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
-      - name: Start booting the SDK's iPad simulator
-        run: |
-          xcodebuild -version
-          xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
-          simulator_id=$(python3 - "$RUNNER_TEMP/simulators.json" <<'PYTHON'
-          import json, subprocess, sys
-          sdk = subprocess.check_output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True).strip()
-          runtime = "com.apple.CoreSimulator.SimRuntime.iOS-" + sdk.replace(".", "-")
-          devices = json.load(open(sys.argv[1]))["devices"].get(runtime, [])
-          ipads = sorted((d for d in devices if d["name"].startswith("iPad")), key=lambda d: (d["name"], d["udid"]))
-          if not ipads:
-              raise SystemExit(f"No installed iPad for SDK {sdk}: {devices}")
-          print(ipads[0]["udid"])
-          PYTHON
-          )
-          echo "IOS_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
-          xcrun simctl boot "$simulator_id"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
       - uses: swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/tests/ios-live-plist.test.mjs
       - run: brew install xcodegen
       - name: Identify iOS core toolchain
         id: core-toolchain
@@ -192,50 +203,183 @@ jobs:
           key: ios-core-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-${{ hashFiles('crates/**', 'Cargo.lock', 'Cargo.toml', 'scripts/build-ios-core.sh') }}
       - run: ./scripts/build-ios-core.sh
         if: steps.ios-core.outputs.cache-hit != 'true'
-      - run: ./scripts/build-ios-web.sh
+      # Toolchain and core preparation overlap frontend; wait only at consumption.
+      - name: Wait for this run's frontend bundle
+        id: frontend
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/wait-ios-artifact.py 900 --frontend
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.frontend.outputs.artifact-id }}
+          merge-multiple: true
+          path: apps/shared-ui/dist
+      - run: ./scripts/build-ios-web.sh --prebuilt
       - run: xcodegen generate
         working-directory: apps/ios
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ios-build/CompilationCache.noindex
+          key: ios-compilation-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-${{ github.sha }}
+          restore-keys: |
+            ios-compilation-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.core-toolchain.outputs.version }}-
+      - name: Build the iOS test bundle once
+        run: |
+          xcodebuild build-for-testing -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
+            -destination 'generic/platform=iOS Simulator' ARCHS=arm64 \
+            -derivedDataPath "$RUNNER_TEMP/ios-build" -parallel-testing-enabled NO \
+            COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES
+          plutil -p "$RUNNER_TEMP"/ios-build/Build/Products/*.xctestrun
+          tar -C "$RUNNER_TEMP/ios-build/Build" -czf "$RUNNER_TEMP/ios-tests.tar.gz" Products
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-bundle
+          path: ${{ runner.temp }}/ios-tests.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+      # Published products let the native consumers proceed independently.
       - name: Build iOS release configuration
         run: |
           xcodebuild build -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
             -configuration Release -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/ios-release" CODE_SIGNING_ALLOWED=NO
-      - name: Wait for the iPad simulator
-        run: xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
-      - name: Build iOS tests
+
+  # Reserve the producer's Mac slot before consumers can occupy the pool.
+  ios-build-started:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 41
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for the build runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/wait-ios-artifact.py 2400 --producer-started
+
+  ios-tests:
+    needs: [changes, ios-build-started]
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-26
+    permissions:
+      actions: read
+      contents: read
+    # Overall cap: 40m handoff (frontend 15m + producer 25m), 15m native,
+    # 10m residual setup/result budget. This cap can truncate step allowances;
+    # account-wide queueing can also exhaust the handoff deadline.
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [drawing, navigation, phone]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        if: matrix.suite == 'navigation'
+      - uses: actions/setup-node@v4
+        if: matrix.suite == 'navigation'
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: matrix.suite == 'navigation'
+      # Finish Worker dependency setup before simulator first boot.
+      # Boot on this VM while ios-build runs on its separate VM.
+      - name: Start the iOS simulator
+        timeout-minutes: 5
         run: |
-          xcodebuild build-for-testing -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
-            -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID" \
-            -derivedDataPath "$RUNNER_TEMP/ios-build" -parallel-testing-enabled NO
-      - name: Run iOS tests against the local sync worker
+          date -u '+%FT%TZ simulator boot starting'
+          sysctl hw.memsize vm.swapusage
+          vm_stat
+          bash scripts/ci/boot-ios-simulator.sh "${{ matrix.suite == 'phone' && 'iPhone' || 'iPad' }}"
+      - name: Wait for this run's test bundle
+        id: bundle
+        timeout-minutes: 41
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/wait-ios-artifact.py 2400
+      - name: Download and verify the test bundle
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.bundle.outputs.artifact-id }}
         run: |
-          ./scripts/ensure-sync-vars.sh
-          node scripts/ios-test-with-worker.mjs xcodebuild test-without-building \
-            -project apps/ios/Memnoter.xcodeproj -scheme Memnoter \
-            -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID" \
-            -derivedDataPath "$RUNNER_TEMP/ios-build" \
-            -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/ios-tests.xcresult"
-          # E2E must execute, not silently pass through its worker/Keychain skip.
+          read_artifact() {
+            local destination="$1" attempt status
+            shift
+            for attempt in 1 2; do
+              if gh api "$@" > "$destination"; then
+                return 0
+              else
+                status=$?
+              fi
+              if [[ "$attempt" == 2 ]]; then
+                return "$status"
+              fi
+              echo "Artifact read failed; retrying (attempt 2/2)" >&2
+              sleep 2
+            done
+          }
+          artifact="repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID"
+          read_artifact "$RUNNER_TEMP/ios-test-bundle.digest" "$artifact" --jq '.digest'
+          digest=$(cat "$RUNNER_TEMP/ios-test-bundle.digest")
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          archive="$RUNNER_TEMP/ios-test-bundle.zip"
+          read_artifact "$archive" "$artifact/zip"
+          printf '%s  %s\n' "${digest#sha256:}" "$archive" | shasum -a 256 --check
+      - name: Unpack the test bundle
+        timeout-minutes: 2
+        run: |
+          unzip -q "$RUNNER_TEMP/ios-test-bundle.zip" -d "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/ios-tests"
+          tar -C "$RUNNER_TEMP/ios-tests" -xzf "$RUNNER_TEMP/ios-tests.tar.gz"
+      - name: Wait for the simulator
+        timeout-minutes: 5
+        run: |
+          xcrun simctl bootstatus "$IOS_SIMULATOR_ID" -b
+          date -u '+%FT%TZ simulator ready, bundle unpacked'
+      - name: Run native tests
+        timeout-minutes: 15
+        env:
+          IOS_TEST_SUITE: ${{ matrix.suite }}
+        run: |
+          sysctl hw.memsize vm.swapusage
+          vm_stat
+          top -l 0 -s 10 -n 15 -o cpu -stats pid,command,cpu,mem,threads,state,time > "$RUNNER_TEMP/ios-resources.log" &
+          resource_monitor=$!
+          trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
+          bash scripts/ci/run-ios-tests.sh
+      - name: Verify native tests actually ran
+        if: always()
+        env:
+          IOS_TEST_SUITE: ${{ matrix.suite }}
+        run: |
           xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/ios-tests.xcresult" > "$RUNNER_TEMP/ios-tests.json"
-          python3 - "$RUNNER_TEMP/ios-tests.json" <<'PY'
-          import json, sys
-          def walk(value):
-              if isinstance(value, dict):
-                  yield value
-                  for child in value.values():
-                      yield from walk(child)
-              elif isinstance(value, list):
-                  for child in value:
-                      yield from walk(child)
-          tests = [node for node in walk(json.load(open(sys.argv[1]))) if node.get('nodeType') == 'Test Case' and 'testTwoNativeDatabasesMergeConcurrentYjsEdits' in node.get('name', '')]
-          assert tests and all(t.get('result') == 'Passed' for t in tests), tests
-          PY
+          python3 scripts/ci/check-ios-results.py "$IOS_TEST_SUITE" "$RUNNER_TEMP/ios-tests.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios-test-results
+          name: ios-test-results-${{ matrix.suite }}
           path: |
             ${{ runner.temp }}/ios-tests.xcresult
             ${{ runner.temp }}/ios-tests.json
             ${{ runner.temp }}/wrangler.log
             ${{ runner.temp }}/simulators.json
+            ${{ runner.temp }}/ios-resources.log
+
+  # Preserve the required iOS check across the build/test split.
+  ios:
+    needs: [changes, frontend, ios-build, ios-build-started, ios-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-checks.py gate ios

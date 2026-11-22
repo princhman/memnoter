@@ -607,7 +607,7 @@ struct RootView: View {
                                     ForEach(0..<chrome.count, id: \.self) { index in
                                         Button("Question \(chrome.label(index))") { session?.worksheetQuestion(index) }
                                     }
-                                } label: { Text("\(chrome.label(chrome.index)) · \(chrome.index + 1)/\(chrome.count)") }
+                                } label: { Text("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))") }
                             }
                             Button { session?.worksheetQuestion(chrome.index + 1) } label: { Image(systemName: "chevron.right") }
                                 .disabled(chrome.index + 1 >= chrome.count).accessibilityLabel("Next question")
@@ -709,7 +709,7 @@ struct RootView: View {
                                     Button("Question \(chrome.label(index))") { session.worksheetQuestion(index) }
                                 }
                             } label: {
-                                Text("\(chrome.label(chrome.index)) · \(chrome.index + 1)/\(chrome.count)").font(.subheadline.weight(.medium))
+                                Text("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))").font(.subheadline.weight(.medium))
                             }
                             .accessibilityLabel("Question \(chrome.label(chrome.index)), \(chrome.index + 1) of \(chrome.count)")
                         }
@@ -802,14 +802,15 @@ struct RootView: View {
     }
     /// Room the trailing bar item needs, so the breadcrumb truncates instead of evicting it.
     private var phoneBarTrailingWidth: CGFloat {
-        module != nil && selected != "questions" ? 165 : 120
+        if selected == "review" { return 230 }
+        return module != nil && selected != "questions" ? 165 : 120
     }
     private var phoneBreadcrumb: some View {
         TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
                          item: breadcrumbItem,
                          questionsEnabled: session != nil,
                          maximumWidth: max(120, detailWidth - phoneBarTrailingWidth),
-                         changeScope: changeSectionScope, changeSection: selectSection)
+                         changeScope: changeSectionScope, changeSection: selectSection, compact: true)
             .disabled(busy)
     }
     private var sectionNavigation: some View {
@@ -1343,7 +1344,7 @@ private struct PdfPageButton: View {
             asking = true
         } label: {
             if compact {
-                Label("Page \(reader.page) of \(reader.pageCount) · Go to page", image: "Pdf-file-text")
+                Label("Go to page (\(reader.page) of \(reader.pageCount))", image: "Pdf-file-text")
             } else {
                 HStack(spacing: 3) {
                     Text("\(reader.page)").fontWeight(.semibold)

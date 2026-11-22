@@ -45,7 +45,9 @@ plan.md
 # Local iOS live-server discovery
 /.ios-live/
 
-# Local agent config (templates in scripts/agent-hooks/)
-/.claude/
-/.codex/
+# Local agent config; the shared hook configs are tracked (scripts/agent-hooks/)
+/.claude/*
+!/.claude/settings.json
+/.codex/*
+!/.codex/hooks.json
 __pycache__/

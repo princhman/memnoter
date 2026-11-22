@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { isNativeHost, postNativeEvent } from "@/lib/backend";
@@ -53,41 +53,18 @@ function WorksheetCropImage({ assetId, label }: { assetId: string; label: string
   if (failed || image.isError) return <p role="alert" className="text-sm text-destructive">Question crop unavailable on this device.</p>;
   return image.data ? <figure className="relative w-fit max-w-full"><img src={image.data} alt={label} className={questionCropClass} onError={() => setFailed(true)} /></figure> : <p className="text-sm text-muted-foreground">Loading question crop…</p>;
 }
-// Desktop answers in a modal: the page stays a clean reading view. The overlay is
-// not a focus-trapping dialog, so the editor's slash/LaTeX menus (mounted on
-// body, above z-40) stay clickable. Escape already handled by a menu is ignored.
-function AnswerModal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  const close = useRef(onClose);
-  close.current = onClose;
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); close.current(); } };
-    document.addEventListener("keydown", key);
-    return () => document.removeEventListener("keydown", key);
-  }, []);
-  return createPortal(<div className="worksheet-answer-modal fixed inset-0 z-[45] flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[8vh] supports-backdrop-filter:backdrop-blur-xs" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <div role="dialog" aria-modal="true" aria-label={title} className="floating-surface w-full max-w-3xl space-y-4 rounded-xl p-5 text-sm shadow-2xl">
-      <div className="flex items-center justify-between gap-3"><h3 className="text-base font-semibold">{title}</h3><Button size="sm" onClick={onClose}>Done</Button></div>
-      {children}
-    </div>
-  </div>, document.body);
-}
 export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { moduleId: string; attemptId: string; bank: Bank; onBack: () => void }) {
   const answers = useWorksheetAnswers(moduleId, attemptId);
   const [index, setIndex] = useState(0);
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
   const attempt = bank.attempts[attemptId];
   const [confirmFinish, setConfirmFinish] = useState(false);
-  // iPad/iPhone keep inline answers: PencilKit drawing anchors to the question on the page.
-  const inlineAnswers = isNativeHost();
-  const [editing, setEditing] = useState<{ revisionId: string; partId: string } | null>(null);
-  const [previewVersion, setPreviewVersion] = useState(0);
   // Desktop puts the worksheet's title and controls in the window header (the
   // root layout's slots); iPad/iPhone show them in the native toolbar instead.
   const [slots, setSlots] = useState<{ crumb: HTMLElement | null; actions: HTMLElement | null }>({ crumb: null, actions: null });
   useEffect(() => {
     if (!isNativeHost()) setSlots({ crumb: document.getElementById(WORKSHEET_CRUMB_SLOT), actions: document.getElementById(WORKSHEET_ACTIONS_SLOT) });
   }, []);
-  const closeAnswer = () => { setEditing(null); setPreviewVersion(value => value + 1); };
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState("");
   const finished = attempt?.finished === true;
@@ -150,14 +127,12 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
   const revision = pin && bank.revisions[pin.revisionId];
   const label = pin ? questionLabels[currentIndex] : "";
   const outline = pinnedOutline(revision, label);
-  const answerEditor = (partId: string, partLabel: string, mode: { preview?: boolean; modal?: boolean } = {}) => {
+  const answerEditor = (partId: string, partLabel: string) => {
     const key = answerKey(attemptId, pin!.revisionId, partId);
-    return <WorksheetAnswerEditor readOnly={finished || finishing || mode.preview} moduleId={moduleId} attemptId={attemptId} revisionId={pin!.revisionId} leafPartId={partId} answer={bank.answers[key]}
-      autoFocus={mode.modal} placeholder={mode.preview ? (finished ? "No answer" : "Click to answer") : undefined}
-      flushDurable={() => answers.flushDurable(pin!.revisionId, partId)} key={`${moduleId}:${key}:text:${answers.resets[key] || 0}:${mode.preview ? `preview:${previewVersion}` : "edit"}`} label={partLabel}
+    return <WorksheetAnswerEditor readOnly={finished || finishing} moduleId={moduleId} attemptId={attemptId} revisionId={pin!.revisionId} leafPartId={partId} answer={bank.answers[key]}
+      flushDurable={() => answers.flushDurable(pin!.revisionId, partId)} key={`${moduleId}:${key}:text:${answers.resets[key] || 0}`} label={partLabel}
       load={() => answers.loadDocument(pin!.revisionId, partId)} save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
   };
-  const editingPart = editing && pin && revision && editing.revisionId === pin.revisionId ? outline?.find(part => part.id === editing.partId && part.leaf) : undefined;
   return <section aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
     <Dialog open={confirmFinish} onOpenChange={open => { if (!finishing) setConfirmFinish(open); }}>
       <DialogContent><DialogTitle>Finish worksheet?</DialogTitle>
@@ -166,13 +141,6 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
         <div className="flex justify-end gap-2"><Button variant="ghost" disabled={finishing} onClick={() => setConfirmFinish(false)}>Cancel</Button><Button disabled={finishing} onClick={() => void finish()}>{finishing ? "Finishing…" : "Finish"}</Button></div>
       </DialogContent>
     </Dialog>
-    {editingPart && revision && !finished && <AnswerModal title={`Question ${editingPart.label}`} onClose={closeAnswer}>
-      {revision.parts[editingPart.id].cropIds.map(cropId => {
-        const crop = revision.crops[cropId];
-        return crop ? <WorksheetCropImage key={`${cropId}:${crop.assetId}`} assetId={crop.assetId} label={`Question ${editingPart.label}`} /> : null;
-      })}
-      {answerEditor(editingPart.id, editingPart.label, { modal: true })}
-    </AnswerModal>}
     {slots.crumb && createPortal(<div className="flex min-w-0 items-center gap-0.5">
       <IconTooltip label="Back to questions"><Button size="icon-sm" variant="ghost" aria-label="Back to questions" onClick={close}><ChevronLeft /></Button></IconTooltip>
       <h2 className="min-w-0 truncate text-sm font-medium text-foreground" data-tauri-drag-region="deep">{attempt.title || "Worksheet"}</h2>
@@ -238,12 +206,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
           })}
           {!cropIds.length && !root && <p className="py-1 text-sm text-muted-foreground">No crops yet</p>}
           {part.leaf && <>
-            {inlineAnswers ? answerEditor(part.id, part.label)
-              : <div className={cn("worksheet-answer-preview", !finished && "cursor-pointer")} role={finished ? undefined : "button"} tabIndex={finished ? undefined : 0} aria-label={finished ? undefined : `Answer question ${part.label}`}
-                onClick={() => { if (!finished) setEditing({ revisionId: pin.revisionId, partId: part.id }); }}
-                onKeyDown={event => { if (!finished && (event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) { event.preventDefault(); setEditing({ revisionId: pin.revisionId, partId: part.id }); } }}>
-                {answerEditor(part.id, part.label, { preview: true })}
-              </div>}
+            {answerEditor(part.id, part.label)}
             {answers.errors[key] && <p role="alert" className="text-sm text-destructive">Couldn't save: {answers.errors[key]} <Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => void answers.retryAnswer(pin.revisionId, part.id)}>Retry</Button><Button size="sm" variant="ghost" disabled={answers.saving} onClick={() => answers.discardAnswer(pin.revisionId, part.id)}>Discard</Button></p>}
           </>}
           </div>

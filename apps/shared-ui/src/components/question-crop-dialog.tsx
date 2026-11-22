@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { ChevronsUpDown } from "lucide-react";
 import { questionLabel, nextQuestionLabel, setBankTarget, useBankTarget, nextPartLabel, partOutline, useBank, useBankEdit, type Bank, type CropDraft, type BankEdit } from "@/lib/question-bank";
 import { Button } from "./ui/button";
@@ -56,7 +56,7 @@ export function QuestionCropDialog({ moduleId, draft, onClose, onSaved }: { modu
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); await query.refetch(); }
     finally { setBusy(false); }
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || (event.target as HTMLElement | null)?.closest("input, textarea, [contenteditable=true]")) return;
       if (event.key === "Escape") { event.preventDefault(); if (picking) setPicking(false); else onClose(); return; }
