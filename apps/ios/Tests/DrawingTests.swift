@@ -65,7 +65,7 @@ final class DrawingTests: XCTestCase {
         for appearance in [UIUserInterfaceStyle.light, .dark] {
             var data: Data?
             UITraitCollection(userInterfaceStyle: appearance).performAsCurrent {
-                data = try? DrawingSnapshot(drawing: model.canvas.drawing, size: model.canvas.documentSize).preview()
+                data = try? DrawingSnapshot(drawing: model.canvas.drawing, size: model.canvas.documentSize).preview().bytes
             }
             let image = try XCTUnwrap(UIImage(data: try XCTUnwrap(data))?.cgImage)
             var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)

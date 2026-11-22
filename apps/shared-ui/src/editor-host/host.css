@@ -246,6 +246,22 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-tablet [data-slot="dropdown-menu-content"] { width: max-content; min-width: 200px; max-width: calc(100vw - 24px); }
 .native-tablet [data-slot="dropdown-menu-content"] [role="menuitem"],
 .native-tablet [data-slot="dropdown-menu-content"] [role="menuitemradio"] { min-height: 44px; white-space: nowrap; padding-inline: 12px; }
+.native-tablet :is(.note-image-actions-menu, .note-image-actions-submenu)[data-slot="dropdown-menu-content"] {
+  min-width: min(176px, calc(100vw - 24px));
+}
+.native-tablet :is(.note-image-actions-menu, .note-image-actions-submenu) :is([role="menuitem"], [role="menuitemradio"]) {
+  min-height: 38px;
+  gap: 8px;
+  padding-inline: 10px;
+}
+.native-tablet .note-image-actions-submenu [role="menuitemradio"] {
+  padding-inline-end: 32px;
+}
+.native-tablet :is(.note-image-actions-menu, .note-image-actions-submenu) [data-slot="dropdown-menu-separator"] {
+  height: 4px;
+  margin: 0;
+  background: transparent;
+}
 .native-tablet .question-crop-bar { max-width: min(960px, calc(100% - 24px)); gap: 8px; }
 .native-tablet .question-crop-bar > div { flex-wrap: nowrap; gap: 2px; }
 .native-tablet .question-crop-bar button { flex-shrink: 0; white-space: nowrap; padding-inline: 8px; }

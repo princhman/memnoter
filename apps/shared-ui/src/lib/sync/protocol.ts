@@ -11,6 +11,15 @@ export { contract as SYNC_CONTRACT };
 // Frames are JSON text; `data` fields are base64.
 
 export const PROTOCOL_VERSION = contract.version;
+// The server goes live on merge, before the matching app release reaches
+// users, so it keeps accepting every version from this one up. When
+// PROTOCOL_VERSION goes up, leave this alone; raise it only after a release
+// with the new version has shipped.
+export const OLDEST_PROTOCOL_VERSION = contract.oldestVersion;
+export function isSupportedProtocol(version: unknown): boolean {
+  const v = typeof version === "string" && /^\d+$/.test(version) ? Number(version) : version;
+  return typeof v === "number" && Number.isInteger(v) && v >= OLDEST_PROTOCOL_VERSION && v <= PROTOCOL_VERSION;
+}
 export const PROTOCOL_HEADER = "X-Memnoter-Protocol-Version";
 export const UPDATE_REQUIRED_MESSAGE = "Please update Memnoter to keep syncing";
 // WebSocket subprotocols: this one, plus "auth.<token>", because browsers

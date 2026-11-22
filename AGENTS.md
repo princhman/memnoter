@@ -138,6 +138,12 @@ Other agents often have uncommitted work in the same checkout.
 - `apps/sync` and `apps/marketing` deploy from `main` through the Cloudflare
   dashboard. Never deploy them by hand or add a deploy workflow;
   `pnpm lint` rejects both.
+- `apps/sync` goes live on merge, before any app update reaches users. It must
+  keep working with the latest released app: only add endpoints and optional
+  fields. A protocol change raises `version` in
+  `apps/sync/test/fixtures/protocol.json` but leaves `oldestVersion`, so the
+  server still accepts the released app; raise `oldestVersion` only after a
+  release with the new version has shipped.
 
 ## Tests
 
