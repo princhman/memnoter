@@ -139,17 +139,23 @@ export function Host() {
         if (!hasSectionAnchor(element) && editor && !editor.isDestroyed) revealCaret(editor.view, "inset");
       },
       open(id) {
+        traceScroll("open-entered", { moduleId: id });
         const operation = queue.then(async () => {
           if (typeof id !== "string" || !id) throw new Error("open requires a moduleId");
+          traceScroll("open-queue-start", { moduleId: id });
           await flushHostWrites();
+          traceScroll("open-flushed", { moduleId: id });
           showQuestions(false);
           if (active.current?.moduleId === id && active.current.isReady) {
-            await router.navigate({ to: "/$moduleId", params: { moduleId: id } }); return;
+            await router.navigate({ to: "/$moduleId", params: { moduleId: id } });
+            traceScroll("open-route-complete", { moduleId: id });
+            return;
           }
           await new Promise<void>((resolve, reject) => {
             opening.current = { moduleId: id, resolve, reject };
             setModuleId(id);
-            void router.navigate({ to: "/$moduleId", params: { moduleId: id } }).catch(reject);
+            void router.navigate({ to: "/$moduleId", params: { moduleId: id } })
+              .then(() => traceScroll("open-route-complete", { moduleId: id })).catch(reject);
           });
         }).catch(error => { throw fail(error); });
         queue = settled(operation);
@@ -279,6 +285,7 @@ export function Host() {
       sectionToTop(editor, focused);
     }
     if (opening.current?.moduleId === id) {
+      traceScroll("open-editor-ready", { moduleId: id });
       opening.current.resolve();
       opening.current = null;
     }

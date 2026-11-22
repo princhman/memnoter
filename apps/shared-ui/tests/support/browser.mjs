@@ -60,7 +60,15 @@ export function browserHarness(file) {
       async launch(options) {
         const browser = await (process.env.BROWSER === 'chromium' ? chromium : playwrightWebkit).launch(options);
         browsers.add(browser);
+        const preparedContexts = new WeakSet();
         const setup = async target => {
+          const context = target.context?.() ?? target;
+          if (!preparedContexts.has(context)) {
+            // Update-dialog tests override this default at the HTTP boundary.
+            await context.route('https://api.github.com/repos/princhman/memnoter/releases/latest',
+              route => route.fulfill({ status: 404, json: {} }));
+            preparedContexts.add(context);
+          }
           const addInitScript = target.addInitScript.bind(target);
           const bridge = `window.installTestBridge = ${installTestBridge.toString()};`;
           await addInitScript(bridge);

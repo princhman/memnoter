@@ -1,0 +1,24 @@
+name: PR description
+
+# Separate from CI so editing a PR description reruns only this check.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: pr-description-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  description:
+    # Release and dependency PRs have no Linear issue or demo.
+    if: ${{ !startsWith(github.head_ref, 'release/') && github.actor != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_pr_description.py'
+      - env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: python3 scripts/ci/check-pr-description.py

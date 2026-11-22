@@ -11,6 +11,7 @@ struct TabletBreadcrumb: View {
     var wrapsTitles = false
     let changeScope: (String?) -> Void
     let changeSection: (String) -> Void
+    var compact: Bool = false
 
     private var moduleTitle: String { modules.first { $0.id == scope }?.name ?? "All modules" }
     private var distinctItem: String? {
@@ -32,7 +33,8 @@ struct TabletBreadcrumb: View {
     private var labelWidths: (module: CGFloat, section: CGFloat, item: CGFloat) {
         let section = Self.textWidth(section.capitalized)
         let itemChrome: CGFloat = distinctItem == nil ? 0 : 24
-        let chrome: CGFloat = 78 + itemChrome
+        // Compact navigation menus add native button padding around both labels.
+        let chrome: CGFloat = (compact ? 114 : 78) + itemChrome
         let available = max(40, maximumWidth - chrome - section)
         let module = Self.textWidth(moduleTitle)
         guard let item = distinctItem else { return (min(module, available), section, 0) }
@@ -56,6 +58,7 @@ struct TabletBreadcrumb: View {
                 breadcrumbLabel(moduleTitle, width: widths.module)
             }.accessibilityLabel("Module scope")
             Text("/").foregroundStyle(.secondary)
+                .fixedSize(horizontal: compact, vertical: false)
             Menu {
                 Button("Notes") { changeSection("notes") }
                 Button("Files") { changeSection("files") }

@@ -31,6 +31,8 @@ export type KeyInfo = { salt: string; check: string };
 export class Vault extends DurableObject<Env> {
   private sql: SqlStorage;
   private storedSinceHintCheck = 0;
+  private accountDeleted: boolean;
+  private objectWrites = new Set<Promise<Response>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -54,11 +56,13 @@ export class Vault extends DurableObject<Env> {
         value TEXT NOT NULL
       );
     `);
+    this.accountDeleted = this.sql.exec("select 1 from meta where key = 'account_deleted'").toArray().length > 0;
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
   }
 
   // Tokens issued before the cloud data was last deleted no longer work.
-  private tokenAllowed(issuedAt: number) {
+  private tokenAllowed(issuedAt: number, deleting = false) {
+    if (this.accountDeleted && !deleting) return false;
     const row = this.sql.exec<{ value: string }>("select value from meta where key = 'revoked_before'").toArray()[0];
     return !row || issuedAt >= Number(row.value);
   }
@@ -91,6 +95,7 @@ export class Vault extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
+    if (this.accountDeleted) return;
     if (typeof raw !== "string") return this.fail(ws, "Binary frames are not supported");
     if (raw.length > MAX_FRAME_BYTES) return this.fail(ws, "Frame too large", true);
     let message: ClientMessage;
@@ -324,28 +329,96 @@ export class Vault extends DurableObject<Env> {
   // derived key, so a new device can tell whether a passphrase is right. The
   // first device to set them wins; others must use what is stored.
   async getKeyInfo(): Promise<KeyInfo | null> {
+    return this.keyInfo();
+  }
+
+  private keyInfo(): KeyInfo | null {
     const row = this.sql.exec<{ value: string }>("select value from meta where key = 'key'").toArray()[0];
     return row ? (JSON.parse(row.value) as KeyInfo) : null;
   }
 
-  async setKeyInfo(info: KeyInfo): Promise<KeyInfo> {
-    const existing = await this.getKeyInfo();
+  async setKeyInfo(info: KeyInfo, issuedAt: number): Promise<KeyInfo | null> {
+    if (!this.tokenAllowed(issuedAt)) return null;
+    const existing = this.keyInfo();
     if (existing) return existing;
     this.sql.exec("insert into meta (key, value) values ('key', ?)", JSON.stringify(info));
     return info;
   }
 
-  // Deletes everything stored for the user, in the log and in R2, and signs
-  // out every device: tokens issued until now stop working.
-  async wipe(): Promise<void> {
+  async putObject(key: string, marker: string | null, request: Request, maxBytes: number, issuedAt: number): Promise<Response> {
+    return this.mutateObject(issuedAt, async () => {
+      if (marker && await this.env.FILES.head(marker)) return Response.json({ error: "File permanently deleted" }, { status: 410 });
+      const length = Number(request.headers.get("Content-Length"));
+      if (!Number.isFinite(length) || length <= 0) return Response.json({ error: "Content-Length is required" }, { status: 411 });
+      if (length > maxBytes) return Response.json({ error: "Too large" }, { status: 413 });
+      if (!request.body) return Response.json({ error: "Empty body" }, { status: 400 });
+      await this.env.FILES.put(key, request.body);
+      return Response.json({ ok: true });
+    });
+  }
+
+  async deleteFile(key: string, marker: string, issuedAt: number): Promise<Response> {
+    return this.mutateObject(issuedAt, async () => {
+      // Publish permanence before removing bytes, including on a retry.
+      await this.env.FILES.put(marker, new Uint8Array());
+      await this.env.FILES.delete(key);
+      return Response.json({ ok: true });
+    });
+  }
+
+  private async mutateObject(issuedAt: number, mutate: () => Promise<Response>): Promise<Response> {
+    if (!this.tokenAllowed(issuedAt)) return Response.json({ error: "Sign in again" }, { status: 401 });
+    const write = mutate();
+    this.objectWrites.add(write);
+    // Account deletion can wait for this write even if its HTTP caller disconnects.
+    this.ctx.waitUntil(write.catch(() => {}));
+    try {
+      return await write;
+    } finally {
+      this.objectWrites.delete(write);
+    }
+  }
+
+  // Wiping keeps the account and permits sign-in with a fresh token.
+  async wipe(issuedAt: number): Promise<boolean> {
+    if (!this.tokenAllowed(issuedAt)) return false;
     const userId = this.userId();
     this.sql.exec("delete from log; delete from snapshots; delete from meta where key <> 'user';");
     this.sql.exec("insert into meta (key, value) values ('revoked_before', ?)", String(Date.now() + 1));
+    this.closeConnections();
+    if (userId) await this.purgeObjects(userId);
+    return true;
+  }
+
+  async deleteAccount(userId: string, issuedAt: number): Promise<boolean> {
+    if (!this.tokenAllowed(issuedAt, true)) return false;
+    if (!this.accountDeleted) {
+      // Keep a tombstone on this opaque vault ID. Only deletion retries may
+      // use a token from this account, subject to any earlier wipe revocation.
+      this.sql.exec(`
+        insert into meta (key, value) values ('account_deleted', '1');
+        delete from log;
+        delete from snapshots;
+        delete from meta where key not in ('account_deleted', 'revoked_before');
+      `);
+      this.accountDeleted = true;
+      this.closeConnections();
+    }
+    // Anything admitted before the tombstone must finish before we list R2.
+    await Promise.allSettled(this.objectWrites);
+    await this.purgeObjects(userId);
+    return true;
+  }
+
+  private closeConnections() {
     for (const ws of this.ctx.getWebSockets()) ws.close(CLOSE_SIGNED_OUT, "Cloud data was deleted");
-    if (!userId) return;
+  }
+
+  private async purgeObjects(userId: string) {
+    const prefix = userPrefix(userId);
     let cursor: string | undefined;
     do {
-      const listing = await this.env.FILES.list({ prefix: userPrefix(userId), cursor });
+      const listing = await this.env.FILES.list({ prefix, cursor });
       if (listing.objects.length > 0) await this.env.FILES.delete(listing.objects.map((object) => object.key));
       cursor = listing.truncated ? listing.cursor : undefined;
     } while (cursor);

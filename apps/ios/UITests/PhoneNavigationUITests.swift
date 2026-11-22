@@ -11,57 +11,71 @@ final class PhoneNavigationUITests: XCTestCase {
         let app = launchNote(name)
         let editor = app.webViews.textViews.firstMatch
         editor.tap()
-        let style = app.buttons["Paragraph style"]
-        XCTAssertTrue(style.waitForExistence(timeout: 5))
+        let style = app.buttons["Block style"]
+        XCTAssertTrue(style.existsOrWait(timeout: 5))
         style.tap()
-        app.buttons["Heading 1"].tap()
+        app.buttons["H1"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Heading 1"), object: style)], timeout: 5), .completed)
         style.tap()
         app.buttons["Text"].tap()
         editor.typeText("Saved from iPhone\nQuestion :: Answer")
-        XCTAssertTrue(app.buttons["module.title"].isHittable, "Module title must remain visible beside undo/redo")
-        let undo = app.navigationBars.buttons["Undo"]
-        let redo = app.navigationBars.buttons["Redo"]
-        XCTAssertTrue(undo.waitForExistence(timeout: 5))
-        XCTAssertTrue(undo.isHittable, "Editor undo must be visible in the navigation bar")
+        let title = app.navigationBars.staticTexts[name]
+        let scope = app.navigationBars.buttons["Module scope"]
+        XCTAssertTrue(title.exists, "The current module name must remain in the breadcrumb")
+        XCTAssertTrue(scope.isHittable, "Module scope must remain reachable beside note actions")
+        XCTAssertTrue(title.frame.intersects(scope.frame), "Module title must remain visible within its menu control")
+        let actions = app.navigationBars.buttons["Note actions"]
+        XCTAssertTrue(actions.isHittable, "Note actions must remain reachable beside the module title")
+        actions.tap()
+        let undo = app.buttons["Undo"]
+        let redo = app.buttons["Redo"]
+        XCTAssertTrue(undo.existsOrWait(timeout: 5))
+        XCTAssertTrue(undo.isHittable, "Editor undo must be reachable in Note actions")
         undo.tap()
         let canRedo = NSPredicate(format: "exists == true AND enabled == true")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: canRedo, object: redo)], timeout: 5), .completed)
-        XCTAssertTrue(redo.isHittable, "Editor redo must be visible in the navigation bar")
+        XCTAssertTrue(redo.isHittable, "Editor redo must be reachable in Note actions")
         redo.tap()
+        // The open menu covers its trigger; dismiss through the uncovered left margin.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.4)).tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: undo)], timeout: 5), .completed)
+        XCTAssertTrue(app.webViews.staticTexts["Saved from iPhone"].existsOrWait(timeout: 10), "Redo must restore the text before navigating away")
         let dismissKeyboard = app.buttons["Hide keyboard"]
-        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 5))
+        XCTAssertTrue(dismissKeyboard.existsOrWait(timeout: 5))
         dismissKeyboard.tap()
 
         back(in: app)
         let note = app.buttons[name]
-        XCTAssertTrue(note.waitForExistence(timeout: 5))
+        XCTAssertTrue(note.existsOrWait(timeout: 5))
         note.tap()
-        XCTAssertTrue(app.webViews.staticTexts["Saved from iPhone"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["Saved from iPhone"].existsOrWait(timeout: 10))
 
         // Reopening the currently selected row must still navigate after Back.
         back(in: app)
-        XCTAssertTrue(note.waitForExistence(timeout: 5))
+        XCTAssertTrue(note.existsOrWait(timeout: 5))
         note.tap()
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.existsOrWait(timeout: 10))
 
         app.terminate()
         app.launch()
-        XCTAssertTrue(app.webViews.staticTexts["Saved from iPhone"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.webViews.staticTexts["Saved from iPhone"].existsOrWait(timeout: 20))
         back(in: app)
-        XCTAssertTrue(app.buttons["Review"].waitForExistence(timeout: 5))
-        app.buttons["Review"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["review.counts"].waitForExistence(timeout: 10))
+        let review = app.buttons.containing(.staticText, identifier: "Review").firstMatch
+        XCTAssertTrue(review.existsOrWait(timeout: 5))
+        review.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["review.counts"].existsOrWait(timeout: 10))
         let reveal = app.buttons["Show answer"]
-        XCTAssertTrue(reveal.waitForExistence(timeout: 10))
+        XCTAssertTrue(reveal.existsOrWait(timeout: 10))
         reveal.tap()
         let good = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Good")).firstMatch
-        XCTAssertTrue(good.waitForExistence(timeout: 5))
+        XCTAssertTrue(good.existsOrWait(timeout: 5))
         XCTAssertTrue(good.isHittable, "Rating must fit on a small phone")
         good.tap()
+        app.buttons["Review actions"].tap()
         XCTAssertTrue(app.buttons["Undo"].isEnabled, "A phone rating must be persisted and undoable")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.4)).tap()
         back(in: app)
-        XCTAssertTrue(note.waitForExistence(timeout: 5))
+        XCTAssertTrue(note.existsOrWait(timeout: 5))
     }
 
     @MainActor private func launchNote(_ name: String) -> XCUIApplication {
@@ -69,10 +83,10 @@ final class PhoneNavigationUITests: XCTestCase {
         app.launchArguments = ["--ui-testing-data-id", UUID().uuidString]
         app.launch()
         let add = app.buttons["New module"]
-        XCTAssertTrue(add.waitForExistence(timeout: 15))
+        XCTAssertTrue(add.existsOrWait(timeout: 15))
         add.tap()
         let field = app.textFields.firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(field.existsOrWait(timeout: 5))
         field.tap()
         field.typeText(name)
         app.buttons["Save"].tap()
@@ -83,7 +97,7 @@ final class PhoneNavigationUITests: XCTestCase {
 
     @MainActor private func back(in app: XCUIApplication) {
         let back = app.navigationBars.buttons["Memnoter"]
-        XCTAssertTrue(back.waitForExistence(timeout: 5), "Native Back must remain accessible")
+        XCTAssertTrue(back.existsOrWait(timeout: 5), "Native Back must remain accessible")
         back.tap()
     }
 }

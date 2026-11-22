@@ -87,3 +87,4 @@ schemes:
         MemnoterUITests: [test]
     test:
       targets: [MemnoterTests, MemnoterUITests]
+      preferredScreenCaptureFormat: screenshots

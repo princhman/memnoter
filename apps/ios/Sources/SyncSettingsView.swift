@@ -14,6 +14,8 @@ struct SyncSettingsView: View {
     @State private var devCode: String?
     @State private var busy = false
     @State private var error: String?
+    @State private var confirmingAccountDeletion = false
+    @State private var accountDeleted = false
     var body: some View {
         Section("Sync") {
             if let account = sync.account {
@@ -28,6 +30,7 @@ struct SyncSettingsView: View {
                 }.disabled(sync.isSyncingNow)
                 Button("Sign out", role: .destructive) { run { try await sync.signOut() } }
                 Text("Your notes stay on this device. The cloud copy is untouched.").font(.caption)
+                Button("Delete account", role: .destructive) { confirmingAccountDeletion = true }
             } else {
                 Text("Keep your notes up to date across devices. Notes are end-to-end encrypted.")
                 if step == 0 {
@@ -58,6 +61,21 @@ struct SyncSettingsView: View {
             }
             if let error { Text(error).foregroundStyle(.red) }
         }.disabled(busy)
+            .alert("Delete sync account?", isPresented: $confirmingAccountDeletion) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete account", role: .destructive) { run {
+                    try await sync.deleteAccount()
+                    code = ""; devCode = nil; step = 0
+                    accountDeleted = true
+                } }
+            } message: {
+                Text("This permanently removes your sync account and its encrypted cloud copy from the server. Notes on this device stay.")
+            }
+            .alert("Sync account deleted", isPresented: $accountDeleted) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Your notes are still on this device.")
+            }
     }
     private func run(_ operation: @escaping @MainActor () async throws -> Void) {
         busy = true; error = nil

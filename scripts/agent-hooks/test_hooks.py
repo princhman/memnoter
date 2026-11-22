@@ -8,7 +8,11 @@ import tempfile
 import unittest
 
 HERE = Path(__file__).resolve().parent
-MAIN = '/Users/vladyslavnalyvaiko/Projects/notes'
+# A stand-in for the primary checkout; the hook reads it from MEMNOTER_MAIN_CHECKOUT.
+_MAIN_DIR = tempfile.TemporaryDirectory()
+MAIN = str(Path(_MAIN_DIR.name).resolve())
+subprocess.run(['git', 'init', MAIN], capture_output=True, check=True)
+(Path(MAIN) / 'crates').mkdir()
 
 
 class Hooks(unittest.TestCase):
@@ -25,6 +29,7 @@ class Hooks(unittest.TestCase):
     def invoke(self, script, payload):
         env = dict(os.environ)
         env.pop('MEMNOTER_DATA_DIR', None)
+        env['MEMNOTER_MAIN_CHECKOUT'] = MAIN
         return subprocess.run([sys.executable, str(HERE / script)], input=json.dumps(payload),
                               text=True, capture_output=True, env=env, check=False)
 
@@ -86,9 +91,17 @@ class Hooks(unittest.TestCase):
                     self.assertRegex(result.stderr, 'isolated worktree|pnpm dev:copy')
         print(f'Policy payloads checked: {len(blocked)} blocked, {len(allowed)} allowed')
 
+    def test_unparseable_command_warns_but_runs(self):
+        for command in ["git commit -F - <<'EOF'\nDon't stop\nEOF", 'echo "unclosed']:
+            with self.subTest(command=command):
+                result = self.invoke('pre-tool-use.py', {
+                    'cwd': MAIN, 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('ran unchecked', result.stderr)
+
     def test_registered_commands(self):
         root = HERE.parents[1]
-        for config in ['scripts/agent-hooks/claude-settings.json', 'scripts/agent-hooks/codex-hooks.json']:
+        for config in ['.claude/settings.json', '.codex/hooks.json']:
             hooks = json.loads((root / config).read_text())['hooks']
             self.assertEqual(hooks['PreToolUse'][0]['matcher'], 'Bash')
             for event, command, expected in [('PreToolUse', 'pnpm dev', 2),
@@ -120,8 +133,10 @@ class Hooks(unittest.TestCase):
                 return subprocess.run(['git', '-C', folder, *args], check=True,
                                       capture_output=True, text=True)
             git('init', '-b', 'hook-context')
+            (Path(folder) / 'AGENTS.md').write_text('guide')
+            git('add', 'AGENTS.md')
             git('-c', 'user.name=Hook Test', '-c', 'user.email=hook@example.test',
-                'commit', '--allow-empty', '-m', 'fixture')
+                'commit', '-m', 'fixture')
             other = str(Path(folder) / 'other')
             git('worktree', 'add', '-b', 'other', other)
             for name in ['one', 'two', 'three', 'four', 'five', 'with\nnewline']:
@@ -134,6 +149,27 @@ class Hooks(unittest.TestCase):
             self.assertIn('Other agents may share', result.stdout)
             self.assertLessEqual(len(result.stdout.splitlines()), 9)
             print(result.stdout, end='')
+
+    def test_stale_main_warning(self):
+        with tempfile.TemporaryDirectory() as folder:
+            upstream, clone = str(Path(folder) / 'upstream'), str(Path(folder) / 'clone')
+
+            def git(cwd, *args):
+                return subprocess.run(['git', '-C', cwd, '-c', 'user.name=Hook Test',
+                                       '-c', 'user.email=hook@example.test', *args],
+                                      check=True, capture_output=True, text=True)
+            subprocess.run(['git', 'init', '-b', 'main', upstream], check=True, capture_output=True)
+            (Path(upstream) / 'AGENTS.md').write_text('guide')
+            git(upstream, 'add', 'AGENTS.md')
+            git(upstream, 'commit', '-m', 'one')
+            subprocess.run(['git', 'clone', '-q', upstream, clone], check=True, capture_output=True)
+            git(upstream, 'commit', '--allow-empty', '-m', 'two')
+            result = self.invoke('session-start.py', {'cwd': clone, 'source': 'startup'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('WARNING: main is 1 commits behind origin/main', result.stdout)
+            git(clone, 'pull', '-q', '--ff-only')
+            result = self.invoke('session-start.py', {'cwd': clone, 'source': 'startup'})
+            self.assertNotIn('WARNING', result.stdout)
 
 
 if __name__ == '__main__':

@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const skipBenchmark = rawArgs.includes('--skip-benchmark');
+const args = rawArgs.filter(arg => arg !== '--skip-benchmark');
 const shard = args.find(arg => arg.startsWith('--test-shard='));
 const run = files => spawnSync(process.execPath, [
   '--experimental-strip-types', '--import', './tests/support/register.mjs',
@@ -11,6 +13,6 @@ const run = files => spawnSync(process.execPath, [
 const status = run(args.some(arg => !arg.startsWith('--')) ? args : [...args, 'tests/*.test.mjs']);
 if (status !== 0) process.exit(status);
 // The benchmark runs once, including when CI splits the suite into shards.
-if (!shard || shard.startsWith('--test-shard=1/')) {
+if (!skipBenchmark && (!shard || shard.startsWith('--test-shard=1/'))) {
   process.exit(run(['tests/copy-large-note.bench.mjs']));
 }
