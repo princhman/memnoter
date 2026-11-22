@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -732,10 +735,11 @@ test("section focus rejects an escaped native composition and its hidden edits b
       getSelection().setBaseAndExtent(start.node, start.offset, end.node, end.offset);
       const cancelled = !node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, cancelable: true }));
       editor.view.focus();
-      editor.view.dispatch(editor.state.tr.delete(1, editor.state.doc.content.size - 1).setMeta("composition", 1));
+      node.querySelector("p").firstChild.appendData(" escaped");
       return cancelled;
     });
     assert.equal(cancelled, true);
+    await page.evaluate(() => new Promise(requestAnimationFrame));
     assert.deepEqual(await snapshot(), before);
   } finally {
     await page.close();
@@ -966,11 +970,11 @@ test("focused Select All keeps a trailing block image selected across sync", asy
   }
 });
 
-async function dispatchReplacement(block, { start, end, data, applyDefault = false }) {
-  return block.evaluate((element, { start, end, data, applyDefault }) => {
+async function dispatchReplacement(block, { start, end, data, applyDefault = false, cancelable = true }) {
+  return block.evaluate((element, { start, end, data, applyDefault, cancelable }) => {
     const text = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode();
     const range = new StaticRange({ startContainer: text, startOffset: start, endContainer: text, endOffset: end });
-    const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertReplacementText", data });
+    const event = new InputEvent("beforeinput", { bubbles: true, cancelable, inputType: "insertReplacementText", data });
     // InputEventInit cannot supply target ranges. Emulate the browser's text
     // mutation when testing a range that leaves out the trailing block atom.
     Object.defineProperty(event, "getTargetRanges", { value: () => [range] });
@@ -978,8 +982,148 @@ async function dispatchReplacement(block, { start, end, data, applyDefault = fal
       text.replaceData(start, end - start, data);
     }
     return event.defaultPrevented;
-  }, { start, end, data, applyDefault });
+  }, { start, end, data, applyDefault, cancelable });
 }
+
+const gifBytes = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+async function leaveAndReadSaved(page, moduleId) {
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.locator(".tiptap").waitFor({ state: "detached" });
+  return savedBlocks(moduleId);
+}
+
+async function pastePng(page) {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const png = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+  });
+  await page.keyboard.press("Control+v");
+}
+
+for (const method of ["drop", "paste"]) {
+  test(`Chromium: an image file ${method} stays after the focused heading in the saved note`, async () => {
+    const moduleId = await createModule(`Image file ${method}`, ["Before", "Middle", "After"], fragment => {
+      if (method === "paste") fragment.insert(4, [new Y.XmlElement("image")]);
+    });
+    const page = await openNote(moduleId);
+    const directory = await mkdtemp(join(tmpdir(), "memnoter-input-"));
+    try {
+      await focusMiddleSection(page);
+      await page.locator(".tiptap").evaluate((node, method) => {
+        node.addEventListener(method, event => { node.dataset.trustedFileEvent = String(event.isTrusted); }, { capture: true, once: true });
+      }, method);
+      if (method === "drop") {
+        const path = join(directory, "new.gif");
+        await writeFile(path, Buffer.from(gifBytes, "base64"));
+        const { x, y } = await page.locator(".section-focus-start").boundingBox();
+        const session = await page.context().newCDPSession(page);
+        for (const type of ["dragEnter", "dragOver", "drop"]) {
+          await session.send("Input.dispatchDragEvent", {
+            type, x: x + 1, y: y + 1, data: { items: [], files: [path], dragOperationsMask: 1 },
+          });
+        }
+        await session.detach();
+      } else {
+        await page.keyboard.press("Meta+a");
+        await pastePng(page);
+      }
+      const editor = page.locator(".tiptap");
+      assert.equal(await editor.getAttribute("data-trusted-file-event"), "true");
+      await page.waitForFunction(() => document.querySelector(".tiptap").editor.getJSON().content
+        .some(node => node.type === "image" && node.attrs.fileId));
+      const saved = await leaveAndReadSaved(page, moduleId);
+      const middle = saved.findIndex(block => block.endsWith(">Middle</heading>"));
+      const after = saved.findIndex(block => block.endsWith(">After</heading>"));
+      const uploaded = saved.findIndex(block => block.startsWith("<image ") && block.includes("fileId="));
+      assert.ok(uploaded > middle && uploaded < after, JSON.stringify(saved));
+    } finally {
+      await page.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+test("Chromium: a pending image upload cannot insert after section focus moves", async () => {
+  const moduleId = await createModule("Delayed image", ["Before", "Middle", "After"]);
+  const uploading = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const page = await openNote(moduleId, {
+    invoke: async (command, args) => {
+      if (command === "save_file") {
+        uploading.resolve();
+        await release.promise;
+      }
+      return call(command, args);
+    },
+  });
+  try {
+    await focusMiddleSection(page);
+    const before = await savedBlocks(moduleId);
+    await pastePng(page);
+    await uploading.promise;
+    const toc = page.getByRole("navigation", { name: "Table of contents" });
+    await toc.getByRole("button", { name: "2 Middle", exact: true }).hover();
+    await toc.getByRole("button", { name: "Unfocus Middle", exact: true }).press("Enter");
+    await toc.getByRole("button", { name: "1 Before", exact: true }).hover();
+    await toc.getByRole("button", { name: "Focus on Before", exact: true }).press("Enter");
+    await page.locator(".section-focus-start").filter({ hasText: "Before" }).waitFor();
+    release.resolve();
+    const discard = page.getByRole("button", { name: "Discard failed image operations" });
+    await discard.or(page.locator(".tiptap .note-image-host")).first().waitFor({ state: "attached" });
+    if (await discard.isVisible()) await discard.click();
+    assert.deepEqual(await leaveAndReadSaved(page, moduleId), before);
+  } finally {
+    release.resolve();
+    await page.close();
+  }
+});
+
+test("the input backstop keeps hidden edits from DOM events and observers out of the saved note", async () => {
+  const moduleId = await createModule("Raw input boundary", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId);
+  try {
+    const before = await savedBlocks(moduleId);
+    const editor = page.locator(".tiptap");
+    const escaped = [];
+    await focusMiddleSection(page);
+    for (const input of ["keydown", "insertText", "insertReplacementText", "deleteContentBackward", "deleteContentForward",
+      "input", "compositionstart", "compositionupdate", "compositionend", "paste", "drop", "cut", "mutation"]) {
+      await editor.evaluate((node, input) => {
+        const { editor } = node;
+        const hidden = node.querySelector("p").firstChild;
+        if (input === "mutation") {
+          hidden.appendData(" escaped");
+          return;
+        }
+        const init = { bubbles: true, cancelable: true };
+        const event = input === "keydown" ? new KeyboardEvent(input, { ...init, key: "F8" })
+          : input.startsWith("composition") ? new CompositionEvent(input, init)
+          : input === "paste" || input === "cut" ? new ClipboardEvent(input, init)
+          : input === "drop" ? new DragEvent(input, init)
+          : new InputEvent(input === "input" ? "input" : "beforeinput", { ...init, inputType: input, data: "escaped" });
+        // Stand in for an editor handler that computed a bad destination despite
+        // the valid visible caret. No input metadata is attached to its edit.
+        node.addEventListener(event.type, () => {
+          const pos = editor.view.posAtDOM(hidden, 0);
+          editor.view.dispatch(editor.state.tr.insertText("escaped ", pos));
+        }, { once: true });
+        node.dispatchEvent(event);
+      }, input);
+      // Let the observer reconcile an actual DOM mutation before reading the editor.
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      if (await editor.locator(":scope > p").first().textContent() !== "Notes for Before.") escaped.push(input);
+      if (escaped.length) break;
+    }
+    const saved = await leaveAndReadSaved(page, moduleId);
+    assert.deepEqual({ escaped, saved }, { escaped: [], saved: before });
+  } finally {
+    await page.close();
+  }
+});
 
 for (const engine of ["Chromium", "WebKit"]) {
   test(`${engine}: an image drop before the focused heading neither previews nor moves the image`, async () => {
@@ -1034,6 +1178,57 @@ for (const engine of ["Chromium", "WebKit"]) {
       await page.close();
     }
   });
+
+  test(`${engine}: noncancelable replacement restores hidden DOM and leaves saved Yjs unchanged`, async () => {
+    const moduleId = await createModule("Native hidden mutation", ["Before", "Middle", "After"]);
+    const page = await openNote(moduleId, { engine });
+    try {
+      await focusMiddleSection(page);
+      const before = await savedBlocks(moduleId);
+      const hidden = page.locator(".tiptap > p").first();
+      await dispatchReplacement(hidden, { start: 0, end: 5, data: "Hidden edit", applyDefault: true, cancelable: false });
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      const rendered = await hidden.textContent();
+      const saved = await leaveAndReadSaved(page, moduleId);
+      assert.deepEqual({ rendered, saved }, { rendered: "Notes for Before.", saved: before });
+    } finally {
+      await page.close();
+    }
+  });
+
+  for (const composing of [false, true]) {
+    test(`${engine}: ${composing ? "composition" : "keyboardless insertText"} replaces the full focused Select All in saved Yjs`, async () => {
+      const moduleId = await createModule("Native image selection", ["Before", "Middle", "After"], fragment => {
+        fragment.insert(4, [new Y.XmlElement("image")]);
+      });
+      const page = await openNote(moduleId, { engine });
+      try {
+        await focusMiddleSection(page);
+        await page.keyboard.press("Meta+a");
+        if (composing && engine === "Chromium") {
+          const session = await page.context().newCDPSession(page);
+          await session.send("Input.imeSetComposition", { text: "に", selectionStart: 1, selectionEnd: 1 });
+          const duringPreedit = await savedBlocks(moduleId);
+          assert.ok(duringPreedit.some(block => block.startsWith("<image")), JSON.stringify(duringPreedit));
+          await session.send("Input.insertText", { text: "日本" });
+          await session.detach();
+        } else {
+          const editor = page.locator(".tiptap");
+          if (composing) await editor.dispatchEvent("compositionstart", { bubbles: true, cancelable: true });
+          await page.keyboard.insertText("日本");
+          if (composing) await editor.evaluate(node => node.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "日本" })));
+        }
+        assert.match(await page.locator(".tiptap").textContent(), /日本/);
+        const saved = await leaveAndReadSaved(page, moduleId);
+        assert.deepEqual(saved.map(block => block.replace(/^<([^ >]+)[^>]*>/, "<$1>")), [
+          "<heading>Before</heading>", "<paragraph>Notes for Before.</paragraph>", "<paragraph>日本</paragraph>",
+          "<heading>After</heading>", "<paragraph>Notes for After.</paragraph>",
+        ]);
+      } finally {
+        await page.close();
+      }
+    });
+  }
 
   test(`${engine}: native replacement of a focused Select All removes its trailing image`, async () => {
     const moduleId = await createModule("Replace image selection", ["Before", "Middle", "After"], fragment => {
