@@ -45,7 +45,14 @@ test('failed answer isolation, explicit conflict recovery, and lifecycle drainin
       answers.setDocument('r', 'good', [0, 0], 'base', 'good', true);
       await flushWorksheetAnswers();
     });
-    const isolated = window.saved.map(x => x.leafPartId).join(',') === 'bad,good' && Object.keys(answers.errors).length === 1 && Object.keys(answers.drafts).length === 1;
+    const failedKey = JSON.stringify(['a', 'r', 'bad']);
+    const deadline = performance.now() + 5_000;
+    while ((!answers.errors[failedKey] || !answers.drafts[failedKey]) && performance.now() < deadline) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    const isolated = window.saved.map(x => x.leafPartId).join(',') === 'bad,good'
+      && !!answers.errors[failedKey] && Object.keys(answers.errors).length === 1
+      && !!answers.drafts[failedKey] && Object.keys(answers.drafts).length === 1;
     let strictBlocked = false;
     await act(async () => {
       await flushAll({ navigation: true });
