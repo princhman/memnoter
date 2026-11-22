@@ -55,6 +55,7 @@ export class Vault extends DurableObject<Env> {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      create table if not exists retired_section_moves (doc TEXT PRIMARY KEY);
     `);
     this.accountDeleted = this.sql.exec("select 1 from meta where key = 'account_deleted'").toArray().length > 0;
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
@@ -195,6 +196,10 @@ export class Vault extends DurableObject<Env> {
         this.drop(entry.doc);
         continue;
       }
+      if (this.sectionMoveRetired(entry.doc)) {
+        this.deleteBlobs([entry.bytes]);
+        continue;
+      }
       const seq = this.sql
         .exec<{ seq: number }>("insert into log (doc, data) values (?, ?) returning seq", entry.doc, entry.bytes)
         .one().seq;
@@ -226,6 +231,10 @@ export class Vault extends DurableObject<Env> {
     }
     const bytes = fromBase64(data);
     if (bytes.length === 0 || bytes.length > MAX_BLOB_BYTES) return this.fail(ws, "Snapshot too large");
+    if (this.sectionMoveRetired(doc)) {
+      this.deleteBlobs([bytes]);
+      return;
+    }
     if (upTo > this.head()) return this.fail(ws, "Snapshot is ahead of the log");
     const existing = this.sql
       .exec<{ seq: number; data: ArrayBuffer }>("select seq, data from snapshots where doc = ?", doc)
@@ -252,6 +261,9 @@ export class Vault extends DurableObject<Env> {
   }
 
   private drop(doc: string) {
+    if (doc.startsWith("r-move-")) {
+      this.sql.exec("insert or ignore into retired_section_moves(doc) values (?)", doc);
+    }
     const blobs = this.sql
       .exec<{ data: ArrayBuffer }>(
         "select data from log where doc = ?1 and length(data) = 33 union all select data from snapshots where doc = ?1",
@@ -262,6 +274,11 @@ export class Vault extends DurableObject<Env> {
     this.sql.exec("delete from log where doc = ?", doc);
     this.sql.exec("delete from snapshots where doc = ?", doc);
     this.deleteBlobs(blobs);
+  }
+
+  private sectionMoveRetired(doc: string) {
+    return doc.startsWith("r-move-") &&
+      this.sql.exec("select 1 from retired_section_moves where doc = ?", doc).toArray().length > 0;
   }
 
   // Removes the R2 objects that entries no longer in the log referred to.
@@ -383,7 +400,7 @@ export class Vault extends DurableObject<Env> {
   async wipe(issuedAt: number): Promise<boolean> {
     if (!this.tokenAllowed(issuedAt)) return false;
     const userId = this.userId();
-    this.sql.exec("delete from log; delete from snapshots; delete from meta where key <> 'user';");
+    this.sql.exec("delete from log; delete from snapshots; delete from retired_section_moves; delete from meta where key <> 'user';");
     this.sql.exec("insert into meta (key, value) values ('revoked_before', ?)", String(Date.now() + 1));
     this.closeConnections();
     if (userId) await this.purgeObjects(userId);
@@ -399,6 +416,7 @@ export class Vault extends DurableObject<Env> {
         insert into meta (key, value) values ('account_deleted', '1');
         delete from log;
         delete from snapshots;
+        delete from retired_section_moves;
         delete from meta where key not in ('account_deleted', 'revoked_before');
       `);
       this.accountDeleted = true;

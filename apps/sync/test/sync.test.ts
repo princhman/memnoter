@@ -360,6 +360,32 @@ describe("images", () => {
 });
 
 describe("vault protocol", () => {
+  it("purges a retired section transfer despite a stale retry", async () => {
+    const { token } = await signIn("retired-transfer@example.com");
+    const writer = await rawSocket(token);
+    const reader = await rawSocket(token);
+    try {
+      // The same server continues to accept the released client.
+      writer.send({ t: "hello", cursor: 0, v: contract.oldestVersion });
+      await waitFor(() => writer.received.some(message => message.t === "ready"));
+      const doc = "r-move-01234567-89ab-4def-8123-456789abcdef";
+      const data = toBase64(await encryptBlob(await keyPromise, doc, new TextEncoder().encode("chapter")));
+      const push = (id: number, entries: ({ doc: string; data: string } | { doc: string; drop: true })[]) => {
+        writer.send({ t: "push", id, entries });
+        return waitFor(() => writer.received.some(message => message.t === "ack" && message.id === id));
+      };
+      await push(1, [{ doc, data }]);
+      await push(2, [{ doc, drop: true }]);
+      await push(3, [{ doc, data }]);
+      reader.send({ t: "hello", cursor: 0, v: PROTOCOL_VERSION });
+      await waitFor(() => reader.received.some(message => message.t === "ready"));
+      expect(reader.received.flatMap(message => message.t === "entries" ? message.entries : [])).toEqual([]);
+    } finally {
+      writer.ws.close();
+      reader.ws.close();
+    }
+  });
+
   it("serves snapshots in place of compacted entries", async () => {
     const { token } = await signIn("compact@example.com");
     const key = await keyPromise;
