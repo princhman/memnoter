@@ -192,7 +192,11 @@ export function Host() {
       exec(command, args) {
         try {
           const editor = getEditor(EXEC_COMMANDS[command] === true);
+          const focusedSection = sectionFocusKey.getState(editor.state);
           const result = execEditor(editor, command, args);
+          // Persist focus changes before returning from the native command.
+          // The app can quit before the debounced view save runs.
+          if (sectionFocusKey.getState(editor.state) !== focusedSection) flushPersistedViews();
           if (result && command === "insertImage") {
             const element = editorHost.scrollContainer(editor.view.dom);
             if (element) beginHostNavigation(element);
