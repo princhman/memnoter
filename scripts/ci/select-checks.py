@@ -25,8 +25,11 @@ def selection(event, base):
         for raw in filter(None, paths):
             path = os.fsdecode(raw)
             if path.startswith(('docs/', 'scripts/agent-hooks/', '.claude/', '.codex/', '.vscode/')) or path in (
-                'AGENTS.md', 'CLAUDE.md', 'README.md', 'LICENSE', '.gitignore',
-            ):
+                'AGENTS.md', 'CLAUDE.md', 'README.md', 'DESIGN.md', 'LICENSE', '.gitignore',
+                # The PR description check has its own workflow, which runs its tests.
+                '.github/pull_request_template.md', '.github/workflows/pr-description.yml',
+                'scripts/ci/check-pr-description.py', 'scripts/tests/test_pr_description.py',
+            ) or os.path.basename(path) in ('AGENTS.md', 'CLAUDE.md', 'README.md'):
                 continue
             # These fixtures are also direct inputs to Rust code/tests.
             if path in ('apps/shared-ui/tests/fixtures/shared-images-yjs.json',
