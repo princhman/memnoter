@@ -33,7 +33,7 @@ function InkDot({ color, diameter, checked }: { color: string; diameter: number;
 }
 
 type Request = { moduleId: string; imageId: string; sourceId?: string | null; displayLabel?: string };
-export type DrawingResult = { status: "save" | "cancel"; source?: FileType; preview?: FileType; width?: number; height?: number; expectedSourceId: string | null; asCopy: boolean; hasChanges: boolean };
+export type DrawingResult = { status: "save" | "cancel" | "discarded"; source?: FileType; preview?: FileType; width?: number; height?: number; expectedSourceId: string | null; asCopy: boolean; hasChanges: boolean };
 const key = (r: Request) => `portable-ink:${JSON.stringify([r.moduleId, r.imageId])}`;
 export function acknowledgePortableDrawing(r: Request) { localStorage.removeItem(key(r)); }
 // Like the Mac editor: keep the page width, crop the height to the ink plus a
@@ -231,7 +231,7 @@ function PortableDrawing({ request, initial, base, recovered, finish }: { reques
   const close = () => { cancel(); if (changed.current && !checkpoint(current.current)) return; finish({ status: "cancel", hasChanges: changed.current, expectedSourceId: base, asCopy: false }); };
   const discard = () => {
     acknowledgePortableDrawing(request);
-    finish({ status: "cancel", hasChanges: false, expectedSourceId: base, asCopy: false });
+    finish({ status: "discarded", hasChanges: false, expectedSourceId: base, asCopy: false });
   };
   const save = async (copy: boolean) => {
     if (gesture.current) return;

@@ -173,6 +173,7 @@ test('Mac drawing sessions preserve existing draft slots, clean only new slots, 
             source: { id: 'saved-source', path: '/source', file_type: 'json' }, preview: { id: 'saved-preview', path: '/preview', file_type: 'png' } };
         }
         if (command === 'drawing_committed') { window.acknowledged = args.imageId; return null; }
+        if (command === 'add_update') throw new Error('Note storage unavailable');
         if (command === 'resolve_card_image') throw new Error('Not downloaded');
         throw new Error(`Unexpected command: ${command}`);
       } } });
@@ -211,6 +212,25 @@ test('Mac drawing sessions preserve existing draft slots, clean only new slots, 
     assert.deepEqual(recovered.images[0].drawing, { version: 1, sourceId: 'saved-source', previewId: 'saved-preview' });
     assert.match(recovered.text, /Removed by peer/);
     assert.equal(recovered.acknowledged, 'peer-slot');
+    const failedSave = await page.evaluate(async () => {
+      const { openMacDrawing } = await import('/src/lib/mac-drawing.ts');
+      const { saveQueue } = await import('/src/lib/saves.ts');
+      const doc = editor.extensionManager.extensions.find(extension => extension.name === 'collaboration').options.document;
+      const queueUpdate = update => saveQueue.enqueue('note', Array.from(update));
+      doc.on('update', queueUpdate);
+      window.acknowledged = null;
+      try {
+        const target = editor.getJSON().content.find(node => node.type === 'image').attrs;
+        await openMacDrawing(editor, 'note', { imageId: target.imageId, sourceId: target.drawing.sourceId });
+        return { acknowledged: window.acknowledged };
+      } catch (error) {
+        return { acknowledged: window.acknowledged, error: error.message };
+      } finally {
+        doc.off('update', queueUpdate);
+        saveQueue.drop('note');
+      }
+    });
+    assert.deepEqual(failedSave, { acknowledged: null, error: 'Could not save the note. Your drawing draft is retained.' });
   } finally { await browser?.close(); await server.close(); }
 });
 
@@ -306,7 +326,7 @@ test('portable ink recovers drafts, publishes immutable editable sources, and pr
     const confirmation = page.getByRole('alertdialog', {name:'Discard local changes?'});
     await confirmation.getByText('This removes the local draft and returns to the note. The drawing saved in the note is kept.').waitFor();
     await confirmation.getByRole('button', {name:'Discard local changes',exact:true}).click();
-    await page.waitForFunction(() => window.result?.status === 'cancel');
+    await page.waitForFunction(() => window.result?.status === 'discarded');
     assert.equal(await page.evaluate(() => window.result.hasChanges), false);
     assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('portable-ink:'))), false);
     await page.evaluate(async () => {

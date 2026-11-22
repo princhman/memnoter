@@ -1,11 +1,12 @@
 import { registerWorksheetEditor } from "@/editor-host/worksheet-editor";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { MODULE_CONTENT_SYNCED_EVENT } from "@/lib/sync/apply-remote";
 import { Pencil } from "lucide-react";
 import { Selection } from "@tiptap/pm/state";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import * as Y from "yjs";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { noteExtensions, isNoteFromNewerVersion } from "@/lib/editor-schema";
 import { isSchemaReadOnly } from "@/lib/guarded-collaboration";
 import { watchWriteAdmission } from "@/lib/write-lifecycle";
@@ -33,7 +34,7 @@ type DrawingResult = { status: string; source?: FileType; preview?: FileType; wi
 type PendingDrawing = { imageId: string; sourceId: string | null; result?: DrawingResult; copyId?: string; anchorId?: string };
 type AnswerOwner = { readOnly?: boolean; moduleId: string; attemptId: string; revisionId: string; leafPartId: string; answer?: Bank["answers"][string]; flushDurable: () => Promise<void> };
 const ANSWER_ACTIONS = ["Text", "Table", "Bullet list", "Numbered list", "Code block", "Mermaid diagram", "Quote", "Drawing", "Foldable block", "Image", "Inline math", "Math block", "Add row above", "Add row below", "Add column left", "Add column right", "Delete row", "Delete column", "Toggle header row", "Delete table"];
-function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { doc: Y.Doc; label: string; flush: () => void; owner: AnswerOwner; autoFocus?: boolean; placeholder?: string }) {
+function AnswerEditor({ doc, label, save, flush, owner, autoFocus, placeholder }: { doc: Y.Doc; label: string; save: (doc: Y.Doc) => void; flush: () => void; owner: AnswerOwner; autoFocus?: boolean; placeholder?: string }) {
   const storageKey = `worksheet-inline-drawing:${JSON.stringify([owner.moduleId, owner.attemptId, owner.revisionId, owner.leafPartId])}`;
   const [pending, setPending] = useState<PendingDrawing | null>(() => {
     try { const value = JSON.parse(localStorage.getItem(storageKey) || "null"); return value && typeof value.imageId === "string" && (value.sourceId === null || typeof value.sourceId === "string") ? value : null; } catch { return null; }
@@ -41,6 +42,7 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
   const pendingRef = useRef(pending);
   const [drawingError, setDrawingError] = useState("");
   const busy = useRef(false);
+  const mountedEditor = useRef<import("@tiptap/core").Editor | null>(null);
   const lastFocusedEditor = useRef<import("@tiptap/core").Editor | null>(null);
   const [drawingBusy, setDrawingBusy] = useState(false);
   const [files, setFiles] = useState<ReadonlyMap<string, FileType>>(new Map());
@@ -147,16 +149,18 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
         }
         const result = await call<DrawingResult>(isNativeHost() ? "worksheet_drawing_open" : "edit_drawing", drawingArgs(draft));
         assertWritable(permit);
-        if (!current.isDestroyed && !hasDrawing(current, draft)) { forgetDeletedDrawing(draft); return; }
+        const latest = mountedEditor.current;
+        if (!latest || latest.isDestroyed) throw new Error("Reopen this answer to save its drawing draft.");
+        if (!hasDrawing(latest, draft)) { forgetDeletedDrawing(draft); return; }
         if (result.status === "save") {
           const updated = { ...draft, result, copyId: result.asCopy ? crypto.randomUUID() : undefined };
           retain(updated);
-          await publishDrawing(current, updated);
+          await publishDrawing(latest, updated);
         } else if (["empty", "discarded", "unchanged"].includes(result.status) || result.status === "cancel" && !result.hasChanges) {
-          if (!current.isDestroyed) { discardEmptyDrawing(current, draft.imageId); await owner.flushDurable(); }
+          discardEmptyDrawing(latest, draft.imageId); await owner.flushDurable();
           clear();
         } else if (result.status === "active" && !retainedBeforeOpen) {
-          if (!target) { discardEmptyDrawing(current, draft.imageId); await owner.flushDurable(); }
+          if (!target) { discardEmptyDrawing(latest, draft.imageId); await owner.flushDurable(); }
           clear();
         }
       });
@@ -181,7 +185,17 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
     }) },
     onFocus: ({ editor }) => { lastFocusedEditor.current = editor; },
     onBlur: flush,
+    onUpdate: ({ transaction }) => {
+      // Hydrating a synced document can add a trailing paragraph. Persist
+      // editor edits and undo/redo, without creating a draft on read or focus.
+      const sync = transaction.getMeta(ySyncPluginKey);
+      if (transaction.docChanged && (!sync?.isChangeOrigin || sync.isUndoRedoOperation)) save(doc);
+    },
   }, [doc]);
+  useLayoutEffect(() => {
+    mountedEditor.current = editor;
+    return () => { mountedEditor.current = null; };
+  }, [editor]);
   useEffect(() => {
     const anchor = () => {
       if (!busy.current || !editor || editor.isDestroyed) return;
@@ -234,7 +248,7 @@ function AnswerEditor({ doc, label, flush, owner, autoFocus, placeholder }: { do
   return <div data-worksheet-answer={JSON.stringify([owner.moduleId, owner.attemptId, owner.revisionId, owner.leafPartId])}>
     {blocked && <p role="alert">This answer contains content from a newer app version. Update the app to edit it; the original is retained.</p>}
     <div hidden={blocked}>
-      <FilesContext.Provider value={{ moduleId: owner.moduleId, files, flashcards: false, saveImage,
+      <FilesContext.Provider value={{ moduleId: owner.moduleId, files, flashcards: false, worksheet: true, saveImage,
         readImage: async fileId => { const read = await call<{ bytes: number[]; file_type: string }>("read_file", { moduleId: owner.moduleId, fileId }); return new Blob([new Uint8Array(read.bytes)], { type: read.file_type }); },
         editDrawing: !owner.readOnly && capabilities.worksheetDrawing ? (imageId, sourceId) => { if (editor) void runDrawing(editor, { imageId, sourceId }); } : undefined,
         unsavedDrawingId: pending && !drawingBusy && (!isNativeHost() || recoverable) ? pending.anchorId ?? pending.imageId : null }}>
@@ -279,31 +293,36 @@ export function answerHasContent(fragment: Y.XmlFragment): boolean {
   return fragment.toArray().some(node => node instanceof Y.XmlText ? node.toDelta().some((delta: { insert?: unknown }) => typeof delta.insert === "string" && delta.insert.trim().length > 0)
     : node instanceof Y.XmlElement && (["image", "inlineImage", "horizontalRule", "mention", "pdfTextQuote"].includes(node.nodeName) || answerHasContent(node)));
 }
-export function WorksheetAnswerEditor({ label, load, refresh, save, flush, autoFocus, placeholder, ...owner }: AnswerOwner & {
+export function WorksheetAnswerEditor({ label, load, refresh, save, flush, autoFocus, placeholder, hasDraft, ...owner }: AnswerOwner & {
   label: string;
   autoFocus?: boolean;
   placeholder?: string;
+  hasDraft?: boolean;
   load: () => Promise<AnswerDocument & { legacyDraft?: string }>;
-  refresh?: (expected: string, isCurrent: () => boolean, apply: (loaded: AnswerDocument) => void) => Promise<void>;
+  refresh?: (expected: string, isCurrent: () => boolean, apply: (loaded: AnswerDocument) => void) => Promise<boolean>;
   save: (document: number[], expected: string, text: string, hasContent: boolean) => void;
   flush: () => void;
 }) {
   const callbacks = useRef({ load, refresh, save, flush, readOnly: owner.readOnly });
   callbacks.current = { load, refresh, save, flush, readOnly: owner.readOnly };
-  const [doc, setDoc] = useState<Y.Doc | null>(null);
+  const [answer, setAnswer] = useState<{ doc: Y.Doc; expected: string } | null>(null);
+  const saveAnswer = (doc: Y.Doc, expected: string) => {
+    if (callbacks.current.readOnly || isNoteFromNewerVersion(doc)) return;
+    const fragment = doc.getXmlFragment("default");
+    callbacks.current.save(Array.from(Y.encodeStateAsUpdate(doc)), expected, fragment.toString(), answerHasContent(fragment));
+  };
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const resumeRefresh = useRef<(() => void) | null>(null);
   useEffect(() => {
     let active = true;
-    let document: Y.Doc | undefined;
-    let changed: (() => void) | undefined;
     setError("");
     let expected: string | undefined;
     let remoteVersion = 0;
+    let refreshedVersion = 0;
     const install = (loaded: AnswerDocument & { legacyDraft?: string }, fromSync = false) => {
-      if (document && changed) document.off("update", changed);
       expected = loaded.expected;
-      document = new Y.Doc();
+      const document = new Y.Doc();
       Y.applyUpdate(document, new Uint8Array(loaded.document));
       const fragment = document.getXmlFragment("default");
       // Deliberately migrate only the backend-confirmed legacy plain shape.
@@ -317,30 +336,27 @@ export function WorksheetAnswerEditor({ label, load, refresh, save, flush, autoF
           if (text) { const child = new Y.XmlText(); paragraph.insert(0, [child]); child.insert(0, text); }
         });
       }
-      const current = document;
-      changed = () => {
-        if (callbacks.current.readOnly || isNoteFromNewerVersion(current)) return;
-        callbacks.current.save(Array.from(Y.encodeStateAsUpdate(current)), loaded.expected, fragment.toString(), answerHasContent(fragment));
-      };
-      // Quarantine before y-tiptap gets a chance to normalize unknown content.
-      if (!isNoteFromNewerVersion(current)) {
-        current.on("update", changed);
-        if (!fromSync && loaded.plainText !== null && (loaded.legacyDraft !== undefined || loaded.plainText.length > 0)) changed();
+      if (!fromSync && loaded.plainText !== null && (loaded.legacyDraft !== undefined || loaded.plainText.length > 0)) {
+        saveAnswer(document, loaded.expected);
       }
       // Swap the editor before another input can reach the retired document.
-      if (fromSync) flushSync(() => setDoc(current));
-      else setDoc(current);
+      const next = { doc: document, expected: loaded.expected };
+      if (fromSync) flushSync(() => setAnswer(next));
+      else setAnswer(next);
     };
     const refreshDocument = () => {
-      if (expected === undefined) return;
+      if (expected === undefined || remoteVersion === refreshedVersion) return;
       const version = remoteVersion;
-      void callbacks.current.refresh?.(expected, () => active && version === remoteVersion, loaded => install(loaded, true)).catch(cause => console.error("Could not refresh synced worksheet answer:", cause));
+      void callbacks.current.refresh?.(expected, () => active && version === remoteVersion, loaded => install(loaded, true)).then(refreshed => {
+        if (refreshed) refreshedVersion = Math.max(refreshedVersion, version);
+      }).catch(cause => console.error("Could not refresh synced worksheet answer:", cause));
     };
     const onRemote = (event: Event) => {
       if ((event as CustomEvent<string>).detail !== owner.moduleId) return;
       remoteVersion++;
       refreshDocument();
     };
+    resumeRefresh.current = refreshDocument;
     window.addEventListener(MODULE_CONTENT_SYNCED_EVENT, onRemote);
     void callbacks.current.load().then(loaded => {
       if (!active) return;
@@ -349,12 +365,16 @@ export function WorksheetAnswerEditor({ label, load, refresh, save, flush, autoF
     }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
     return () => {
       active = false;
+      resumeRefresh.current = null;
       window.removeEventListener(MODULE_CONTENT_SYNCED_EVENT, onRemote);
-      if (document && changed) document.off("update", changed);
       callbacks.current.flush();
       // TipTap owns its binding cleanup; this answer document is private to this editor.
     };
   }, [retry, owner.moduleId]);
+  useEffect(() => {
+    if (!hasDraft) resumeRefresh.current?.();
+  }, [hasDraft]);
   if (error) return <div role="alert" className="text-sm text-destructive">{error} <Button size="sm" variant="ghost" onClick={() => setRetry(value => value + 1)}>Retry opening answer</Button></div>;
-  return doc ? <AnswerEditor doc={doc} label={label} owner={owner} autoFocus={autoFocus} placeholder={placeholder} flush={() => callbacks.current.flush()} /> : <p role="status">Loading answer…</p>;
+  return answer ? <AnswerEditor doc={answer.doc} label={label} owner={owner} autoFocus={autoFocus} placeholder={placeholder}
+    save={doc => { if (doc === answer.doc) saveAnswer(doc, answer.expected); }} flush={() => callbacks.current.flush()} /> : <p role="status">Loading answer…</p>;
 }

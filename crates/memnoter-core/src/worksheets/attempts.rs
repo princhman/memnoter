@@ -2,7 +2,7 @@
 use super::*;
 use crate::{Core, CoreError};
 use yrs::{
-    types::AsPrelim, GetString, StateVector, XmlElementPrelim, Any, Array, ArrayPrelim, In, MapPrelim, MapRef, Text, TransactionMut, Xml,
+    types::{AsPrelim, SharedRef}, BranchID, GetString, StateVector, XmlElementPrelim, Any, Array, ArrayPrelim, In, MapPrelim, MapRef, Text, TransactionMut, Xml,
     XmlFragment, XmlFragmentPrelim, XmlOut, XmlTextPrelim,
 };
 
@@ -235,6 +235,7 @@ fn copy_xml(
     txn: &mut TransactionMut<'_>,
     depth: usize,
     budget: &mut usize,
+    mut drawing_ids: Option<&mut HashSet<String>>,
 ) -> CommandResult<()> {
     if depth > 128 || children.len() > *budget { return Err("Answer document is too complex".into()); }
     *budget -= children.len();
@@ -246,7 +247,27 @@ fn copy_xml(
                     let Out::Any(value) = value else { return Err(invalid()); };
                     copied.insert_attribute(txn, key, value);
                 }
-                copy_xml(source, element.children(source).collect(), &copied, txn, depth + 1, budget)?;
+                if let Some(ids) = drawing_ids.as_deref_mut() {
+                    if matches!(element.tag().as_ref(), "image" | "inlineImage")
+                        && matches!(element.get_attribute(source, "drawing"), Some(Out::Any(Any::Map(_))))
+                    {
+                        if let Some(Out::Any(Any::String(image_id))) = element.get_attribute(source, "imageId") {
+                            if !ids.insert(image_id.to_string()) {
+                                // Offline answer replacements may both carry the same imageId.
+                                // Derive the copy's identity from the shared item so reopening
+                                // this answer still finds any draft saved against that copy.
+                                let hook = element.hook();
+                                let BranchID::Nested(item) = hook.id() else { return Err(invalid()); };
+                                use sha2::{Digest, Sha256};
+                                let hash = Sha256::digest(format!("memnoter:answer-drawing:v1:{image_id}:{}:{}", item.client, item.clock));
+                                let id = uuid::Builder::from_custom_bytes(hash[..16].try_into().unwrap()).into_uuid().to_string();
+                                ids.insert(id.clone());
+                                copied.insert_attribute(txn, "imageId", id);
+                            }
+                        }
+                    }
+                }
+                copy_xml(source, element.children(source).collect(), &copied, txn, depth + 1, budget, drawing_ids.as_deref_mut())?;
             }
             XmlOut::Text(text) => {
                 if text.diff(source, |_| ()).iter().any(|d| !matches!(d.insert, Out::Any(Any::String(_)))) {
@@ -343,7 +364,7 @@ pub fn load_answer_document(core: &Core, module: String, attempt: String, revisi
     let (expected, plain_text) = if let Some(f) = fragment {
         let expected = token(&txn, &f)?;
         let plain = plain_text_child(&txn, &f).ok().map(|child| child.map(|t| t.get_string(&txn)).unwrap_or_default());
-        copy_xml(&txn, f.children(&txn).collect(), &output, &mut isolated.transact_mut(), 0, &mut 100_000)?;
+        copy_xml(&txn, f.children(&txn).collect(), &output, &mut isolated.transact_mut(), 0, &mut 100_000, Some(&mut HashSet::new()))?;
         (expected, plain)
     } else { ("[]".into(), Some(String::new())) };
     let document = isolated.transact().encode_state_as_update_v1(&StateVector::default());
@@ -375,7 +396,7 @@ pub fn save_answer_document(core: &Core, module: String, attempt: String, revisi
         let target = current.ok_or_else(invalid)?;
         let len = target.len(txn);
         if len > 0 { target.remove_range(txn, 0, len); }
-        copy_xml(&source_txn, source.children(&source_txn).collect(), &target, txn, 0, &mut 100_000)?;
+        copy_xml(&source_txn, source.children(&source_txn).collect(), &target, txn, 0, &mut 100_000, None)?;
         Ok(())
     })?;
     Ok(DocumentReceipt { bank, expected: next })

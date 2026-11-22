@@ -47,16 +47,19 @@ test('failed answer isolation, explicit conflict recovery, and lifecycle drainin
     });
     const isolated = window.saved.map(x => x.leafPartId).join(',') === 'bad,good' && Object.keys(answers.errors).length === 1 && Object.keys(answers.drafts).length === 1;
     let strictBlocked = false;
+    let retainedBeforeConfirmation = false;
     await act(async () => {
       await flushAll({ navigation: true });
       try { await flushAll(); } catch { strictBlocked = true; }
-      await answers.retryAnswer('r', 'bad');
+      const conflict = await answers.retryAnswer('r', 'bad');
+      retainedBeforeConfirmation = conflict === 'fresh' && !window.saved.some(x => x.leafPartId === 'bad' && x.expected === 'fresh');
+      await answers.retryAnswer('r', 'bad', conflict);
       try { await legacy.loadDocument('r', 'part'); } catch {}
     });
     const legacyRecovery = !!legacy.errors[legacyKey];
     let durableAtExit = false;
     await act(async () => {
-      await legacy.retryAnswer('r', 'part');
+      await legacy.retryAnswer('r', 'part', await legacy.retryAnswer('r', 'part'));
       // Rejected before IPC: a resolved running promise must not wedge future saves.
       answers.setDocument('r', 'invalid', [255], 'base', 'invalid', true);
       await flushWorksheetAnswers();
@@ -70,9 +73,9 @@ test('failed answer isolation, explicit conflict recovery, and lifecycle drainin
     while (!document.querySelector('.tiptap')) await new Promise(resolve => setTimeout(resolve, 10));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)); });
     await act(async () => { root.unmount(); });
-    return { isolated, strictBlocked, legacyRecovery, openedEmptyWrites, rebased: window.saved.some(x => x.leafPartId === 'bad' && x.expected === 'fresh'), durableAtExit };
+    return { isolated, strictBlocked, legacyRecovery, retainedBeforeConfirmation, openedEmptyWrites, rebased: window.saved.some(x => x.leafPartId === 'bad' && x.expected === 'fresh'), durableAtExit };
   }, server.config.cacheDir);
-  assert.deepEqual(result, { isolated: true, strictBlocked: true, legacyRecovery: true, openedEmptyWrites: 0, rebased: true, durableAtExit: true });
+  assert.deepEqual(result, { isolated: true, strictBlocked: true, legacyRecovery: true, retainedBeforeConfirmation: true, openedEmptyWrites: 0, rebased: true, durableAtExit: true });
 });
 
 test('Linux worksheet drawing publishes editable assets only after durable answer acknowledgement and reopens', async t => {
@@ -100,10 +103,29 @@ test('Linux worksheet drawing publishes editable assets only after durable answe
     const {default:React}=await import(`/@fs/${cacheDir}/deps/react.js`);
     const {default:{createRoot}}=await import(`/@fs/${cacheDir}/deps/react-dom_client.js`);
     const {WorksheetAnswerEditor}=await import('/src/components/worksheet-answer-editor.tsx');
+    const { MODULE_CONTENT_SYNCED_EVENT } = await import('/src/lib/sync/apply-remote.ts');
+    const Y = await import(`/@fs/${cacheDir}/deps/yjs.js`);
+    window.syncAnswerText = () => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, new Uint8Array(window.answerBytes));
+      const paragraph = new Y.XmlElement('paragraph');
+      const text = new Y.XmlText();
+      text.insert(0, 'Text from another device');
+      paragraph.insert(0, [text]);
+      doc.getXmlFragment('default').insert(0, [paragraph]);
+      window.answerBytes = Array.from(Y.encodeStateAsUpdate(doc));
+      doc.destroy();
+      window.dispatchEvent(new CustomEvent(MODULE_CONTENT_SYNCED_EVENT, { detail: 'm' }));
+    };
     window.answerBytes=[0,0]; window.blockAck=true;
     window.newAnswerRoot=()=>{const host=document.body.appendChild(document.createElement("div"));host.style.cssText="position:fixed;inset:80px 100px;background:var(--background);z-index:40;overflow:auto";return createRoot(host);}; window.answerRoot=window.newAnswerRoot();
     window.mountAnswer=() => window.answerRoot.render(React.createElement(WorksheetAnswerEditor,{moduleId:'m',attemptId:'a',revisionId:'r',leafPartId:'p',label:'Portable',
       load:async()=>({document:window.answerBytes,expected:'base',plainText:null}),
+      refresh:async (_expected, isCurrent, apply) => {
+        if (!isCurrent()) return false;
+        apply({document:window.answerBytes,expected:'peer text',plainText:null});
+        return true;
+      },
       save:bytes=>window.answerBytes=bytes,flush:()=>{},flushDurable:async()=> { if(window.blockAck && Object.keys(window.assets).length) throw new Error('Durable answer save unavailable'); }
     })); window.mountAnswer();
   },server.config.cacheDir);
@@ -121,8 +143,13 @@ test('Linux worksheet drawing publishes editable assets only after durable answe
   await page.evaluate(()=>{window.answerRoot.unmount();window.answerRoot=window.newAnswerRoot();window.mountAnswer();});
   await page.locator('.worksheet-answer-input .note-image-host img').waitFor();
   await page.locator('.worksheet-answer-input .note-image-host img').dblclick();
-  await paper.waitFor(); await page.getByRole('button',{name:'Done',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('[aria-label="Drawing editor"]'));
+  await paper.waitFor();
+  await page.evaluate(() => window.syncAnswerText());
+  await answer.getByText('Text from another device', { exact: true }).waitFor({ state: 'attached' });
+  await page.mouse.move(box.x+80,box.y+180); await page.mouse.down(); await page.mouse.move(box.x+160,box.y+220); await page.mouse.up();
+  await page.getByRole('button',{name:'Done',exact:true}).click();
+  await page.waitForFunction(()=>!Object.keys(localStorage).some(k=>k.startsWith('worksheet-inline-drawing:')||k.startsWith('portable-ink:')));
+  assert.match(await answer.innerText(), /Text from another device/);
   await page.evaluate(async cacheDir=>{
     window.answerRoot.unmount(); window.answerRoot=window.newAnswerRoot();
     const {default:React}=await import(`/@fs/${cacheDir}/deps/react.js`);
@@ -152,9 +179,21 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
       if (command === 'worksheet_answer_document_load') return window.savedAnswer;
       if (command === 'worksheet_answer_document_save') {
         window.lastExpected = args.expected;
+        if (window.holdAcknowledgement) {
+          window.holdAcknowledgement = false;
+          return new Promise(resolve => {
+            const bank = window.bank;
+            window.releaseAcknowledgement = () => resolve({ bank, expected: 'Acknowledged local edit' });
+          });
+        }
         throw new Error('This answer changed elsewhere');
       }
-      if (command === 'resolve_card_image') return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      if (command === 'resolve_card_image') {
+        if (args.fileId === 'ink-preview-2') return new Promise(resolve => {
+          window.releasePreview = () => resolve(window.previews[args.fileId]);
+        });
+        return window.previews[args.fileId];
+      }
       if (command.startsWith('plugin:')) return 1;
       if (['modules', 'documents', 'list_documents', 'unindexed_modules', 'unindexed_card_modules'].includes(command)) return [];
       if (command === 'sync_status') return { enabled: false, account: null };
@@ -170,6 +209,13 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
     const { queryClient } = await import('/src/lib/query-client.ts');
     const { QuestionBank } = await import('/src/components/question-bank.tsx');
     const { onRemote } = await import('/src/lib/sync/manager.ts');
+    window.previews = {};
+    for (const [revision, width] of [[1, 200], [2, 300]]) {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = 100;
+      window.previews['ink-preview-' + revision] = canvas.toDataURL();
+    }
     const setSaved = (questionTitle, text, drawing) => {
       const doc = new Y.Doc();
       const paragraph = new Y.XmlElement('paragraph');
@@ -181,7 +227,7 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
       if (drawing) {
         const image = new Y.XmlElement('image');
         image.setAttribute('imageId', 'ink');
-        image.setAttribute('drawing', { version: 1, sourceId: 'ink-source', previewId: 'ink-preview' });
+        image.setAttribute('drawing', { version: 1, sourceId: 'ink-source-' + drawing, previewId: 'ink-preview-' + drawing });
         fragment.insert(1, [image]);
       }
       window.savedAnswer = { document: Array.from(Y.encodeStateAsUpdate(doc)), expected: text, plainText: null };
@@ -206,15 +252,37 @@ test('remote sync refreshes an open worksheet and keeps conflicting local typing
   }, server.config.cacheDir);
   const answer = page.locator('.worksheet-answer-input');
   await answer.getByText('Original answer', { exact: true }).waitFor();
-  await page.evaluate(() => window.applyRemote('Renamed question', 'Synced answer', true));
+  await page.evaluate(() => window.applyRemote('Renamed question', 'Synced answer', 1));
   await page.getByRole('article', { name: 'Question Renamed question' }).waitFor();
   await answer.getByText('Synced answer', { exact: true }).waitFor();
-  await answer.locator('.note-image-host img').waitFor();
+  await page.waitForFunction(() => document.querySelector('.worksheet-answer-input .note-image-host img')?.naturalWidth === 200);
+  const preview = answer.locator('.note-image-host img').first();
+  const oldWidth = await preview.evaluate(img => img.getBoundingClientRect().width);
 
-  await answer.fill('Synced answer my draft');
+  await page.evaluate(() => window.applyRemote('Renamed question', 'Synced ink revision', 2));
+  await page.waitForFunction(() => !!window.releasePreview);
+  await answer.getByText('Synced ink revision', { exact: true }).waitFor();
+  await page.waitForFunction(() => document.querySelector('.worksheet-answer-input .note-image-host img')?.naturalWidth === 200);
+  assert.equal(await preview.evaluate(img => img.getBoundingClientRect().width), oldWidth);
+  assert.equal(await answer.getByRole('status').count(), 0, 'keep the existing worksheet preview visible without a spinner');
+  await page.evaluate(() => window.releasePreview());
+  await page.waitForFunction(() => document.querySelector('.worksheet-answer-input .note-image-host img')?.naturalWidth === 300);
+
+  await page.evaluate(() => { window.holdAcknowledgement = true; });
+  await answer.locator('p').first().click();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' local edit');
+  await page.waitForFunction(() => !!window.releaseAcknowledgement);
+  await page.evaluate(() => {
+    window.applyRemote('Question with newer answer', 'Synced after local save', 1);
+    window.releaseAcknowledgement();
+  });
+  await answer.getByText('Synced after local save', { exact: true }).waitFor();
+
+  await answer.fill('Synced after local save my draft');
   await page.evaluate(() => window.applyRemote('Renamed again', 'Conflicting answer', false));
   await page.getByRole('article', { name: 'Question Renamed again' }).waitFor();
   await page.getByRole('alert').filter({ hasText: /^This answer changed elsewhere Your draft is retained\.$/ }).waitFor();
-  assert.match(await answer.innerText(), /Synced answer my draft/);
-  assert.equal(await page.evaluate(() => window.lastExpected), 'Synced answer');
+  assert.match(await answer.innerText(), /Synced after local save my draft/);
+  assert.equal(await page.evaluate(() => window.lastExpected), 'Synced after local save');
 });

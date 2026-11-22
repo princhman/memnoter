@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { call } from "./backend";
+import { IS_MAC } from "./platform";
 import { patchContent, type FileType } from "./content";
 import { flushSaves } from "./saves";
 import { assertWritable, writeOperation } from "./write-lifecycle";
@@ -37,9 +38,11 @@ export async function openMacDrawing(editor: Editor, moduleId: string, target?: 
       patchContent(moduleId, old => ({ ...old, files: [...old.files, result.source!, result.preview!] }));
       persistence.publish({ sourceId: result.source.id, previewId: result.preview.id,
         expectedSourceId: result.expectedSourceId ?? null, asCopy: result.asCopy });
-      await flushSaves();
+      if (!await flushSaves()) throw new Error("Could not save the note. Your drawing draft is retained.");
       await call("drawing_committed", { moduleId, imageId });
-    } else if (!target && (result.status === "empty" || result.status === "discarded" || result.status === "active" || (result.status === "cancel" && !result.hasChanges))) {
+    } else if (result.status === "discarded" && !IS_MAC || !target && (
+      result.status === "empty" || result.status === "discarded" || result.status === "active" || (result.status === "cancel" && !result.hasChanges)
+    )) {
       execEditor(editor, "discardEmptyDrawing", { imageId });
       await flushSaves();
     }
