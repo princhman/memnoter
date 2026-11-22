@@ -10,6 +10,13 @@ export function useSectionModuleDrop(moduleId: string) {
   return { setNodeRef: drop.setNodeRef, isOver: drop.isOver && active?.data.current?.kind === "section" };
 }
 
+export function SidebarSectionLabel({ title, number }: { title: string; number?: string }) {
+  return <>
+    {number && <span className="shrink-0 tabular-nums text-muted-foreground">{number}</span>}
+    <MiddleTruncate text={title} />
+  </>;
+}
+
 export function SidebarSectionRow({ moduleId, headingId, title, number, selected, onClick }: {
   moduleId: string; headingId: string | null; title: string; number?: string; selected: boolean; onClick: () => void;
 }) {
@@ -17,7 +24,7 @@ export function SidebarSectionRow({ moduleId, headingId, title, number, selected
   // but cannot be dragged or targeted until opening the note gives it an id.
   const source: SectionSource = { moduleId, headingId: headingId ?? "" };
   const id = `section:${moduleId}:${headingId ?? `untitled-${title}-${number}`}`;
-  const drag = useDraggable({ id, disabled: !headingId, data: { kind: "section", ...source, title: number ? `${number} ${title}` : title } });
+  const drag = useDraggable({ id, disabled: !headingId, data: { kind: "section", ...source, title, number } });
   const drop = useDroppable({ id, disabled: !headingId, data: { kind: "section", ...source } });
   const { active } = useDndContext();
   const [pointerY, setPointerY] = useState(0);
@@ -36,8 +43,7 @@ export function SidebarSectionRow({ moduleId, headingId, title, number, selected
       title={number ? `${number} ${title}` : title}
       className={headingId ? "cursor-grab active:cursor-grabbing" : undefined}
       onPointerDown={drag.listeners?.onPointerDown as React.PointerEventHandler<HTMLButtonElement> | undefined} onClick={onClick}>
-      {number && <span className="shrink-0 tabular-nums text-muted-foreground">{number}</span>}
-      <MiddleTruncate text={title} />
+      <SidebarSectionLabel title={title} number={number} />
     </SidebarMenuButton>
   </SidebarMenuItem>;
 }

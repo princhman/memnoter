@@ -98,9 +98,11 @@ export async function moveSidebarSection(source: SectionSource, target: SectionD
         bytes: Array.from(Y.encodeStateAsUpdate(docs[index], before[index])),
       }));
       const receipts = await call<ContentUpdate[]>("move_note_section", { edits, cardIds });
-      // A cross-note transfer cannot be undone by just one editor's history.
-      // Do not leave an undo entry capable of resurrecting only half a move.
-      if (active && ids.includes(active.moduleId) && !active.editor.isDestroyed) yUndoPluginKey.getState(active.editor.state)?.undoManager.clear();
+      // Source history can resurrect transferred content. The recipient's
+      // existing history cannot touch the newly inserted Yjs nodes.
+      if (active?.moduleId === source.moduleId && !active.editor.isDestroyed) {
+        yUndoPluginKey.getState(active.editor.state)?.undoManager.clear();
+      }
       for (let i = 0; i < ids.length; i++) {
         appendSavedUpdate(ids[i], receipts[i]);
         queryClient.setQueryData(contentKey(ids[i]), { ...saved[i], updates: [...saved[i].updates, receipts[i]] });

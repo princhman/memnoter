@@ -1,4 +1,5 @@
 import { MiddleTruncate } from "./middle-truncate";
+import { SidebarSectionLabel } from "./sidebar-section-row";
 import { useState, type PointerEventHandler, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, useDroppable, closestCenter, pointerWithin } from '@dnd-kit/core';
@@ -52,7 +53,9 @@ export function SidebarModules({ modules, renderModule, onMoveSection }: { modul
   const [editing, setEditing] = useState<SidebarItem | 'new' | null>(null);
   const [name, setName] = useState('');
   // The row being dragged, so a copy of it can follow the pointer.
-  const [dragging, setDragging] = useState<{ id: string; width: number; title: string; folder: boolean }>();
+  const [dragging, setDragging] = useState<{ width: number; title: string } & (
+    { kind: 'section'; number?: string } | { kind: 'item'; folder: boolean }
+  )>();
   const sectionMove = useMutation({ mutationKey: [MUTATIONS.moveSection], mutationFn: ({ source, target }: { source: SectionSource; target: SectionDestination }) => onMoveSection!(source, target) });
   const mutation = useMutation({
     mutationFn: (items: SidebarItem[]) => writeOperation(() => call('save_sidebar_items', { items })),
@@ -142,10 +145,11 @@ export function SidebarModules({ modules, renderModule, onMoveSection }: { modul
       const section = active.data.current?.kind === 'section';
       const item = items.find(item => item.id === active.id);
       const element = activatorEvent.target instanceof Element ? activatorEvent.target.closest(section ? '[data-sidebar-section]' : '[data-sidebar-item]') : null;
-      setDragging({ id: String(active.id),
-        width: element?.getBoundingClientRect().width ?? active.rect.current.initial?.width ?? 220,
-        title: section ? active.data.current!.title : item?.name ?? modules.find(module => module.id === active.id)?.name ?? '',
-        folder: !section && !!item?.name });
+      const width = element?.getBoundingClientRect().width ?? active.rect.current.initial?.width ?? 220;
+      const data = active.data.current;
+      setDragging(data?.kind === 'section'
+        ? { kind: 'section', width, title: data.title, number: data.number }
+        : { kind: 'item', width, title: item?.name ?? modules.find(module => module.id === active.id)?.name ?? '', folder: !!item?.name });
     }}
     onDragCancel={() => setDragging(undefined)}
     onDragEnd={({ active, over, delta, activatorEvent }) => {
@@ -172,7 +176,9 @@ export function SidebarModules({ modules, renderModule, onMoveSection }: { modul
           a copy follows the pointer instead. Portalled out of the scrolling sidebar. */}
       {createPortal(<DragOverlay dropAnimation={null} style={{ pointerEvents: 'none' }}>{dragging && <div data-sidebar-drag-preview inert aria-hidden style={{ width: dragging.width }}
         className="floating-surface flex h-8 items-center gap-2 rounded-md px-2 text-sm">
-        {dragging.folder && <Folder className="size-4 shrink-0" />}<span className="truncate">{dragging.title}</span>
+        {dragging.kind === 'section'
+          ? <SidebarSectionLabel title={dragging.title} number={dragging.number} />
+          : <>{dragging.folder && <Folder className="size-4 shrink-0" />}<span className="truncate">{dragging.title}</span></>}
       </div>}</DragOverlay>, document.body)}
     </DndContext>
     <Dialog open={editing !== null} onOpenChange={open => { if (!open) setEditing(null); }}><DialogContent>
