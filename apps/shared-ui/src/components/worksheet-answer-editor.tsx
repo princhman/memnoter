@@ -88,10 +88,11 @@ function AnswerEditor({ doc, label, save, flush, owner, autoFocus, placeholder }
     const result = draft.result!;
     if (!result.source || !result.preview) throw new Error("The drawing save was incomplete. Reopen the local draft.");
     if (current.isDestroyed || !current.isEditable) throw new Error("Reopen this answer to save its drawing draft.");
-    if (!hasDrawing(current, draft)) { forgetDeletedDrawing(draft); return; }
+    const removed = !hasDrawing(current, draft);
+    if (removed) draft = { ...draft, copyId: crypto.randomUUID() };
     const imageId = draft.copyId ?? draft.imageId;
     if (draft.copyId && draft.anchorId !== imageId) {
-      beginDrawing(current, imageId);
+      beginDrawing(current, imageId, removed ? current.state.doc.content.size : undefined);
       draft = { ...draft, anchorId: imageId };
       retain(draft);
     }
@@ -150,7 +151,6 @@ function AnswerEditor({ doc, label, save, flush, owner, autoFocus, placeholder }
         assertWritable(permit);
         const latest = mountedEditor.current;
         if (!latest || latest.isDestroyed) throw new Error("Reopen this answer to save its drawing draft.");
-        if (!hasDrawing(latest, draft)) { forgetDeletedDrawing(draft); return; }
         if (result.status === "save") {
           const updated = { ...draft, result, copyId: result.asCopy ? crypto.randomUUID() : undefined };
           retain(updated);
@@ -214,10 +214,11 @@ function AnswerEditor({ doc, label, save, flush, owner, autoFocus, placeholder }
     if (!editor) return;
     const reconcile = () => {
       const draft = pendingRef.current;
-      if (draft && !editor.isDestroyed && !isSchemaReadOnly(editor) && !hasDrawing(editor, draft)) forgetDeletedDrawing(draft);
+      if (draft && !busy.current && !editor.isDestroyed && !isSchemaReadOnly(editor) && !hasDrawing(editor, draft)) forgetDeletedDrawing(draft);
     };
     // The shared image menu, keyboard deletion and range deletion all arrive
-    // here as document updates. Never recreate a missing recovery placeholder.
+    // here as document updates. While the drawing is open, publication handles
+    // an embed removed by a synced answer refresh.
     reconcile();
     editor.on("update", reconcile);
     return () => { editor.off("update", reconcile); };

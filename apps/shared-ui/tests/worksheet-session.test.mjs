@@ -105,17 +105,36 @@ test('Linux worksheet drawing publishes editable assets only after durable answe
     const {WorksheetAnswerEditor}=await import('/src/components/worksheet-answer-editor.tsx');
     const { MODULE_CONTENT_SYNCED_EVENT } = await import('/src/lib/sync/apply-remote.ts');
     const Y = await import(`/@fs/${cacheDir}/deps/yjs.js`);
-    window.syncAnswerText = () => {
+    window.syncAnswerDeletion = () => {
       const doc = new Y.Doc();
       Y.applyUpdate(doc, new Uint8Array(window.answerBytes));
       const paragraph = new Y.XmlElement('paragraph');
       const text = new Y.XmlText();
       text.insert(0, 'Text from another device');
       paragraph.insert(0, [text]);
-      doc.getXmlFragment('default').insert(0, [paragraph]);
+      const fragment = doc.getXmlFragment('default');
+      const drawingIndex = fragment.toArray().findIndex(node => node.getAttribute?.('drawing'));
+      if (drawingIndex === -1) throw new Error('Expected a drawing to delete remotely');
+      const deletedImageId = fragment.get(drawingIndex).getAttribute('imageId');
+      fragment.delete(drawingIndex, 1);
+      fragment.insert(0, [paragraph]);
       window.answerBytes = Array.from(Y.encodeStateAsUpdate(doc));
       doc.destroy();
       window.dispatchEvent(new CustomEvent(MODULE_CONTENT_SYNCED_EVENT, { detail: 'm' }));
+      return deletedImageId;
+    };
+    window.savedAnswerDrawings = () => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, new Uint8Array(window.answerBytes));
+      const blocks = doc.getXmlFragment('default').toArray();
+      const drawings = blocks.flatMap((node, index) => {
+        const drawing = node.getAttribute?.('drawing');
+        if (!drawing) return [];
+        const source = JSON.parse(new TextDecoder().decode(new Uint8Array(window.assets[drawing.sourceId])));
+        return [{ imageId: node.getAttribute('imageId'), index, strokes: source.portable.strokes.length }];
+      });
+      doc.destroy();
+      return drawings;
     };
     window.answerBytes=[0,0]; window.blockAck=true;
     window.newAnswerRoot=()=>{const host=document.body.appendChild(document.createElement("div"));host.style.cssText="position:fixed;inset:80px 100px;background:var(--background);z-index:40;overflow:auto";return createRoot(host);}; window.answerRoot=window.newAnswerRoot();
@@ -144,12 +163,17 @@ test('Linux worksheet drawing publishes editable assets only after durable answe
   await page.locator('.worksheet-answer-input .note-image-host img').waitFor();
   await page.locator('.worksheet-answer-input .note-image-host img').dblclick();
   await paper.waitFor();
-  await page.evaluate(() => window.syncAnswerText());
+  const deletedImageId = await page.evaluate(() => window.syncAnswerDeletion());
   await answer.getByText('Text from another device', { exact: true }).waitFor({ state: 'attached' });
   await page.mouse.move(box.x+80,box.y+180); await page.mouse.down(); await page.mouse.move(box.x+160,box.y+220); await page.mouse.up();
   await page.getByRole('button',{name:'Done',exact:true}).click();
   await page.waitForFunction(()=>!Object.keys(localStorage).some(k=>k.startsWith('worksheet-inline-drawing:')||k.startsWith('portable-ink:')));
   assert.match(await answer.innerText(), /Text from another device/);
+  const drawings = await page.evaluate(() => window.savedAnswerDrawings());
+  assert.equal(drawings.length, 1, 'the saved answer contains the recovered drawing');
+  assert.notEqual(drawings[0].imageId, deletedImageId);
+  assert.ok(drawings[0].index > 0, 'the recovered drawing follows the synced text');
+  assert.equal(drawings[0].strokes, 2, 'the recovered drawing keeps both strokes');
   await page.evaluate(async cacheDir=>{
     window.answerRoot.unmount(); window.answerRoot=window.newAnswerRoot();
     const {default:React}=await import(`/@fs/${cacheDir}/deps/react.js`);
