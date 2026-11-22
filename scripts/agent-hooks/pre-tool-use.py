@@ -285,6 +285,11 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (PermissionError, ValueError, TypeError) as error:
-        print(str(error) + ' Rephrase as simple literal commands if parsing failed.', file=sys.stderr)
+    except PermissionError as error:
+        print(str(error), file=sys.stderr)
         sys.exit(2)
+    except (ValueError, TypeError) as error:
+        # Heredocs and other syntax the parser can't follow are common and almost always
+        # harmless, so let them run and only say the guard didn't check them.
+        print(f'Warning: the git and dev-launch guard could not check this command ({error}). '
+              'It ran unchecked.', file=sys.stderr)

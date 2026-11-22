@@ -4,6 +4,7 @@ Requires Python 3 and Git. The configs are tracked, so every checkout gets them:
 after project and hook trust review in `/hooks`). Other files in `.claude/` and
 `.codex/` stay local.
 Both use the same stdin JSON scripts; denial exits 2 with a safe alternative on stderr.
+A command the parser can't follow (a heredoc, for example) runs with a warning on stderr.
 Git guards apply to this repository's primary checkout (including subdirectories), found
 through `git rev-parse --git-common-dir`; `MEMNOTER_MAIN_CHECKOUT` overrides it.
 Isolated worktrees may use destructive Git commands; dev launches always need a data override.

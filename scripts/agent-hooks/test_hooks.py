@@ -91,6 +91,14 @@ class Hooks(unittest.TestCase):
                     self.assertRegex(result.stderr, 'isolated worktree|pnpm dev:copy')
         print(f'Policy payloads checked: {len(blocked)} blocked, {len(allowed)} allowed')
 
+    def test_unparseable_command_warns_but_runs(self):
+        for command in ["git commit -F - <<'EOF'\nDon't stop\nEOF", 'echo "unclosed']:
+            with self.subTest(command=command):
+                result = self.invoke('pre-tool-use.py', {
+                    'cwd': MAIN, 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('ran unchecked', result.stderr)
+
     def test_registered_commands(self):
         root = HERE.parents[1]
         for config in ['.claude/settings.json', '.codex/hooks.json']:
