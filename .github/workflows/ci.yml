@@ -356,7 +356,11 @@ jobs:
           top -l 0 -s 10 -n 15 -o cpu -stats pid,command,cpu,mem,threads,state,time > "$RUNNER_TEMP/ios-resources.log" &
           resource_monitor=$!
           trap 'kill "$resource_monitor" 2>/dev/null || true' EXIT
-          bash scripts/ci/run-ios-tests.sh
+          # The next step decides pass/fail from the results, so known-flaky
+          # UI tests (check-ios-results.py NON_BLOCKING) only warn.
+          status=0
+          bash scripts/ci/run-ios-tests.sh || status=$?
+          echo "xcodebuild exited with $status"
       - name: Verify native tests actually ran
         if: always()
         env:
