@@ -197,6 +197,7 @@ fn sync_module_cards(
     conn: &mut Connection,
     module_id: &str,
     cards: &[CardContent],
+    update_id: Option<i64>,
     now: i64,
 ) -> CommandResult<Vec<String>> {
     let tx = conn.transaction().map_err(db_err)?;
@@ -213,6 +214,7 @@ fn sync_module_cards(
     }
     let mut conflicts = Vec::new();
     let mut unavailable = Vec::new();
+    let mut waiting = Vec::new();
     let snapshot = cards.iter().map(|card| card.id.as_str()).collect();
     {
         let mut upsert = tx
@@ -237,9 +239,13 @@ fn sync_module_cards(
             )
             .map_err(db_err)?;
         for card in cards {
-            if crate::card_moves::renews(&tx, module_id, &card.id, &snapshot)? {
-                conflicts.push(card.id.clone());
-                continue;
+            match crate::card_moves::index(&tx, module_id, &card.id, &snapshot)? {
+                crate::card_moves::Indexing::Normal => {}
+                crate::card_moves::Indexing::Renew => {
+                    conflicts.push(card.id.clone());
+                    continue;
+                }
+                crate::card_moves::Indexing::Wait => waiting.push(card.id.clone()),
             }
             if card.kind == "occlusion" {
                 let front_id =
@@ -276,7 +282,7 @@ fn sync_module_cards(
     let kept = serde_json::to_string(
         &cards
             .iter()
-            .filter(|card| !conflicts.contains(&card.id) && !unavailable.contains(&card.id))
+            .filter(|card| !conflicts.contains(&card.id) && !unavailable.contains(&card.id) && !waiting.contains(&card.id))
             .map(|card| card.id.as_str())
             .collect::<Vec<_>>(),
     )
@@ -296,7 +302,8 @@ fn sync_module_cards(
         )
         .map_err(db_err)?;
     }
-    crate::card_moves::indexed(&tx, module_id)?;
+    crate::card_moves::indexed(&tx, module_id, update_id)?;
+    crate::card_moves::wait(&tx, module_id, &waiting)?;
     // Cards first indexed here may have been reviewed on another device.
     crate::sync::apply_reviews(&tx, module_id)?;
     tx.commit().map_err(db_err)?;
@@ -638,9 +645,10 @@ pub fn sync_cards(
     db: &Db,
     module_id: String,
     cards: Vec<CardContent>,
+    update_id: Option<i64>,
 ) -> CommandResult<Vec<String>> {
     let mut conn = db.lock()?;
-    sync_module_cards(&mut conn, &module_id, &cards, Utc::now().timestamp_millis())
+    sync_module_cards(&mut conn, &module_id, &cards, update_id, Utc::now().timestamp_millis())
 }
 
 #[derive(serde::Serialize)]
@@ -715,7 +723,7 @@ mod tests {
         }
 
         fn sync(&self, module: &str, cards: &[CardContent], now: i64) -> Vec<String> {
-            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, now).unwrap()
+            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, None, now).unwrap()
         }
 
         fn due(&self, module: Option<&str>, now: i64) -> Vec<Card> {

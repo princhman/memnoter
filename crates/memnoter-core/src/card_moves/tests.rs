@@ -83,7 +83,7 @@ impl Device {
                 .iter()
                 .map(|id| serde_json::from_value(json!({"id": id, "kind": "cloze", "front": id, "back": id, "section": []})).unwrap())
                 .collect();
-            let conflicts = sync_cards(&self.db, module.into(), cards).unwrap();
+            let conflicts = sync_cards(&self.db, module.into(), cards, None).unwrap();
             if conflicts.is_empty() {
                 return;
             }
@@ -459,6 +459,7 @@ fn two_devices_moving_one_card_agree_on_the_winner() {
         for a_first in [true, false] {
             let (mut server, mut a, mut b) = pair();
             a.cut_paste(("m1", "old"), ("m2", "on-a"), &first);
+            std::thread::sleep(std::time::Duration::from_millis(3));
             b.cut_paste(("m1", "old"), ("m2", "on-b"), &second);
             let a_row = a.review("on-a", 3000);
             let b_row = b.review("on-b", 3100);
@@ -470,7 +471,7 @@ fn two_devices_moving_one_card_agree_on_the_winner() {
                 a.push(&mut server);
             }
             settle(&mut server, &mut [&mut a, &mut b]);
-            let (winner, loser, won, lost) = if first < second { ("on-a", "on-b", a_row, b_row) } else { ("on-b", "on-a", b_row, a_row) };
+            let (winner, loser, won, lost) = ("on-b", "on-a", b_row, a_row);
             assert_eq!(a.logs(winner).len(), 3);
             assert!(a.logs(winner).contains(&won));
             assert_eq!(a.logs(loser), BTreeSet::from([lost]));
@@ -705,7 +706,7 @@ fn a_malformed_move_does_not_stop_sync() {
     map.insert(
         &mut bad_state.transact_mut(),
         "meta",
-        json!({"from": "sibling", "from_module": "m1", "to": "z", "to_module": "m2", "prev": null, "state": "{}"}).to_string(),
+        json!({"from": "sibling", "from_module": "m1", "to": "z", "to_module": "m2", "at": 1, "state": "{}"}).to_string(),
     );
     let cyclic = Doc::new();
     let map = cyclic.get_or_insert_map("move");
@@ -713,7 +714,7 @@ fn a_malformed_move_does_not_stop_sync() {
     map.insert(
         &mut cyclic.transact_mut(),
         "meta",
-        json!({"from": "loop", "from_module": "m1", "to": "loop", "to_module": "m1", "prev": op(9), "state": state}).to_string(),
+        json!({"from": "loop", "from_module": "m1", "to": "loop", "to_module": "m1", "at": 2, "state": state}).to_string(),
     );
     for (n, bytes) in [(7, vec![1, 2, 3]), (8, encode(&bad_state)), (9, encode(&cyclic))] {
         server.head += 1;
@@ -812,7 +813,7 @@ fn a_copy_in_another_note_does_not_take_a_paste_that_is_not_indexed_yet() {
     let entries = server.log.iter().filter(|(_, doc, _)| doc.starts_with(PREFIX)).cloned().collect();
     b.receive(entries, server.head);
     let copy = serde_json::from_value(json!({"id": "new", "kind": "cloze", "front": "x", "back": "x", "section": []})).unwrap();
-    assert_eq!(sync_cards(&b.db, "m1".into(), vec![copy]).unwrap(), vec!["new"]);
+    assert_eq!(sync_cards(&b.db, "m1".into(), vec![copy], None).unwrap(), vec!["new"]);
 }
 
 #[test]
@@ -853,4 +854,108 @@ fn a_restored_card_is_renewed_once_the_paste_is_known_to_be_live() {
     a.background();
     assert!(!a.in_text("m1").contains(&"old".to_string()));
     assert_eq!((a.reps("new"), a.logs("new").len()), (2, 2));
+}
+
+#[test]
+fn turning_sync_on_again_keeps_the_newer_schedule() {
+    let (mut server, mut a, mut b) = pair();
+    sync::disable(&a.db.lock().unwrap()).unwrap();
+    a.review("old", 3000);
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    sync::enable(&mut a.db.lock().unwrap(), "{}").unwrap();
+    a.cursor = 0;
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!((a.reps("new"), a.logs("new").len()), (3, 3));
+}
+
+#[test]
+fn undoing_a_late_review_takes_its_schedule_back() {
+    let (mut server, mut a, mut b) = pair();
+    let before = b.state("old");
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    let late = b.review("old", 2500);
+    b.push(&mut server);
+    a.pull(&server);
+    assert_eq!(a.reps("new"), 3);
+    {
+        let conn = b.db.lock().unwrap();
+        conn.execute("delete from review_log where sync_id = ?1", [&late]).unwrap();
+        set_state(&conn, "old", &before.to_string()).unwrap();
+        sync::record_review(&conn, "old", None, Some(&late)).unwrap();
+    }
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!((a.state("new"), a.logs("new").len()), (before, 2));
+}
+
+// Both devices move the card and undo it; returns them before they sync.
+fn both_undone() -> (Server, Device, Device) {
+    let (server, a, b) = pair();
+    for (device, id, n) in [(&a, "on-a", 1), (&b, "on-b", 2)] {
+        device.cut_paste(("m1", "old"), ("m2", id), &op(n));
+        device.text("m2", id, false);
+        device.index("m2");
+        device.text("m1", "old", true);
+        device.index("m1");
+        std::thread::sleep(std::time::Duration::from_millis(3));
+    }
+    (server, a, b)
+}
+
+#[test]
+fn a_restored_card_keeps_its_reviews_and_can_move_again() {
+    for b_acts in [false, true] {
+        let (mut server, mut a, mut b) = both_undone();
+        let actor = if b_acts { &b } else { &a };
+        actor.review("old", 3000);
+        settle(&mut server, &mut [&mut a, &mut b]);
+        assert_eq!((a.reps("old"), a.logs("old").len()), (3, 3));
+        let (mut server, mut a, mut b) = both_undone();
+        let actor = if b_acts { &b } else { &a };
+        actor.cut_paste(("m1", "old"), ("m2", "third"), &op(3));
+        actor.review("third", 3000);
+        settle(&mut server, &mut [&mut a, &mut b]);
+        assert_eq!((a.reps("third"), a.logs("third").len()), (3, 3));
+    }
+}
+
+#[test]
+fn ratings_made_before_an_undo_follow_the_next_move() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    a.review("new", 3000);
+    a.text("m2", "new", false);
+    a.index("m2");
+    a.text("m1", "old", true);
+    a.index("m1");
+    a.cut_paste(("m1", "old"), ("m2", "third"), &op(2));
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!((b.reps("third"), b.logs("third").len()), (3, 3));
+}
+
+#[test]
+fn an_index_of_older_text_does_not_settle_who_holds_the_history() {
+    let (_, a, _) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    let last = |a: &Device| a.db.lock().unwrap().query_row("select max(id) from contents_updates", [], |r| r.get::<_, i64>(0)).unwrap();
+    let before = last(&a);
+    let captured: CardContent = serde_json::from_value(json!({"id": "new", "kind": "cloze", "front": "x", "back": "x", "section": []})).unwrap();
+    a.text("m2", "new", false);
+    sync_cards(&a.db, "m2".into(), vec![captured], Some(before)).unwrap();
+    a.text("m1", "old", true);
+    a.index("m1");
+    assert!(a.in_text("m1").contains(&"old".to_string()));
+    // It comes back by itself once the destination is indexed.
+    a.index("m2");
+    assert!(live_in(&a.db.lock().unwrap(), "old").unwrap().is_some());
+    assert_eq!((a.reps("old"), a.logs("old").len()), (2, 2));
+}
+
+#[test]
+fn a_restored_card_is_not_reviewed_until_its_owner_is_known() {
+    let (_, a, _) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    a.set("m2", "other", "text", "x");
+    a.text("m1", "old", true);
+    a.index("m1");
+    assert!(live_in(&a.db.lock().unwrap(), "old").unwrap().is_none());
 }
