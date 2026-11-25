@@ -24,7 +24,7 @@ and profiling details.
 
 | Command | Use |
 | --- | --- |
-| `pnpm check:ci` | What CI runs, except the iOS build on Linux (minipc). Run before a PR; `--quick` skips the iOS build. |
+| `pnpm check:ci` | What CI runs, plus the iOS build on the Mac. Run before a PR; `--quick` skips the iOS build. |
 | `pnpm test` | shared-ui tests. One file: `node --experimental-strip-types --import ./tests/support/register.mjs --test tests/<name>.test.mjs` in `apps/shared-ui`. |
 | `cargo test -p memnoter-core` | Core tests. |
 | `pnpm dev:device` | LAN shared-ui server for `scripts/ios-install.sh --live` Debug installs. |
@@ -43,6 +43,11 @@ Never run a dev server in the foreground of a tool call.
 - **On a device:** run `scripts/ios-install.sh` (add `--core` after `crates/`
   changes). That build is needed every time, so batch fixes before installing.
 - **Before a PR:** `pnpm check:ci`. That is where the full build belongs.
+- **iOS changes:** CI has no iOS job. If your diff touches `apps/ios/` or
+  `apps/apple-shared/`, run `pnpm check:ci` on the Mac and the simulator tests
+  in `apps/ios/README.md` (Tests: iPad, then the phone suite on an iPhone)
+  before you push, and report the results. Skip this when nothing under those
+  folders changed.
 
 ## One platform first
 
@@ -153,9 +158,6 @@ Other agents often have uncommitted work in the same checkout.
   change, and say which you did.
 - A flaky test gets fixed or merged into a reliable one. Skip it on CI only
   when the user says so, only that case, and keep it runnable locally.
-  Known-flaky iOS UI tests the user agreed to stop blocking on are listed in
-  `NON_BLOCKING` in `scripts/ci/check-ios-results.py`: they still run, and a
-  failure only warns. Remove a name once its fix has passed CI a few times.
 - "Verified" means you performed the reported action through the app's real
   entry point (a real pointer drag for a drag bug). A launch or a synthetic
   event doesn't count; say which you did.

@@ -1,11 +1,11 @@
 #!/bin/bash
 # Runs what .github/workflows/ci.yml runs, so a PR is green before it is pushed.
 #
-#   pnpm check:ci           all jobs; the iOS job builds on macOS only
+#   pnpm check:ci           all jobs, plus the iOS build on macOS
 #   pnpm check:ci --quick   skip the iOS build
 #
-# The iOS job's simulator tests are not run here; they need a simulator and the
-# local sync worker. Build failures, which are most iOS CI failures, are caught.
+# CI has no iOS job. With iOS changes, run this on the Mac and the iOS
+# simulator tests (apps/ios/README.md, Tests) before pushing.
 #
 # Keep this in step with ci.yml when jobs change.
 set -euo pipefail
@@ -31,8 +31,6 @@ run() {
 # Jobs: frontend, web, rust
 run "CI selection and gates" python3 -m unittest discover -s scripts/tests -p test_ci_selection.py
 run "iOS live configuration" node --test scripts/tests/ios-live-plist.test.mjs
-run "native result gating" node --test scripts/tests/ios-results.test.mjs
-run "iOS artifact handoff" python3 -m unittest discover -s scripts/tests -p test_wait_ios_artifact.py
 run "build" pnpm build
 run "lint" pnpm lint
 run "shared-ui tests" pnpm --filter memnoter-shared-ui test:ci
@@ -43,11 +41,11 @@ run "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
 run "sync typecheck" pnpm --filter memnoter-sync typecheck
 run "sync tests" pnpm --filter memnoter-sync test
 
-# Job: ios (macos-latest)
+# iOS build: local only, not in CI
 if [ "$quick" = true ]; then
   step "iOS: skipped (--quick)"
 elif [ "$(uname)" != Darwin ]; then
-  step "iOS: skipped (needs macOS; CI will still run it)"
+  step "iOS: skipped (needs macOS, and CI does not build iOS)"
 else
   # Chained with && because `set -e` is off inside `if !` in run().
   ios_build() {
