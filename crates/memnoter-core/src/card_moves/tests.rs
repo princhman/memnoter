@@ -117,11 +117,23 @@ impl Device {
     fn undo(&self, card: &str) -> Option<String> {
         let conn = self.db.lock().unwrap();
         let id: Option<String> = conn
-            .query_row("delete from review_log where id = (select max(id) from review_log where card_id = ?1) returning sync_id", [card], |r| r.get(0))
+            .query_row("delete from review_log where id = (select id from review_log where card_id = ?1 order by review_time desc limit 1) returning sync_id", [card], |r| r.get(0))
             .optional()
             .unwrap();
         let id = id?;
-        conn.execute("update cards set reps = max(reps - 1, 0) where id = ?1", [card]).unwrap();
+        // Back to exactly what the review before it left, as the app does.
+        conn.execute(
+            "update cards set reps = max(reps - 1, 0), last_review_at = (select max(review_time) from review_log where card_id = ?1) where id = ?1",
+            [card],
+        )
+        .unwrap();
+        conn.execute("update cards set due_at = last_review_at + 1000, stability = last_review_at / 7.0 where id = ?1 and last_review_at is not null", [card]).unwrap();
+        conn.execute(
+            "update cards set reps = 0, due_at = created_at, stability = 0, difficulty = 0, scheduled_days = 0, state = 0,
+                 schedule_status = 'new', fsrs_model = null where id = ?1 and last_review_at is null",
+            [card],
+        )
+        .unwrap();
         sync::record_review(&conn, card, None, Some(&id)).unwrap();
         Some(id)
     }
@@ -944,30 +956,15 @@ fn an_index_of_older_text_does_not_settle_who_holds_the_history() {
     a.text("m1", "old", true);
     a.index("m1");
     assert!(a.in_text("m1").contains(&"old".to_string()));
-    // It comes back by itself once the destination is indexed.
     a.index("m2");
-    assert!(live_in(&a.db.lock().unwrap(), "old").unwrap().is_some());
+    a.background();
     assert_eq!((a.reps("old"), a.logs("old").len()), (2, 2));
-}
-
-#[test]
-fn a_restored_card_is_not_reviewed_until_its_owner_is_known() {
-    let (_, a, _) = pair();
-    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
-    a.set("m2", "other", "text", "x");
-    a.text("m1", "old", true);
-    a.index("m1");
-    assert!(live_in(&a.db.lock().unwrap(), "old").unwrap().is_none());
 }
 
 #[test]
 fn undoing_a_moved_rating_in_the_old_place_takes_its_schedule_back() {
     let (mut server, mut a, mut b) = pair();
     a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
-    {
-        let conn = b.db.lock().unwrap();
-        conn.execute("update cards set last_review_at = 1000 where id = 'old'", []).unwrap();
-    }
     b.undo("old");
     let earlier = b.state("old");
     settle(&mut server, &mut [&mut a, &mut b]);
@@ -992,4 +989,64 @@ fn the_latest_review_decides_after_both_moves_were_undone() {
     settle(&mut server, &mut [&mut a, &mut b]);
     assert_eq!(a.state("old")["last_review_at"], 3000);
     assert_eq!(a.logs("old").len(), 4);
+}
+
+#[test]
+fn a_sync_toggle_does_not_give_inherited_ratings_to_the_losing_paste() {
+    for (n, m) in [(1, 2), (2, 1)] {
+        let (mut server, mut a, mut b) = pair();
+        a.cut_paste(("m1", "old"), ("m2", "on-a"), &op(n));
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        b.cut_paste(("m1", "old"), ("m2", "on-b"), &op(m));
+        sync::disable(&a.db.lock().unwrap()).unwrap();
+        sync::enable(&mut a.db.lock().unwrap(), "{}").unwrap();
+        a.cursor = 0;
+        for note in NOTES {
+            let bytes = encode(&a.notes[note]);
+            sync::record_update(&a.db.lock().unwrap(), note, &bytes).unwrap();
+        }
+        settle(&mut server, &mut [&mut a, &mut b]);
+        assert_eq!((a.logs("on-b").len(), a.logs("on-a").len()), (2, 0));
+    }
+}
+
+#[test]
+fn a_restored_original_does_not_override_the_live_paste() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "on-a"), &op(1));
+    a.text("m2", "on-a", false);
+    a.index("m2");
+    a.text("m1", "old", true);
+    a.index("m1");
+    a.review("old", 3500);
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    b.cut_paste(("m1", "old"), ("m2", "on-b"), &op(2));
+    b.review("on-b", 3000);
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!(a.state("on-b")["last_review_at"], 3000);
+}
+
+#[test]
+fn copying_an_older_late_schedule_loses_nothing() {
+    for _ in 0..12 {
+        let (mut server, mut a, b) = pair();
+        let mut c = Device::new();
+        c.pull(&server);
+        a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+        a.push(&mut server);
+        b.review("old", 2500);
+        b.push(&mut server);
+        // Each copies the schedule after a different review.
+        a.pull(&server);
+        b.review("old", 2600);
+        b.push(&mut server);
+        c.pull(&server);
+        c.push(&mut server);
+        a.push(&mut server);
+        server.log.retain(|(_, doc, _)| doc != "r-m1");
+        let mut fresh = Device::new();
+        fresh.pull(&server);
+        assert_eq!(fresh.state("new")["last_review_at"], 2600);
+        assert_eq!(fresh.logs("new").len(), 4);
+    }
 }

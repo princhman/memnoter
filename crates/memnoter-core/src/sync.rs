@@ -1304,12 +1304,12 @@ pub(crate) fn apply_remote(
         save_doc(&tx, &doc_id, &doc)?;
         result.reviews_changed |= apply_review_doc(&tx, &doc)?;
         for card in crate::card_moves::cards_in(&tx, module_id)? {
-            crate::card_moves::fold(&tx, &card, true)?;
+            crate::card_moves::fold(&tx, &card)?;
             moved_cards.insert(card);
         }
     }
     for card in &received {
-        crate::card_moves::fold(&tx, card, false)?;
+        crate::card_moves::fold(&tx, card)?;
     }
     moved_cards.extend(received);
     result.reviews_changed |= crate::card_moves::materialize(&tx, moved_cards)?;
