@@ -108,7 +108,7 @@ final class SidebarSectionsUITests: XCTestCase {
         let add = app.buttons["Add"]
         XCTAssertTrue(add.existsOrWait(timeout: 10))
         add.tap()
-        app.buttons["New module"].tap()
+        app.buttons["New module"].firstMatch.tap()
         let field = app.textFields["Name"]
         XCTAssertTrue(field.existsOrWait(timeout: 5))
         field.tap()
