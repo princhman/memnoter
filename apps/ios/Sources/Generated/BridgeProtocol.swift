@@ -7,6 +7,7 @@ enum NativeEventName: String, Codable {
     case reviewState = "reviewState"
     case skipCardsCreatedToday = "skip-cards-created-today"
     case outline = "outline"
+    case sidebarSections = "sidebarSections"
     case outlineCurrent = "outlineCurrent"
     case state = "state"
     case ready = "ready"
@@ -120,6 +121,9 @@ enum EditorApiMethod: String, Codable {
     case pdfSelectionAction = "pdfSelectionAction"
     case pdfCommand = "pdfCommand"
     case exec = "exec"
+    case readSidebarSections = "readSidebarSections"
+    case setSidebarSectionsTracking = "setSidebarSectionsTracking"
+    case navigateSidebar = "navigateSidebar"
     case setOutlineTracking = "setOutlineTracking"
     case focus = "focus"
 }

@@ -17,7 +17,7 @@ import { pdfReaderControls } from "@/lib/pdf-reader-controls";
 import { acceptsPdfShortcut, action, matchesShortcut } from "@/lib/shortcuts";
 import type { EditorApi, PdfCommand, PdfReaderState } from "./protocol";
 
-export type NativePdfActions = Pick<EditorApi, "toggleFiles" | "refreshDocuments" | "pdfCommand">;
+export type NativePdfActions = Pick<EditorApi, "toggleFiles" | "refreshDocuments" | "pdfCommand"> & { closeFiles(): void };
 
 function PdfPanel({ moduleId }: { moduleId: string }) {
   const { data: docs = [] } = useDocuments(moduleId);
@@ -128,7 +128,7 @@ export function NativePdfWorkspace({ moduleId, actions, children, sourceDocument
       case "backToNote": showNote(); break;
     }
   };
-  useImperativeHandle(actions, () => ({ toggleFiles, pdfCommand, async refreshDocuments(id) {
+  useImperativeHandle(actions, () => ({ toggleFiles, pdfCommand, closeFiles() { if (open) showNote(); }, async refreshDocuments(id) {
     await queryClient.invalidateQueries({ queryKey: documentsKey });
     if (id === current.current.moduleId) updatePdfPane(id, { open: true, active: null });
   } }));

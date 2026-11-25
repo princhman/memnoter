@@ -201,6 +201,26 @@ private struct PdfViewStateRecord: Codable {
     var requestedPdfImport: String?
     var requestedModule: String?
     var ready = false
+    private(set) var sidebarSections: SidebarSectionSnapshot?
+    func sidebarSections(for id: String) -> SidebarSectionSnapshot? {
+        moduleId == id ? sidebarSections : nil
+    }
+    func readSidebarSections(_ id: String) async throws -> SidebarSectionSnapshot {
+        guard let result = try await callEditor(.readSidebarSections, ["id": id], parameters: ["id"]) else {
+            throw CocoaError(.coderValueNotFound)
+        }
+        return try JSONDecoder().decode(SidebarSectionSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
+    }
+    func trackSidebarSections(_ enabled: Bool) async {
+        if !enabled { sidebarSections = nil }
+        _ = try? await callEditor(.setSidebarSectionsTracking, ["enabled": enabled], parameters: ["enabled"])
+    }
+    func navigateSidebar(_ id: String, to target: SidebarNoteDestination) async throws -> SidebarNavigationResult {
+        guard ready, moduleId == id else { return .unavailable }
+        let result = try await callEditor(.navigateSidebar, ["id": id, "target": target.arguments],
+                                          parameters: ["id", "target"]) as? String
+        return result.flatMap(SidebarNavigationResult.init(rawValue:)) ?? .unavailable
+    }
     var headings: [Heading] = []
     var allHeadings: [Heading] = []
     var currentHeadingId: String?
@@ -228,7 +248,7 @@ private struct PdfViewStateRecord: Codable {
         return result
     }
     private var moduleId: String?
-    private var generation = UUID()
+    private(set) var generation = UUID()
     private var barrier: Task<Void, Error>?
     init(client: CoreClient, directory: URL, entry: String = BridgeProtocol.editorEntry, preferences: UserDefaults = .standard) {
         self.client = client
@@ -505,6 +525,7 @@ private struct PdfViewStateRecord: Codable {
         try await closeQuestions()
         if moduleId != id {
             moduleId = id
+            sidebarSections = nil
             state = EditorState(); headings = []; allHeadings = []; currentHeadingId = nil
             filesOpen = false; pdfCoveringNote = false; pdfFocused = false; pdfReader = nil
             requestedPdfImport = nil; requestedModule = nil
@@ -534,7 +555,7 @@ private struct PdfViewStateRecord: Codable {
             }
         }
         #endif
-        generation = UUID(); ready = false; reportedViewport = []
+        generation = UUID(); ready = false; reportedViewport = []; sidebarSections = nil
         questionsOpen = false; worksheetChrome = nil; worksheetAnswerFocused = false; worksheetAnswerModule = nil; worksheetAnswerID = nil
         filesOpen = false; pdfCoveringNote = false; pdfFocused = false; pdfReader = nil
         requestedPdfImport = nil; requestedModule = nil
@@ -711,6 +732,10 @@ private struct PdfViewStateRecord: Codable {
                 case .outlineCurrent:
                     guard payload["moduleId"] as? String == moduleId else { return }
                     currentHeadingId = payload["currentHeadingId"] as? String
+                case .sidebarSections:
+                    guard payload["moduleId"] as? String == moduleId else { return }
+                    let snapshot = try JSONDecoder().decode(SidebarSectionSnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+                    if sidebarSections != snapshot { sidebarSections = snapshot }
                 case .outline:
                     guard payload["moduleId"] as? String == moduleId else { return }
                     guard let value = payload["headings"] else { throw CocoaError(.coderValueNotFound) }

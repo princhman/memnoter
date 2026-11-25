@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import { worksheetEditor } from "./worksheet-editor";
 import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
 import { beginHostNavigation, editorHost } from "@/lib/editor-host";
@@ -28,6 +29,11 @@ import { flushPersistedViews } from "@/lib/view-persistence";
 import { headingMathLabel } from "@/lib/heading-label";
 import { headingNumbers, headingNumberingKey } from "@/lib/heading-numbering";
 import { editorOutline, editorOutlines, editorState, execEditor } from "./commands";
+
+import { editorFragment, focusedSidebarSection, liveSidebarSections } from "@/lib/sidebar-section-data";
+import { isSchemaReadOnly } from "@/lib/guarded-collaboration";
+import { NEWER_VERSION_MESSAGE } from "@/lib/schema-compatibility";
+import { navigateSidebar, parseSidebarTarget, readSidebarSections } from "./sidebar-sections";
 
 async function flushHostWrites() {
   flushPersistedViews();
@@ -80,6 +86,8 @@ export function Host() {
   const container = useRef<HTMLElement>(null);
   const outlineTracking = useRef(false);
   const refreshOutline = useRef(() => {});
+  const tracksSidebarSections = useRef(false);
+  const refreshSidebarSections = useRef(() => {});
   const opening = useRef<{ moduleId: string; resolve(): void; reject(error: Error): void } | null>(null);
   useLayoutEffect(() => { active.current = activeEditor; }, [activeEditor]);
 
@@ -111,6 +119,20 @@ export function Host() {
       async refreshDocuments(id) { await pdfActions.current?.refreshDocuments(id); },
       pdfSelectionAction(action, color) { pdfSelectionControls.run(action, color); },
       pdfCommand(command, value) { pdfActions.current?.pdfCommand(command, value); },
+      readSidebarSections,
+      setSidebarSectionsTracking(enabled) {
+        tracksSidebarSections.current = enabled;
+        refreshSidebarSections.current();
+      },
+      navigateSidebar(id, value) {
+        const current = active.current;
+        if (opening.current || questionSurface.current.open || current?.moduleId !== id ||
+            !current.isReady || current.editor.isDestroyed) return "unavailable";
+        const target = parseSidebarTarget(value);
+        // A covering PDF makes the editor unfocusable until React commits the pane change.
+        flushSync(() => pdfActions.current?.closeFiles());
+        return navigateSidebar(current.editor, target);
+      },
       setOutlineTracking(enabled) { outlineTracking.current = enabled; refreshOutline.current(); },
       async refreshModules() { await queryClient.invalidateQueries({ queryKey: ["modules"] }); },
       applyRemote: onRemote,
@@ -264,6 +286,32 @@ export function Host() {
       scrollTimer = setTimeout(() => { scrollTimer = undefined; publishCurrent(); }, 120);
     };
     container.current?.addEventListener("scroll", onScroll, { passive: true });
+    let lastSidebarJson = "";
+    let lastSidebarDoc: typeof editor.state.doc | undefined;
+    let lastSidebarFocus: ReturnType<typeof sectionFocusKey.getState>;
+    let lastSidebarBlocked: boolean | undefined;
+    const publishSidebarSections = () => {
+      if (!tracksSidebarSections.current || editor.isDestroyed) {
+        lastSidebarDoc = undefined;
+        lastSidebarJson = "";
+        return;
+      }
+      const { state } = editor;
+      const focused = sectionFocusKey.getState(state);
+      const blocked = isSchemaReadOnly(editor);
+      if (lastSidebarDoc === state.doc && lastSidebarFocus === focused && lastSidebarBlocked === blocked) return;
+      lastSidebarDoc = state.doc;
+      lastSidebarFocus = focused;
+      lastSidebarBlocked = blocked;
+      const snapshot = blocked
+        ? { moduleId: id, sections: [], error: NEWER_VERSION_MESSAGE }
+        : { moduleId: id, sections: liveSidebarSections(state.doc, editorFragment(state)), focusedKey: focusedSidebarSection(state) };
+      const encoded = JSON.stringify(snapshot);
+      if (encoded === lastSidebarJson) return;
+      lastSidebarJson = encoded;
+      postNativeEvent("sidebarSections", snapshot);
+    };
+    refreshSidebarSections.current = publishSidebarSections;
     const publish = () => {
       if (editor.isDestroyed) return;
       if (!questionSurface.current.open) postNativeEvent("state", { moduleId: id, ...editorState(editor) });
@@ -282,6 +330,7 @@ export function Host() {
         postNativeEvent("outline", { moduleId: id, headings, allHeadings });
       }
       publishCurrent();
+      publishSidebarSections();
     };
     publish();
     const focused = sectionFocusKey.getState(editor.state);
@@ -352,6 +401,7 @@ export function Host() {
     editor.on("update", reveal);
     editor.on("focus", reveal);
     return () => {
+      refreshSidebarSections.current = () => {};
       element?.removeEventListener("pointerdown", selecting, true);
       document.removeEventListener("selectionchange", selectionChanged);
       document.removeEventListener("pointerup", selected);
