@@ -1135,3 +1135,58 @@ fn a_review_after_an_undone_competing_move_counts_until_the_paste_is_reviewed() 
     assert_eq!(a.state("fourth")["last_review_at"], 3500);
     assert_eq!(a.logs("fourth").len(), 3);
 }
+
+#[test]
+fn a_restored_card_can_be_cut_again_before_the_first_paste_is_indexed_away() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    a.text("m2", "new", false);
+    a.text("m1", "old", true);
+    a.index("m1");
+    assert_eq!(a.cut_paste(("m1", "old"), ("m1", "again"), &op(2)), Transfer::Moved);
+    a.index("m2");
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!((b.reps("again"), b.logs("again").len()), (2, 2));
+}
+
+#[test]
+fn upgrading_does_not_renew_a_card_before_its_notes_are_indexed() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    settle(&mut server, &mut [&mut a, &mut b]);
+    {
+        let conn = b.db.lock().unwrap();
+        conn.execute("insert into sync_docs (doc, state) select ?1 || op, doc from card_moves", [PREFIX]).unwrap();
+        conn.execute_batch("drop trigger card_stale_on_update; drop table card_moves; drop table card_move_ends; drop table card_stale_modules;").unwrap();
+    }
+    b.notes["m2"].get_or_insert_map("removed").insert(&mut b.notes["m2"].transact_mut(), "new", "1");
+    b.notes["m1"].get_or_insert_map("removed").insert(&mut b.notes["m1"].transact_mut(), "old", "");
+    {
+        let conn = b.db.lock().unwrap();
+        let version: i64 = conn.query_row("pragma user_version", [], |r| r.get(0)).unwrap();
+        conn.pragma_update(None, "user_version", version - 1).unwrap();
+        crate::db::migrate(&conn).unwrap();
+    }
+    b.index("m1");
+    b.index("m2");
+    assert!(b.in_text("m1").contains(&"old".to_string()));
+    assert_eq!((b.reps("old"), b.logs("old").len()), (2, 2));
+}
+
+#[test]
+fn malformed_moves_leave_cards_alone() {
+    let (mut server, _, mut b) = pair();
+    let state = b.state("old").to_string();
+    for (n, from, to) in [(5, "old", "old"), (6, "sibling", "x"), (7, "x", "sibling")] {
+        let doc = Doc::new();
+        doc.get_or_insert_map("move").insert(
+            &mut doc.transact_mut(),
+            "meta",
+            json!({"from": from, "from_module": "m1", "to": to, "to_module": "m1", "at": 1, "state": state}).to_string(),
+        );
+        server.head += 1;
+        server.log.push((server.head, format!("{PREFIX}{}", op(n)), encode(&doc)));
+    }
+    b.pull(&server);
+    assert_eq!((b.reps("old"), b.reps("sibling")), (2, 1));
+}

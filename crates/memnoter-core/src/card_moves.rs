@@ -54,6 +54,13 @@ pub(crate) fn migrate(conn: &Connection) -> CommandResult<()> {
         fold(conn, card)?;
     }
     materialize(conn, cards)?;
+    // The older app may have stopped before indexing the text it received.
+    conn.execute(
+        "insert or ignore into card_stale_modules (module_id, update_id)
+         select distinct module_id, 0 from card_move_ends where module_id in (select id from modules)",
+        [],
+    )
+    .map_err(db_err)?;
     conn.execute(
         "delete from sync_docs where substr(doc, 1, length(?1)) = ?1",
         [PREFIX],
@@ -176,7 +183,7 @@ fn schedule(
 
 fn meta_of(doc: &Doc) -> Option<Meta> {
     let meta: Meta = serde_json::from_str(entries(doc, "move").get("meta")?).ok()?;
-    valid_state(&meta.state).then_some(meta)
+    (meta.from != meta.to && valid_state(&meta.state)).then_some(meta)
 }
 
 fn store(conn: &Connection, op: &str, doc: &Doc) -> CommandResult<()> {
@@ -677,7 +684,11 @@ fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<boo
     }
     for node in nodes.values() {
         for card in [&node.meta.from, &node.meta.to] {
-            if !holders.contains(card.as_str()) {
+            // A move that is not part of any chain is malformed.
+            let known = paths
+                .iter()
+                .any(|path| cards_of(nodes, path).contains(&card.as_str()));
+            if known && !holders.contains(card.as_str()) {
                 changed |= reset(conn, card)?;
             }
         }
@@ -906,8 +917,11 @@ pub(crate) fn transfer(
             if newer == from {
                 break;
             }
-            if live_in(tx, newer)?.is_some() {
-                return Ok(Transfer::SourceMissing);
+            // Unless that note may just have lost it.
+            if let Some(home) = live_in(tx, newer)? {
+                if !stale(tx, &home)? {
+                    return Ok(Transfer::SourceMissing);
+                }
             }
         }
     }
