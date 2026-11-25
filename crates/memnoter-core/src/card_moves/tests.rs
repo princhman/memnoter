@@ -1050,3 +1050,53 @@ fn copying_an_older_late_schedule_loses_nothing() {
         assert_eq!(fresh.logs("new").len(), 4);
     }
 }
+
+#[test]
+fn upgrading_reads_the_moves_an_older_app_stored() {
+    let (mut server, a, b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    a.push(&mut server);
+    {
+        // What the released app leaves behind: the move unread, the text in.
+        let conn = b.db.lock().unwrap();
+        let name = format!("{PREFIX}{}", op(1));
+        let bytes = snapshot(&a.db.lock().unwrap(), &op(1)).unwrap().unwrap();
+        conn.execute("insert into sync_docs (doc, state) values (?1, ?2)", params![name, bytes]).unwrap();
+        conn.execute_batch("drop trigger card_stale_on_update; drop table card_moves; drop table card_move_ends; drop table card_stale_modules;").unwrap();
+        conn.execute("insert into cards (id, module_id, kind, front, back, due_at, created_at, updated_at) values ('new', 'm2', 'cloze', '1', '1', 0, 0, 0)", []).unwrap();
+        conn.execute("update cards set deleted_at = 1 where id = 'old'", []).unwrap();
+        let version: i64 = conn.query_row("pragma user_version", [], |r| r.get(0)).unwrap();
+        conn.pragma_update(None, "user_version", version - 1).unwrap();
+        crate::db::migrate(&conn).unwrap();
+    }
+    assert_eq!((b.reps("new"), b.logs("new").len()), (2, 2));
+}
+
+#[test]
+fn moving_a_restored_intermediate_card_keeps_its_latest_review() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "second"), &op(1));
+    a.review("second", 3000);
+    a.cut_paste(("m2", "second"), ("m1", "third"), &op(2));
+    a.text("m1", "third", false);
+    a.index("m1");
+    a.text("m2", "second", true);
+    a.index("m2");
+    a.review("second", 4000);
+    a.cut_paste(("m2", "second"), ("m1", "fourth"), &op(3));
+    assert_eq!((a.reps("fourth"), a.logs("fourth").len()), (4, 4));
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!(b.state("fourth")["last_review_at"], 4000);
+}
+
+#[test]
+fn deleting_a_stale_destination_returns_the_history_at_once() {
+    let (_, a, _) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    a.review("new", 3000);
+    a.set("m2", "other", "text", "x");
+    a.text("m1", "old", true);
+    a.index("m1");
+    crate::content::delete_module_data(&mut a.db.lock().unwrap(), &a.dir.join("files"), "m2").unwrap();
+    assert_eq!((a.reps("old"), a.logs("old").len()), (3, 3));
+}

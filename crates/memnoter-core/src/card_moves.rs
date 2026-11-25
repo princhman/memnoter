@@ -35,6 +35,30 @@ pub(crate) fn migrate(conn: &Connection) -> CommandResult<()> {
              insert or replace into card_stale_modules (module_id, update_id) values (new.module_id, new.id);
          end;",
     )
+    .map_err(db_err)?;
+    // An older app stored the moves it received without reading them.
+    let stored: Vec<(String, Vec<u8>)> = {
+        let mut stmt = conn
+            .prepare("select substr(doc, length(?1) + 1), state from sync_docs where substr(doc, 1, length(?1)) = ?1")
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([PREFIX], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(db_err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(db_err)?
+    };
+    let mut cards = BTreeSet::new();
+    for (op, state) in stored {
+        cards.extend(receive(conn, &op, &[state])?);
+    }
+    for card in &cards {
+        fold(conn, card)?;
+    }
+    materialize(conn, cards)?;
+    conn.execute(
+        "delete from sync_docs where substr(doc, 1, length(?1)) = ?1",
+        [PREFIX],
+    )
+    .map(|_| ())
     .map_err(db_err)
 }
 
@@ -122,18 +146,32 @@ fn reviewed_at(state: &str) -> i64 {
         .unwrap_or(-1)
 }
 
-// The schedule of the original card: the latest one whose review still counts.
-fn inherited(node: &Node, undone: &BTreeSet<i64>) -> String {
-    let mut states: Vec<String> = entries(&node.doc, "pred")
-        .into_values()
-        .filter(|state| valid_state(state))
-        .collect();
+// The schedule along a path as of its `last` move. Reviews after that move
+// decide; before any, the latest of what was moved, what came late for the card
+// it moved, and reviews of that card while another move of it was undone.
+fn schedule(
+    nodes: &BTreeMap<String, Node>,
+    path: &[String],
+    undone: &BTreeSet<i64>,
+) -> Option<String> {
+    let (op, earlier) = path.split_last()?;
+    let node = &nodes[op];
+    if let Some(state) = state_of(&node.doc, "state", "state") {
+        return Some(state);
+    }
+    let mut states: Vec<String> = entries(&node.doc, "pred").into_values().collect();
     states.push(node.meta.state.clone());
-    states.retain(|state| !undone.contains(&reviewed_at(state)));
+    states.extend(schedule(nodes, earlier, undone));
+    for (other, sibling) in nodes {
+        if other != op && sibling.meta.from == node.meta.from {
+            states.extend(state_of(&sibling.doc, "state", &node.meta.from));
+        }
+    }
+    states.retain(|state| valid_state(state) && !undone.contains(&reviewed_at(state)));
     states
         .into_iter()
         .max_by_key(|state| (reviewed_at(state), state.clone()))
-        .unwrap_or_else(|| node.meta.state.clone())
+        .or_else(|| Some(node.meta.state.clone()))
 }
 
 fn meta_of(doc: &Doc) -> Option<Meta> {
@@ -592,25 +630,22 @@ fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<boo
                 !taken.contains(id) && !card_of(row).is_some_and(|card| original.contains(&card))
             });
         }
-        let recorded = path
-            .ops
-            .iter()
-            .rev()
-            .find_map(|op| state_of(&nodes[op].doc, "state", "state"));
-        // The original, reviewed while a losing move of it was undone.
-        let restored = nodes
-            .iter()
-            .filter(|(op, _)| {
-                path.inherits && current == first.meta.from && !path.ops.contains(op)
-            })
-            .filter_map(|(_, node)| state_of(&node.doc, "state", &first.meta.from));
-        let state = restored
-            .chain(recorded)
-            .max_by_key(|state| reviewed_at(state))
-            .or_else(|| {
-                path.inherits
-                    .then(|| inherited(first, &undone))
-            });
+        let state = if path.inherits {
+            // The card that holds it now, reviewed while a losing move of it
+            // was undone.
+            let restored = nodes
+                .iter()
+                .filter(|(op, node)| !path.ops.contains(op) && node.meta.from == current)
+                .filter_map(|(_, node)| state_of(&node.doc, "state", current));
+            restored
+                .chain(schedule(nodes, &path.ops, &undone))
+                .max_by_key(|state| reviewed_at(state))
+        } else {
+            path.ops
+                .iter()
+                .rev()
+                .find_map(|op| state_of(&nodes[op].doc, "state", "state"))
+        };
         if row_state(conn, current)?.is_none() {
             // Not indexed here yet. The moves keep these rows until it is; no
             // other card may show them meanwhile.
@@ -673,9 +708,9 @@ pub(crate) fn record(
     }
     let op = path.ops.last().unwrap();
     let mut rows = vec![("state", "state", state)];
-    // If this move turns out to have lost, a review of the card it started
-    // from still counts.
-    if path.inherits && nodes[&path.ops[0]].meta.from == card {
+    // If this move is undone or loses, a review of the card it started from
+    // still counts.
+    if nodes[op].meta.from == card {
         rows.push(("state", card, state));
     }
     if let Some((id, row)) = added {
