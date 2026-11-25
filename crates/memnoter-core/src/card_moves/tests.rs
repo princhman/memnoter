@@ -814,3 +814,43 @@ fn a_copy_in_another_note_does_not_take_a_paste_that_is_not_indexed_yet() {
     let copy = serde_json::from_value(json!({"id": "new", "kind": "cloze", "front": "x", "back": "x", "section": []})).unwrap();
     assert_eq!(sync_cards(&b.db, "m1".into(), vec![copy]).unwrap(), vec!["new"]);
 }
+
+#[test]
+fn every_late_review_of_the_old_card_updates_the_schedule() {
+    let (mut server, mut a, mut b) = pair();
+    let mut c = Device::new();
+    c.pull(&server);
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    b.review("old", 2500);
+    b.push(&mut server);
+    // The second device reviews after the first, and neither has the move.
+    c.pull(&server);
+    c.review("old", 2600);
+    a.pull(&server);
+    assert_eq!(a.state("new")["last_review_at"], 2500);
+    a.push(&mut server);
+    c.push(&mut server);
+    a.pull(&server);
+    a.push(&mut server);
+    server.log.retain(|(_, doc, _)| doc != "r-m1");
+    let mut fresh = Device::new();
+    fresh.pull(&server);
+    assert_eq!(fresh.logs("new").len(), 4);
+    assert_eq!(fresh.state("new")["last_review_at"], 2600);
+    settle(&mut server, &mut [&mut a, &mut b, &mut c]);
+}
+
+#[test]
+fn a_restored_card_is_renewed_once_the_paste_is_known_to_be_live() {
+    let (_, a, _) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    // An edit in the destination note that is not indexed yet.
+    a.set("m2", "other", "text", "x");
+    a.text("m1", "old", true);
+    a.index("m1");
+    assert!(a.in_text("m1").contains(&"old".to_string()));
+    a.index("m2");
+    a.background();
+    assert!(!a.in_text("m1").contains(&"old".to_string()));
+    assert_eq!((a.reps("new"), a.logs("new").len()), (2, 2));
+}

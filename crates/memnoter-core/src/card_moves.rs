@@ -264,15 +264,6 @@ fn paths(nodes: &BTreeMap<String, Node>) -> Vec<Path> {
     result
 }
 
-// The cards whose history the moves started from.
-fn originals(nodes: &BTreeMap<String, Node>, paths: &[Path]) -> BTreeSet<String> {
-    paths
-        .iter()
-        .filter(|path| path.inherits)
-        .map(|path| nodes[&path.ops[0]].meta.from.clone())
-        .collect()
-}
-
 fn owner<'a>(nodes: &'a BTreeMap<String, Node>, path: &Path) -> &'a str {
     &nodes[path.ops.last().unwrap()].meta.to
 }
@@ -424,7 +415,6 @@ pub(crate) fn fold(conn: &Connection, card: &str, arrived: bool) -> CommandResul
         .flat_map(|n| entries(&n.doc, "own").into_keys().chain(entries(&n.doc, "carried").into_keys()))
         .collect();
     let paths = paths(&nodes);
-    let originals = originals(&nodes, &paths);
     for path in paths {
         let first = &path.ops[0];
         let node = &nodes[first];
@@ -442,10 +432,7 @@ pub(crate) fn fold(conn: &Connection, card: &str, arrived: bool) -> CommandResul
                 continue;
             }
             let Some(card) = card_of(row) else { continue };
-            if originals.contains(&card) {
-                if !path.inherits || card != node.meta.from {
-                    continue;
-                }
+            if path.inherits && card == node.meta.from {
                 rows.push((first.clone(), "carried".into(), id.clone(), row.clone()));
             } else if let Some(op) = path.ops.iter().find(|op| nodes[*op].meta.to == card) {
                 rows.push((op.clone(), "own".into(), id.clone(), row.clone()));
@@ -509,7 +496,6 @@ fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<boo
         .collect();
     let mut changed = false;
     let paths = paths(nodes);
-    let originals = originals(nodes, &paths);
     let mut holders = BTreeSet::new();
     for path in &paths {
         let current = holder(conn, nodes, path)?;
@@ -539,12 +525,8 @@ fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<boo
         }
         for (id, row) in &found.logs {
             let card = card_of(row).unwrap_or_default();
-            let here = if originals.contains(&card) {
-                path.inherits && card == first.meta.from
-            } else {
-                path.ops.iter().any(|op| nodes[op].meta.to == card)
-                    && (path.inherits || !carried_anywhere.contains(id))
-            };
+            let here = path.ops.iter().any(|op| nodes[op].meta.to == card)
+                || (path.inherits && card == first.meta.from);
             if here && !own_anywhere.contains(id) {
                 rows.insert(id.clone(), row.clone());
             }
