@@ -51,7 +51,9 @@ impl Device {
             map.insert(&mut txn, key, value);
             txn.encode_update_v1()
         };
-        sync::record_update(&self.db.lock().unwrap(), module, &update).unwrap();
+        let conn = self.db.lock().unwrap();
+        conn.execute("insert into contents_updates (module_id, bytes, created_at) select id, ?2, 0 from modules where id = ?1", params![module, update]).unwrap();
+        sync::record_update(&conn, module, &update).unwrap();
     }
 
     // Adds or removes the block of a card. A removed block stays removed when
@@ -174,6 +176,22 @@ impl Device {
         for note in NOTES {
             self.index(note);
         }
+        self.background();
+    }
+
+    // The app's background check of notes that are not indexed.
+    fn background(&self) {
+        for _ in 0..4 {
+            let pending = serde_json::to_value(crate::cards::unindexed_card_modules(&self.db).unwrap()).unwrap();
+            let pending: Vec<String> = pending.as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap().to_string()).collect();
+            if pending.is_empty() {
+                return;
+            }
+            for note in pending {
+                self.index(&note);
+            }
+        }
+        panic!("indexing does not settle");
     }
 
     fn state(&self, card: &str) -> serde_json::Value {
@@ -600,6 +618,13 @@ fn random_moves_reviews_and_delivery_converge() {
                     }
                 }
                 6 | 7 => device.push(&mut server),
+                8 if random.next(2) == 0 => {
+                    let entries = server.log.iter().filter(|(seq, ..)| *seq > device.cursor).cloned().collect();
+                    device.receive(entries, server.head);
+                    if random.next(2) == 0 {
+                        device.index(module);
+                    }
+                }
                 _ => device.pull(&server),
             }
         }
@@ -669,4 +694,123 @@ fn an_undone_review_stays_undone_after_its_review_document_is_dropped() {
     server.log.retain(|(_, doc, _)| doc != "r-m2" && doc != "r-m1");
     b.pull(&server);
     assert_eq!((b.reps("new"), b.logs("new").len()), (1, 1));
+}
+
+#[test]
+fn a_malformed_move_does_not_stop_sync() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    let bad_state = Doc::new();
+    let map = bad_state.get_or_insert_map("move");
+    map.insert(
+        &mut bad_state.transact_mut(),
+        "meta",
+        json!({"from": "sibling", "from_module": "m1", "to": "z", "to_module": "m2", "prev": null, "state": "{}"}).to_string(),
+    );
+    let cyclic = Doc::new();
+    let map = cyclic.get_or_insert_map("move");
+    let state = a.state("sibling").to_string();
+    map.insert(
+        &mut cyclic.transact_mut(),
+        "meta",
+        json!({"from": "loop", "from_module": "m1", "to": "loop", "to_module": "m1", "prev": op(9), "state": state}).to_string(),
+    );
+    for (n, bytes) in [(7, vec![1, 2, 3]), (8, encode(&bad_state)), (9, encode(&cyclic))] {
+        server.head += 1;
+        server.log.push((server.head, format!("{PREFIX}{}", op(n)), bytes));
+    }
+    let bad = Doc::new();
+    for map in ["state", "pred"] {
+        bad.get_or_insert_map(map).insert(&mut bad.transact_mut(), "state", "{}");
+    }
+    bad.get_or_insert_map("own").insert(&mut bad.transact_mut(), "row", "{}");
+    server.head += 1;
+    server.log.push((server.head, format!("{PREFIX}{}", op(1)), encode(&bad)));
+    b.text("m1", "loop", true);
+    b.index("m1");
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!((b.reps("new"), b.reps("sibling")), (2, 1));
+}
+
+#[test]
+fn undoing_a_same_note_paste_and_cut_at_once_restores_the_card() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m1", "new"), &op(1));
+    a.text("m1", "new", false);
+    a.text("m1", "old", true);
+    a.index("m1");
+    assert_eq!((a.reps("old"), a.logs("old").len()), (2, 2));
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!(b.reps("old"), 2);
+}
+
+#[test]
+fn a_device_that_never_saw_the_paste_has_the_restored_card() {
+    let (mut server, mut a, _) = pair();
+    a.text("m1", "old", false);
+    a.transfer_as(&op(1), "old", "new", "m2");
+    a.text("m2", "new", true);
+    a.text("m2", "new", false);
+    a.text("m1", "old", true);
+    a.index("m1");
+    assert_eq!((a.reps("old"), a.logs("old").len()), (2, 2));
+    let mut fresh = Device::new();
+    settle(&mut server, &mut [&mut a, &mut fresh]);
+    assert_eq!((fresh.reps("old"), fresh.logs("old").len()), (2, 2));
+}
+
+#[test]
+fn the_source_note_survives_deleting_the_destination_note() {
+    let (_, a, _) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    a.review("new", 3000);
+    crate::content::delete_module_data(&mut a.db.lock().unwrap(), &a.dir.join("files"), "m2").unwrap();
+    a.text("m1", "old", true);
+    a.index("m1");
+    assert_eq!((a.reps("old"), a.logs("old").len()), (3, 3));
+}
+
+#[test]
+fn a_late_rating_seen_before_the_move_outlives_its_note() {
+    let (mut server, mut a, mut b) = pair();
+    let mut observer = Device::new();
+    observer.pull(&server);
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    b.review("old", 2500);
+    b.push(&mut server);
+    observer.pull(&server);
+    a.push(&mut server);
+    observer.pull(&server);
+    assert_eq!(observer.logs("new").len(), 3);
+    observer.push(&mut server);
+    server.log.retain(|(_, doc, _)| doc != "r-m1");
+    let mut fresh = Device::new();
+    fresh.pull(&server);
+    assert_eq!((fresh.reps("new"), fresh.logs("new").len()), (3, 3));
+    settle(&mut server, &mut [&mut a, &mut b, &mut observer]);
+}
+
+#[test]
+fn concurrent_moves_that_are_both_undone_keep_the_schedule() {
+    let (mut server, mut a, mut b) = pair();
+    for (device, id, n) in [(&a, "on-a", 1), (&b, "on-b", 2)] {
+        device.cut_paste(("m1", "old"), ("m2", id), &op(n));
+        device.text("m2", id, false);
+        device.index("m2");
+        device.text("m1", "old", true);
+        device.index("m1");
+    }
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!((a.reps("old"), a.logs("old").len()), (2, 2));
+}
+
+#[test]
+fn a_copy_in_another_note_does_not_take_a_paste_that_is_not_indexed_yet() {
+    let (mut server, a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    a.push(&mut server);
+    let entries = server.log.iter().filter(|(_, doc, _)| doc.starts_with(PREFIX)).cloned().collect();
+    b.receive(entries, server.head);
+    let copy = serde_json::from_value(json!({"id": "new", "kind": "cloze", "front": "x", "back": "x", "section": []})).unwrap();
+    assert_eq!(sync_cards(&b.db, "m1".into(), vec![copy]).unwrap(), vec!["new"]);
 }

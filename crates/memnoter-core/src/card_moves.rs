@@ -2,8 +2,12 @@
 //!
 //! Each move is its own Yjs document, synced as "r-lineage-<op>". Released
 //! apps store it without reading it: it has no "cards" or "log" rows of the
-//! kind they apply. Owner, schedule and log are computed from the merged set
-//! of moves, so the order in which devices receive them does not matter.
+//! kind they apply. Schedule and log are computed from the merged set of
+//! moves, so the order in which devices receive them does not matter.
+//!
+//! Moves only go forward, to ids that were never used. The newest card of a
+//! chain that is live in the text holds the history, so undoing a paste and
+//! its cut gives it back without another move.
 //!
 //! Maps: "move" holds the immutable description, "carried" the review rows
 //! known when the card moved (and late ones of the old id), "own" the rows
@@ -25,7 +29,11 @@ pub(crate) fn migrate(conn: &Connection) -> CommandResult<()> {
         "create table if not exists card_moves (op TEXT PRIMARY KEY, doc BLOB NOT NULL);
          create table if not exists card_move_ends (card_id TEXT NOT NULL, op TEXT NOT NULL, module_id TEXT NOT NULL, PRIMARY KEY(card_id, op));
          create index if not exists card_move_ends_module on card_move_ends(module_id);
-         create table if not exists card_move_seen (card_id TEXT PRIMARY KEY);",
+         -- Notes whose text changed after their cards were last indexed.
+         create table if not exists card_stale_modules (module_id TEXT PRIMARY KEY REFERENCES modules(id) ON DELETE CASCADE);
+         create trigger if not exists card_stale_on_update after insert on contents_updates begin
+             insert or ignore into card_stale_modules (module_id) values (new.module_id);
+         end;",
     )
     .map_err(db_err)
 }
@@ -77,8 +85,38 @@ fn read(conn: &Connection, op: &str) -> CommandResult<Doc> {
     Ok(doc)
 }
 
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct Schedule {
+    due_at: i64,
+    stability: f64,
+    stability_fast: f64,
+    difficulty: f64,
+    scheduled_days: f64,
+    learning_step: i64,
+    state: i64,
+    schedule_status: String,
+    last_review_at: Option<i64>,
+    reps: i64,
+    lapses: i64,
+    fsrs_model: Option<String>,
+}
+
+// Synced data is written to strict columns, where one bad value would fail
+// every later sync.
+fn valid_state(state: &str) -> bool {
+    serde_json::from_str::<Schedule>(state).is_ok()
+}
+
+fn state_of(doc: &Doc, map: &str) -> Option<String> {
+    entries(doc, map)
+        .remove("state")
+        .filter(|state| valid_state(state))
+}
+
 fn meta_of(doc: &Doc) -> Option<Meta> {
-    serde_json::from_str(entries(doc, "move").get("meta")?).ok()
+    let meta: Meta = serde_json::from_str(entries(doc, "move").get("meta")?).ok()?;
+    valid_state(&meta.state).then_some(meta)
 }
 
 fn store(conn: &Connection, op: &str, doc: &Doc) -> CommandResult<()> {
@@ -167,17 +205,6 @@ struct Path {
 }
 
 fn paths(nodes: &BTreeMap<String, Node>) -> Vec<Path> {
-    // Where a chain started, following recorded predecessors.
-    let start = |op: &str| {
-        let mut node = &nodes[op];
-        for _ in 0..nodes.len() {
-            match node.meta.prev.as_ref().and_then(|prev| nodes.get(prev)) {
-                Some(prev) => node = prev,
-                None => break,
-            }
-        }
-        node.meta.from.as_str()
-    };
     // Groups moves that compete for one predecessor. A device can move a card
     // on before it hears how that card got there, so `prev` may be unset.
     let mut children: BTreeMap<String, Vec<&str>> = BTreeMap::new();
@@ -190,8 +217,6 @@ fn paths(nodes: &BTreeMap<String, Node>) -> Vec<Path> {
                 .find(|(other, candidate)| {
                     *other != op
                         && candidate.meta.to == node.meta.from
-                        // A chain that led back here is not how the card got here.
-                        && start(other) != node.meta.from
                 })
                 .map(|(other, _)| other.clone()),
         };
@@ -252,12 +277,43 @@ fn owner<'a>(nodes: &'a BTreeMap<String, Node>, path: &Path) -> &'a str {
     &nodes[path.ops.last().unwrap()].meta.to
 }
 
-// The move that currently makes this card the owner of a history.
-fn owning_op(nodes: &BTreeMap<String, Node>, card: &str) -> Option<String> {
+// The cards of a path, newest first.
+fn cards_of<'a>(nodes: &'a BTreeMap<String, Node>, path: &Path) -> Vec<&'a str> {
+    let moved = path.ops.iter().rev().map(|op| nodes[op].meta.to.as_str());
+    let original = path
+        .inherits
+        .then(|| nodes[&path.ops[0]].meta.from.as_str());
+    moved.chain(original).collect()
+}
+
+fn path_of(nodes: &BTreeMap<String, Node>, card: &str) -> Option<Path> {
     paths(nodes)
-        .iter()
-        .find(|path| owner(nodes, path) == card)
-        .and_then(|path| path.ops.last().cloned())
+        .into_iter()
+        .find(|path| cards_of(nodes, path).contains(&card))
+}
+
+fn live_in(conn: &Connection, card: &str) -> CommandResult<Option<String>> {
+    conn.query_row(
+        "select module_id from cards where id = ?1 and deleted_at is null",
+        [card],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(db_err)
+}
+
+// The card that holds a path's history here.
+fn holder<'a>(
+    conn: &Connection,
+    nodes: &'a BTreeMap<String, Node>,
+    path: &Path,
+) -> CommandResult<&'a str> {
+    for card in cards_of(nodes, path) {
+        if live_in(conn, card)?.is_some() {
+            return Ok(card);
+        }
+    }
+    Ok(owner(nodes, path))
 }
 
 fn row_state(conn: &Connection, card: &str) -> CommandResult<Option<String>> {
@@ -324,6 +380,9 @@ fn ordinary(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<
     for module in modules {
         let doc = load_doc(conn, &review_doc_id(module))?;
         for (card, state) in string_entries(&doc, "cards") {
+            if !valid_state(&state) {
+                continue;
+            }
             let here = nodes.values().any(|node| {
                 (node.meta.from == card && node.meta.from_module == *module)
                     || (node.meta.to == card && node.meta.to_module == *module)
@@ -345,7 +404,7 @@ fn ordinary(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<
     Ok(found)
 }
 
-fn card_of(row: &str) -> Option<String> {
+pub(crate) fn card_of(row: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(row)
         .ok()?
         .get("card_id")?
@@ -354,9 +413,10 @@ fn card_of(row: &str) -> Option<String> {
 }
 
 // Copies late reviews of these cards into the moves, where they survive the
-// deletion of the note they were made in. Only for review data that has just
-// arrived: an older copy must not replace what another device already saw.
-pub(crate) fn fold(conn: &Connection, card: &str) -> CommandResult<()> {
+// deletion of the note they were made in. An older copy must not replace the
+// schedule another device already saw, so unless the review data has just
+// arrived it only fills in a missing one.
+pub(crate) fn fold(conn: &Connection, card: &str, arrived: bool) -> CommandResult<()> {
     let nodes = component(conn, card)?;
     let found = ordinary(conn, &nodes)?;
     let known: BTreeSet<String> = nodes
@@ -371,7 +431,8 @@ pub(crate) fn fold(conn: &Connection, card: &str) -> CommandResult<()> {
         let mut rows: Vec<(String, String, String, String)> = Vec::new();
         if path.inherits && node.meta.prev.is_none() {
             if let Some(state) = found.states.get(&node.meta.from) {
-                if *state != node.meta.state {
+                let missing = !entries(&node.doc, "pred").contains_key("state");
+                if *state != node.meta.state && (arrived || missing) {
                     rows.push((first.clone(), "pred".into(), "state".into(), state.clone()));
                 }
             }
@@ -411,12 +472,31 @@ pub(crate) fn fold(conn: &Connection, card: &str) -> CommandResult<()> {
 }
 
 // Writes the owner, schedule and log that the moves add up to.
-pub(crate) fn materialize(conn: &Connection, card: &str) -> CommandResult<bool> {
-    let nodes = component(conn, card)?;
+pub(crate) fn materialize(
+    conn: &Connection,
+    cards: impl IntoIterator<Item = String>,
+) -> CommandResult<bool> {
+    let mut done = BTreeSet::new();
+    let mut changed = false;
+    for card in cards {
+        if done.contains(&card) {
+            continue;
+        }
+        let nodes = component(conn, &card)?;
+        for node in nodes.values() {
+            done.insert(node.meta.from.clone());
+            done.insert(node.meta.to.clone());
+        }
+        changed |= apply(conn, &nodes)?;
+    }
+    Ok(changed)
+}
+
+fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<bool> {
     if nodes.is_empty() {
         return Ok(false);
     }
-    let found = ordinary(conn, &nodes)?;
+    let found = ordinary(conn, nodes)?;
     let mut gone = found.gone.clone();
     let mut own_anywhere = BTreeSet::new();
     for node in nodes.values() {
@@ -428,11 +508,25 @@ pub(crate) fn materialize(conn: &Connection, card: &str) -> CommandResult<bool> 
         .flat_map(|node| entries(&node.doc, "carried").into_keys())
         .collect();
     let mut changed = false;
-    let paths = paths(&nodes);
-    let originals = originals(&nodes, &paths);
-    let owners: BTreeSet<&str> = paths.iter().map(|path| owner(&nodes, path)).collect();
+    let paths = paths(nodes);
+    let originals = originals(nodes, &paths);
+    let mut holders = BTreeSet::new();
     for path in &paths {
-        let current = owner(&nodes, path);
+        let current = holder(conn, nodes, path)?;
+        holders.insert(current);
+        // An older card that is live as well gets its new id when its note is
+        // indexed again.
+        if let Some(home) = live_in(conn, current)? {
+            if !stale(conn, &home)? {
+                for card in cards_of(nodes, path).into_iter().filter(|card| *card != current) {
+                    conn.execute(
+                        "delete from card_indexed_modules where module_id in (select module_id from cards where id = ?1 and deleted_at is null)",
+                        [card],
+                    )
+                    .map_err(db_err)?;
+                }
+            }
+        }
         let first = &nodes[&path.ops[0]];
         let mut rows = BTreeMap::new();
         for op in &path.ops {
@@ -445,8 +539,6 @@ pub(crate) fn materialize(conn: &Connection, card: &str) -> CommandResult<bool> 
         }
         for (id, row) in &found.logs {
             let card = card_of(row).unwrap_or_default();
-            // A losing move may lead back to the original card; its rows stay
-            // with the winner.
             let here = if originals.contains(&card) {
                 path.inherits && card == first.meta.from
             } else {
@@ -461,13 +553,15 @@ pub(crate) fn materialize(conn: &Connection, card: &str) -> CommandResult<bool> 
             .ops
             .iter()
             .rev()
-            .find_map(|op| entries(&nodes[op].doc, "state").remove("state"))
+            .find_map(|op| state_of(&nodes[op].doc, "state"))
             .or_else(|| {
                 path.inherits.then(|| {
-                    (first.meta.prev.is_none())
-                        .then(|| found.states.get(&first.meta.from).cloned())
-                        .flatten()
-                        .or_else(|| entries(&first.doc, "pred").remove("state"))
+                    state_of(&first.doc, "pred")
+                        .or_else(|| {
+                            (first.meta.prev.is_none())
+                                .then(|| found.states.get(&first.meta.from).cloned())
+                                .flatten()
+                        })
                         .unwrap_or_else(|| first.meta.state.clone())
                 })
             });
@@ -502,7 +596,7 @@ pub(crate) fn materialize(conn: &Connection, card: &str) -> CommandResult<bool> 
     }
     for node in nodes.values() {
         for card in [&node.meta.from, &node.meta.to] {
-            if !owners.contains(card.as_str()) {
+            if !holders.contains(card.as_str()) {
                 changed |= reset(conn, card)?;
             }
         }
@@ -525,9 +619,13 @@ pub(crate) fn record(
     removed: Option<&str>,
 ) -> CommandResult<()> {
     let nodes = component(conn, card)?;
-    let Some(op) = owning_op(&nodes, card) else {
+    let Some(path) = path_of(&nodes, card) else {
         return Ok(());
     };
+    if holder(conn, &nodes, &path)? != card {
+        return Ok(());
+    }
+    let op = path.ops.last().unwrap();
     let mut rows = vec![("state", "state", state)];
     if let Some((id, row)) = added {
         rows.push(("own", id, row));
@@ -535,16 +633,20 @@ pub(crate) fn record(
     if let Some(id) = removed {
         rows.push(("gone", id, "1"));
     }
-    write(conn, &op, &nodes[&op].doc, &rows)
+    write(conn, op, &nodes[op].doc, &rows)
 }
 
 // Merges a received move. Returns its cards, or None if it is not complete.
 pub(crate) fn receive(conn: &Connection, op: &str, updates: &[Vec<u8>]) -> CommandResult<Option<String>> {
     let doc = read(conn, op)?;
     for bytes in updates {
-        doc.transact_mut()
-            .apply_update(Update::decode_v1(bytes).map_err(db_err)?)
-            .map_err(db_err)?;
+        let applied = Update::decode_v1(bytes)
+            .map_err(db_err)
+            .and_then(|update| doc.transact_mut().apply_update(update).map_err(db_err));
+        // One bad move must not stop the rest of the vault from syncing.
+        if let Err(error) = applied {
+            eprintln!("Skipped a malformed update of card move {op}: {error}");
+        }
     }
     store(conn, op, &doc)?;
     Ok(meta_of(&doc).map(|meta| meta.from))
@@ -574,65 +676,56 @@ pub(crate) fn cards_in(conn: &Connection, module: &str) -> CommandResult<BTreeSe
     rows.collect::<rusqlite::Result<_>>().map_err(db_err)
 }
 
-#[derive(PartialEq)]
-pub(crate) enum Indexing {
-    Normal,
-    // Its history lives on in another card, so this block needs a new id.
-    Renew,
-    // The paste that took its history has not been indexed here yet.
-    Wait,
+fn stale(conn: &Connection, module: &str) -> CommandResult<bool> {
+    conn.query_row(
+        "select exists(select 1 from card_stale_modules where module_id = ?1)",
+        [module],
+        |r| r.get(0),
+    )
+    .map_err(db_err)
 }
 
-// A card is in a note's text. If its history has moved away, decides whose it
-// is: undoing a paste and its cut gives it back.
-pub(crate) fn index(conn: &Connection, module: &str, card: &str) -> CommandResult<Indexing> {
+pub(crate) fn indexed(conn: &Connection, module: &str) -> CommandResult<()> {
+    conn.execute("delete from card_stale_modules where module_id = ?1", [module])
+        .map(|_| ())
+        .map_err(db_err)
+}
+
+// Whether a card in a note's text must get a new id, because its history is
+// held by another card. `snapshot` is every card in that text: one of them
+// missing from it is not live any more.
+pub(crate) fn renews(
+    conn: &Connection,
+    module: &str,
+    card: &str,
+    snapshot: &BTreeSet<&str>,
+) -> CommandResult<bool> {
     let nodes = component(conn, card)?;
-    if nodes.is_empty() {
-        return Ok(Indexing::Normal);
+    let Some(path) = path_of(&nodes, card) else {
+        return Ok(false);
+    };
+    // The paste itself has not been indexed here, so this is a copy of it.
+    let elsewhere = nodes
+        .values()
+        .any(|node| node.meta.to == card && node.meta.to_module != module);
+    if elsewhere && row_state(conn, card)?.is_none() {
+        return Ok(true);
     }
-    if owning_op(&nodes, card).is_some() {
-        conn.execute("insert or ignore into card_move_seen (card_id) values (?1)", [card])
-            .map_err(db_err)?;
-        return Ok(Indexing::Normal);
+    for newer in cards_of(&nodes, &path) {
+        if newer == card {
+            break;
+        }
+        let live = match live_in(conn, newer)? {
+            // That note may just have lost the card, as when a paste and its
+            // cut are undone. Indexing it settles which of the two this is.
+            Some(home) if home != module => !stale(conn, &home)?,
+            _ => snapshot.contains(newer),
+        };
+        if live {
+            return Ok(true);
+        }
     }
-    let path = paths(&nodes)
-        .into_iter()
-        .find(|path| {
-            path.ops.iter().any(|op| nodes[op].meta.to == card)
-                || (path.inherits && nodes[&path.ops[0]].meta.from == card)
-        })
-        .ok_or("Card move without an owner")?;
-    let current = owner(&nodes, &path);
-    let live: bool = conn
-        .query_row(
-            "select exists(select 1 from cards where id = ?1 and deleted_at is null)",
-            [current],
-            |r| r.get(0),
-        )
-        .map_err(db_err)?;
-    if live {
-        return Ok(Indexing::Renew);
-    }
-    let seen: bool = conn
-        .query_row(
-            "select exists(select 1 from card_move_seen where card_id = ?1)",
-            [current],
-            |r| r.get(0),
-        )
-        .map_err(db_err)?;
-    if !seen {
-        return Ok(Indexing::Wait);
-    }
-    // Devices that see the same undo record the same move.
-    let last = path.ops.last().unwrap();
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(format!("{last}\n{card}"));
-    let op = uuid::Uuid::from_slice(&digest[..16]).map_err(db_err)?.to_string();
-    let from = current.to_string();
-    append(conn, &op, &from, card, module, Some(last.clone()))?;
-    conn.execute("insert or ignore into card_move_seen (card_id) values (?1)", [card])
-        .map_err(db_err)?;
-    Ok(Indexing::Normal)
+    Ok(false)
 }
 
 fn append(
@@ -716,9 +809,21 @@ pub(crate) fn transfer(
         return Ok(Transfer::SourceMissing);
     }
     let nodes = component(tx, from)?;
-    let prev = owning_op(&nodes, from);
-    if prev.is_none() && !nodes.is_empty() {
-        return Ok(Transfer::SourceMissing);
+    let mut prev = None;
+    if !nodes.is_empty() {
+        let Some(path) = path_of(&nodes, from) else {
+            return Ok(Transfer::SourceMissing);
+        };
+        for newer in cards_of(&nodes, &path) {
+            if newer == from {
+                break;
+            }
+            if live_in(tx, newer)?.is_some() {
+                return Ok(Transfer::SourceMissing);
+            }
+        }
+        // After undo, the original is cut again.
+        prev = path.ops.last().cloned();
     }
     let module: bool = tx
         .query_row("select exists(select 1 from modules where id = ?1)", [to_module], |r| r.get(0))
@@ -726,6 +831,7 @@ pub(crate) fn transfer(
     if !module || from == to || row_state(tx, to)?.is_some() || involved(tx, to)? {
         return Ok(Transfer::DestinationTaken);
     }
+    materialize(tx, [from.to_string()])?;
     append(tx, op, from, to, to_module, prev)?;
     let now = chrono::Utc::now().timestamp_millis();
     tx.execute(
@@ -739,7 +845,7 @@ pub(crate) fn transfer(
         params![from, now],
     )
     .map_err(db_err)?;
-    materialize(tx, from)?;
+    materialize(tx, [from.to_string()])?;
     Ok(Transfer::Moved)
 }
 

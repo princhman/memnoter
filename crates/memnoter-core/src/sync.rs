@@ -660,20 +660,12 @@ fn apply_review_doc(conn: &Connection, doc: &Doc) -> CommandResult<bool> {
                 .map_err(db_err)?;
             continue;
         }
-        let Some(card_id) = log_card(&row) else { continue };
+        let Some(card_id) = crate::card_moves::card_of(&row) else { continue };
         if !crate::card_moves::involved(conn, &card_id)? {
             insert_log(conn, &sync_id, &row, &card_id)?;
         }
     }
     Ok(changed)
-}
-
-fn log_card(row: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(row)
-        .ok()?
-        .get("card_id")?
-        .as_str()
-        .map(str::to_string)
 }
 
 // Adds a synced log row to the card, if this device has the card.
@@ -703,9 +695,8 @@ pub(crate) fn insert_log(
 // After a note's cards were (re)indexed, gives new card rows their synced
 // review state.
 pub fn apply_reviews(conn: &Connection, module_id: &str) -> CommandResult<()> {
-    for card in crate::card_moves::cards_in(conn, module_id)? {
-        crate::card_moves::materialize(conn, &card)?;
-    }
+    let moved = crate::card_moves::cards_in(conn, module_id)?;
+    crate::card_moves::materialize(conn, moved)?;
     if !is_enabled(conn)? {
         return Ok(());
     }
@@ -1289,8 +1280,9 @@ pub(crate) fn apply_remote(
         moves.entry(op).or_default().push(entry.bytes);
     }
     let mut moved_cards = HashSet::new();
+    let mut received = HashSet::new();
     for (op, updates) in moves {
-        moved_cards.extend(crate::card_moves::receive(&tx, &op, &updates)?);
+        received.extend(crate::card_moves::receive(&tx, &op, &updates)?);
     }
     let mut reviews: BTreeMap<String, Vec<RemoteEntry>> = BTreeMap::new();
     for entry in review_entries {
@@ -1312,13 +1304,15 @@ pub(crate) fn apply_remote(
         save_doc(&tx, &doc_id, &doc)?;
         result.reviews_changed |= apply_review_doc(&tx, &doc)?;
         for card in crate::card_moves::cards_in(&tx, module_id)? {
-            crate::card_moves::fold(&tx, &card)?;
+            crate::card_moves::fold(&tx, &card, true)?;
             moved_cards.insert(card);
         }
     }
-    for card in moved_cards {
-        result.reviews_changed |= crate::card_moves::materialize(&tx, &card)?;
+    for card in &received {
+        crate::card_moves::fold(&tx, card, false)?;
     }
+    moved_cards.extend(received);
+    result.reviews_changed |= crate::card_moves::materialize(&tx, moved_cards)?;
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
     for module_id in &touched {
