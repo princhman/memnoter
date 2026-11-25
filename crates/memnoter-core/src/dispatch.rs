@@ -61,6 +61,7 @@ commands! { core;
     unindexed_modules(version: i64) => crate::unindexed_modules(&core.db, version);
     search_notes(query: String, limit: i64) => crate::search_notes(&core.db, query, limit);
     sync_cards(module_id: String, cards: Vec<CardContent>) => crate::cards::sync_cards(&core.db, module_id, cards);
+    transfer_card(op: String, from: String, to: String, to_module: String) => crate::card_moves::transfer_card(&core.db, op, from, to, to_module);
     due_cards(module_id: Option<String>, now: i64, created_at_cutoff: Option<i64>) => crate::cards::due_cards(&core.db, module_id, now, created_at_cutoff);
     card_schedules(module_id: String) => crate::cards::card_schedules(&core.db, module_id);
     due_counts(now: i64, day_end: i64, created_at_cutoff: Option<i64>) => crate::cards::due_counts(&core.db, now, day_end, created_at_cutoff);

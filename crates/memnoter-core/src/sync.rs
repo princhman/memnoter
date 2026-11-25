@@ -52,10 +52,10 @@ fn json_object_sql(fields: &[&str]) -> String {
             .join(", ")
     )
 }
-fn card_state_json() -> String {
+pub(crate) fn card_state_json() -> String {
     json_object_sql(crate::cards::CARD_STATE_FIELDS)
 }
-fn log_json() -> String {
+pub(crate) fn log_json() -> String {
     let mut fields = vec![
         "card_id",
         "rating",
@@ -529,7 +529,9 @@ pub fn record_review(
     added_log: Option<i64>,
     removed_log: Option<&str>,
 ) -> CommandResult<bool> {
-    if !is_enabled(conn)? {
+    let moved = crate::card_moves::involved(conn, card_id)?;
+    let enabled = is_enabled(conn)?;
+    if !enabled && !moved {
         return Ok(false);
     }
     let (module_id, state): (String, String) = conn
@@ -556,6 +558,12 @@ pub fn record_review(
         ),
         None => None,
     };
+    if moved {
+        crate::card_moves::record(conn, card_id, &state, added.as_ref(), removed_log)?;
+        if !enabled {
+            return Ok(false);
+        }
+    }
     let doc_id = review_doc_id(&module_id);
     let doc = load_doc(conn, &doc_id)?;
     let cards = doc.get_or_insert_map(REVIEW_CARDS_MAP);
@@ -576,7 +584,7 @@ pub fn record_review(
     Ok(true)
 }
 
-fn load_doc(conn: &Connection, doc_id: &str) -> CommandResult<Doc> {
+pub(crate) fn load_doc(conn: &Connection, doc_id: &str) -> CommandResult<Doc> {
     let doc = Doc::new();
     let state: Option<Vec<u8>> = conn
         .query_row(
@@ -606,7 +614,7 @@ fn save_doc(conn: &Connection, doc_id: &str, doc: &Doc) -> CommandResult<()> {
     .map_err(db_err)
 }
 
-fn string_entries(doc: &Doc, map_name: &str) -> Vec<(String, String)> {
+pub(crate) fn string_entries(doc: &Doc, map_name: &str) -> Vec<(String, String)> {
     let map = doc.get_or_insert_map(map_name);
     let txn = doc.transact();
     map.iter(&txn)
@@ -628,6 +636,10 @@ fn string_entries(doc: &Doc, map_name: &str) -> Vec<(String, String)> {
 fn apply_review_doc(conn: &Connection, doc: &Doc) -> CommandResult<bool> {
     let mut changed = false;
     for (card_id, state) in string_entries(doc, REVIEW_CARDS_MAP) {
+        // A moved card's schedule and log come from its moves.
+        if crate::card_moves::involved(conn, &card_id)? {
+            continue;
+        }
         changed |= conn
             .execute(
                 &format!("update cards set {}
@@ -648,28 +660,52 @@ fn apply_review_doc(conn: &Connection, doc: &Doc) -> CommandResult<bool> {
                 .map_err(db_err)?;
             continue;
         }
-        conn.execute(
-            "insert or ignore into review_log (sync_id, card_id, rating, review_time, duration_ms,
-                 fsrs_model, state, schedule_status, due_at, last_review_at, stability,
-                 stability_fast, difficulty, scheduled_days, learning_step)
-             select ?1, json_extract(?2, '$.card_id'), json_extract(?2, '$.rating'),
-                 json_extract(?2, '$.review_time'), json_extract(?2, '$.duration_ms'),
-                 json_extract(?2, '$.fsrs_model'), json_extract(?2, '$.state'),
-                 json_extract(?2, '$.schedule_status'), json_extract(?2, '$.due_at'),
-                 json_extract(?2, '$.last_review_at'), json_extract(?2, '$.stability'),
-                 json_extract(?2, '$.stability_fast'), json_extract(?2, '$.difficulty'),
-                 json_extract(?2, '$.scheduled_days'), json_extract(?2, '$.learning_step')
-             where exists (select 1 from cards where id = json_extract(?2, '$.card_id'))",
-            params![sync_id, row],
-        )
-        .map_err(db_err)?;
+        let Some(card_id) = log_card(&row) else { continue };
+        if !crate::card_moves::involved(conn, &card_id)? {
+            insert_log(conn, &sync_id, &row, &card_id)?;
+        }
     }
     Ok(changed)
+}
+
+fn log_card(row: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(row)
+        .ok()?
+        .get("card_id")?
+        .as_str()
+        .map(str::to_string)
+}
+
+// Adds a synced log row to the card, if this device has the card.
+pub(crate) fn insert_log(
+    conn: &Connection,
+    sync_id: &str,
+    row: &str,
+    card_id: &str,
+) -> CommandResult<usize> {
+    conn.execute(
+        "insert or ignore into review_log (sync_id, card_id, rating, review_time, duration_ms,
+             fsrs_model, state, schedule_status, due_at, last_review_at, stability,
+             stability_fast, difficulty, scheduled_days, learning_step)
+         select ?1, ?3, json_extract(?2, '$.rating'),
+             json_extract(?2, '$.review_time'), json_extract(?2, '$.duration_ms'),
+             json_extract(?2, '$.fsrs_model'), json_extract(?2, '$.state'),
+             json_extract(?2, '$.schedule_status'), json_extract(?2, '$.due_at'),
+             json_extract(?2, '$.last_review_at'), json_extract(?2, '$.stability'),
+             json_extract(?2, '$.stability_fast'), json_extract(?2, '$.difficulty'),
+             json_extract(?2, '$.scheduled_days'), json_extract(?2, '$.learning_step')
+         where exists (select 1 from cards where id = ?3)",
+        params![sync_id, row, card_id],
+    )
+    .map_err(db_err)
 }
 
 // After a note's cards were (re)indexed, gives new card rows their synced
 // review state.
 pub fn apply_reviews(conn: &Connection, module_id: &str) -> CommandResult<()> {
+    for card in crate::card_moves::cards_in(conn, module_id)? {
+        crate::card_moves::materialize(conn, &card)?;
+    }
     if !is_enabled(conn)? {
         return Ok(());
     }
@@ -926,7 +962,8 @@ fn seed(conn: &Connection) -> CommandResult<()> {
         [],
     )
     .map_err(db_err)?;
-    seed_reviews(conn, &modules)
+    seed_reviews(conn, &modules)?;
+    crate::card_moves::seed(conn)
 }
 
 fn seed_reviews(conn: &Connection, modules: &[(String, String)]) -> CommandResult<()> {
@@ -1016,29 +1053,29 @@ pub struct SyncStatus {
 #[derive(Debug, serde::Serialize)]
 pub struct OutboxEntry {
     id: i64,
-    doc: String,
-    bytes: Vec<u8>,
+    pub(crate) doc: String,
+    pub(crate) bytes: Vec<u8>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 pub struct RemoteEntry {
     // Sent by the frontend; the cursor is passed separately.
-    seq: i64,
-    doc: String,
-    bytes: Vec<u8>,
+    pub(crate) seq: i64,
+    pub(crate) doc: String,
+    pub(crate) bytes: Vec<u8>,
 }
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteUpdate {
-    module_id: String,
-    update: ContentUpdate,
+    pub(crate) module_id: String,
+    pub(crate) update: ContentUpdate,
 }
 
 #[derive(Debug, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyResult {
-    updates: Vec<RemoteUpdate>,
+    pub(crate) updates: Vec<RemoteUpdate>,
     modules_changed: bool,
     pub deleted: Vec<String>,
     reviews_changed: bool,
@@ -1073,7 +1110,7 @@ fn account_identity(raw: &str) -> String {
     }
 }
 
-fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
+pub(crate) fn enable(conn: &mut Connection, account: &str) -> CommandResult<()> {
     let tx = conn.transaction().map_err(db_err)?;
     let was_enabled = is_enabled(&tx)?;
     set_value(&tx, "account", account_identity(account))?;
@@ -1123,7 +1160,7 @@ pub(crate) fn reconcile_restored_account(
     tx.commit().map_err(db_err)
 }
 
-fn disable(conn: &Connection) -> CommandResult<()> {
+pub(crate) fn disable(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(
         "delete from sync_outbox; delete from sync_state; delete from sync_docs; delete from sync_file_uploads; delete from sync_file_deletes;",
     )
@@ -1131,7 +1168,7 @@ fn disable(conn: &Connection) -> CommandResult<()> {
     rotate_generation(conn)
 }
 
-fn outbox(conn: &Connection, limit_bytes: i64) -> CommandResult<Vec<OutboxEntry>> {
+pub(crate) fn outbox(conn: &Connection, limit_bytes: i64) -> CommandResult<Vec<OutboxEntry>> {
     // Oldest first, stopping once the running total passes the limit, but
     // always at least one entry.
     let mut stmt = conn
@@ -1154,7 +1191,7 @@ fn outbox(conn: &Connection, limit_bytes: i64) -> CommandResult<Vec<OutboxEntry>
     rows.collect::<rusqlite::Result<_>>().map_err(db_err)
 }
 
-fn apply_remote(
+pub(crate) fn apply_remote(
     conn: &mut Connection,
     files_dir: &Path,
     entries: Vec<RemoteEntry>,
@@ -1243,6 +1280,18 @@ fn apply_remote(
             Err(_) => {} // Future roots/fields remain opaque and quarantined.
         }
     }
+    let (move_entries, review_entries): (Vec<_>, Vec<_>) = review_entries
+        .into_iter()
+        .partition(|entry| entry.doc.starts_with(crate::card_moves::PREFIX));
+    let mut moves: BTreeMap<String, Vec<Vec<u8>>> = BTreeMap::new();
+    for entry in move_entries {
+        let op = entry.doc[crate::card_moves::PREFIX.len()..].to_string();
+        moves.entry(op).or_default().push(entry.bytes);
+    }
+    let mut moved_cards = HashSet::new();
+    for (op, updates) in moves {
+        moved_cards.extend(crate::card_moves::receive(&tx, &op, &updates)?);
+    }
     let mut reviews: BTreeMap<String, Vec<RemoteEntry>> = BTreeMap::new();
     for entry in review_entries {
         reviews.entry(entry.doc.clone()).or_default().push(entry);
@@ -1262,6 +1311,13 @@ fn apply_remote(
         }
         save_doc(&tx, &doc_id, &doc)?;
         result.reviews_changed |= apply_review_doc(&tx, &doc)?;
+        for card in crate::card_moves::cards_in(&tx, module_id)? {
+            crate::card_moves::fold(&tx, &card)?;
+            moved_cards.insert(card);
+        }
+    }
+    for card in moved_cards {
+        result.reviews_changed |= crate::card_moves::materialize(&tx, &card)?;
     }
     result.files_changed = !vault_entries.is_empty() && !missing_files(&tx)?.is_empty();
 
@@ -1277,13 +1333,16 @@ fn apply_remote(
     Ok(result)
 }
 
-fn snapshot(conn: &Connection, doc_id: &str) -> CommandResult<Option<Vec<u8>>> {
+pub(crate) fn snapshot(conn: &Connection, doc_id: &str) -> CommandResult<Option<Vec<u8>>> {
     if doc_id == VAULT_DOC {
         let doc = load_vault(conn)?;
         return Ok(Some(
             doc.transact()
                 .encode_state_as_update_v1(&StateVector::default()),
         ));
+    }
+    if let Some(op) = doc_id.strip_prefix(crate::card_moves::PREFIX) {
+        return crate::card_moves::snapshot(conn, op);
     }
     if doc_id.starts_with(REVIEW_PREFIX) {
         return conn

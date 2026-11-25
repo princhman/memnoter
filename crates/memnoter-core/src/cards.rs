@@ -236,6 +236,17 @@ fn sync_module_cards(
             )
             .map_err(db_err)?;
         for card in cards {
+            match crate::card_moves::index(&tx, module_id, &card.id)? {
+                crate::card_moves::Indexing::Normal => {}
+                crate::card_moves::Indexing::Renew => {
+                    conflicts.push(card.id.clone());
+                    continue;
+                }
+                crate::card_moves::Indexing::Wait => {
+                    unavailable.push(card.id.clone());
+                    continue;
+                }
+            }
             if card.kind == "occlusion" {
                 let front_id =
                     crate::files::assets::card_image(&card.kind, &card.front, &card.back);
