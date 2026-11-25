@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 POLICY = Path(__file__).resolve().parents[1] / 'ci/select-checks.py'
-FULL = {'frontend', 'rust', 'browser', 'benchmark', 'sync', 'ios'}
+FULL = {'frontend', 'rust', 'browser', 'benchmark', 'sync'}
 
 
 class SelectionTests(unittest.TestCase):
@@ -62,16 +62,16 @@ class SelectionTests(unittest.TestCase):
             '.codex/config.toml': set(), 'scripts/agent-hooks/run.sh': set(),
             'apps/marketing/src/page.ts': {'frontend'},
             'apps/desktop/src/lib.rs': {'frontend', 'rust'},
-            'apps/ios/Sources/Screen.swift': {'frontend', 'ios'},
-            'apps/apple-shared/DrawingDocument.swift': {'frontend', 'ios'},
-            'apps/shared-ui/src/components/Editor.tsx': {'frontend', 'browser', 'benchmark', 'ios'},
-            'apps/shared-ui/public/help.md': {'frontend', 'browser', 'benchmark', 'ios'},
-            'apps/shared-ui/vite.config.ts': {'frontend', 'browser', 'benchmark', 'ios'},
+            'apps/ios/Sources/Screen.swift': {'frontend'},
+            'apps/apple-shared/DrawingDocument.swift': {'frontend'},
+            'apps/shared-ui/src/components/Editor.tsx': {'frontend', 'browser', 'benchmark'},
+            'apps/shared-ui/public/help.md': {'frontend', 'browser', 'benchmark'},
+            'apps/shared-ui/vite.config.ts': {'frontend', 'browser', 'benchmark'},
             'apps/shared-ui/tests/editor.test.mjs': {'browser'},
             'apps/shared-ui/tests/copy-large-note.bench.mjs': {'benchmark'},
             'apps/shared-ui/tests/support/fixture.html': {'browser', 'benchmark'},
             'apps/shared-ui/tests/fixtures/shared-images-yjs.json': {'browser', 'benchmark', 'rust'},
-            'apps/sync/test/fixtures/protocol.json': {'frontend', 'browser', 'sync', 'ios', 'rust'},
+            'apps/sync/test/fixtures/protocol.json': {'frontend', 'browser', 'sync', 'rust'},
             'crates/memnoter-ffi/src/lib.rs': FULL,
             'patches/history.patch': FULL, 'pnpm-lock.yaml': FULL,
             'package.json': FULL, 'Cargo.toml': FULL,
@@ -92,7 +92,7 @@ class SelectionTests(unittest.TestCase):
         (self.repo / 'docs').mkdir()
         self.git('mv', 'apps/shared-ui/public/content\nfile.md', 'docs/moved.md')
         self.git('commit', '-qm', 'move')
-        self.assertEqual(self.classify(), {'frontend', 'browser', 'benchmark', 'ios'})
+        self.assertEqual(self.classify(), {'frontend', 'browser', 'benchmark'})
         self.base = self.git('rev-parse', 'HEAD').stdout.strip()
         self.git('rm', 'docs/moved.md')
         self.git('commit', '-qm', 'delete docs')
@@ -101,7 +101,7 @@ class SelectionTests(unittest.TestCase):
         self.base = self.git('rev-parse', 'HEAD').stdout.strip()
         self.git('rm', 'apps/ios/Tests/Native.swift')
         self.git('commit', '-qm', 'delete native test')
-        self.assertEqual(self.classify(), {'frontend', 'ios'})
+        self.assertEqual(self.classify(), {'frontend'})
 
     def test_pr_merge_base_and_push_before_are_distinct(self):
         self.git('branch', 'feature')
@@ -135,7 +135,7 @@ class GateTests(unittest.TestCase):
             outputs.pop(missing)
         outputs.update(override or {})
         needs = {'changes': {'result': 'success', 'outputs': outputs}}
-        for job in ('frontend', 'rust', 'web', 'sync-server', 'ios-build', 'ios-build-started', 'ios-tests'):
+        for job in ('frontend', 'rust', 'web', 'sync-server'):
             needs[job] = {'result': 'success' if selected else 'skipped'}
         if bad_job:
             needs[bad_job]['result'] = state
@@ -143,8 +143,7 @@ class GateTests(unittest.TestCase):
                               text=True, env={**os.environ, 'NEEDS': json.dumps(needs)})
 
     def test_selected_jobs_require_success_and_unselected_jobs_can_skip(self):
-        for kind, jobs in [('check', ('frontend', 'rust', 'web', 'sync-server')),
-                           ('ios', ('frontend', 'ios-build', 'ios-build-started', 'ios-tests'))]:
+        for kind, jobs in [('check', ('frontend', 'rust', 'web', 'sync-server'))]:
             self.assertEqual(self.gate(FULL, kind).returncode, 0)
             self.assertEqual(self.gate(set(), kind).returncode, 0)
             for job in (*jobs, 'changes'):
@@ -154,13 +153,13 @@ class GateTests(unittest.TestCase):
                         self.assertNotEqual(result.returncode, 0, result.stdout)
             for flag in FULL | {'web', 'web-shards'}:
                 self.assertNotEqual(self.gate(set(), kind, missing=flag).returncode, 0)
-            self.assertNotEqual(self.gate({'ios'}, kind).returncode, 0)
-            for override in ({'ios': 'TRUE'}, {'web': 'false'},
+            for override in ({'rust': 'TRUE'}, {'web': 'false'},
                              {'web-shards': '[1]'}, {'web-shards': 'broken'}):
                 self.assertNotEqual(self.gate(FULL, kind, override=override).returncode, 0)
-        # Browser-only and native-only changes must not require unrelated jobs.
+        # Browser-only changes must not require unrelated jobs.
         self.assertEqual(self.gate({'browser'}, 'check', 'rust', 'skipped').returncode, 0)
-        self.assertEqual(self.gate({'frontend', 'ios'}, 'ios', 'web', 'skipped').returncode, 0)
+        # Native iOS jobs are gone from CI; an old ios gate request fails closed.
+        self.assertNotEqual(self.gate(FULL, 'ios').returncode, 0)
 
 
 if __name__ == '__main__':

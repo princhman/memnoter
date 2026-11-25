@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-FLAGS = ('frontend', 'rust', 'browser', 'benchmark', 'sync', 'ios')
+FLAGS = ('frontend', 'rust', 'browser', 'benchmark', 'sync')
 
 
 def selection(event, base):
@@ -43,14 +43,15 @@ def selection(event, base):
                 else:
                     selected.update(('browser', 'benchmark'))
             elif path.startswith('apps/shared-ui/'):
-                selected.update(('frontend', 'browser', 'benchmark', 'ios'))
+                selected.update(('frontend', 'browser', 'benchmark'))
             elif path.startswith(('apps/ios/', 'apps/apple-shared/')):
-                selected.update(('frontend', 'ios'))
+                # iOS builds and tests run locally on the Mac before push (AGENTS.md).
+                selected.add('frontend')
             elif path.startswith('crates/'):
                 # Browser command harness and sync integration use the real core.
-                selected.update(('frontend', 'rust', 'browser', 'benchmark', 'sync', 'ios'))
+                selected.update(('frontend', 'rust', 'browser', 'benchmark', 'sync'))
             elif path.startswith('apps/sync/'):
-                selected.update(('frontend', 'browser', 'sync', 'ios'))
+                selected.update(('frontend', 'browser', 'sync'))
             elif path.startswith('apps/desktop/'):
                 selected.update(('frontend', 'rust'))
             elif path.startswith('apps/marketing/'):
@@ -80,16 +81,7 @@ def gate(kind, needs):
     expected_shards += ['benchmark'] if outputs['benchmark'] == 'true' else []
     if json.loads(outputs['web-shards']) != expected_shards:
         raise ValueError('missing or inconsistent browser matrix')
-    if outputs['ios'] == 'true' and outputs['frontend'] != 'true':
-        raise ValueError('native coverage requires a same-run frontend build')
     jobs = {'frontend': 'frontend', 'rust': 'rust', 'web': 'web', 'sync': 'sync-server'}
-    if kind == 'ios':
-        # Frontend is required by this gate only when native coverage is selected.
-        jobs = {'ios': 'ios-build'}
-        if outputs['ios'] == 'true':
-            for job in ('frontend', 'ios-build-started', 'ios-tests'):
-                if needs[job]['result'] != 'success':
-                    raise ValueError(f'selected job did not succeed: {job}')
     for flag, job in jobs.items():
         if outputs[flag] == 'true' and needs[job]['result'] != 'success':
             raise ValueError(f'selected job did not succeed: {job}')
@@ -103,10 +95,10 @@ def main():
             with open(os.environ['GITHUB_OUTPUT'], 'a') as target:
                 target.write(text)
         print(text, end='')
-    elif len(sys.argv) == 3 and sys.argv[1] == 'gate' and sys.argv[2] in ('check', 'ios'):
+    elif len(sys.argv) == 3 and sys.argv[1] == 'gate' and sys.argv[2] == 'check':
         gate(sys.argv[2], json.loads(os.environ['NEEDS']))
     else:
-        raise ValueError('usage: select-checks.py classify EVENT BASE | gate check|ios')
+        raise ValueError('usage: select-checks.py classify EVENT BASE | gate check')
 
 
 if __name__ == '__main__':
