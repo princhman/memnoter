@@ -1100,3 +1100,38 @@ fn deleting_a_stale_destination_returns_the_history_at_once() {
     crate::content::delete_module_data(&mut a.db.lock().unwrap(), &a.dir.join("files"), "m2").unwrap();
     assert_eq!((a.reps("old"), a.logs("old").len()), (3, 3));
 }
+
+#[test]
+fn a_late_review_of_an_intermediate_card_counts() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "second"), &op(1));
+    settle(&mut server, &mut [&mut a, &mut b]);
+    a.cut_paste(("m2", "second"), ("m1", "third"), &op(2));
+    b.review("second", 3500);
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!((a.reps("third"), a.logs("third").len()), (3, 3));
+}
+
+#[test]
+fn a_review_after_an_undone_competing_move_counts_until_the_paste_is_reviewed() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "second"), &op(1));
+    settle(&mut server, &mut [&mut a, &mut b]);
+    a.cut_paste(("m2", "second"), ("m1", "third"), &op(2));
+    a.text("m1", "third", false);
+    a.index("m1");
+    a.text("m2", "second", true);
+    a.index("m2");
+    a.review("second", 3500);
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    b.cut_paste(("m2", "second"), ("m1", "fourth"), &op(3));
+    // Undoing the cut on one device and cutting on the other: the cut stays.
+    settle(&mut server, &mut [&mut a, &mut b]);
+    for device in [&a, &b] {
+        device.text("m2", "second", false);
+        device.index("m2");
+    }
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!(a.state("fourth")["last_review_at"], 3500);
+    assert_eq!(a.logs("fourth").len(), 3);
+}

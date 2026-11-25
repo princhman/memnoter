@@ -567,11 +567,11 @@ fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<boo
     let mut changed = false;
     let paths = paths(nodes);
     let mut holders = BTreeSet::new();
-    // Rows a winning path carries, and the cards those paths started from.
+    // Rows a winning path carries, and the cards on those paths.
     let mut taken = BTreeSet::new();
-    let mut original = BTreeSet::new();
+    let mut winning = BTreeSet::new();
     for path in paths.iter().filter(|path| path.inherits) {
-        original.insert(nodes[&path.ops[0]].meta.from.clone());
+        winning.extend(cards_of(nodes, path).into_iter().map(str::to_string));
         for op in &path.ops {
             taken.extend(entries(&nodes[op].doc, "carried").into_keys());
         }
@@ -600,8 +600,8 @@ fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<boo
         if path.inherits {
             let others = nodes.iter().filter(|(op, _)| !path.ops.contains(op));
             for (_, node) in others {
-                // What a losing move carried, and reviews of the original
-                // card made while that move was undone.
+                // What a losing move carried, and reviews made while it was
+                // undone.
                 rows.extend(
                     entries(&node.doc, "carried")
                         .into_iter()
@@ -610,7 +610,7 @@ fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<boo
                 rows.extend(
                     entries(&node.doc, "own")
                         .into_iter()
-                        .filter(|(_, row)| card_of(row).as_ref() == Some(&first.meta.from)),
+                        .filter(|(_, row)| card_of(row).is_some_and(|card| winning.contains(&card))),
                 );
             }
             for op in &path.ops {
@@ -627,7 +627,7 @@ fn apply(conn: &Connection, nodes: &BTreeMap<String, Node>) -> CommandResult<boo
         }
         if !path.inherits {
             rows.retain(|id, row| {
-                !taken.contains(id) && !card_of(row).is_some_and(|card| original.contains(&card))
+                !taken.contains(id) && !card_of(row).is_some_and(|card| winning.contains(&card))
             });
         }
         let state = if path.inherits {
