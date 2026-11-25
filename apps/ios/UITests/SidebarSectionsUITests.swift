@@ -7,7 +7,7 @@ final class SidebarSectionsUITests: XCTestCase {
         let app = launch()
         let phone = UIDevice.current.userInterfaceIdiom == .phone
         let module = "Chapters"
-        let sidebar = app.collectionViews["Sidebar"]
+        let sidebar = phone ? app.collectionViews.firstMatch : app.collectionViews["Sidebar"]
         let disclosure = sidebar.buttons["Sections in \(module)"]
 
         createModule(module, in: app)
@@ -36,7 +36,8 @@ final class SidebarSectionsUITests: XCTestCase {
 
         second.tap()
         XCTAssertTrue(app.webViews.staticTexts["Second body"].existsOrWait(timeout: 10))
-        XCTAssertFalse(app.webViews.staticTexts["First body"].exists)
+        // Compact navigation attaches the editor before it can apply focus.
+        XCTAssertTrue(app.webViews.staticTexts["First body"].waitForNonExistence(timeout: 5))
         showSidebar(in: app, phone: phone)
         XCTAssertTrue(second.existsOrWait(timeout: 5))
         XCTAssertTrue(second.isSelected)
@@ -56,7 +57,7 @@ final class SidebarSectionsUITests: XCTestCase {
         let app = launch()
         let phone = UIDevice.current.userInterfaceIdiom == .phone
         let module = "New chapters"
-        let sidebar = app.collectionViews["Sidebar"]
+        let sidebar = phone ? app.collectionViews.firstMatch : app.collectionViews["Sidebar"]
         setSidebarSections(in: app)
         createModule(module, in: app)
         showSidebar(in: app, phone: phone)
@@ -85,6 +86,9 @@ final class SidebarSectionsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-testing-data-id", UUID().uuidString]
         app.launch()
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            showSidebar(in: app, phone: true)
+        }
         return app
     }
 
@@ -135,6 +139,11 @@ final class SidebarSectionsUITests: XCTestCase {
     @MainActor private func showSidebar(in app: XCUIApplication, phone: Bool) {
         let reveal = phone ? app.navigationBars.buttons["Memnoter"] : app.buttons["Toggle Sidebar"]
         if reveal.exists && reveal.isHittable { reveal.tap() }
+        if phone {
+            // The compact sidebar is an unlabeled list on iOS 26.
+            XCTAssertTrue(app.buttons["Settings"].existsOrWait(timeout: 5))
+            return
+        }
         // The list is the sidebar. The floating Settings toolbar can report
         // temporarily unhittable while the keyboard is dismissing.
         XCTAssertTrue(app.collectionViews["Sidebar"].existsOrWait(timeout: 5))
