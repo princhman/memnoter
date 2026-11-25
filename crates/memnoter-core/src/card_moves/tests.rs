@@ -959,3 +959,37 @@ fn a_restored_card_is_not_reviewed_until_its_owner_is_known() {
     a.index("m1");
     assert!(live_in(&a.db.lock().unwrap(), "old").unwrap().is_none());
 }
+
+#[test]
+fn undoing_a_moved_rating_in_the_old_place_takes_its_schedule_back() {
+    let (mut server, mut a, mut b) = pair();
+    a.cut_paste(("m1", "old"), ("m2", "new"), &op(1));
+    {
+        let conn = b.db.lock().unwrap();
+        conn.execute("update cards set last_review_at = 1000 where id = 'old'", []).unwrap();
+    }
+    b.undo("old");
+    let earlier = b.state("old");
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!((a.state("new"), a.logs("new").len()), (earlier, 1));
+}
+
+#[test]
+fn the_latest_review_decides_after_both_moves_were_undone() {
+    let (mut server, mut a, mut b) = pair();
+    for (device, id, n, at) in [(&a, "on-a", 1, None), (&b, "on-b", 2, Some(2900))] {
+        device.cut_paste(("m1", "old"), ("m2", id), &op(n));
+        if let Some(at) = at {
+            device.review(id, at);
+        }
+        device.text("m2", id, false);
+        device.index("m2");
+        device.text("m1", "old", true);
+        device.index("m1");
+        std::thread::sleep(std::time::Duration::from_millis(3));
+    }
+    a.review("old", 3000);
+    settle(&mut server, &mut [&mut a, &mut b]);
+    assert_eq!(a.state("old")["last_review_at"], 3000);
+    assert_eq!(a.logs("old").len(), 4);
+}
