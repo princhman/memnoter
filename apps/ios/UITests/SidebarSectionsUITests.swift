@@ -6,15 +6,16 @@ final class SidebarSectionsUITests: XCTestCase {
         continueAfterFailure = false
         let app = launch()
         let phone = UIDevice.current.userInterfaceIdiom == .phone
-        let module = "Sidebar chapters"
-        let disclosure = app.buttons["Sections in \(module)"]
+        let module = "Chapters"
+        let sidebar = app.collectionViews["Sidebar"]
+        let disclosure = sidebar.buttons["Sections in \(module)"]
 
         createModule(module, in: app)
         let editor = app.webViews.textViews.firstMatch
         editor.tap()
         for (typed, displayed) in [
-            ("# First chapter", "First chapter"), ("First body", "First body"),
-            ("# Second chapter", "Second chapter"), ("Second body", "Second body")
+            ("# First", "First"), ("First body", "First body"),
+            ("# Second", "Second"), ("Second body", "Second body")
         ] {
             editor.typeText(typed + "\n")
             XCTAssertTrue(app.webViews.staticTexts[displayed].existsOrWait(timeout: 10))
@@ -24,14 +25,13 @@ final class SidebarSectionsUITests: XCTestCase {
         XCTAssertFalse(disclosure.exists, "A fresh device starts with the existing sidebar.")
         setSidebarSections(in: app, numberedModule: module)
 
-        createModule("Another note", in: app)
-        XCTAssertTrue(editor.existsOrWait(timeout: 15))
+        createModule("Other note", in: app)
         showSidebar(in: app, phone: phone)
         XCTAssertTrue(disclosure.existsOrWait(timeout: 5))
         disclosure.tap()
-        let second = app.buttons["2 Second chapter"]
+        let second = sidebar.buttons["2 Second"]
         XCTAssertTrue(second.existsOrWait(timeout: 10))
-        XCTAssertTrue(app.buttons["1 First chapter"].exists)
+        XCTAssertTrue(sidebar.buttons["1 First"].exists)
         XCTAssertFalse(app.webViews.staticTexts["First body"].exists, "Disclosure must leave the current note in place.")
 
         second.tap()
@@ -46,7 +46,7 @@ final class SidebarSectionsUITests: XCTestCase {
         app.buttons["Done editing"].tap()
         XCTAssertTrue(second.existsOrWait(timeout: 5))
 
-        app.buttons[module].tap()
+        sidebar.buttons[module].tap()
         XCTAssertTrue(app.webViews.staticTexts["First body"].existsOrWait(timeout: 10))
         XCTAssertTrue(app.webViews.staticTexts["Second body"].exists)
     }
@@ -55,13 +55,16 @@ final class SidebarSectionsUITests: XCTestCase {
         continueAfterFailure = false
         let app = launch()
         let phone = UIDevice.current.userInterfaceIdiom == .phone
-        let module = "Add a sidebar chapter"
+        let module = "New chapters"
+        let sidebar = app.collectionViews["Sidebar"]
         setSidebarSections(in: app)
         createModule(module, in: app)
         showSidebar(in: app, phone: phone)
-        app.buttons["Sections in \(module)"].tap()
+        let disclosure = sidebar.buttons["Sections in \(module)"]
+        XCTAssertTrue(disclosure.existsOrWait(timeout: 5))
+        disclosure.tap()
 
-        let row = app.buttons[module]
+        let row = sidebar.buttons[module]
         XCTAssertTrue(row.existsOrWait(timeout: 5))
         row.press(forDuration: 1)
         let add = app.buttons["Add section"]
@@ -70,12 +73,12 @@ final class SidebarSectionsUITests: XCTestCase {
 
         let editor = app.webViews.textViews.firstMatch
         XCTAssertTrue(editor.existsOrWait(timeout: 10))
-        XCTAssertTrue(app.buttons["Hide keyboard"].existsOrWait(timeout: 10), "Add section should activate the editor.")
+        XCTAssertTrue(app.buttons["Hide keyboard"].firstMatch.existsOrWait(timeout: 10), "Add section should activate the editor.")
         editor.typeText("New title")
         XCTAssertTrue(app.webViews.staticTexts["New title"].existsOrWait(timeout: 10))
         dismissKeyboard(in: app)
         showSidebar(in: app, phone: phone)
-        XCTAssertTrue(app.buttons["New title"].existsOrWait(timeout: 5), "The sidebar follows edits to the focused title.")
+        XCTAssertTrue(sidebar.buttons["New title"].existsOrWait(timeout: 5), "The sidebar follows edits to the focused title.")
     }
 
     @MainActor private func launch() -> XCUIApplication {
@@ -92,16 +95,26 @@ final class SidebarSectionsUITests: XCTestCase {
         let toggle = app.switches["Sections in the sidebar"]
         XCTAssertTrue(toggle.existsOrWait(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "0")
-        toggle.tap()
+        enable(toggle)
         if let numberedModule {
+            // On iPad the list can expose a clipped switch at the bottom of
+            // the sheet as hittable. Scroll the numbering section into view.
+            app.collectionViews.firstMatch.swipeUp()
             let numbering = app.switches[numberedModule]
             XCTAssertTrue(numbering.existsOrWait(timeout: 5))
-            numbering.tap()
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "value == %@", "1"), object: numbering
-            )], timeout: 10), .completed)
+            enable(numbering)
         }
         app.buttons["Done"].tap()
+    }
+
+    @MainActor private func enable(_ toggle: XCUIElement) {
+        // SwiftUI exposes the whole labeled row as a switch. Its midpoint
+        // can land on the label instead of the actual switch at the trailing edge.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+            .withOffset(CGVector(dx: -30, dy: 0)).tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "1"), object: toggle
+        )], timeout: 5), .completed)
     }
 
     @MainActor private func createModule(_ name: String, in app: XCUIApplication) {
@@ -120,11 +133,11 @@ final class SidebarSectionsUITests: XCTestCase {
     }
 
     @MainActor private func showSidebar(in app: XCUIApplication, phone: Bool) {
-        if app.buttons["Settings"].isHittable { return }
-        let button = phone ? app.navigationBars.buttons["Memnoter"] : app.buttons["Show Sidebar"]
-        XCTAssertTrue(button.existsOrWait(timeout: 5))
-        button.tap()
-        XCTAssertTrue(app.buttons["Settings"].existsOrWait(timeout: 5))
+        let reveal = phone ? app.navigationBars.buttons["Memnoter"] : app.buttons["Toggle Sidebar"]
+        if reveal.exists && reveal.isHittable { reveal.tap() }
+        // The list is the sidebar. The floating Settings toolbar can report
+        // temporarily unhittable while the keyboard is dismissing.
+        XCTAssertTrue(app.collectionViews["Sidebar"].existsOrWait(timeout: 5))
     }
 
     @MainActor private func dismissKeyboard(in app: XCUIApplication) {

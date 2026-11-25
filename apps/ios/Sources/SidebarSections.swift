@@ -77,16 +77,12 @@ struct SidebarModuleDisclosure: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: open) {
-                HStack {
-                    Text(name)
-                        .lineLimit(compact ? 1 : nil)
-                        .fixedSize(horizontal: false, vertical: !compact)
-                        .padding(.leading, inFolder ? 20 : 0)
-                    Spacer(minLength: 4)
-                    if count > 0 { Text(count, format: .number).font(.caption).foregroundStyle(.secondary) }
-                }
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+                Text(name)
+                    .lineLimit(compact ? 1 : nil)
+                    .fixedSize(horizontal: false, vertical: !compact)
+                    .padding(.leading, inFolder ? 20 : 0)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .accessibilityAddTraits(selected ? .isSelected : [])
             Button(action: toggle) {
@@ -100,9 +96,9 @@ struct SidebarModuleDisclosure: View {
             .accessibilityLabel("Sections in \(name)")
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
         }
+        .badge(count)
         .buttonStyle(.plain)
-        .selectionDisabled()
-        .listRowBackground(selected ? Color("BrandAccent").opacity(0.15) : nil)
+        .modifier(SidebarSectionRowStyle(selected: selected))
     }
 }
 
@@ -126,8 +122,7 @@ struct SidebarSectionRows: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .selectionDisabled()
-                .listRowBackground(focused ? Color("BrandAccent").opacity(0.15) : nil)
+                .modifier(SidebarSectionRowStyle(selected: focused))
                 .accessibilityAddTraits(focused ? .isSelected : [])
                 .accessibilityIdentifier("sidebar.section.\(module.id).\(section.key)")
             }
@@ -137,7 +132,19 @@ struct SidebarSectionRows: View {
                 .foregroundStyle(.secondary)
                 .padding(.leading, inset)
                 .frame(minHeight: 44)
-                .selectionDisabled()
+                .modifier(SidebarSectionRowStyle(selected: false))
         }
+    }
+}
+
+private struct SidebarSectionRowStyle: ViewModifier {
+    let selected: Bool
+
+    func body(content: Content) -> some View {
+        content
+            // Keep space for a 44-point control inside the native 52-point row.
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+            .selectionDisabled()
+            .listRowBackground(selected ? Capsule().fill(Color(uiColor: .systemFill)) : nil)
     }
 }
