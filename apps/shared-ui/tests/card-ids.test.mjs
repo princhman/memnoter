@@ -5,6 +5,13 @@ import { browserHarness } from "./support/browser.mjs";
 // app in WebKit against a fake Tauri backend that keeps saves in memory.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import * as Y from "yjs";
 
@@ -105,3 +112,116 @@ for (const [name, route] of [
     assert.equal(second.saved.length, 0);
   });
 }
+
+
+test("the first cut paste keeps cloze history across and within notes, while copies are new", async () => {
+  const workspace = fileURLToPath(new URL("../../..", import.meta.url));
+  execFileSync("cargo", ["build", "-p", "memnoter-core", "--example", "command-harness"], {
+    cwd: workspace, env: { ...process.env, CARGO_BUILD_JOBS: "4" }, stdio: "pipe",
+  });
+  const child = spawn(join(workspace, "target/debug/examples/command-harness"), [], { stdio: ["pipe", "pipe", "inherit"] });
+  const exit = once(child, "exit");
+  const pending = [];
+  createInterface({ input: child.stdout }).on("line", line => pending.shift()(JSON.parse(line)));
+  const call = async (command, args = {}) => {
+    const response = await new Promise(resolve => {
+      pending.push(resolve);
+      child.stdin.write(JSON.stringify({ command, args }) + "\n");
+    });
+    if (response.error) throw new Error(response.error.message ?? response.error);
+    return response.value;
+  };
+
+  const page = await browser.newPage();
+  let db;
+  try {
+    const source = await call("create_module", { name: "Geography" });
+    const destination = await call("create_module", { name: "Travel" });
+    db = new DatabaseSync(join(tmpdir(), `memnoter-harness-${child.pid}`, "main.db"), { readOnly: true });
+    const log = db.prepare("select rating, review_time from review_log where card_id = ?");
+    await page.exposeFunction("rustCall", (command, args) => {
+      if (command.startsWith("plugin:") || command === "set_editor_history") return 1;
+      return call(command, args);
+    });
+    await page.addInitScript(() => window.installTestBridge({ tauri: { invoke: (command, args) => window.rustCall(command, args) } }));
+    const editor = page.locator('.tiptap[contenteditable="true"]');
+    const mod = process.platform === "darwin" ? "Meta" : "Control";
+    const schedules = async (moduleId, count) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const cards = await call("card_schedules", { moduleId });
+        if (cards.length === count) return cards;
+        await delay(50);
+      }
+      assert.fail(`Expected ${count} synced cards in ${moduleId}`);
+    };
+
+    await page.goto(`${url}/${source}`);
+    await editor.click();
+    await page.keyboard.type("{{Paris}} and {{France}}");
+    await schedules(source, 2);
+    const cards = await call("due_cards", { moduleId: source, now: Number.MAX_SAFE_INTEGER });
+    const paris = cards.find(({ back }) => back.some(part => part.type === "cloze" && part.children.map(child => child.text).join("") === "Paris"));
+    assert.ok(paris, JSON.stringify({ cards, text: await editor.textContent() }));
+    const france = cards.find(card => card.id !== paris.id);
+    await page.evaluate(async paris => {
+      const { getScheduler, scheduleReview } = await import("/src/lib/fsrs.ts");
+      const { card, log } = scheduleReview(await getScheduler(), paris, 4, Date.now());
+      await window.rustCall("review_card", { cardId: paris.id, expectedReps: 0, card, log });
+    }, paris);
+    const initial = (await schedules(source, 2)).find(card => card.id === paris.id);
+    const review = log.get(paris.id);
+    assert.equal(review.rating, 4);
+
+    await editor.evaluate(el => el.editor.commands.setTextSelection({ from: 1, to: 10 }));
+    await page.waitForFunction(() => window.getSelection()?.toString().includes("{{Paris}}"));
+    await page.keyboard.press(`${mod}+x`);
+    assert.equal(await editor.evaluate(el => el.editor.getText()), " and {{France}}");
+    const [remaining] = await schedules(source, 1);
+    assert.equal(remaining.id, france.id);
+
+    await page.getByRole("link", { name: "Travel", exact: true }).click();
+    await editor.click();
+    await page.keyboard.press(`${mod}+v`);
+    const [moved] = await schedules(destination, 1);
+    assert.notEqual(moved.id, paris.id);
+    assert.deepEqual(moved, { ...initial, id: moved.id });
+    assert.deepEqual(log.get(moved.id), review);
+    assert.equal(log.get(paris.id), undefined);
+
+    await page.keyboard.press("End");
+    await page.keyboard.type(" and ");
+    await page.keyboard.press(`${mod}+v`);
+    const repeated = await schedules(destination, 2);
+    assert.deepEqual(repeated.find(card => card.id === moved.id), moved);
+    assert.equal(repeated.find(card => card.id !== moved.id).lastReviewAt, null);
+
+    await editor.evaluate(el => el.editor.commands.setTextSelection({ from: 1, to: 10 }));
+    await page.waitForFunction(() => window.getSelection()?.toString().includes("{{Paris}}"));
+    await page.keyboard.press(`${mod}+c`);
+    await page.keyboard.press("End");
+    await page.keyboard.type(" and ");
+    await page.keyboard.press(`${mod}+v`);
+    const copied = await schedules(destination, 3);
+    assert.deepEqual(copied.filter(card => card.lastReviewAt !== null), [moved]);
+
+    await editor.evaluate(el => el.editor.commands.setTextSelection({ from: 1, to: 10 }));
+    await page.waitForFunction(() => window.getSelection()?.toString().includes("{{Paris}}"));
+    await page.keyboard.press(`${mod}+x`);
+    await schedules(destination, 2);
+    await page.keyboard.press("End");
+    await page.keyboard.type(" and ");
+    await page.keyboard.press(`${mod}+v`);
+    const repasted = await schedules(destination, 3);
+    const movedAgain = repasted.find(card => card.lastReviewAt !== null);
+    assert.ok(movedAgain);
+    assert.notEqual(movedAgain.id, moved.id);
+    assert.deepEqual(movedAgain, { ...initial, id: movedAgain.id });
+    assert.deepEqual(log.get(movedAgain.id), review);
+    assert.deepEqual(repasted.filter(card => card.id !== movedAgain.id), copied.filter(card => card.id !== moved.id));
+  } finally {
+    db?.close();
+    await page.close();
+    child.stdin.end();
+    await exit;
+  }
+});

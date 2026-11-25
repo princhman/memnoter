@@ -1,3 +1,6 @@
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
+import { noteSaveCheckpoint } from "@/lib/saves";
+import type { Doc } from "yjs";
 import { isSchemaReadOnly } from "./guarded-collaboration";
 import { settled } from "@/lib/async-work";
 import { writeCards } from "@/lib/card-writes";
@@ -38,12 +41,12 @@ const openModules = new Map<string, number>();
 // after edits settle, and when stopped. `flush` waits until the database has
 // the editor's current cards, including ids renewed after a conflict.
 export function startCardSync(editor: Editor, moduleId: string, onSynced: () => void, admittedPermit?: WritePermit) {
-  let lastSent: string | undefined;
+  let lastSent: ReturnType<typeof snapshot> | undefined;
   let queue = Promise.resolve();
   let lastWrite = queue;
 
-  const snapshot = () =>
-    extractCards(editor.state.doc).map(({ id, kind, front, back, section }) => ({
+  const snapshot = () => {
+    const cards = extractCards(editor.state.doc).map(({ id, kind, front, back, section }) => ({
       id,
       // Older review screens understand basic block segments and reveal the
       // complete list together. New screens recognize the revealStep payload.
@@ -52,17 +55,29 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
       back,
       section,
     }));
+    const doc: Doc | undefined = ySyncPluginKey.getState(editor.state)?.doc;
+    const checkpoint = doc ? noteSaveCheckpoint(doc, moduleId) : undefined;
+    return { cards, payload: JSON.stringify(cards), checkpoint };
+  };
+
+  const wasSent = (current: ReturnType<typeof snapshot>) => lastSent?.payload === current.payload &&
+    lastSent.checkpoint?.edit === current.checkpoint?.edit &&
+    lastSent.checkpoint?.appliedId === current.checkpoint?.appliedId;
 
   const sync = (permit: WritePermit | undefined = admittedPermit): Promise<void> => {
     debounce.cancel();
     if (!isWriteAdmitted(permit) || isSchemaReadOnly(editor)) return Promise.resolve();
-    const cards = snapshot();
-    const payload = JSON.stringify(cards);
-    if (payload === lastSent) return lastWrite;
-    lastSent = payload;
+    const current = snapshot();
+    if (wasSent(current)) return lastWrite;
+    lastSent = current;
+    const { cards, checkpoint } = current;
     // Keep syncs in order so an older snapshot never lands last.
     const write = queue
-      .then(() => isSchemaReadOnly(editor) ? [] : writeCards<string[]>("sync_cards", { moduleId, cards }, permit))
+      .then(async () => {
+        const updateId = await checkpoint?.updateId();
+        if (isSchemaReadOnly(editor)) return [];
+        return writeCards<string[]>("sync_cards", { moduleId, cards, updateId }, permit);
+      })
       .then((conflicts) => {
         // Blocks copied from another note get their own cards here.
         if (conflicts.length > 0 && !editor.isDestroyed && !isSchemaReadOnly(editor)) {
@@ -71,7 +86,7 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
         onSynced();
       })
       .catch((error) => {
-        lastSent = undefined;
+        if (lastSent === current) lastSent = undefined;
         console.error("Failed to sync flashcards:", error);
         throw error;
       });
@@ -83,7 +98,7 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
 
   const flush = async (permit?: WritePermit) => {
     do { await sync(permit); }
-    while (isWriteAdmitted(permit) && !editor.isDestroyed && !isSchemaReadOnly(editor) && JSON.stringify(snapshot()) !== lastSent);
+    while (isWriteAdmitted(permit) && !editor.isDestroyed && !isSchemaReadOnly(editor) && !wasSent(snapshot()));
   };
   const debounce = editorSync.attach(flush);
   const schedule = debounce.schedule;

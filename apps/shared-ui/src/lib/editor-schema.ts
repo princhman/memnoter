@@ -32,6 +32,7 @@ import { MoveLines } from "@/lib/move-lines";
 import { TextSelectionHighlight } from "@/lib/text-selection";
 import { ItalicCaret } from "@/lib/italic-caret";
 import { PdfTextQuote } from "./editor-schema/pdf-text-quotes";
+import type { WithCardTransfers } from "./cloze-clipboard";
 import { Flashcards } from "@/lib/flashcards";
 import { FoldableBlock } from "@/lib/foldable-block";
 
@@ -44,6 +45,7 @@ type NoteExtensionOptions = {
   scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;
   onFirstRender?: () => void;
+  withCardTransfers?: WithCardTransfers;
 };
 
 // Every editor of a note's Yjs document must share these: an editor whose
@@ -57,6 +59,7 @@ export function noteExtensions({
   scrollContainer,
   onTocUpdate,
   onFirstRender,
+  withCardTransfers,
 }: NoteExtensionOptions) {
   return [
     (reduced ? StarterKit.extend({
@@ -87,7 +90,7 @@ export function noteExtensions({
     TextSelectionHighlight,
     ui.inlineMath ?? InlineMath,
     ui.mathBlock ?? MathBlock,
-    reduced ? Flashcards.extend({ addCommands: () => ({}), addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] }) : Flashcards,
+    reduced ? Flashcards.extend({ addCommands: () => ({}), addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] }) : withCardTransfers ? Flashcards.configure({ withCardTransfers }) : Flashcards,
     ui.pdfTextQuote ?? PdfTextQuote,
     ...FoldableBlock,
     ...(reduced ? [HeadingFold.extend({ addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] })] : [HeadingHieararchy, SectionFocus, Sections, HeadingFold, HeadingNumbering]),
