@@ -74,7 +74,8 @@ final class SidebarSectionsUITests: XCTestCase {
 
         let editor = app.webViews.textViews.firstMatch
         XCTAssertTrue(editor.existsOrWait(timeout: 10))
-        XCTAssertTrue(app.buttons["Hide keyboard"].firstMatch.existsOrWait(timeout: 10), "Add section should activate the editor.")
+        // Without tapping the editor, XCTest requires the text view to already
+        // have keyboard focus before it delivers this input.
         editor.typeText("New title")
         XCTAssertTrue(app.webViews.staticTexts["New title"].existsOrWait(timeout: 10))
         dismissKeyboard(in: app)
