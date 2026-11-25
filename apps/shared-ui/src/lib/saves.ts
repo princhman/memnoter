@@ -21,6 +21,9 @@ export function noteSaveCheckpoint(doc: Y.Doc, moduleId: string) {
   return {
     appliedId,
     edit,
+    async whenSaved() {
+      return edit !== undefined && await saveQueue.flushThrough(moduleId, edit, true) && receipts.has(edit);
+    },
     async updateId() {
       if (!edit) return appliedId;
       if (!await saveQueue.flushThrough(moduleId, edit)) throw new Error("Could not save note before indexing cards.");

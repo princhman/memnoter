@@ -1,6 +1,7 @@
 import type { Slice, Node } from "@tiptap/pm/model";
 import { PluginKey, type Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
+import { CellSelection, handlePaste as pasteTableCells } from "@tiptap/pm/tables";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
 import { clozeCardId } from "./card-id.ts";
 import { changedRanges, clozeIdsOf, extractCards, isCardBlock, parseBlock, validatedClozeGroups, type Range } from "./cards.ts";
@@ -41,12 +42,14 @@ function clozesIn(doc: Node, ranges: Range[]): Cloze[] {
 
 type Cut = {
   token: string;
+  claimed: boolean;
   text: string;
+  formula: boolean;
   content: string[];
   cards: { id: string; members: number[] }[];
 };
 
-type Paste = { cut: Cut; inserted: Range[]; moves: CardTransfer[] };
+type Paste = { cut: Cut | undefined; inserted: Range[]; moves: CardTransfer[] };
 export const clozeCutKey = new PluginKey<ReadonlyMap<string, ReadonlySet<string>>>("clozeCut");
 export const clozePasteKey = new PluginKey<Paste>("clozePaste");
 const cutAttribute = "data-memnoter-cloze-cut";
@@ -59,9 +62,8 @@ function clipboardCut(html: string) {
 }
 
 export function consumePlainClozeCut(html: string, text: string) {
-  if (clipboardCut(html) || (!html && latestCut?.text === text.replace(/\r\n/g, "\n"))) {
-    latestCut = undefined;
-  }
+  const cut = html ? clipboardCut(html) : latestCut;
+  if (cut && (html || cut.text === text.replace(/\r\n/g, "\n"))) cut.claimed = true;
 }
 
 export function clozeClipboard(withTransfers: WithCardTransfers = (_moves, dispatch) => dispatch()) {
@@ -74,7 +76,8 @@ export function clozeClipboard(withTransfers: WithCardTransfers = (_moves, dispa
       if (!view.editable || !event.clipboardData || view.state.selection.empty) return false;
       latestCut = undefined;
       const { doc, selection } = view.state;
-      const clozes = clozesIn(doc, [{ from: selection.from, to: selection.to }]);
+      const slice = selection.content();
+      const clozes = clozesIn(doc, selection.ranges.map(({ $from, $to }) => ({ from: $from.pos, to: $to.pos })));
       if (!clozes.length) return false;
 
       const removed = new Map<string, Set<string>>();
@@ -85,15 +88,23 @@ export function clozeClipboard(withTransfers: WithCardTransfers = (_moves, dispa
         if (!ids) removed.set(id, ids = new Set());
         ids.add(localId);
       }
+      // The clipboard can omit the contents of a cell clipped by a span.
+      const copiedBlocks = new Set<unknown>();
+      if (selection instanceof CellSelection) slice.content.descendants(node => {
+        if (isCardBlock(node)) copiedBlocks.add(node.attrs.cardId);
+      });
+      const copied = selection instanceof CellSelection
+        ? clozes.filter(({ block }) => copiedBlocks.has(block.attrs.cardId)) : clozes;
+
       const active = new Set(extractCards(doc).filter(card => card.kind === "cloze").map(card => card.id));
       const cards: Cut["cards"] = [];
-      for (const [index, { block, pos, localId }] of clozes.entries()) {
+      for (const [index, { block, pos, localId }] of copied.entries()) {
         if (typeof block.attrs.cardId !== "string") continue;
         const id = clozeCardId(block.attrs.cardId, localId);
         if (!active.has(id)) continue;
         const group = validatedClozeGroups(block.attrs.clozeGroups).find(group => group.includes(localId));
         const members = group
-          ? group.map(member => clozes.findIndex(cloze => cloze.pos === pos && cloze.localId === member))
+          ? group.map(member => copied.findIndex(cloze => cloze.pos === pos && cloze.localId === member))
           : [index];
         if (members.every(member => member >= 0)) cards.push({ id, members });
       }
@@ -107,7 +118,7 @@ export function clozeClipboard(withTransfers: WithCardTransfers = (_moves, dispa
         tr.setNodeAttribute(pos, "clozeGroups", null);
       });
       const token = crypto.randomUUID();
-      const { dom, text } = view.serializeForClipboard(selection.content());
+      const { dom, text } = view.serializeForClipboard(slice);
       if (!dom.firstElementChild) return false;
       dom.firstElementChild.setAttribute(cutAttribute, token);
       event.clipboardData.clearData();
@@ -118,35 +129,45 @@ export function clozeClipboard(withTransfers: WithCardTransfers = (_moves, dispa
       history?.stopCapturing();
       view.dispatch(tr.setMeta(clozeCutKey, removed).setMeta("uiEvent", "cut").scrollIntoView());
       history?.stopCapturing();
-      latestCut = { token, text, content: clozes.map(cloze => cloze.content), cards };
+      const formula = clozes.length === 1 && selection.$from.parent.type.name === "mathBlock" && selection.$from.sameParent(selection.$to);
+      latestCut = { token, text, formula, content: copied.map(cloze => cloze.content), cards, claimed: false };
       return true;
     },
     paste(view: EditorView, event: ClipboardEvent, slice: Slice) {
-      const cut = clipboardCut(event.clipboardData?.getData("text/html") ?? "");
-      if (!cut) {
-        const data = event.clipboardData;
-        if (data && !data.getData("text/html")) consumePlainClozeCut("", data.getData("text/plain"));
+      const data = event.clipboardData;
+      const html = data?.getData("text/html") ?? "";
+      const cut = clipboardCut(html);
+      if (!cut && !html.includes(`${cutAttribute}="`)) {
+        if (data && !html) consumePlainClozeCut("", data.getData("text/plain"));
         return false;
       }
-      if (!slice.size || view.state.selection.$from.parent.type.spec.code) {
-        latestCut = undefined;
-        return false;
-      }
+      const claim = cut && !cut.claimed ? cut : undefined;
+      if (cut) cut.claimed = true;
+      const { $from } = view.state.selection;
+      const restoreFormula = cut?.formula && $from.parent.type.name === "mathBlock" && !$from.parent.content.size;
+      if (!slice.size || ($from.parent.type.spec.code && !restoreFormula)) return false;
+      const dispatch = (tr: Transaction) => {
+        if (restoreFormula) tr.setNodeAttribute($from.before(), "cloze", true);
+        const present = new Set(extractCards(view.state.doc).map(card => card.id));
+        const moves: CardTransfer[] = [];
+        const paste: Paste = {
+          cut: claim && { ...claim, cards: claim.cards.filter(card => !present.has(card.id)) },
+          inserted: changedRanges(tr.mapping.maps),
+          moves,
+        };
+        const history = yUndoPluginKey.getState(view.state)?.undoManager;
+        history?.stopCapturing();
+        tr.setMeta(clozePasteKey, paste).setMeta("paste", true).setMeta("uiEvent", "paste");
+        withTransfers(moves, () => view.dispatch(tr.scrollIntoView()));
+        history?.stopCapturing();
+      };
+      // Use the table plugin's cell fitting and selection, and attach the
+      // transfer to the transaction it would normally dispatch.
+      const tableView: EditorView = Object.create(view, { dispatch: { value: dispatch } });
+      if (pasteTableCells(tableView, event, slice)) return true;
       const tr = view.state.tr.replaceSelection(slice);
       if (!tr.docChanged) return false;
-      const present = new Set(extractCards(view.state.doc).map(card => card.id));
-      const moves: CardTransfer[] = [];
-      const paste: Paste = {
-        cut: { ...cut, cards: cut.cards.filter(card => !present.has(card.id)) },
-        inserted: changedRanges(tr.mapping.maps),
-        moves,
-      };
-      latestCut = undefined;
-      const history = yUndoPluginKey.getState(view.state)?.undoManager;
-      history?.stopCapturing();
-      tr.setMeta(clozePasteKey, paste).setMeta("paste", true).setMeta("uiEvent", "paste");
-      withTransfers(moves, () => view.dispatch(tr.scrollIntoView()));
-      history?.stopCapturing();
+      dispatch(tr);
       return true;
     },
   };
@@ -157,13 +178,20 @@ export function clozeClipboard(withTransfers: WithCardTransfers = (_moves, dispa
 // (including identical answers) with the ids their anchors retained.
 export function assignPastedClozes(tr: Transaction, { cut, inserted, moves }: Paste) {
   const clozes = clozesIn(tr.doc, inserted);
-  const matches = clozes.length === cut.content.length;
+  const matches = cut && clozes.length === cut.content.length;
   const newIds = clozes.map(cloze => cloze.block.type.spec.code ? "math" : `c${crypto.randomUUID()}`);
   const groupsByPos = new Map<number, string[][]>();
   const targets = new Map<string, string>();
-  for (const { id, members } of cut.cards) {
+  const formulaIds = new Map<number, string>();
+  for (const { block, pos } of clozes) {
+    if (!block.type.spec.code) continue;
+    const id = crypto.randomUUID();
+    formulaIds.set(pos, id);
+    tr.setNodeAttribute(pos, "cardId", id);
+  }
+  for (const { id, members } of cut?.cards ?? []) {
     const first = clozes[members[0]];
-    if (!matches || !first || !members.every(index => clozes[index].pos === first.pos &&
+    if (!cut || !matches || !first || !members.every(index => clozes[index].pos === first.pos &&
       clozes[index].content === cut.content[index])) continue;
     const group = members.map(index => newIds[index]);
     if (group.length > 1) {
@@ -171,8 +199,9 @@ export function assignPastedClozes(tr: Transaction, { cut, inserted, moves }: Pa
       if (!groups) groupsByPos.set(first.pos, groups = []);
       groups.push(group);
     }
-    if (typeof first.block.attrs.cardId === "string") {
-      targets.set(id, clozeCardId(first.block.attrs.cardId, group[0]));
+    const blockId = formulaIds.get(first.pos) ?? first.block.attrs.cardId;
+    if (typeof blockId === "string") {
+      targets.set(id, clozeCardId(blockId, group[0]));
     }
   }
 

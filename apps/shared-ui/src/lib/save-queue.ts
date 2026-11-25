@@ -36,7 +36,7 @@ type ModuleQueue<Update> = {
   failingSince: number | null;
   wake: (() => void) | null;
   dropped: boolean;
-  waiters: { update: Update; resolve(saved: boolean): void }[];
+  waiters: { update: Update; waitForRetry: boolean; resolve(saved: boolean): void }[];
 };
 
 export function createSaveQueue<Update, Saved>({
@@ -145,7 +145,11 @@ export function createSaveQueue<Update, Saved>({
         onError?.(moduleId, error);
         notify();
         settleFlush(false);
-        for (const waiter of queue.waiters.splice(0)) waiter.resolve(false);
+        queue.waiters = queue.waiters.filter(waiter => {
+          if (waiter.waitForRetry) return true;
+          waiter.resolve(false);
+          return false;
+        });
         const delay = Math.min(
           initialDelayMs * 2 ** (queue.attempts - 1),
           maxDelayMs,
@@ -191,11 +195,11 @@ export function createSaveQueue<Update, Saved>({
     },
 
     // Wait only through the edit represented in a derived snapshot.
-    flushThrough(moduleId: string, update: Update): Promise<boolean> {
+    flushThrough(moduleId: string, update: Update, waitForRetry = false): Promise<boolean> {
       const queue = queues.get(moduleId);
       if (!queue?.items.includes(update)) return Promise.resolve(true);
-      const result = new Promise<boolean>(resolve => queue.waiters.push({ update, resolve }));
-      queue.wake?.();
+      const result = new Promise<boolean>(resolve => queue.waiters.push({ update, waitForRetry, resolve }));
+      if (!waitForRetry) queue.wake?.();
       return result;
     },
 

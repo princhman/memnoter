@@ -113,12 +113,14 @@ for (const [name, route] of [
   });
 }
 
+let harnessBuilt = false;
 
-test("the first cut paste keeps cloze history across and within notes, while copies are new", async () => {
+async function withCore(run, invoke = (command, args, call) => call(command, args)) {
   const workspace = fileURLToPath(new URL("../../..", import.meta.url));
-  execFileSync("cargo", ["build", "-p", "memnoter-core", "--example", "command-harness"], {
+  if (!harnessBuilt) execFileSync("cargo", ["build", "-p", "memnoter-core", "--example", "command-harness"], {
     cwd: workspace, env: { ...process.env, CARGO_BUILD_JOBS: "4" }, stdio: "pipe",
   });
+  harnessBuilt = true;
   const child = spawn(join(workspace, "target/debug/examples/command-harness"), [], { stdio: ["pipe", "pipe", "inherit"] });
   const exit = once(child, "exit");
   const pending = [];
@@ -141,7 +143,7 @@ test("the first cut paste keeps cloze history across and within notes, while cop
     const log = db.prepare("select rating, review_time from review_log where card_id = ?");
     await page.exposeFunction("rustCall", (command, args) => {
       if (command.startsWith("plugin:") || command === "set_editor_history") return 1;
-      return call(command, args);
+      return invoke(command, args, call);
     });
     await page.addInitScript(() => window.installTestBridge({ tauri: { invoke: (command, args) => window.rustCall(command, args) } }));
     const editor = page.locator('.tiptap[contenteditable="true"]');
@@ -155,19 +157,46 @@ test("the first cut paste keeps cloze history across and within notes, while cop
       assert.fail(`Expected ${count} synced cards in ${moduleId}`);
     };
 
-    await page.goto(`${url}/${source}`);
-    await editor.click();
+    const open = async moduleId => {
+      await page.goto(`${url}/${moduleId}`);
+      await editor.click();
+    };
+    const travel = async () => {
+      await page.getByRole("link", { name: "Travel", exact: true }).click();
+      await editor.click();
+    };
+    const grade = card => page.evaluate(async stored => {
+      const { getScheduler, scheduleReview } = await import("/src/lib/fsrs.ts");
+      const { card, log } = scheduleReview(await getScheduler(), stored, 4, Date.now());
+      await window.rustCall("review_card", { cardId: stored.id, expectedReps: 0, card, log });
+    }, card);
+    const reviewAll = async (moduleId, count) => {
+      await schedules(moduleId, count);
+      const cards = await call("due_cards", { moduleId, now: Number.MAX_SAFE_INTEGER });
+      for (const card of cards) await grade(card);
+      return schedules(moduleId, count);
+    };
+    const select = (from, to) => editor.evaluate((el, range) => el.editor.commands.setTextSelection(range), { from, to });
+    const key = key => page.keyboard.press(key);
+    await run({ page, editor, mod, source, destination, call, schedules, log, open, travel, grade, reviewAll, select, key });
+  } finally {
+    db?.close();
+    await page.close();
+    child.stdin.end();
+    await exit;
+  }
+}
+
+test("the first cut paste keeps cloze history across and within notes, while copies are new", () =>
+  withCore(async ({ page, editor, mod, source, destination, call, schedules, log, grade, open, travel }) => {
+    await open(source);
     await page.keyboard.type("{{Paris}} and {{France}}");
     await schedules(source, 2);
     const cards = await call("due_cards", { moduleId: source, now: Number.MAX_SAFE_INTEGER });
     const paris = cards.find(({ back }) => back.some(part => part.type === "cloze" && part.children.map(child => child.text).join("") === "Paris"));
     assert.ok(paris, JSON.stringify({ cards, text: await editor.textContent() }));
     const france = cards.find(card => card.id !== paris.id);
-    await page.evaluate(async paris => {
-      const { getScheduler, scheduleReview } = await import("/src/lib/fsrs.ts");
-      const { card, log } = scheduleReview(await getScheduler(), paris, 4, Date.now());
-      await window.rustCall("review_card", { cardId: paris.id, expectedReps: 0, card, log });
-    }, paris);
+    await grade(paris);
     const initial = (await schedules(source, 2)).find(card => card.id === paris.id);
     const review = log.get(paris.id);
     assert.equal(review.rating, 4);
@@ -179,8 +208,7 @@ test("the first cut paste keeps cloze history across and within notes, while cop
     const [remaining] = await schedules(source, 1);
     assert.equal(remaining.id, france.id);
 
-    await page.getByRole("link", { name: "Travel", exact: true }).click();
-    await editor.click();
+    await travel();
     await page.keyboard.press(`${mod}+v`);
     const [moved] = await schedules(destination, 1);
     assert.notEqual(moved.id, paris.id);
@@ -218,10 +246,126 @@ test("the first cut paste keeps cloze history across and within notes, while cop
     assert.deepEqual(movedAgain, { ...initial, id: movedAgain.id });
     assert.deepEqual(log.get(movedAgain.id), review);
     assert.deepEqual(repasted.filter(card => card.id !== movedAgain.id), copied.filter(card => card.id !== moved.id));
-  } finally {
-    db?.close();
-    await page.close();
-    child.stdin.end();
-    await exit;
-  }
+  }));
+
+
+test("a spent cut cannot recover the history of its deleted first paste", () =>
+  withCore(async ({ page, editor, source, destination, schedules, reviewAll, open, travel, select, key, mod }) => {
+    await open(source);
+    await page.keyboard.type("{{Paris}}");
+    await reviewAll(source, 1);
+    await select(1, 10);
+    await key(`${mod}+x`);
+    await schedules(source, 0);
+    await travel();
+    await page.keyboard.type("Capital: ");
+    await key(`${mod}+v`);
+    const [first] = await schedules(destination, 1);
+    assert.ok(first.lastReviewAt);
+    await select(10, 19);
+    await key("Backspace");
+    assert.equal(await editor.evaluate(el => el.editor.getText()), "Capital: ");
+    await schedules(destination, 0);
+    await key(`${mod}+v`);
+    const [second] = await schedules(destination, 1);
+    assert.notEqual(second.id, first.id);
+    assert.equal(second.lastReviewAt, null);
+  }));
+
+for (const acrossNotes of [false, true]) {
+  test(`cutting formula source keeps the cloze and its history ${acrossNotes ? "across notes" : "in its original block"}`, () =>
+    withCore(async ({ editor, source, destination, schedules, reviewAll, log, open, travel, select, key, mod }) => {
+      await open(source);
+      await editor.evaluate(el => el.editor.commands.setContent({
+        type: "doc",
+        content: [{ type: "mathBlock", attrs: { cloze: true }, content: [{ type: "text", text: "a + b" }] }],
+      }));
+      const [before] = await reviewAll(source, 1);
+      const review = log.get(before.id);
+      await select(1, 6);
+      await key(`${mod}+x`);
+      await schedules(source, 0);
+      if (acrossNotes) await travel();
+      await key(`${mod}+v`);
+      const [after] = await schedules(acrossNotes ? destination : source, 1);
+      assert.equal(await editor.evaluate(el => el.editor.state.doc.firstChild.type.name), "mathBlock");
+      assert.notEqual(after.id, before.id);
+      assert.deepEqual(after, { ...before, id: after.id });
+      assert.deepEqual(log.get(after.id), review);
+    }));
+}
+
+test("cutting and pasting multiple table cells moves each cloze's history", () =>
+  withCore(async ({ editor, source, schedules, reviewAll, log, open, key, mod }) => {
+    await open(source);
+    await editor.evaluate(el => {
+      const cell = text => ({
+        type: "tableCell", content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : [] }],
+      });
+      el.editor.commands.setContent({
+        type: "doc",
+        content: [{ type: "table", content: [{ type: "tableRow", content: [
+          cell("{{Paris}}"), cell("{{Berlin}}"), cell(""), cell(""),
+        ] }] }],
+      });
+    });
+    const before = await reviewAll(source, 2);
+    const history = cards => cards.map(({ id, ...schedule }) => ({ schedule, review: log.get(id) }))
+      .sort((a, b) => a.schedule.lastReviewAt - b.schedule.lastReviewAt);
+    const expected = history(before);
+    const cellPositions = () => editor.evaluate(el => {
+      const positions = [];
+      el.editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "tableCell") positions.push(pos);
+      });
+      return positions;
+    });
+    const selectCells = (anchorCell, headCell) => editor.evaluate((el, range) =>
+      el.editor.commands.setCellSelection(range), { anchorCell, headCell });
+    const [first, second] = await cellPositions();
+    await selectCells(first, second);
+    await key(`${mod}+x`);
+    await schedules(source, 0);
+    const [, , third, fourth] = await cellPositions();
+    await selectCells(third, fourth);
+    await key(`${mod}+v`);
+    const after = await schedules(source, 2);
+    const contents = await editor.evaluate(el => {
+      const cells = [];
+      el.editor.state.doc.descendants(node => {
+        if (node.type.name === "tableCell") cells.push(node.textContent);
+      });
+      return cells;
+    });
+    assert.ok(after.every(card => !before.some(previous => previous.id === card.id)));
+    const transferred = history(after);
+    assert.ok(transferred.every(card => card.review), "each pasted cloze keeps a review log");
+    assert.deepEqual(transferred, expected);
+    assert.deepEqual(contents, ["", "", "{{Paris}}", "{{Berlin}}"]);
+  }));
+
+test("a successful save retry retires a cut card without another editor update", async () => {
+  let failNextSave = false;
+  let failed = false;
+  let retried = false;
+  await withCore(async ({ page, source, schedules, open, select, key, mod }) => {
+    await open(source);
+    await page.keyboard.type("{{Paris}}");
+    await schedules(source, 1);
+    await select(1, 10);
+    failNextSave = true;
+    await key(`${mod}+x`);
+    await schedules(source, 0);
+    assert.ok(failed && retried);
+  }, async (command, args, call) => {
+    if (command === "add_update" && failNextSave) {
+      failNextSave = false;
+      await delay(1100); // Let the card index start waiting for the failed write.
+      failed = true;
+      throw new Error("Transient test save failure");
+    }
+    const result = await call(command, args);
+    if (command === "add_update" && failed) retried = true;
+    return result;
+  });
 });

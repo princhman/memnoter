@@ -64,17 +64,28 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
     lastSent.checkpoint?.edit === current.checkpoint?.edit &&
     lastSent.checkpoint?.appliedId === current.checkpoint?.appliedId;
 
-  const sync = (permit: WritePermit | undefined = admittedPermit): Promise<void> => {
+  const sync = (permit: WritePermit | undefined = admittedPermit, captured?: ReturnType<typeof snapshot>): Promise<void> => {
     debounce.cancel();
     if (!isWriteAdmitted(permit) || isSchemaReadOnly(editor)) return Promise.resolve();
-    const current = snapshot();
+    const current = captured ?? snapshot();
     if (wasSent(current)) return lastWrite;
     lastSent = current;
     const { cards, checkpoint } = current;
     // Keep syncs in order so an older snapshot never lands last.
     const write = queue
       .then(async () => {
-        const updateId = await checkpoint?.updateId();
+        const updateId = await checkpoint?.updateId().catch(error => {
+          // A caller waiting to navigate or quit still sees the save error.
+          // Resume indexing once the queue actually saves this edit.
+          if (lastSent === current) {
+            lastSent = undefined;
+            void checkpoint.whenSaved().then(saved => {
+              if (!saved || lastSent || (editor.isDestroyed && isModuleOpen(moduleId))) return;
+              void settled(sync(permit, editor.isDestroyed ? current : undefined));
+            });
+          }
+          throw error;
+        });
         if (isSchemaReadOnly(editor)) return [];
         return writeCards<string[]>("sync_cards", { moduleId, cards, updateId }, permit);
       })
