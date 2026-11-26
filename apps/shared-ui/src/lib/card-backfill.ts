@@ -4,7 +4,7 @@ import { dueCountsKey, isModuleOpen, startCardSync } from "@/lib/card-sync";
 import { isSchemaReadOnly } from "./guarded-collaboration";
 import { noteExtensions } from "@/lib/editor-schema";
 import { queryClient } from "@/lib/query-client";
-import { saveQueue } from "@/lib/saves";
+import { enqueueNoteUpdate } from "@/lib/saves";
 
 import type { WritePermit } from "@/lib/write-lifecycle";
 
@@ -16,7 +16,7 @@ export async function indexStoredCards(moduleId: string, doc: import("yjs").Doc,
   // A note opened meanwhile gives its blocks ids of its own; keep only those.
   const save = (update: Uint8Array, origin: unknown) => {
     if (origin !== LOAD_ORIGIN && !isModuleOpen(moduleId)) {
-      saveQueue.enqueue(moduleId, Array.from(update));
+      enqueueNoteUpdate(doc, moduleId, Array.from(update));
     }
   };
   doc.on("update", save);

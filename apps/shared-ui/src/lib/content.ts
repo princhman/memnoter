@@ -29,6 +29,7 @@ const loadedModules = new Set<string>();
 // the arrays it was read with, and re-applying a Yjs update is a no-op that
 // still decodes it in full (twice per large note open, before this).
 const appliedBytes = new WeakMap<Y.Doc, WeakSet<number[]>>();
+export const appliedContentUpdateId = new WeakMap<Y.Doc, number>();
 
 export function applySavedContent(doc: Y.Doc, content: GetContentResponse) {
   let applied = appliedBytes.get(doc);
@@ -45,6 +46,7 @@ export function applySavedContent(doc: Y.Doc, content: GetContentResponse) {
       if (seen.has(update.bytes)) continue;
       Y.applyUpdate(doc, new Uint8Array(update.bytes));
       seen.add(update.bytes);
+      appliedContentUpdateId.set(doc, Math.max(appliedContentUpdateId.get(doc) ?? 0, update.id));
     }
   }, LOAD_ORIGIN);
 }

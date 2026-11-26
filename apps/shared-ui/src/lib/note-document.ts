@@ -4,11 +4,12 @@ import * as Y from "yjs";
 import { ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "./backend";
-import { applyPendingSaves, saveQueue } from "./saves";
+import { applyPendingSaves, enqueueNoteUpdate, saveQueue } from "./saves";
 import { restoreView } from "./view-persistence";
 import { imageFilesOperation, assertWritable, isWriteAdmitted, MUTATIONS, type WritePermit } from "./write-lifecycle";
 import { applySavedContent, contentQueryOptions, acknowledgeCompaction, contentKey, LOAD_ORIGIN, patchContent, type ContentUpdate, loadContent, type FileType, type GetContentResponse } from "./content";
 
+import type { CardTransfer, WithCardTransfers } from "./cloze-clipboard";
 import { parsePdfSource, quoteTarget } from "./pdf-quote";
 import { pendingPdfQuote, type PdfTextQuotePart, type QuoteDraft } from "./pending-pdf-quote";
 
@@ -19,6 +20,12 @@ const COMPACTION_IDLE_MS = 3_000;
 
 export function useNoteDocument(moduleId: string) {
   const yDoc = useMemo(() => new Y.Doc(), [moduleId]);
+  const pendingMoves = useRef<CardTransfer[]>([]);
+  const withCardTransfers: WithCardTransfers = useCallback((moves, dispatch) => {
+    pendingMoves.current = moves;
+    try { dispatch(); }
+    finally { pendingMoves.current = []; }
+  }, []);
   const persistenceTarget = useRef<Y.Doc | null>(null);
   const queryClient = useQueryClient();
 
@@ -129,13 +136,15 @@ export function useNoteDocument(moduleId: string) {
 
     const handleUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin === LOAD_ORIGIN) return;
-      saveQueue.enqueue(moduleId, Array.from(update));
+      const moves = pendingMoves.current;
+      pendingMoves.current = [];
+      enqueueNoteUpdate(yDoc, moduleId, Array.from(update), moves);
     };
 
     persistenceTarget.current = yDoc;
     isSaving.current = true;
     for (const update of loadChanges.current.splice(0)) {
-      saveQueue.enqueue(moduleId, update);
+      enqueueNoteUpdate(yDoc, moduleId, update);
     }
     yDoc.on("update", handleUpdate);
     return () => {
@@ -349,5 +358,5 @@ export function useNoteDocument(moduleId: string) {
     [filesById, moduleId, uploadFileMutation.mutateAsync],
   );
 
-  return { yDoc, editorRef, isSuccess, filesContext, insertImages, insertQuote, insertTextQuote };
+  return { yDoc, editorRef, isSuccess, filesContext, withCardTransfers, insertImages, insertQuote, insertTextQuote };
 }
