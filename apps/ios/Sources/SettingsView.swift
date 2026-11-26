@@ -7,6 +7,7 @@ struct SettingsView: View {
     let beforeRestore: () async throws -> Void
     let restored: () async -> Void
     @AppStorage("skipCardsCreatedToday") private var skipCardsCreatedToday = false
+    @AppStorage("sidebarSectionsEnabled") private var sidebarSectionsEnabled = false
     @Environment(\.dismiss) private var dismiss
     @State private var backups: [Backup] = []
     @State private var selected: Backup?
@@ -27,6 +28,7 @@ struct SettingsView: View {
                     Toggle("Skip cards added to this device today", isOn: $skipCardsCreatedToday)
                     Text("Unreviewed cards first indexed on this device today become available after local midnight, including cards from older synced notes.").font(.caption).foregroundStyle(.secondary)
                 }
+                Section { Toggle("Sections in the sidebar", isOn: $sidebarSectionsEnabled) }
                 if let sync { SyncSettingsView(sync: sync) }
                 Section {
                     if modules.isEmpty {
