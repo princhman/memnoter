@@ -997,7 +997,7 @@ async function pastePng(page) {
     const png = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
     await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
   });
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("ControlOrMeta+v");
 }
 
 for (const method of ["drop", "paste"]) {

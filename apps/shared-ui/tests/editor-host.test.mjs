@@ -973,11 +973,15 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     // Exercise the public WK bridge against the real shared schema/commands.
     const state = () => page.evaluate(() => window.messages.filter(m => m.event === 'state').at(-1).payload);
     await page.evaluate(() => window.memnoterEditor.focus());
+    await page.waitForFunction(() => document.activeElement === document.querySelector('.tiptap'));
     for (let level = 1; level <= 6; level++) {
       assert.equal(await exec('heading', { level }), true);
       await page.keyboard.type(`Level ${level}`);
+      await page.waitForFunction(level =>
+        window.messages.findLast(m => m.event === 'state').payload.headingLevel === level, level);
       assert.equal((await state()).headingLevel, level);
       await page.keyboard.press('Enter');
+      await page.waitForFunction(() => window.messages.findLast(m => m.event === 'state').payload.blockType === 'paragraph');
     }
     await exec('paragraph');
     assert.equal(await exec('codeBlock'), true);
@@ -1007,7 +1011,11 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.keyboard.press('Enter');
     await page.keyboard.type('Answer');
     for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowLeft');
-    await page.waitForFunction(() => window.messages.filter(m => m.event === 'state').at(-1).payload.canMakeCard);
+    await page.waitForFunction(() => {
+      const { doc, selection } = document.querySelector('.tiptap').editor.state;
+      return doc.textBetween(selection.from, selection.to) === 'Answer' &&
+        window.messages.findLast(m => m.event === 'state').payload.canMakeCard;
+    });
     assert.equal((await state()).canMakeCard, true);
     assert.equal(await exec('makeCard'), true);
     assert.equal((await state()).inCloze, true);
