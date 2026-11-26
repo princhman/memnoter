@@ -45,9 +45,10 @@ import {
 
 type TipTapProps = {
   moduleId: string;
+  sidebarSectionsEnabled?: () => boolean;
 };
 
-const Tiptap = ({ moduleId }: TipTapProps) => {
+const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sidebarSections }: TipTapProps) => {
   const host = useEditorHost();
   const element = useRef<HTMLDivElement>(null);
   const { data: modules } = useModules();
@@ -68,7 +69,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       shouldRerenderOnTransaction: false,
       extensions: noteExtensions({
         document: yDoc,
-        sidebarSectionsEnabled: () => appStore.state.sidebarSections,
+        sidebarSectionsEnabled,
         withCardTransfers,
         scrollContainer: () => element.current ? host.scrollContainer(element.current) : null,
         ui: {

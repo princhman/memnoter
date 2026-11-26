@@ -152,6 +152,22 @@ test('native sidebar reads closed chapters and focuses or adds them only in the 
     await page.waitForFunction(() => window.messages.findLast(message => message.event === 'sidebarSections')
       .payload.sections.at(-1).title === 'Typed in the new title');
 
+    // The formatting bar creates a sibling through the editor command, while the
+    // native preference can change with the same note still open.
+    for (const enabled of [false, true]) {
+      await page.evaluate(enabled => window.memnoterEditor.setSidebarSectionsTracking(enabled), enabled);
+      assert.equal(await page.evaluate(target => window.memnoterEditor.navigateSidebar('one', target), second), 'applied');
+      const headings = page.locator('.tiptap h1');
+      const count = await headings.count();
+      assert.equal(await page.evaluate(() => window.memnoterEditor.exec('insertSection', { kind: 'sibling' })), true);
+      assert.equal(await headings.count(), count + 1);
+      const sibling = headings.nth(2);
+      assert.equal(await first.isVisible(), enabled, 'Only the enabled preference reveals the whole note');
+      const headingId = await sibling.getAttribute('data-toc-id');
+      if (enabled) assert.ok(headingId, 'An empty section needs an ID for sidebar navigation');
+      else assert.equal(headingId, null);
+    }
+
     await page.evaluate(() => window.memnoterEditor.open('newer'));
     assert.equal(await page.evaluate(() => window.memnoterEditor.navigateSidebar('newer', { kind: 'add' })), 'read-only');
     assert.match((await latest()).error, /newer version/);

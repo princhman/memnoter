@@ -426,7 +426,9 @@ export function Host() {
     else setQuestionSourceOpen(documentId);
   };
   return <EditorHostProvider value={editorHost}><NativePdfWorkspace questions={questions.open} moduleId={questions.open ? questions.moduleId : moduleId} actions={pdfActions} sourceDocumentId={worksheetModule ? null : questionSourceOpen} onCloseSource={() => setQuestionSourceOpen(null)}><SaveStatus />
-    <main ref={container} style={questions.open ? { display: "none" } : undefined} className="app-scroll-container h-full overflow-y-auto p-4">{moduleId && <Tiptap key={moduleId} moduleId={moduleId} />}</main>
+    <main ref={container} style={questions.open ? { display: "none" } : undefined} className="app-scroll-container h-full overflow-y-auto p-4">
+      {moduleId && <Tiptap key={moduleId} moduleId={moduleId} sidebarSectionsEnabled={() => tracksSidebarSections.current} />}
+    </main>
     {questions.mounted && <main aria-label={worksheetModule ? "Worksheet" : "Questions"} style={!questions.open ? { display: "none" } : undefined} className="app-scroll-container native-questions h-full overflow-y-auto p-4"><NativeQuestions visible={questions.open} scope={questions.moduleId} onOpenSource={openQuestionSource} tablet={tablet} worksheetModule={worksheetModule} /></main>}
   </NativePdfWorkspace></EditorHostProvider>;
 }
