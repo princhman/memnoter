@@ -676,7 +676,6 @@ struct RootView: View {
                         Text(reader.title).lineLimit(1).truncationMode(.middle)
                             .accessibilityIdentifier("module.title")
                     } else if isPhone, module != nil || ["files", "review", "questions"].contains(selected ?? "") {
-                        // Same glass breadcrumb as iPad: module ⌄ / section ⌄.
                         phoneBreadcrumb
                     } else {
                         Text(module != nil && session?.state.focusedSectionId != nil
@@ -850,12 +849,18 @@ struct RootView: View {
         if selected == "review" { return 230 }
         return module != nil && selected != "questions" ? 165 : 120
     }
+    private var showWholeNoteFromBreadcrumb: (() -> Void)? {
+        guard currentSection == "notes", let session, session.state.focusedSectionId != nil else { return nil }
+        return { session.exec(.showDocument) }
+    }
     private var phoneBreadcrumb: some View {
         TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
                          item: breadcrumbItem,
                          questionsEnabled: session != nil,
                          maximumWidth: max(120, detailWidth - phoneBarTrailingWidth),
-                         changeScope: changeSectionScope, changeSection: selectSection, compact: true)
+                         changeScope: changeSectionScope, changeSection: selectSection, compact: true,
+                         combinesMenus: !phoneSplitLayout && detailWidth < 400,
+                         showWholeNote: showWholeNoteFromBreadcrumb)
             .disabled(busy)
     }
     private var sectionNavigation: some View {
