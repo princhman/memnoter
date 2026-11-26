@@ -550,9 +550,17 @@ function selectAcrossHiddenSections(node) {
 }
 
 async function focusFromHeadingToolbar(page, headingIndex) {
-  await page.locator(".tiptap > h1").nth(headingIndex).hover();
-  await page.getByRole("toolbar", { name: "Heading controls" })
-    .getByRole("button", { name: "Focus on this section", exact: true }).click();
+  const heading = page.locator(".tiptap > h1").nth(headingIndex);
+  const toolbar = page.getByRole("toolbar", { name: "Heading controls" });
+  await heading.hover();
+  // The toolbar follows the hovered heading asynchronously; clicking before it
+  // moves would focus the previous heading's section instead.
+  await page.waitForFunction(([target, bar]) => {
+    const box = target?.getBoundingClientRect();
+    const controls = bar?.getBoundingClientRect();
+    return box && controls && controls.bottom > box.top && controls.top < box.bottom;
+  }, [await heading.elementHandle(), await toolbar.elementHandle()]);
+  await toolbar.getByRole("button", { name: "Focus on this section", exact: true }).click();
   await page.locator(".tiptap > h1").nth(headingIndex).and(page.locator(".section-focus-start")).waitFor();
 }
 
