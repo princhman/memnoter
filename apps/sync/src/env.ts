@@ -12,6 +12,8 @@ export interface Env {
   // HMAC key for session tokens. Set with `wrangler secret put AUTH_SECRET`.
   AUTH_SECRET: string;
   EMAIL_FROM: string;
+  REVIEW_EMAIL?: string;
+  REVIEW_CODE?: string;
   // Local development only: return sign-in codes in the response instead of
   // emailing them. Never set this in production.
   DEV_RETURN_CODE?: string;
