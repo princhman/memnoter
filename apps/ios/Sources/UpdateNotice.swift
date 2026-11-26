@@ -1,27 +1,78 @@
 import SwiftUI
+import StoreKit
 
-/// The installed native version is authoritative, including TestFlight builds.
+private enum UpdateChannel {
+    case appStore, testFlight
+
+    private static let appStoreAppID = 6830285669
+
+    static func installed() async -> Self {
+        #if DEBUG || targetEnvironment(simulator)
+        return .appStore
+        #else
+        if case .verified(let transaction)? = try? await AppTransaction.shared {
+            return transaction.environment == .sandbox ? .testFlight : .appStore
+        }
+        // A beta receipt also identifies an offline TestFlight install.
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt" ? .testFlight : .appStore
+        #endif
+    }
+
+    var name: String { self == .testFlight ? "TestFlight" : "the App Store" }
+    var buttonTitle: String { self == .testFlight ? "Open TestFlight" : "Open App Store" }
+    var updateURL: URL {
+        switch self {
+        case .testFlight: URL(string: "itms-beta://")!
+        case .appStore: URL(string: "itms-apps://apps.apple.com/app/id\(Self.appStoreAppID)")!
+        }
+    }
+
+    var releaseURL: URL {
+        switch self {
+        case .testFlight: URL(string: "https://api.github.com/repos/princhman/memnoter/releases/latest")!
+        case .appStore: URL(string: "https://itunes.apple.com/lookup?id=\(Self.appStoreAppID)")!
+        }
+    }
+
+    func version(from data: Data) throws -> String? {
+        switch self {
+        case .testFlight:
+            guard let release = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  release["draft"] as? Bool != true, release["prerelease"] as? Bool != true else { return nil }
+            return release["tag_name"] as? String
+        case .appStore:
+            struct Lookup: Decodable {
+                struct Listing: Decodable { let bundleId: String; let version: String }
+                let results: [Listing]
+            }
+            return try JSONDecoder().decode(Lookup.self, from: data).results
+                .first { $0.bundleId == Bundle.main.bundleIdentifier }?.version
+        }
+    }
+}
+
 @MainActor @Observable final class ReleaseNotice {
     var available: String?
-    func check() async {
+    fileprivate func check(channel: UpdateChannel) async {
         let defaults = UserDefaults.standard
         let now = Date().timeIntervalSince1970
-        let cached = defaults.string(forKey: "releaseTag")
-        if now - defaults.double(forKey: "releaseChecked") < 86_400 {
+        // A promoted build can have a newer TestFlight release cached locally.
+        let tagKey = channel == .testFlight ? "releaseTag" : "appStoreReleaseVersion"
+        let checkedKey = channel == .testFlight ? "releaseChecked" : "appStoreReleaseChecked"
+        let cached = defaults.string(forKey: tagKey)
+        if now - defaults.double(forKey: checkedKey) < 86_400 {
             show(cached); return
         }
-        defaults.set(now, forKey: "releaseChecked")
+        defaults.set(now, forKey: checkedKey)
         // A failed refresh must not revive a stale notice.
-        defaults.removeObject(forKey: "releaseTag")
+        defaults.removeObject(forKey: tagKey)
         do {
-            var request = URLRequest(url: URL(string: "https://api.github.com/repos/princhman/memnoter/releases/latest")!)
+            var request = URLRequest(url: channel.releaseURL)
             request.timeoutInterval = 10
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
-                  let release = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  release["draft"] as? Bool != true, release["prerelease"] as? Bool != true,
-                  let tag = release["tag_name"] as? String else { return }
-            defaults.set(tag, forKey: "releaseTag"); show(tag)
+                  let tag = try channel.version(from: data) else { return }
+            defaults.set(tag, forKey: tagKey); show(tag)
         } catch { /* Offline and rate limits need no user action. */ }
     }
     private func show(_ tag: String?) {
@@ -51,6 +102,7 @@ import SwiftUI
 struct UpdateNoticeView: View {
     let required: Bool
     @State private var release = ReleaseNotice()
+    @State private var channel: UpdateChannel?
     @State private var showing = false
     @State private var requiredShown = false
     @State private var optionalShown = false
@@ -59,22 +111,27 @@ struct UpdateNoticeView: View {
     var body: some View {
         Color.clear.frame(width: 0, height: 0)
             .alert(required ? "Memnoter needs an update to keep syncing" : "Update available", isPresented: $showing) {
-                Button("Open TestFlight") {
-                    if !required { release.dismiss() }
-                    UIApplication.shared.open(URL(string: "itms-beta://")!)
+                if let channel {
+                    Button(channel.buttonTitle) {
+                        if !required { release.dismiss() }
+                        UIApplication.shared.open(channel.updateURL)
+                    }
                 }
                 Button("Later", role: .cancel) {
                     if !required { release.dismiss() }
                 }
             } message: {
                 Text(required
-                     ? "Your notes are still available on this device. Update Memnoter in TestFlight to resume syncing."
-                     : "A newer version of Memnoter is available in TestFlight.")
+                     ? "Your notes are still available on this device. Update Memnoter in \(channel?.name ?? "the App Store") to resume syncing."
+                     : "A newer version of Memnoter is available in \(channel?.name ?? "the App Store").")
             }
             .tint(Color("BrandAccent"))
             .task {
+                let installed = await UpdateChannel.installed()
+                guard !Task.isCancelled else { return }
+                channel = installed
                 presentIfNeeded()
-                await release.check()
+                await release.check(channel: installed)
                 presentIfNeeded()
             }
             .onChange(of: required) { _, _ in presentIfNeeded() }
@@ -82,6 +139,7 @@ struct UpdateNoticeView: View {
     }
 
     private func presentIfNeeded() {
+        guard channel != nil else { return }
         if required {
             guard !requiredShown else { return }
             requiredShown = true

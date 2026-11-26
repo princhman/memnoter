@@ -117,10 +117,11 @@ async function startSignIn(request: Request, env: Env) {
   const email = normalizeEmail(body?.email);
   if (!email) return json({ error: "Enter a valid email address" }, 400);
 
-  const result = await env.ACCOUNT.getByName(email).startSignIn();
+  const result = await env.ACCOUNT.getByName(email).startSignIn(reviewCodeFor(email, env) !== undefined);
   if ("retryAfterMs" in result) {
     return json({ error: "A code was just sent. Wait a moment and try again.", retryAfterMs: result.retryAfterMs }, 429);
   }
+  if (result.code === null) return json({ ok: true });
   if (env.DEV_RETURN_CODE === "1") return json({ ok: true, devCode: result.code });
   if (!env.EMAIL) return json({ error: "Email sending is not configured" }, 503);
 
@@ -137,9 +138,12 @@ async function verifySignIn(request: Request, env: Env) {
   const body = await readJson<{ email?: unknown; code?: unknown }>(request);
   const email = normalizeEmail(body?.email);
   const code = typeof body?.code === "string" ? body.code.trim() : "";
-  if (!email || !/^\d{6}$/.test(code)) return json({ error: "Enter the 6-digit code" }, 400);
+  const reviewCode = reviewCodeFor(email, env);
+  if (!email || !code || (reviewCode === undefined && !/^\d{6}$/.test(code))) {
+    return json({ error: "Enter the 6-digit code" }, 400);
+  }
 
-  const userId = await env.ACCOUNT.getByName(email).verify(code);
+  const userId = await env.ACCOUNT.getByName(email).verify(code, reviewCode);
   if (!userId) return json({ error: "That code is wrong or has expired" }, 401);
 
   const now = Date.now();
@@ -179,6 +183,12 @@ function normalizeEmail(value: unknown) {
   if (typeof value !== "string") return null;
   const email = value.trim().toLowerCase();
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+function reviewCodeFor(email: string | null, env: Env) {
+  if (!email || email !== normalizeEmail(env.REVIEW_EMAIL)) return undefined;
+  const code = env.REVIEW_CODE?.trim();
+  return code && [...code].length >= 12 ? code : undefined;
 }
 
 function isKeyInfo(value: Partial<KeyInfo> | null): value is KeyInfo {
