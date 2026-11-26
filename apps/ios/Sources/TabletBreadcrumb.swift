@@ -12,6 +12,8 @@ struct TabletBreadcrumb: View {
     let changeScope: (String?) -> Void
     let changeSection: (String) -> Void
     var compact: Bool = false
+    var combinesMenus = false
+    var showWholeNote: (() -> Void)?
 
     private var moduleTitle: String { modules.first { $0.id == scope }?.name ?? "All modules" }
     private var distinctItem: String? {
@@ -19,8 +21,14 @@ struct TabletBreadcrumb: View {
         let name = item.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty,
               name.localizedCaseInsensitiveCompare(moduleTitle) != .orderedSame,
-              name.localizedCaseInsensitiveCompare(section) != .orderedSame else { return nil }
+              combinesMenus || name.localizedCaseInsensitiveCompare(section) != .orderedSame else { return nil }
         return item
+    }
+    private var trailingTitle: String? {
+        if let distinctItem { return distinctItem }
+        guard combinesMenus, section != "notes",
+              section.localizedCaseInsensitiveCompare(moduleTitle) != .orderedSame else { return nil }
+        return section.capitalized
     }
 
     /// Toolbar items are laid out at their ideal size, so a cap on the row alone lets long
@@ -31,13 +39,14 @@ struct TabletBreadcrumb: View {
     /// Natural widths unless the row really overflows. Then the shorter name keeps its full
     /// width (up to half) and the longer one takes the rest, so nothing truncates needlessly.
     private var labelWidths: (module: CGFloat, section: CGFloat, item: CGFloat) {
-        let section = Self.textWidth(section.capitalized)
-        let itemChrome: CGFloat = distinctItem == nil ? 0 : 24
-        // Compact navigation menus add native button padding around both labels.
-        let chrome: CGFloat = (compact ? 114 : 78) + itemChrome
+        let section = combinesMenus ? 0 : Self.textWidth(section.capitalized)
+        let itemChrome: CGFloat = trailingTitle == nil ? 0 : 24
+        // Navigation bar menus add native button padding around their labels.
+        let menuChrome: CGFloat = combinesMenus ? 64 : (compact ? 114 : 78)
+        let chrome = menuChrome + itemChrome
         let available = max(40, maximumWidth - chrome - section)
         let module = Self.textWidth(moduleTitle)
-        guard let item = distinctItem else { return (min(module, available), section, 0) }
+        guard let item = trailingTitle else { return (min(module, available), section, 0) }
         let itemWidth = Self.textWidth(item)
         if module + itemWidth <= available { return (module, section, itemWidth) }
         let half = available / 2
@@ -50,24 +59,34 @@ struct TabletBreadcrumb: View {
         let widths = labelWidths
         HStack(spacing: 8) {
             Menu {
-                Button("All modules") { changeScope(nil) }
-                ForEach(modules) { module in
-                    Button { changeScope(module.id) } label: { Text(module.name).lineLimit(1) }
+                if combinesMenus {
+                    if let showWholeNote {
+                        Button("Whole Note", systemImage: "arrow.up.left.and.arrow.down.right", action: showWholeNote)
+                    }
+                    Section("Modules") {
+                        Picker("Module", selection: Binding(get: { scope }, set: { changeScope($0) })) {
+                            Text("All modules").tag(nil as String?)
+                            ForEach(modules) { module in
+                                Text(module.name).lineLimit(1).tag(Optional(module.id))
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    }
+                    Section { sectionActions }
+                } else {
+                    moduleActions
                 }
             } label: {
                 breadcrumbLabel(moduleTitle, width: widths.module)
-            }.accessibilityLabel("Module scope")
-            Text("/").foregroundStyle(.secondary)
-                .fixedSize(horizontal: compact, vertical: false)
-            Menu {
-                Button("Notes") { changeSection("notes") }
-                Button("Files") { changeSection("files") }
-                if questionsEnabled { Button("Questions") { changeSection("questions") } }
-                Button("Review") { changeSection("review") }
-            } label: {
-                breadcrumbLabel(section.capitalized, width: widths.section)
-            }.accessibilityLabel("Select module section")
-            if let item = distinctItem {
+            }.accessibilityLabel(combinesMenus ? "\(moduleTitle), module and view" : "Module scope")
+            if !combinesMenus {
+                Text("/").foregroundStyle(.secondary)
+                    .fixedSize(horizontal: compact, vertical: false)
+                Menu { sectionActions } label: {
+                    breadcrumbLabel(section.capitalized, width: widths.section)
+                }.accessibilityLabel("Select module section")
+            }
+            if let item = trailingTitle {
                 Text("›").foregroundStyle(.secondary)
                 fittedText(item, width: widths.item, wraps: wrapsTitles)
             }
@@ -77,6 +96,20 @@ struct TabletBreadcrumb: View {
         .padding(.horizontal, 10)
         .frame(maxWidth: maximumWidth, minHeight: 44)
         .fixedSize(horizontal: true, vertical: false)
+    }
+
+    @ViewBuilder private var moduleActions: some View {
+        Button("All modules") { changeScope(nil) }
+        ForEach(modules) { module in
+            Button { changeScope(module.id) } label: { Text(module.name).lineLimit(1) }
+        }
+    }
+
+    @ViewBuilder private var sectionActions: some View {
+        if !combinesMenus || showWholeNote == nil { Button("Notes") { changeSection("notes") } }
+        Button("Files") { changeSection("files") }
+        if questionsEnabled { Button("Questions") { changeSection("questions") } }
+        Button("Review") { changeSection("review") }
     }
 
     private func breadcrumbLabel(_ title: String, width: CGFloat) -> some View {

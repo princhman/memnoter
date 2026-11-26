@@ -14,6 +14,8 @@ import { cardGroupsOf, groupOpener, isCardBlock, cardIdsOf, changedRanges, cloze
 import { assignPastedClozes, clozeClipboard, clozeCutKey, clozePasteKey, renewClipboardClozeBlock, type WithCardTransfers } from "./cloze-clipboard.ts";
 import { CardState, formatInterval } from "./fsrs.ts";
 
+import { sectionFocusBackground } from "./section-focus.ts";
+
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
 
 declare module "@tiptap/core" {
@@ -836,6 +838,7 @@ export const Flashcards = Extension.create<{ withCardTransfers?: WithCardTransfe
               if (isImageNode(node)) tr.setNodeMarkup(pos, undefined, renewImageIdentity(node.attrs, () => crypto.randomUUID()));
               else tr.setNodeAttribute(pos, "cardId", crypto.randomUUID());
             }
+            tr.setMeta(sectionFocusBackground, true);
           }
           return true;
         },

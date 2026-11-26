@@ -1,9 +1,10 @@
 import { action } from "./shortcuts.ts";
-import { outline } from "./outline.ts";
+import { outline, TOC_ID_ATTRIBUTE } from "./outline.ts";
 import { Extension } from "@tiptap/core";
 import type { EditorState } from "@tiptap/pm/state";
-import { TextSelection } from "@tiptap/pm/state";
-import { getSectionRange, sectionFocusKey } from "./section-focus.ts";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
+import { getSectionRange, sectionFocusBackground, sectionFocusKey } from "./section-focus.ts";
 
 export type SectionKind = "sibling" | "subsection";
 
@@ -29,8 +30,12 @@ export function currentSection(state: EditorState) {
   return { blockPos, heading, end: heading?.end ?? state.doc.content.size };
 }
 
-export const Sections = Extension.create({
+export const Sections = Extension.create<{ sidebarSectionsEnabled: () => boolean }>({
   name: "sections",
+
+  addOptions() {
+    return { sidebarSectionsEnabled: () => false };
+  },
 
   addCommands() {
     return {
@@ -60,6 +65,8 @@ export const Sections = Extension.create({
           const level = heading
             ? Math.min(heading.level + (kind === "subsection" ? 1 : 0), MAX_LEVEL)
             : 1;
+          const id = dispatch && this.options.sidebarSectionsEnabled() ? crypto.randomUUID() : null;
+          const attrs = id ? { level, id, [TOC_ID_ATTRIBUTE]: id } : { level };
 
           let headingPos: number;
           const block = $from.depth > 0 ? $from.node(1) : null;
@@ -67,23 +74,23 @@ export const Sections = Extension.create({
             // An empty line, e.g. one the slash menu just cleared, becomes
             // the heading itself.
             headingPos = $from.before(1);
-            tr.setBlockType(headingPos, headingPos + 1, headingType, { level });
+            tr.setBlockType(headingPos, headingPos + 1, headingType, attrs);
           } else {
             // Otherwise the new section goes after the current one, so it
             // does not take over the rest of that section's content.
             headingPos = end;
-            tr.insert(headingPos, headingType.create({ level }));
+            tr.insert(headingPos, headingType.create(attrs));
           }
           tr.setSelection(TextSelection.create(tr.doc, headingPos + 1));
           if (!dispatch) return true;
           tr.scrollIntoView();
 
-          // A section outside the focused one would be hidden; focus it instead.
           const focusedPos = sectionFocusKey.getState(state);
           if (focusedPos != null) {
             const range = getSectionRange(tr.doc, tr.mapping.map(focusedPos));
             if (!range || headingPos < range.from || headingPos >= range.to) {
-              commands.showSection(headingPos);
+              if (this.options.sidebarSectionsEnabled()) commands.showDocument();
+              else commands.showSection(headingPos);
             }
           }
           return true;
@@ -97,4 +104,53 @@ export const Sections = Extension.create({
       [action("section.child").keys]: () => this.editor.commands.insertSection("subsection"),
     };
   },
+
+  addProseMirrorPlugins() {
+    const editor = this.editor;
+    const enabled = () => editor.isEditable && this.options.sidebarSectionsEnabled();
+    return [new Plugin({
+      key: new PluginKey("empty-heading-ids"),
+      appendTransaction(transactions, _old, state) {
+        if (!enabled() || !transactions.some(tr => tr.docChanged) ||
+          transactions.some(tr => tr.getMeta("composition"))) return null;
+        const source = transactions[0].getMeta("appendedTransaction") ?? transactions[0];
+        // The view repairs synced headings in a separate background write.
+        if (source.getMeta(ySyncPluginKey)?.isChangeOrigin) return null;
+        const repair = emptyHeadingIds(state);
+        if (source.getMeta("addToHistory") === false) repair?.setMeta("addToHistory", false);
+        return repair;
+      },
+      // A note becomes editable only after it loads, without a content change.
+      view: () => ({
+        update(view) {
+          if (!enabled() || view.composing) return;
+          const tr = emptyHeadingIds(view.state);
+          if (tr) queueMicrotask(() => {
+            const next = !view.isDestroyed && !view.composing && enabled() ? emptyHeadingIds(view.state) : null;
+            if (next) view.dispatch(next.setMeta("addToHistory", false));
+          });
+        },
+      }),
+    })];
+  },
 });
+
+// TableOfContents only identifies headings with text. An empty heading still
+// bounds a section and takes a chapter number, so the sidebar and section moves
+// need its id too. Splitting at a heading's start can also leave the empty half
+// with its neighbour's id; the titled heading keeps it.
+function emptyHeadingIds(state: EditorState) {
+  const titled = new Set<string>();
+  state.doc.forEach(node => { if (node.type.name === "heading" && node.textContent) titled.add(node.attrs[TOC_ID_ATTRIBUTE]); });
+  const seen = new Set<string>();
+  const tr = state.tr;
+  state.doc.forEach((node, pos) => {
+    if (node.type.name !== "heading" || node.textContent) return;
+    const id = node.attrs[TOC_ID_ATTRIBUTE];
+    if (typeof id === "string" && id && !titled.has(id) && !seen.has(id)) { seen.add(id); return; }
+    const fresh = crypto.randomUUID();
+    seen.add(fresh);
+    tr.setNodeMarkup(pos, undefined, { ...node.attrs, [TOC_ID_ATTRIBUTE]: fresh, id: fresh });
+  });
+  return tr.docChanged ? tr.setMeta(sectionFocusBackground, true) : null;
+}

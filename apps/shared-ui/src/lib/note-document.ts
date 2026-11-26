@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import type { Editor } from "@tiptap/core";
+import { CommandManager, type Editor } from "@tiptap/core";
+import { changesOutsideSection, getFocusedSectionRange, sectionContainsRange } from "./section-focus";
 import * as Y from "yjs";
-import { ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
+import { absolutePositionToRelativePosition, ProsemirrorBinding, relativePositionToAbsolutePosition, ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call as invoke } from "./backend";
 import { applyPendingSaves, enqueueNoteUpdate, saveQueue } from "./saves";
@@ -162,13 +163,39 @@ export function useNoteDocument(moduleId: string) {
     position: number,
   ) {
     if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
-    // Keep mapped position and per-file receipts across retries. The original
-    // editor is the target; navigation never redirects these files to a new note.
-    let insertAt = position;
-    const mapPosition = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => {
-      insertAt = transaction.mapping.map(insertAt);
+    const { state } = currentEditor;
+    const binding: unknown = ySyncPluginKey.getState(state)?.binding;
+    if (!(binding instanceof ProsemirrorBinding) || binding.doc !== yDoc) return;
+    const section = getFocusedSectionRange(state);
+    const $heading = section ? state.doc.resolve(section.from) : null;
+    // The binding keeps the same Yjs heading item when peer edits move it.
+    const heading = $heading ? binding.type.get($heading.index()) : null;
+    // Put images from the start of the title after the heading. Anchor to the
+    // heading's trailing edge so a peer's new chapter cannot move the destination.
+    let destination: Y.RelativePosition = $heading && position >= $heading.pos && position <= $heading.pos + 1
+      ? Y.createRelativePositionFromTypeIndex(binding.type, $heading.index() + 1, -1)
+      : absolutePositionToRelativePosition(position, binding.type, binding.mapping);
+
+    const prepareInsertion = (file: File, fileId?: string) => {
+      const { state } = currentEditor;
+      const range = getFocusedSectionRange(state);
+      const position = relativePositionToAbsolutePosition(yDoc, binding.type, destination, binding.mapping);
+      if (position === null) throw new Error("The image destination was removed.");
+      if ((section && (!range || !(heading instanceof Y.XmlElement) ||
+            binding.mapping.get(heading) !== state.doc.nodeAt(range.from))) ||
+          (range && !sectionContainsRange(range, { from: position, to: position }))) {
+        throw new Error("The image destination is outside the focused section.");
+      }
+      const tr = state.tr;
+      const inserted = new CommandManager({ editor: currentEditor }).createChain(tr)
+        .insertContentAt(position, { type: "image", attrs: { fileId, alt: file.name } })
+        .run();
+      if (!inserted || !tr.docChanged) throw new Error("Could not insert the uploaded image.");
+      if (range && changesOutsideSection(tr, range)) {
+        throw new Error("The image destination is outside the focused section.");
+      }
+      return { tr, nextPosition: tr.mapping.map(position) };
     };
-    currentEditor.on("transaction", mapPosition);
     return imageFilesOperation(files, {
       checkTarget: permit => {
         assertWritable(permit);
@@ -176,15 +203,16 @@ export function useNoteDocument(moduleId: string) {
           throw new Error("The original note is closed. Reopen it and add the remaining images, then discard this failed operation.");
         }
       },
-      upload: (file, permit) => uploadFileMutation.mutateAsync({ file, permit }),
-      insert: (saved, file) => {
-        // Owned retries use programmatic commands while user admission is closed.
-        const inserted = currentEditor.chain().insertContentAt(insertAt, {
-          type: "image", attrs: { fileId: saved.id, alt: file.name },
-        }).run();
-        if (!inserted) throw new Error("Could not insert the uploaded image.");
+      upload: (file, permit) => {
+        prepareInsertion(file);
+        return uploadFileMutation.mutateAsync({ file, permit });
       },
-      dispose: () => currentEditor.off("transaction", mapPosition),
+      insert: (saved, file) => {
+        const { tr, nextPosition } = prepareInsertion(file, saved.id);
+        currentEditor.view.dispatch(tr);
+        if (currentEditor.state.doc === tr.before) throw new Error("Could not insert the uploaded image.");
+        destination = absolutePositionToRelativePosition(nextPosition, binding.type, binding.mapping);
+      },
     })
       .catch(error => console.error("Failed to insert image:", error));
   }
@@ -229,10 +257,11 @@ export function useNoteDocument(moduleId: string) {
       },
       insert: saved => attempt(() => {
         if (inserted) return;
+        const before = currentEditor.state.doc;
         const accepted = currentEditor.commands.insertContentAt(destination.resolve(), {
           type: "image", attrs: { fileId: saved.id, imageId: crypto.randomUUID(), alt: file.name, pdfSource: parsedSource },
         });
-        if (!accepted) throw new Error("Could not insert the quote.");
+        if (!accepted || before.eq(currentEditor.state.doc)) throw new Error("Could not insert the quote.");
         inserted = true;
       }),
       dispose: () => {
@@ -272,7 +301,10 @@ export function useNoteDocument(moduleId: string) {
       const position = destination.resolve();
       const undoManager = yUndoPluginKey.getState(currentEditor.state)?.undoManager;
       undoManager?.stopCapturing();
-      if (!currentEditor.commands.insertContentAt(position, content)) throw new Error("Could not insert the quote. Try again.");
+      const before = currentEditor.state.doc;
+      if (!currentEditor.commands.insertContentAt(position, content) || before.eq(currentEditor.state.doc)) {
+        throw new Error("Could not insert the quote. Try again.");
+      }
       undoManager?.stopCapturing();
     } finally {
       destination.dispose();

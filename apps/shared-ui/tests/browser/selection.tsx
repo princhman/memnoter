@@ -8,7 +8,13 @@ import "@fontsource-variable/inter";
 import "@fontsource-variable/dm-sans";
 import "@/App.css";
 function SelectionEditor() {
-  const editor = useEditor({ extensions: visibleNoteExtensions({ document: new Y.Doc() }), onCreate: ({ editor }) => Object.assign(window, { editor }) });
+  const editor = useEditor({
+    extensions: visibleNoteExtensions({
+      document: new Y.Doc(),
+      sidebarSectionsEnabled: () => new URLSearchParams(location.search).has("sidebar-sections"),
+    }),
+    onCreate: ({ editor }) => Object.assign(window, { editor }),
+  });
   return <TooltipProvider><div style={{ width: 772.8, margin: "40px auto" }}><EditorContent editor={editor} /><TextBubbleMenu editor={editor} /></div></TooltipProvider>;
 }
 createRoot(document.getElementById("root")!).render(<SelectionEditor />);

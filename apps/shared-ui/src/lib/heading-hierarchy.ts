@@ -2,7 +2,7 @@ import { outline } from "./outline";
 import { Mapping } from "@tiptap/pm/transform";
 import { isHistoryTransaction } from "@tiptap/pm/history";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
-import { Extension } from "@tiptap/core";
+import { Extension, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
@@ -16,6 +16,12 @@ const headingHierarchyKey = new PluginKey<HeadingHierarchyState>(
   "heading-hierarchy",
 );
 
+export function backspaceHeading(editor: Editor) {
+  const { empty, $from } = editor.state.selection;
+  return empty && $from.parentOffset === 0 && $from.parent.type.name === "heading" &&
+    editor.commands.setParagraph();
+}
+
 export const HeadingHieararchy = Extension.create({
   name: "heading-hierarchy",
   // Handle heading starts before the list and default Backspace keymaps join
@@ -23,18 +29,7 @@ export const HeadingHieararchy = Extension.create({
   priority: 110,
   addKeyboardShortcuts() {
     return {
-      Backspace: () => {
-        const { empty, $from } = this.editor.state.selection;
-        if (
-          !empty ||
-          $from.parentOffset !== 0 ||
-          $from.parent.type.name !== "heading"
-        ) {
-          return false;
-        }
-
-        return this.editor.commands.setParagraph();
-      },
+      Backspace: () => backspaceHeading(this.editor),
     };
   },
   addProseMirrorPlugins() {

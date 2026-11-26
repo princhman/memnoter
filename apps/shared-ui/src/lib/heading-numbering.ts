@@ -6,9 +6,13 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
 // Missing heading levels do not invent empty chapters: H1 → H3 is 1 → 1.1.
 export function headingNumbers(doc: Node) {
+  return numberHeadings(outline(doc));
+}
+
+export function numberHeadings(headings: readonly { pos: number; level: number }[]) {
   const result = new Map<number, string>();
   const stack: { level: number; number: number }[] = [];
-  for (const { pos, level } of outline(doc)) {
+  for (const { pos, level } of headings) {
     let previous = 0;
     while (stack.length && stack[stack.length - 1].level > level) previous = stack.pop()!.number;
     if (stack[stack.length - 1]?.level === level) stack[stack.length - 1].number++;

@@ -46,7 +46,7 @@ function suppressNextClick() {
   setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
 }
 
-export function SidebarModules({ modules, renderModule }: { modules: Module[]; renderModule: (module: Module) => ReactNode }) {
+export function SidebarModules({ modules, renderModule }: { modules: Module[]; renderModule: (module: Module, preview?: boolean) => ReactNode }) {
   const query = useQuery({ queryKey: sidebarKey, queryFn: () => call<SidebarItem[]>('sidebar_items') });
   const [editing, setEditing] = useState<SidebarItem | 'new' | null>(null);
   const [name, setName] = useState('');
@@ -146,7 +146,7 @@ export function SidebarModules({ modules, renderModule }: { modules: Module[]; r
       {createPortal(<DragOverlay dropAnimation={null}>{dragged && <div data-sidebar-drag-preview inert aria-hidden style={{ width: dragging?.width }}
         className="floating-surface cursor-grabbing rounded-md text-sm">
         <SidebarMenu>{dragged.name === null
-          ? (draggedModule && renderModule(draggedModule))
+          ? (draggedModule && renderModule(draggedModule, true))
           : <SidebarMenuItem><SidebarMenuButton><ChevronRight /><Folder /><span>{dragged.name}</span></SidebarMenuButton></SidebarMenuItem>}</SidebarMenu>
       </div>}</DragOverlay>, document.body)}
     </DndContext>

@@ -54,6 +54,10 @@ struct RootView: View {
     @State private var folder: SidebarItem?
     @State private var folderName = ""
     @State private var deletingFolder: SidebarItem?
+    @AppStorage("sidebarSectionsEnabled") private var sidebarSectionsEnabled = false
+    @State private var expandedSidebarModules: Set<String> = []
+    @State private var savedSidebarSections: [String: SidebarSectionSnapshot] = [:]
+    @State private var sidebarSectionRevisions: [String: Int] = [:]
     @State private var sidebarEditMode: EditMode = .inactive
     @State private var detailWidth: CGFloat = 0
     @State private var primaryLibraryDocumentId: String?
@@ -109,8 +113,13 @@ struct RootView: View {
             guard let result = notification.object as? SyncApplyResult else { return }
             Task {
                 do {
+                    let payload = try JSONSerialization.jsonObject(with: Data(result.json.utf8))
                     if let session, session.ready {
-                        _ = try await session.callEditor(.applyRemote, ["result": try JSONSerialization.jsonObject(with: Data(result.json.utf8))], parameters: ["result"])
+                        _ = try await session.callEditor(.applyRemote, ["result": payload], parameters: ["result"])
+                    }
+                    if sidebarSectionsEnabled, let updates = (payload as? [String: Any])?["updates"] as? [[String: Any]] {
+                        let updated = Set(updates.compactMap { $0["moduleId"] as? String })
+                        for id in updated.intersection(expandedSidebarModules) { sidebarSectionRevisions[id, default: 0] += 1 }
                     }
                     await store.refresh()
                     if let selected, selected != "home", selected != "review", selected != "files", selected != "questions", !store.modules.contains(where: { $0.id == selected }) { self.selected = "home" }
@@ -144,6 +153,15 @@ struct RootView: View {
                 if restored.ready { restoreNavigation() }
                 else { restored.onReady = restoreNavigation }
             }
+        }
+        .task(id: SidebarTrackingRequest(generation: session?.generation, ready: session?.ready == true, enabled: sidebarSectionsEnabled)) {
+            if !sidebarSectionsEnabled {
+                expandedSidebarModules.removeAll()
+                savedSidebarSections.removeAll()
+                sidebarSectionRevisions.removeAll()
+            }
+            guard let session, session.ready else { return }
+            await session.trackSidebarSections(sidebarSectionsEnabled)
         }
         .alert(rename == nil ? "New module" : "Rename module", isPresented: $editingName) {
             TextField("Name", text: $name)
@@ -435,15 +453,28 @@ struct RootView: View {
         AnyView(Group {
             Section {
                 let rows = SidebarLayout.rows(items: store.sidebarItems, modules: store.modules)
-                ForEach(rows) { row in
-                    switch row {
-                    case .folder(let item): folderRow(item)
-                    case .module(let item, let module): moduleRow(module, inFolder: item.folder_id != nil)
+                if sidebarSectionsEnabled && !sidebarEditMode.isEditing {
+                    ForEach(rows) { row in
+                        switch row {
+                        case .folder(let item): folderRow(item)
+                        case .module(let item, let module):
+                            moduleRow(module, inFolder: item.folder_id != nil, showsSections: true)
+                            if expandedSidebarModules.contains(module.id) {
+                                sidebarSectionRows(module, inFolder: item.folder_id != nil)
+                            }
+                        }
                     }
-                }
-                .onMove { source, destination in
-                    let items = store.sidebarItems
-                    Task { await store.saveSidebar(SidebarLayout.move(items: items, rows: rows, from: source, to: destination)) }
+                } else {
+                    ForEach(rows) { row in
+                        switch row {
+                        case .folder(let item): folderRow(item)
+                        case .module(let item, let module): moduleRow(module, inFolder: item.folder_id != nil)
+                        }
+                    }
+                    .onMove { source, destination in
+                        let items = store.sidebarItems
+                        Task { await store.saveSidebar(SidebarLayout.move(items: items, rows: rows, from: source, to: destination)) }
+                    }
                 }
             } header: {
                 HStack {
@@ -649,7 +680,6 @@ struct RootView: View {
                         Text(reader.title).lineLimit(1).truncationMode(.middle)
                             .accessibilityIdentifier("module.title")
                     } else if isPhone, module != nil || ["files", "review", "questions"].contains(selected ?? "") {
-                        // Same glass breadcrumb as iPad: module ⌄ / section ⌄.
                         phoneBreadcrumb
                     } else {
                         Text(module != nil && session?.state.focusedSectionId != nil
@@ -823,12 +853,18 @@ struct RootView: View {
         if selected == "review" { return 230 }
         return module != nil && selected != "questions" ? 165 : 120
     }
+    private var showWholeNoteFromBreadcrumb: (() -> Void)? {
+        guard currentSection == "notes", let session, session.state.focusedSectionId != nil else { return nil }
+        return { session.exec(.showDocument) }
+    }
     private var phoneBreadcrumb: some View {
         TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
                          item: breadcrumbItem,
                          questionsEnabled: session != nil,
                          maximumWidth: max(120, detailWidth - phoneBarTrailingWidth),
-                         changeScope: changeSectionScope, changeSection: selectSection, compact: true)
+                         changeScope: changeSectionScope, changeSection: selectSection, compact: true,
+                         combinesMenus: !phoneSplitLayout && detailWidth < 400,
+                         showWholeNote: showWholeNoteFromBreadcrumb)
             .disabled(busy)
     }
     private var sectionNavigation: some View {
@@ -1153,13 +1189,19 @@ struct RootView: View {
             Button("Rename") { folder = item; folderName = item.name ?? ""; editingFolder = true }
         }
     }
-    @ViewBuilder private func moduleRow(_ module: NoteModule, inFolder: Bool) -> some View {
-        destinationLink(module.id) {
-            Text(module.name)
-                .lineLimit(isPhone ? 1 : nil)
-                .fixedSize(horizontal: false, vertical: !isPhone)
-                .badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
-                .padding(.leading, inFolder ? 20 : 0)
+    @ViewBuilder private func moduleRow(_ module: NoteModule, inFolder: Bool, showsSections: Bool = false) -> some View {
+        Group {
+            if showsSections {
+                sidebarModuleWithDisclosure(module, inFolder: inFolder)
+            } else {
+                destinationLink(module.id) {
+                    Text(module.name)
+                        .lineLimit(isPhone ? 1 : nil)
+                        .fixedSize(horizontal: false, vertical: !isPhone)
+                        .badge(store.counts.first { $0.moduleId == module.id }?.count ?? 0)
+                        .padding(.leading, inFolder ? 20 : 0)
+                }
+            }
         }
         .contextMenu { moduleActions(module) }
         // A destructive swipe removes the row before confirmation, losing its presenter.
@@ -1172,6 +1214,48 @@ struct RootView: View {
             Button("Delete", role: .destructive) { deleteModule(module) }
         }
     }
+    private func sidebarModuleWithDisclosure(_ module: NoteModule, inFolder: Bool) -> some View {
+        let expanded = expandedSidebarModules.contains(module.id)
+        let live = session?.sidebarSections(for: module.id)
+        let selected = sidebarDestination == module.id && (self.selected != module.id || live?.focusedKey == nil)
+        let count = store.counts.first { $0.moduleId == module.id }?.count ?? 0
+        let request = SidebarReadRequest(
+            generation: session?.generation, ready: session?.ready == true,
+            expanded: expanded, live: live != nil, revision: sidebarSectionRevisions[module.id, default: 0]
+        )
+        return SidebarModuleDisclosure(
+            name: module.name, count: count, inFolder: inFolder, compact: isPhone,
+            expanded: expanded, selected: selected,
+            open: { navigate(module.id, sidebarTarget: .document) },
+            toggle: {
+                if expanded {
+                    expandedSidebarModules.remove(module.id)
+                    savedSidebarSections.removeValue(forKey: module.id)
+                } else {
+                    expandedSidebarModules.insert(module.id)
+                }
+            }
+        )
+        .task(id: request) {
+            guard request.expanded, request.ready, !request.live, let session else { return }
+            let result = (try? await session.readSidebarSections(module.id)) ?? .readFailure
+            guard !Task.isCancelled, session.generation == request.generation,
+                  sidebarSectionsEnabled, expandedSidebarModules.contains(module.id),
+                  sidebarSectionRevisions[module.id, default: 0] == request.revision else { return }
+            savedSidebarSections[module.id] = result
+        }
+    }
+
+    private func sidebarSectionRows(_ module: NoteModule, inFolder: Bool) -> some View {
+        let live = session?.sidebarSections(for: module.id)
+        return SidebarSectionRows(
+            module: module, snapshot: live ?? savedSidebarSections[module.id],
+            focusedKey: selected == module.id ? live?.focusedKey : nil, inFolder: inFolder
+        ) { target in
+            navigate(module.id, sidebarTarget: .section(target))
+        }
+    }
+
     private func deleteModule(_ module: NoteModule) {
         Task {
             await store.perform {
@@ -1183,6 +1267,10 @@ struct RootView: View {
         }
     }
     @ViewBuilder func moduleActions(_ module: NoteModule) -> some View {
+        if sidebarSectionsEnabled {
+            Button("Add section", systemImage: "text.badge.plus") { navigate(module.id, sidebarTarget: .add) }
+                .disabled(session?.ready != true)
+        }
         Button("Rename") { rename = module; name = module.name; editingName = true }
         Button("Review") { reviewModule = module.id; navigate("review") }
         Button("Files", systemImage: "doc.text") { filesModuleFilter = module.id; navigate("files") }
@@ -1269,14 +1357,20 @@ struct RootView: View {
         _ = try await session.callEditor(.refreshDocuments, ["moduleId": document.moduleId], parameters: ["moduleId"])
         _ = try await session.callEditor(.pdfCommand, ["command": PdfCommand.openFile.rawValue, "value": document.id], parameters: ["command", "value"])
     }
-    func navigate(_ destination: String, questionScope: String? = nil) {
+    func navigate(_ destination: String, questionScope: String? = nil, sidebarTarget: SidebarNoteDestination? = nil) {
         guard !busy else { return }
+        if sidebarTarget != nil && session?.ready != true { return }
+        let generation = session?.generation
         busy = true
         Task {
             defer { busy = false }
             do {
                 try await session?.worksheetDrawing.cancel()
                 try await session?.flush()
+                if sidebarTarget != nil {
+                    guard sidebarSectionsEnabled, session?.ready == true, session?.generation == generation,
+                          store.modules.contains(where: { $0.id == destination }) else { return }
+                }
                 showingFind = false
                 showingContents = false
                 primaryLibraryDocumentId = nil
@@ -1294,21 +1388,67 @@ struct RootView: View {
                     // A deferred Questions open must not replace a newer destination.
                     session?.onReady = nil
                 }
-                if store.modules.contains(where: { $0.id == destination }), let session {
+                if sidebarTarget != nil {
+                    guard let session, session.ready, session.generation == generation else { return }
+                    try await session.open(destination)
+                } else if store.modules.contains(where: { $0.id == destination }), let session {
                     if session.ready { try await session.open(destination) }
                     else { session.onReady = { [weak session] in
                         guard let session else { return }
                         Task { do { try await session.open(destination) } catch { store.error = String(describing: error) } } } }
                 }
-                if store.modules.contains(where: { $0.id == destination }) {
-                    store.recordOpenedModule(destination)
+                let moduleExists = store.modules.contains { $0.id == destination }
+                if sidebarTarget != nil {
+                    guard moduleExists, sidebarSectionsEnabled, session?.ready == true,
+                          session?.generation == generation else { return }
                 }
+                if moduleExists { store.recordOpenedModule(destination) }
                 selected = destination
                 if isPhone { phoneColumn = .detail }
+                if let sidebarTarget, let session, session.generation == generation {
+                    try await applySidebarDestination(sidebarTarget, to: destination, in: session)
+                }
                 await store.refresh()
             } catch { store.error = String(describing: error) }
         }
     }
+
+    private func applySidebarDestination(_ target: SidebarNoteDestination, to id: String, in session: WebSession) async throws {
+        let generation = session.generation
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        // A sheet or compact split transition can leave the editor offscreen
+        // even after the bridge opened the note. Commit while it can take focus.
+        while clock.now < deadline {
+            guard sidebarSectionsEnabled, scenePhase == .active, selected == id, self.session === session,
+                  session.ready, session.generation == generation,
+                  !isPhone || phoneColumn == .detail else { return }
+            if session.web.window != nil && (!isPhone || phoneSplitLayout || !sidebarOnScreen) {
+                switch try await session.navigateSidebar(id, to: target) {
+                case .applied: break
+                case .unavailable: store.error = "This section is no longer available."
+                case .readOnly: store.error = "This note is read-only. A section could not be added."
+                }
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        store.error = "The editor isn't ready."
+    }
+}
+
+private struct SidebarTrackingRequest: Equatable {
+    let generation: UUID?
+    let ready: Bool
+    let enabled: Bool
+}
+
+private struct SidebarReadRequest: Equatable {
+    let generation: UUID?
+    let ready: Bool
+    let expanded: Bool
+    let live: Bool
+    let revision: Int
 }
 
 /// The PDF's name; its menu switches files, returns to the list or adds one.

@@ -20,7 +20,7 @@ import {
 } from "@tiptap/extension-table-of-contents";
 import { HeadingHieararchy } from "@/lib/heading-hierarchy";
 import { LinkEditor } from "@/lib/link-editor";
-import { SectionFocus } from "@/lib/section-focus";
+import { SectionFocus, sectionFocusKey } from "@/lib/section-focus";
 import { Sections } from "@/lib/sections";
 import { HeadingFold } from "@/lib/heading-fold";
 import { IMAGE_TYPES, SavedImage, InlineImage } from "./editor-schema/images";
@@ -45,6 +45,7 @@ type NoteExtensionOptions = {
   scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;
   onFirstRender?: () => void;
+  sidebarSectionsEnabled?: () => boolean;
   withCardTransfers?: WithCardTransfers;
 };
 
@@ -59,6 +60,7 @@ export function noteExtensions({
   scrollContainer,
   onTocUpdate,
   onFirstRender,
+  sidebarSectionsEnabled = () => false,
   withCardTransfers,
 }: NoteExtensionOptions) {
   return [
@@ -93,7 +95,13 @@ export function noteExtensions({
     reduced ? Flashcards.extend({ addCommands: () => ({}), addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] }) : withCardTransfers ? Flashcards.configure({ withCardTransfers }) : Flashcards,
     ui.pdfTextQuote ?? PdfTextQuote,
     ...FoldableBlock,
-    ...(reduced ? [HeadingFold.extend({ addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] })] : [HeadingHieararchy, SectionFocus, Sections, HeadingFold, HeadingNumbering]),
+    ...(reduced ? [HeadingFold.extend({ addKeyboardShortcuts: () => ({}), addProseMirrorPlugins: () => [] })] : [
+      HeadingHieararchy,
+      SectionFocus,
+      Sections.configure({ sidebarSectionsEnabled }),
+      HeadingFold,
+      HeadingNumbering,
+    ]),
     ...(ui.menus ?? []),
     (reduced ? TableOfContents.extend({
       // Keep the persisted heading attributes without note navigation effects.
@@ -124,7 +132,9 @@ export function noteExtensions({
       allowedMimeTypes: IMAGE_TYPES,
       consumePasteEvent: true,
       onPaste: (currentEditor, files) => {
-        insertImages(currentEditor, files, currentEditor.state.selection.anchor);
+        const { state } = currentEditor;
+        const position = sectionFocusKey.getState(state) == null ? state.selection.anchor : state.selection.from;
+        insertImages(currentEditor, files, position);
       },
       onDrop: (currentEditor, files, position) => {
         insertImages(currentEditor, files, position);

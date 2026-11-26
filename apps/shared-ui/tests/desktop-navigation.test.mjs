@@ -12,9 +12,15 @@ test("desktop toolbar spacing and Settings back navigation respect the platform 
     await server.listen();
     browser = await chromium.launch();
     const origin = `http://localhost:${server.httpServer.address().port}`;
+    const newPage = async options => {
+      const page = await browser.newPage(options);
+      await page.route("https://api.github.com/repos/princhman/memnoter/releases/latest",
+        route => route.fulfill({ status: 404, json: {} }));
+      return page;
+    };
     for (const platform of ["Win32", "Linux x86_64", "MacIntel"]) {
       for (const fullscreen of [false, true]) {
-        const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+        const page = await newPage({ viewport: { width: 1000, height: 700 } });
         const setup = ({ platform, fullscreen }) => {
           Object.defineProperty(navigator, "platform", { value: platform });
           Object.defineProperty(navigator, "maxTouchPoints", { value: 0 });
@@ -52,7 +58,7 @@ test("desktop toolbar spacing and Settings back navigation respect the platform 
       }
     }
     // A direct launch has no previous app route, so Back goes home.
-    const direct = await browser.newPage();
+    const direct = await newPage();
     await direct.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; window.installTestBridge({ tauri: { invoke: async () => [] } });`);
     await direct.goto(`${origin}/settings`);
     await direct.getByRole("button", { name: "Back", exact: true }).click();

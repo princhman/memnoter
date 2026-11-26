@@ -1,4 +1,4 @@
-import { browserHarness } from "./support/browser.mjs";
+import { browserHarness, waitForEditorSelection } from "./support/browser.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 const { createServer, webkit } = browserHarness(import.meta.url);
@@ -32,6 +32,7 @@ test("code keeps spaces while prose and literal punctuation retain native input"
         editor.commands.setContent(inline ? '<p><code>value</code></p>' : '<pre><code>value</code></pre>');
         editor.commands.focus("end");
       }, inline);
+      await waitForEditorSelection(page);
       await page.keyboard.type("  next");
       assert.equal(await page.evaluate(() => editor.state.doc.textContent), "value  next");
     }

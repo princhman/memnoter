@@ -3,6 +3,7 @@ import type { FileType } from "../lib/content";
 import type { ApplyResult } from "../lib/sync/apply-remote";
 import type { ModuleView } from "../lib/store";
 import type { Grade } from "../lib/fsrs";
+import type { SidebarSection, SidebarTarget } from "../lib/sidebar-section-data";
 
 export const BRIDGE_VERSION = 1;
 export const FILE_SCHEME = "memnoter-file";
@@ -157,12 +158,19 @@ export interface NativeViewState {
   learnAhead: boolean;
 }
 // Includes the native -> web preference event so both ends share its name.
+export type SidebarNavigationResult = "applied" | "unavailable" | "read-only";
+export interface SidebarSectionSnapshot {
+  sections: SidebarSection[];
+  focusedKey?: string | null;
+  error?: string;
+}
 export interface NativeEvents {
   viewState: NativeViewState;
   cardsChanged: null;
   reviewState: ReviewState;
   "skip-cards-created-today": boolean;
   outline: { moduleId: string; headings: Heading[]; allHeadings: Heading[] };
+  sidebarSections: SidebarSectionSnapshot & { moduleId: string };
   outlineCurrent: { moduleId: string; currentHeadingId: string | null };
   state: EditorState & { moduleId: string };
   ready: { protocolVersion: number };
@@ -198,6 +206,9 @@ export interface EditorApi {
   pdfSelectionAction(action: PdfSelectionAction, color?: string | null): void;
   pdfCommand(command: PdfCommand, value?: string | number | null): void;
   exec(command: ExecCommand, args?: Record<string, unknown>): boolean;
+  readSidebarSections(moduleId: string): Promise<SidebarSectionSnapshot>;
+  setSidebarSectionsTracking(enabled: boolean): void;
+  navigateSidebar(moduleId: string, target: SidebarTarget): SidebarNavigationResult;
   setOutlineTracking(enabled: boolean): void;
   focus(): boolean;
 }

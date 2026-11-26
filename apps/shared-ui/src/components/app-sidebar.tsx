@@ -17,9 +17,14 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
-import { Link, useMatchRoute } from "@tanstack/react-router";
+import { Link, useMatchRoute, useRouter } from "@tanstack/react-router";
 import { SidebarModules } from "./sidebar-modules";
-import { Ellipsis, FilePlus, FileText, House, Files, CircleHelp, Layers, Pencil, Settings, Trash2 } from "lucide-react";
+import { ChevronRight, Ellipsis, FilePlus, FileText, House, Files, CircleHelp, Layers, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import { openSidebarSection, SidebarSectionNavigation, useSidebarSections } from "@/lib/sidebar-sections";
+import type { Module } from "@/lib/types";
+import { useSelector } from "@tanstack/react-store";
+import { appStore } from "@/lib/store";
+import { SidebarSectionRow } from "./sidebar-section-row";
 import { pickPdfs } from "./add-pdf";
 import { isTauri } from "@/lib/backend";
 import {
@@ -47,6 +52,8 @@ import { useDueCounts } from "@/lib/card-sync";
 import { CardCounts } from "@/components/card-counts";
 
 const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: string; children: ReactNode }) => {
+  const router = useRouter();
+  const sidebarSections = useSelector(appStore, state => state.sidebarSections);
   const [menuOpen, setMenuOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const showMenu = () => { trigger.current?.focus(); setMenuOpen(true); };
@@ -56,6 +63,9 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
   // Shared by the pointer-positioned context menu and the "…" dropdown.
   const items = (Item: typeof DropdownMenuItem | typeof ContextMenuItem) => (
     <>
+      {sidebarSections && <Item onClick={() => {
+        openSidebarSection(moduleId, { kind: "add" }, router);
+      }}><Plus className="size-3" />Add section</Item>}
       {isTauri() && <Item onClick={() => pickPdfs(moduleId)}><FilePlus className="size-3" />Add PDF…</Item>}
       <Item onClick={() => setRenameOpen(true)}>
         <Pencil className="size-3" />
@@ -116,10 +126,52 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
   );
 };
 
+function ModuleEntry({ module, isActive }: { module: Module; isActive: boolean }) {
+  const [expanded, setExpanded] = useState(isActive);
+  const { sections, focusedKey, loading, error } = useSidebarSections(module.id, expanded);
+  const router = useRouter();
+  const sectionsId = `sidebar-sections-${module.id}`;
+  useEffect(() => { if (isActive) setExpanded(true); }, [isActive]);
+
+  return <ModuleMenu moduleId={module.id} name={module.name}>
+    <div className="relative">
+    <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} sections of ${module.name}`}
+      aria-expanded={expanded} aria-controls={expanded ? sectionsId : undefined}
+      className="absolute top-1 left-0 z-10 flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-ring"
+      onPointerDown={event => event.stopPropagation()}
+      onClick={() => setExpanded(value => !value)}>
+      <ChevronRight className={`size-3.5 ${expanded ? "rotate-90" : ""}`} />
+    </button>
+    <SidebarMenuButton className="pl-7" isActive={isActive && !focusedKey}
+      render={<Link to="/$moduleId" params={{ moduleId: module.id }} />}
+      onClick={event => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        openSidebarSection(module.id, { kind: "document" }, router);
+      }}>
+      <MiddleTruncate text={module.name} />
+    </SidebarMenuButton>
+    </div>
+    {expanded && <ul id={sectionsId} aria-label={`Sections of ${module.name}`} className="mt-0.5 space-y-0.5 pl-5"
+      onPointerDown={event => event.stopPropagation()}>
+      {loading && <li className="px-2 py-1 text-xs text-muted-foreground" role="status">Loading sections…</li>}
+      {error && <li className="px-2 py-1 text-xs text-muted-foreground" role="alert">Could not load sections.</li>}
+      {!loading && !error && !sections.length && <li className="px-2 py-1 text-xs text-muted-foreground">No H1 sections</li>}
+      {sections.map(section => <SidebarSectionRow key={section.key}
+          title={section.title}
+          number={module.heading_numbering ? section.number : undefined}
+          selected={isActive && focusedKey === section.key}
+          onClick={() => openSidebarSection(module.id, section.target, router)}
+        />)}
+    </ul>}
+  </ModuleMenu>;
+}
+
 const AppSidebar = () => {
   const { isPending, error, data } = useModules();
   const matchRoute = useMatchRoute();
   const { total } = useDueCounts();
+  const sidebarSections = useSelector(appStore, state => state.sidebarSections);
   const bankEnabled = useBankGate();
   const moduleId = useModuleSectionScope();
   const navigateSection = useModuleSectionNavigation();
@@ -138,6 +190,7 @@ const AppSidebar = () => {
 
   return (
     <Sidebar>
+      {sidebarSections && <SidebarSectionNavigation />}
       <div data-tauri-drag-region="deep" className="h-8 shrink-0" />
       <SidebarContent>
         <SidebarGroup>
@@ -167,23 +220,15 @@ const AppSidebar = () => {
 
           {data && (
             <SidebarGroupContent>
-              <SidebarModules modules={data} renderModule={(module) => {
+              <SidebarModules modules={data} renderModule={(module, preview) => {
                   const isActive = moduleId === module.id;
-                  return (
-                    <ModuleMenu key={module.id} moduleId={module.id} name={module.name}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={
-                          <Link
-                            to="/$moduleId"
-                            params={{ moduleId: module.id }}
-                          />
-                        }
-                      >
+                  return sidebarSections && !preview
+                    ? <ModuleEntry key={module.id} module={module} isActive={isActive} />
+                    : <ModuleMenu key={module.id} moduleId={module.id} name={module.name}>
+                      <SidebarMenuButton isActive={isActive} render={<Link to="/$moduleId" params={{ moduleId: module.id }} />}>
                         <MiddleTruncate text={module.name} />
                       </SidebarMenuButton>
-                    </ModuleMenu>
-                  );
+                    </ModuleMenu>;
                 }} />
             </SidebarGroupContent>
           )}

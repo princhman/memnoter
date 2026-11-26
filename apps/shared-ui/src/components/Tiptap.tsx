@@ -33,6 +33,7 @@ import { FilesContext } from "@/components/saved-image";
 import { isSchemaReadOnly } from "@/lib/guarded-collaboration";
 import { NEWER_VERSION_MESSAGE } from "@/lib/schema-compatibility";
 import { noteExtensions } from "@/lib/editor-schema";
+import { appStore } from "@/lib/store";
 
 import { useCardSchedules, useCardSync } from "@/lib/card-sync";
 import { useCardReveal } from "@/lib/card-reveal";
@@ -44,9 +45,10 @@ import {
 
 type TipTapProps = {
   moduleId: string;
+  sidebarSectionsEnabled?: () => boolean;
 };
 
-const Tiptap = ({ moduleId }: TipTapProps) => {
+const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sidebarSections }: TipTapProps) => {
   const host = useEditorHost();
   const element = useRef<HTMLDivElement>(null);
   const { data: modules } = useModules();
@@ -67,6 +69,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       shouldRerenderOnTransaction: false,
       extensions: noteExtensions({
         document: yDoc,
+        sidebarSectionsEnabled,
         withCardTransfers,
         scrollContainer: () => element.current ? host.scrollContainer(element.current) : null,
         ui: {

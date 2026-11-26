@@ -149,6 +149,8 @@ export function contentQueryOptions(moduleId: string) {
 export const LOAD_ORIGIN = "tauri-load";
 export const contentKey = (moduleId: string) => ["content", moduleId] as const;
 
+export const sidebarSectionsKey = (moduleId: string) => [...contentKey(moduleId), "sidebar-sections"] as const;
+
 export function patchContent(moduleId: string, patch: (content: GetContentResponse) => GetContentResponse) {
   queryClient.setQueryData<GetContentResponse>(contentKey(moduleId), content => content && patch(content));
 }
@@ -156,4 +158,5 @@ export function patchContent(moduleId: string, patch: (content: GetContentRespon
 export function appendSavedUpdate(moduleId: string, update: ContentUpdate) {
   acknowledgeContent(moduleId, update);
   patchContent(moduleId, content => ({ ...content, updates: [...content.updates.filter(known => known.id !== update.id), update] }));
+  void queryClient.invalidateQueries({ queryKey: sidebarSectionsKey(moduleId) });
 }

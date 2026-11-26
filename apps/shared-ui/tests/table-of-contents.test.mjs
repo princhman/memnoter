@@ -1,4 +1,4 @@
-import { browserHarness } from "./support/browser.mjs";
+import { browserHarness, waitForEditorSelection } from "./support/browser.mjs";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -275,4 +275,56 @@ test("hover reveals the chosen Contents focus action and keyboard unfocus restor
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), root(2));
   const restored = await page.locator('.tiptap h1').filter({ hasText: root(2) }).evaluate(node => node.getBoundingClientRect().top);
   assert.ok(Math.abs(restored - top) <= 1, 'Unfocus retains the section on screen');
+});
+
+test("deletion respects the focused section boundaries", async () => {
+  const target = await browser.newPage();
+  await target.addInitScript(() => {
+    Object.defineProperty(navigator, "platform", { value: "MacIntel" });
+    Object.defineProperty(navigator, "userAgent", { value: "Macintosh" });
+  });
+  try {
+    await load("?short", 900, 800, target);
+    const original = "<h1>Before</h1><p>Previous text</p><h1>Focused</h1><p>Section text</p><h1>After</h1><p>Next text</p>";
+    for (const { key, selection, expected = original, focused = true } of [
+      { key: "Delete", selection: "end" },
+      { key: "Control+d", selection: "end" },
+      { key: "Delete", selection: "across", expected: original.replace("Section text", "Section tex") },
+      { key: "Backspace", selection: "start", expected: original.replace("<h1>Focused</h1>", "<p>Focused</p>") },
+      { key: "Delete", selection: "tail", expected: original.replace("Section text", "Section tex") },
+      { key: "Delete", selection: "inside", expected: original.replace("Section text", "ection text") },
+      { key: "Delete", selection: "end", focused: false, expected: original.replace("Section text</p><h1>After</h1>", "Section textAfter</p>") },
+    ]) {
+      const before = await target.evaluate(({ original, focused, selection }) => {
+        editor.commands.showDocument();
+        editor.commands.setContent(original);
+        const { doc } = editor.state;
+        const heading = doc.child(0).nodeSize + doc.child(1).nodeSize;
+        const body = heading + doc.child(2).nodeSize;
+        const end = body + doc.child(3).nodeSize - 1;
+        const positions = {
+          start: heading + 1,
+          end,
+          across: { from: end - 1, to: end + 3 },
+          tail: { from: end - 1, to: end },
+          inside: body + 1,
+        };
+        if (focused) editor.commands.showSection(heading);
+        editor.commands.setTextSelection(positions[selection]);
+        editor.view.focus();
+        return editor.getJSON();
+      }, { original, focused, selection });
+      await waitForEditorSelection(target);
+      await target.keyboard.press(key);
+      const message = `${key} at ${selection}, focused=${focused}`;
+      if (expected === original) {
+        assert.deepEqual(await target.evaluate(() => editor.getJSON()), before, message);
+      } else {
+        const html = await target.evaluate(() => editor.getHTML().replace(/<h1 [^>]*>/g, "<h1>"));
+        assert.equal(html, expected, message);
+      }
+    }
+  } finally {
+    await target.close();
+  }
 });

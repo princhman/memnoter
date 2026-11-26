@@ -90,7 +90,7 @@ export function imageFilesOperation<File, Saved>(files: readonly File[], handler
   checkTarget: (permit: WritePermit) => void;
   upload: (file: File, permit: WritePermit) => Promise<Saved>;
   insert: (saved: Saved, file: File) => void;
-  dispose: () => void;
+  dispose?: () => void;
 }) {
   let next = 0;
   let receipt: { value: Saved } | undefined;

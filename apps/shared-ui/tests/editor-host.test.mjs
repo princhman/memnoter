@@ -2,6 +2,7 @@ import { browserHarness } from "./support/browser.mjs";
 import { execFileSync } from "node:child_process";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import * as Y from 'yjs';
 
 const { createServer, webkit } = browserHarness(import.meta.url);
 
@@ -30,6 +31,150 @@ test('native entry installs its API and ready signal before initialization retur
     });
     assert.deepEqual(startup, { apiAvailable: true, readyEvents: 1 });
   } finally { await browser?.close(); await server.close(); }
+});
+
+test('native sidebar reads closed chapters and focuses or adds them only in the requested note', async () => {
+  const note = new Y.Doc();
+  const heading = (title, id, level = 1) => {
+    const node = new Y.XmlElement('heading');
+    node.setAttribute('level', level);
+    if (id) node.setAttribute('data-toc-id', id);
+    if (title) {
+      const text = new Y.XmlText();
+      text.insert(0, title);
+      node.insert(0, [text]);
+    }
+    return node;
+  };
+  const fragment = note.getXmlFragment('default');
+  fragment.insert(0, [heading('First chapter', 'duplicate'), heading('Subsection', null, 2),
+    heading('Second chapter', 'duplicate'), heading('', null)]);
+  const saved = Array.from(Y.encodeStateAsUpdate(note));
+  const version = Y.encodeStateVector(note);
+  fragment.insert(fragment.length, [heading('Synced chapter', 'synced')]);
+  const remote = Array.from(Y.encodeStateAsUpdate(note, version));
+  note.destroy();
+  const future = new Y.Doc();
+  future.getXmlFragment('default').insert(0, [new Y.XmlElement('futureBlock')]);
+  const newer = Array.from(Y.encodeStateAsUpdate(future));
+  future.destroy();
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 430, height: 932 }, hasTouch: true });
+    page.on('pageerror', error => console.error(error));
+    await page.addInitScript(({ saved, newer }) => {
+      window.messages = [];
+      window.installTestBridge({ native(message) {
+        window.messages.push(message);
+        if (message.kind !== 'call') return;
+        const { id, command, args } = message;
+        queueMicrotask(() => {
+          if (command === 'get_content' && args.moduleId === 'unreadable') {
+            window.__memnoterBridge.reject(id, 'Missing content');
+            return;
+          }
+          let value = null;
+          if (command === 'modules') value = [{ id: 'one', heading_numbering: true }, { id: 'two' }, { id: 'newer' }];
+          if (command === 'get_content') value = {
+            state: args.moduleId === 'one' ? saved : args.moduleId === 'newer' ? newer : [], updates: [], files: [],
+          };
+          if (command === 'add_update') value = { id: window.messages.length, bytes: args.bytes };
+          if (['sync_cards', 'card_schedules', 'unindexed_card_modules', 'unindexed_modules', 'list_documents'].includes(command)) value = [];
+          window.__memnoterBridge.resolve(id, value);
+        });
+      } });
+    }, { saved, newer });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+    await page.waitForFunction(() => window.messages.some(message => message.event === 'ready'));
+    const arm = await page.evaluate(async () => {
+      const api = window.memnoterEditor;
+      window.messages.length = 0;
+      const closed = await api.readSidebarSections('one');
+      const empty = await api.readSidebarSections('two');
+      const newer = await api.readSidebarSections('newer');
+      const unreadable = await api.readSidebarSections('unreadable');
+      return { closed, empty, newer, unreadable, commands: window.messages.map(message => message.command) };
+    });
+    assert.deepEqual(arm.closed.sections.map(({ title, number, target }) => [title, number, target.kind]),
+      [['First chapter', '1', 'legacy-heading'], ['Second chapter', '2', 'legacy-heading'], ['Untitled section', '3', 'legacy-heading']]);
+    assert.deepEqual(arm.empty, { sections: [] });
+    assert.match(arm.newer.error, /newer version/);
+    assert.match(arm.unreadable.error, /could not be loaded/);
+    assert.deepEqual(arm.commands, Array(4).fill('get_content'));
+    assert.equal(await page.locator('.tiptap').count(), 0);
+
+    const second = arm.closed.sections[1].target;
+    await page.evaluate(() => window.memnoterEditor.setSidebarSectionsTracking(true));
+    assert.equal(await page.evaluate(target => window.memnoterEditor.navigateSidebar('one', target), second), 'unavailable');
+    await page.evaluate(() => window.memnoterEditor.open('one'));
+    const first = page.locator('.tiptap h1').filter({ hasText: 'First chapter' });
+    await first.waitFor({ state: 'visible', timeout: 5000 }); // A blocked tap must not replay on open.
+    await page.evaluate(() => window.memnoterEditor.setTopInset(60));
+    assert.equal(await page.evaluate(target => window.memnoterEditor.navigateSidebar('one', target), second), 'applied');
+    await page.waitForFunction(() => {
+      const container = document.querySelector('.app-scroll-container');
+      const second = [...document.querySelectorAll('.tiptap h1')].find(node => node.textContent.includes('Second chapter'));
+      return Math.abs(second.getBoundingClientRect().top - container.getBoundingClientRect().top - 60) < 2;
+    });
+    assert.equal(await first.isVisible(), false);
+    const latest = () => page.evaluate(() => window.messages.findLast(message => message.event === 'sidebarSections').payload);
+    const focused = await latest();
+    assert.equal(focused.sections.find(section => section.key === focused.focusedKey)?.title, 'Second chapter');
+
+    assert.equal(await page.evaluate(() => window.memnoterEditor.navigateSidebar('one', { kind: 'document' })), 'applied');
+    assert.equal(await first.isVisible(), true);
+    await page.evaluate(bytes => window.memnoterEditor.applyRemote({
+      updates: [{ moduleId: 'one', update: { id: 90, bytes } }], modulesChanged: false, deleted: [], reviewsChanged: false, filesChanged: false,
+    }), remote);
+    await page.waitForFunction(() => window.messages.findLast(message => message.event === 'sidebarSections')
+      .payload.sections.some(section => section.title === 'Synced chapter' && section.number === '4'));
+
+    assert.equal(await page.evaluate(() => window.memnoterEditor.navigateSidebar('one', { kind: 'add' })), 'applied');
+    await page.evaluate(() => window.memnoterEditor.setBottomInset(380));
+    const newSection = await latest();
+    assert.equal(newSection.sections.find(section => section.key === newSection.focusedKey)?.title, 'Untitled section');
+    assert.equal(newSection.sections.length, 5);
+    await page.waitForFunction(() => {
+      const editor = document.querySelector('.tiptap');
+      const container = editor.closest('.app-scroll-container');
+      const selection = getSelection();
+      const title = [...editor.querySelectorAll('h1')].at(-1);
+      return document.activeElement === editor && selection.isCollapsed && title.contains(selection.anchorNode) &&
+        title.getBoundingClientRect().bottom < container.getBoundingClientRect().bottom - 380;
+    });
+    await page.evaluate(() => window.memnoterEditor.exec('undo'));
+    await page.waitForFunction(() => window.messages.findLast(message => message.event === 'sidebarSections').payload.sections.length === 4);
+    await page.evaluate(() => window.memnoterEditor.navigateSidebar('one', { kind: 'add' }));
+    await page.keyboard.insertText('Typed in the new title');
+    await page.waitForFunction(() => window.messages.findLast(message => message.event === 'sidebarSections')
+      .payload.sections.at(-1).title === 'Typed in the new title');
+
+    // The formatting bar creates a sibling through the editor command, while the
+    // native preference can change with the same note still open.
+    for (const enabled of [false, true]) {
+      await page.evaluate(enabled => window.memnoterEditor.setSidebarSectionsTracking(enabled), enabled);
+      assert.equal(await page.evaluate(target => window.memnoterEditor.navigateSidebar('one', target), second), 'applied');
+      const headings = page.locator('.tiptap h1');
+      const count = await headings.count();
+      assert.equal(await page.evaluate(() => window.memnoterEditor.exec('insertSection', { kind: 'sibling' })), true);
+      assert.equal(await headings.count(), count + 1);
+      const sibling = headings.nth(2);
+      assert.equal(await first.isVisible(), enabled, 'Only the enabled preference reveals the whole note');
+      const headingId = await sibling.getAttribute('data-toc-id');
+      if (enabled) assert.ok(headingId, 'An empty section needs an ID for sidebar navigation');
+      else assert.equal(headingId, null);
+    }
+
+    await page.evaluate(() => window.memnoterEditor.open('newer'));
+    assert.equal(await page.evaluate(() => window.memnoterEditor.navigateSidebar('newer', { kind: 'add' })), 'read-only');
+    assert.match((await latest()).error, /newer version/);
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
 });
 
 test('WK host opens shared editors, publishes state and outline, and persists edits without desktop APIs', async t => {
@@ -828,11 +973,15 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     // Exercise the public WK bridge against the real shared schema/commands.
     const state = () => page.evaluate(() => window.messages.filter(m => m.event === 'state').at(-1).payload);
     await page.evaluate(() => window.memnoterEditor.focus());
+    await page.waitForFunction(() => document.activeElement === document.querySelector('.tiptap'));
     for (let level = 1; level <= 6; level++) {
       assert.equal(await exec('heading', { level }), true);
       await page.keyboard.type(`Level ${level}`);
+      await page.waitForFunction(level =>
+        window.messages.findLast(m => m.event === 'state').payload.headingLevel === level, level);
       assert.equal((await state()).headingLevel, level);
       await page.keyboard.press('Enter');
+      await page.waitForFunction(() => window.messages.findLast(m => m.event === 'state').payload.blockType === 'paragraph');
     }
     await exec('paragraph');
     assert.equal(await exec('codeBlock'), true);
@@ -862,7 +1011,11 @@ test('WK host opens shared editors, publishes state and outline, and persists ed
     await page.keyboard.press('Enter');
     await page.keyboard.type('Answer');
     for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowLeft');
-    await page.waitForFunction(() => window.messages.filter(m => m.event === 'state').at(-1).payload.canMakeCard);
+    await page.waitForFunction(() => {
+      const { doc, selection } = document.querySelector('.tiptap').editor.state;
+      return doc.textBetween(selection.from, selection.to) === 'Answer' &&
+        window.messages.findLast(m => m.event === 'state').payload.canMakeCard;
+    });
     assert.equal((await state()).canMakeCard, true);
     assert.equal(await exec('makeCard'), true);
     assert.equal((await state()).inCloze, true);
