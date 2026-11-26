@@ -84,6 +84,7 @@ describe("App Review sign-in", () => {
     { name: "only the email is set", bindings: { REVIEW_EMAIL: email } },
     { name: "only the code is set", bindings: { REVIEW_CODE: code } },
     { name: "the configured code is shorter than 12 characters", bindings: { ...enabled, REVIEW_CODE: "12345678901" } },
+    { name: "the configured code has letters", bindings: { ...enabled, REVIEW_CODE: "1234567890ab" } },
   ])("uses the emailed code when $name", async ({ bindings }) => {
     const { start, verify, send } = client(bindings);
     const response = await start();

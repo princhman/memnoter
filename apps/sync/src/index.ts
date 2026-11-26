@@ -188,7 +188,8 @@ function normalizeEmail(value: unknown) {
 function reviewCodeFor(email: string | null, env: Env) {
   if (!email || email !== normalizeEmail(env.REVIEW_EMAIL)) return undefined;
   const code = env.REVIEW_CODE?.trim();
-  return code && [...code].length >= 12 ? code : undefined;
+  // Digits only, so App Review can type it on the iOS number pad.
+  return code && /^\d{12,}$/.test(code) ? code : undefined;
 }
 
 function isKeyInfo(value: Partial<KeyInfo> | null): value is KeyInfo {

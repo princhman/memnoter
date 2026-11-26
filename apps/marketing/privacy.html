@@ -48,14 +48,14 @@
       <section>
         <h2>Deleting your data</h2>
         <p>Choose <strong>Sign out</strong> under Settings → Sync to stop syncing on one device. Signing out keeps your encrypted data on the server.</p>
-        <p>On iPhone and iPad, open Settings → Sync → <strong>Delete account</strong> to remove your sync account and encrypted data from the server. Your local data stays on your devices. We keep a deletion record tied to an account ID so old sign-ins cannot reconnect.</p>
+        <p>On iPhone and iPad, open Settings → Sync → <strong>Delete account</strong> to remove your sync account and encrypted data from the server. Your local data stays on your devices. We keep a deletion record tied to an account ID so old sign-ins cannot reconnect. Cloudflare keeps recovery copies of deleted sync data for up to 30 days, and technical logs for a few days, before they are removed.</p>
         <p>On Mac, Windows and Linux, Settings → Sync → <strong>Delete cloud data…</strong> removes the encrypted cloud copy and keeps your account. For help deleting the account, email us.</p>
       </section>
 
       <section>
         <h2>Updates and service providers</h2>
         <p>Cloudflare hosts this site and the sync service, stores synced data and sends sign-in emails. Cloudflare receives your IP address when you connect to the site or sync service. The sync service records technical logs to help diagnose problems.</p>
-        <p>The app checks GitHub for new releases up to once a day while in use. The desktop updater also checks GitHub at startup or when you check manually, and downloads available updates there. GitHub receives your IP address when your device connects.</p>
+        <p>The app checks for new releases up to once a day while in use: the App Store version asks Apple's App Store, and TestFlight and desktop versions ask GitHub. The desktop updater also checks GitHub at startup or when you check manually, and downloads available updates there. Apple and GitHub receive your IP address when your device connects.</p>
         <p>Memnoter has no ads, tracking or product analytics. It uses no third-party SDKs for advertising, tracking or analytics.</p>
       </section>
 

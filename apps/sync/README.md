@@ -14,7 +14,7 @@ pnpm dev      # local server on :8787 (needs .dev.vars, see wrangler.jsonc)
 Set both optional Worker secrets from `apps/sync` to enable sign-in with a
 fixed code for one dedicated review email address. Use a randomly generated
 numeric code of at least 12 digits so reviewers can type it on the iOS keypad.
-The Worker requires at least 12 characters after trimming whitespace.
+The Worker ignores the code unless it is at least 12 digits after trimming whitespace.
 
 ```sh
 pnpm exec wrangler secret put REVIEW_EMAIL
