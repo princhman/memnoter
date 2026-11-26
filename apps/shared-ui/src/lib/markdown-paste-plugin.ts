@@ -3,6 +3,7 @@ import { Fragment, Slice, type Schema } from "@tiptap/pm/model";
 import { Plugin } from "@tiptap/pm/state";
 import { closeHistory } from "@tiptap/pm/history";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
+import { consumePlainClozeCut } from "./cloze-clipboard.ts";
 import { looksLikeMarkdown, markdownToJSON } from "./markdown-paste.ts";
 
 // Older schemas retain readable content, including table cells and formulas.
@@ -36,6 +37,7 @@ export const MarkdownPaste = Extension.create({
             if (view.editable === false || !data || data.files.length || Array.from(data.items ?? []).some(item => item.kind === "file")) return false;
             // Internal editor HTML carries identities and an exact PM slice.
             const html = data.getData("text/html");
+            if (bypass) consumePlainClozeCut(html, data.getData("text/plain"));
             if (!bypass && /data-pm-slice\s*=/i.test(html)) return false;
             // Reading-view plain text can contain Markdown-looking code (e.g.
             // C pointer declarations). Its structured HTML is authoritative;

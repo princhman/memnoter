@@ -1,5 +1,5 @@
 import { action } from "./shortcuts.ts";
-import { Node, selectionToInsertionEnd } from "@tiptap/core";
+import { mergeAttributes, Node, selectionToInsertionEnd } from "@tiptap/core";
 import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
@@ -60,8 +60,8 @@ export const MathBlock = Node.create({
     return [{ tag: 'div[data-type="math-block"]', preserveWhitespace: "full" }];
   },
 
-  renderHTML() {
-    return ["div", { "data-type": "math-block", class: "math-block" }, 0];
+  renderHTML({ HTMLAttributes }) {
+    return ["div", mergeAttributes(HTMLAttributes, { "data-type": "math-block", class: "math-block" }), 0];
   },
 
   addCommands() {

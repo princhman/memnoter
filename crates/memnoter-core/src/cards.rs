@@ -197,6 +197,7 @@ fn sync_module_cards(
     conn: &mut Connection,
     module_id: &str,
     cards: &[CardContent],
+    update_id: Option<i64>,
     now: i64,
 ) -> CommandResult<Vec<String>> {
     let tx = conn.transaction().map_err(db_err)?;
@@ -213,6 +214,7 @@ fn sync_module_cards(
     }
     let mut conflicts = Vec::new();
     let mut unavailable = Vec::new();
+    let snapshot = cards.iter().map(|card| card.id.as_str()).collect();
     {
         let mut upsert = tx
             .prepare(
@@ -236,6 +238,10 @@ fn sync_module_cards(
             )
             .map_err(db_err)?;
         for card in cards {
+            if crate::card_moves::renews(&tx, module_id, &card.id, &snapshot)? {
+                conflicts.push(card.id.clone());
+                continue;
+            }
             if card.kind == "occlusion" {
                 let front_id =
                     crate::files::assets::card_image(&card.kind, &card.front, &card.back);
@@ -291,6 +297,7 @@ fn sync_module_cards(
         )
         .map_err(db_err)?;
     }
+    crate::card_moves::indexed(&tx, module_id, update_id)?;
     // Cards first indexed here may have been reviewed on another device.
     crate::sync::apply_reviews(&tx, module_id)?;
     tx.commit().map_err(db_err)?;
@@ -632,9 +639,10 @@ pub fn sync_cards(
     db: &Db,
     module_id: String,
     cards: Vec<CardContent>,
+    update_id: Option<i64>,
 ) -> CommandResult<Vec<String>> {
     let mut conn = db.lock()?;
-    sync_module_cards(&mut conn, &module_id, &cards, Utc::now().timestamp_millis())
+    sync_module_cards(&mut conn, &module_id, &cards, update_id, Utc::now().timestamp_millis())
 }
 
 #[derive(serde::Serialize)]
@@ -709,7 +717,7 @@ mod tests {
         }
 
         fn sync(&self, module: &str, cards: &[CardContent], now: i64) -> Vec<String> {
-            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, now).unwrap()
+            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, None, now).unwrap()
         }
 
         fn due(&self, module: Option<&str>, now: i64) -> Vec<Card> {

@@ -52,7 +52,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
   const element = useRef<HTMLDivElement>(null);
   const { data: modules } = useModules();
   const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
-  const { yDoc, editorRef, isSuccess, filesContext, insertImages, insertQuote, insertTextQuote } = useNoteDocument(moduleId);
+  const { yDoc, editorRef, isSuccess, filesContext, withCardTransfers, insertImages, insertQuote, insertTextQuote } = useNoteDocument(moduleId);
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
   const { setActiveEditor } = useActiveEditor();
@@ -69,6 +69,7 @@ const Tiptap = ({ moduleId }: TipTapProps) => {
       extensions: noteExtensions({
         document: yDoc,
         sidebarSectionsEnabled: () => appStore.state.sidebarSections,
+        withCardTransfers,
         scrollContainer: () => element.current ? host.scrollContainer(element.current) : null,
         ui: {
           ...(!host.isNative ? { mention: MentionView } : {}),

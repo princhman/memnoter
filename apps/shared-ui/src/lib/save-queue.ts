@@ -36,6 +36,7 @@ type ModuleQueue<Update> = {
   failingSince: number | null;
   wake: (() => void) | null;
   dropped: boolean;
+  waiters: { update: Update; waitForRetry: boolean; resolve(saved: boolean): void }[];
 };
 
 export function createSaveQueue<Update, Saved>({
@@ -108,6 +109,7 @@ export function createSaveQueue<Update, Saved>({
     const queue = queues.get(moduleId);
     if (!queue) return;
     queue.dropped = true;
+    for (const waiter of queue.waiters.splice(0)) waiter.resolve(false);
     queues.delete(moduleId);
     queue.wake?.();
     notify();
@@ -119,7 +121,8 @@ export function createSaveQueue<Update, Saved>({
     queue.running = true;
     while (queue.items.length > 0 && !queue.dropped && !suspended) {
       try {
-        const write = persist(moduleId, queue.items[0]);
+        const update = queue.items[0];
+        const write = persist(moduleId, update);
         active.add(write);
         let saved: Saved;
         try { saved = await write; } finally { active.delete(write); }
@@ -128,6 +131,11 @@ export function createSaveQueue<Update, Saved>({
         queue.attempts = 0;
         queue.failingSince = null;
         onSaved?.(moduleId, saved);
+        queue.waiters = queue.waiters.filter(waiter => {
+          if (waiter.update !== update) return true;
+          waiter.resolve(true);
+          return false;
+        });
         notify();
       } catch (error) {
         if (queue.dropped) break;
@@ -137,6 +145,11 @@ export function createSaveQueue<Update, Saved>({
         onError?.(moduleId, error);
         notify();
         settleFlush(false);
+        queue.waiters = queue.waiters.filter(waiter => {
+          if (waiter.waitForRetry) return true;
+          waiter.resolve(false);
+          return false;
+        });
         const delay = Math.min(
           initialDelayMs * 2 ** (queue.attempts - 1),
           maxDelayMs,
@@ -172,12 +185,22 @@ export function createSaveQueue<Update, Saved>({
           failingSince: null,
           wake: null,
           dropped: false,
+          waiters: [],
         };
         queues.set(moduleId, queue);
       }
       queue.items.push(update);
       notify();
       void drain(moduleId, queue);
+    },
+
+    // Wait only through the edit represented in a derived snapshot.
+    flushThrough(moduleId: string, update: Update, waitForRetry = false): Promise<boolean> {
+      const queue = queues.get(moduleId);
+      if (!queue?.items.includes(update)) return Promise.resolve(true);
+      const result = new Promise<boolean>(resolve => queue.waiters.push({ update, waitForRetry, resolve }));
+      if (!waitForRetry) queue.wake?.();
+      return result;
     },
 
     // Updates for the module that are not yet persisted, oldest first.
