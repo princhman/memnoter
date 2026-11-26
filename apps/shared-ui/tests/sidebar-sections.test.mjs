@@ -1135,7 +1135,8 @@ for (const sections of [true, false]) {
       }
       const focused = page.locator(".tiptap > h1.section-focus-start").filter({ hasText: "Middle" });
       await focused.click();
-      await page.keyboard.press("Home");
+      // macOS Chromium scrolls on Home; Cmd+Left moves to the start of the line.
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowLeft" : "Home");
       assert.equal(await focused.evaluate(node => {
         const { selection } = node.parentElement.editor.state;
         return selection.empty && selection.$from.parentOffset === 0;
