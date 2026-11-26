@@ -2,13 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 node scripts/generate-bridge-protocol.mjs
+dist=apps/shared-ui/dist/ios
 case "${1:-}" in
-  "") pnpm build ;;
-  --prebuilt) test -f apps/shared-ui/dist/editor.html ;;
+  "") pnpm --filter memnoter-shared-ui build --mode ios ;;
+  --prebuilt) test -f "$dist/editor.html" ;;
   *) echo "Usage: $0 [--prebuilt]" >&2; exit 2 ;;
 esac
 mkdir -p apps/ios/Resources/Web
-rsync -a --delete apps/shared-ui/dist/ apps/ios/Resources/Web/
+rsync -a --delete "$dist/" apps/ios/Resources/Web/
 # Settings → About shows this, so a tester can tell which commit is installed.
 stamp=$(git rev-parse --short HEAD)
 [ -n "$(git status --porcelain --untracked-files=no)" ] && stamp="$stamp-dirty"

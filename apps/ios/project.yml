@@ -24,6 +24,8 @@ targets:
       - path: Sources
       - path: ../apple-shared
       - path: Resources/Assets.xcassets
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: Resources/Web
         type: folder
     preBuildScripts:

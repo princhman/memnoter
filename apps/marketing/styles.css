@@ -85,10 +85,12 @@ footer a:hover { color: var(--ink); }
 .page .description { max-width: none; }
 .contact { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
 .contact-note { margin: 16px 0 0; font-size: 14px; line-height: 1.5; color: var(--muted); }
-.faq { margin-top: 56px; padding-top: 40px; border-top: 1px solid var(--line); }
-.faq h2 { margin: 0 0 8px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.faq, .policy { margin-top: 56px; padding-top: 40px; border-top: 1px solid var(--line); }
+.faq h2, .policy h2 { margin: 0 0 8px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 .faq h3 { margin: 28px 0 0; font-size: 16px; font-weight: 600; }
-.faq p { margin: 8px 0 0; font-size: 15px; line-height: 1.6; color: var(--muted); }
+.faq p, .policy p { margin: 8px 0 0; font-size: 15px; line-height: 1.6; color: var(--muted); }
+.policy section + section { margin-top: 28px; }
+.faq p a, .policy p a { text-decoration: underline; text-underline-offset: 3px; }
 .faq code { padding: 1px 5px; border-radius: 5px; background: #f0eef4; color: var(--ink); font-size: 13px; }
 
 @media (max-width: 720px) {
