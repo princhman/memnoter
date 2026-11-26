@@ -292,6 +292,10 @@ struct RootView: View {
                 defer { busy = false; image = nil }
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else { throw URLError(.cannotDecodeContentData) }
+                    if let capacity = try? store.directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
+                       capacity < Int64(data.count) {
+                        throw CocoaError(.fileWriteOutOfSpace)
+                    }
                     let file: SavedFile = try await client.call("save_file", FileArgs(moduleId: id, bytes: Array(data), mimeType: item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"))
                     guard answerTarget == session?.worksheetAnswerID,
                           (answerTarget != nil ? session?.worksheetAnswerModule == id && session?.questionsOpen == true : module?.id == id) else { throw DrawingFailure.changed }

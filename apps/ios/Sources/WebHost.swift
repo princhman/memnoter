@@ -601,7 +601,7 @@ private struct PdfViewStateRecord: Codable {
                     } else if command == "open_external_link" {
                         let args = body["args"] as? [String: Any]
                         guard let href = args?["href"] as? String, let url = URL(string: href),
-                              ["https", "http", "mailto", "itms-beta"].contains(url.scheme ?? "") else { throw CocoaError(.validationMissingMandatoryProperty) }
+                              ["https", "http", "mailto"].contains(url.scheme ?? "") else { throw CocoaError(.validationMissingMandatoryProperty) }
                         await UIApplication.shared.open(url)
                         result = "null"
                     } else if command == BridgeProtocol.pdfChunkCommand {

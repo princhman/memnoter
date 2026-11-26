@@ -10,11 +10,13 @@ From the repository root, with Node 22+ and internet access:
 
 ```sh
 node apps/marketing/build.mjs
-cd apps/marketing
-python3 -m http.server 4173 --bind 127.0.0.1 --directory dist
+pnpm --dir apps/marketing preview
 ```
 
-Open http://127.0.0.1:4173. Rebuild after editing source files.
+The preview uses Wrangler from the workspace's sync package. If needed, install
+it with `pnpm install --filter memnoter-sync`. Open http://127.0.0.1:4173 to
+check the site, including `/support` and `/privacy`. Rebuild after editing source
+files.
 
 The build resolves the latest published GitHub release and matches the macOS
 Apple silicon DMG, macOS Intel DMG, Windows x64 EXE, and Linux x64 AppImage.
@@ -38,6 +40,7 @@ dashboard's Git integration; never deploy it by hand.
 
 - `index.html`: copy, layout, metadata, and direct download links.
 - `support.html`: the support page at `/support`, also the App Store support URL.
+- `privacy.html`: the privacy policy at `/privacy`, also the App Store privacy policy URL.
 - `styles.css`: responsive styles and reduced-motion support.
 - `build.mjs`: asset packaging and verified release links.
 - `worker.js`: keeps download links on the latest release between deploys.

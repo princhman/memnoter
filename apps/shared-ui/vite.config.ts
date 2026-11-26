@@ -26,7 +26,7 @@ const deviceDev = process.env.MEMNOTER_DEVICE_DEV === "1";
 let deviceRevision = `${Date.now()}:0`;
 let revision = 0;
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(async ({ mode }) => ({
   // WKWebView loads editor.html from the bundled dist directory.
   base: "./",
   define: {
@@ -65,8 +65,13 @@ export default defineConfig(async () => ({
     tailwindcss(),
   ],
   build: {
+    ...(mode === "ios" ? { outDir: "dist/ios" } : {}),
     rollupOptions: {
-      input: { review: new URL("./review-native.html", import.meta.url).pathname, main: new URL("./index.html", import.meta.url).pathname, editor: new URL("./editor.html", import.meta.url).pathname },
+      input: {
+        review: new URL("./review-native.html", import.meta.url).pathname,
+        editor: new URL("./editor.html", import.meta.url).pathname,
+        ...(mode === "ios" ? {} : { main: new URL("./index.html", import.meta.url).pathname }),
+      },
     },
   },
   esbuild: { jsx: "automatic" },
