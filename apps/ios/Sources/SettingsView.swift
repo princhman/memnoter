@@ -52,7 +52,11 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Section("About") { Text(Self.versionLine).foregroundStyle(.secondary) }
+                Section("About") {
+                    Text(Self.versionLine).foregroundStyle(.secondary)
+                    Link("Privacy Policy", destination: URL(string: "https://memnoter.com/privacy")!)
+                    Link("Support", destination: URL(string: "https://memnoter.com/support")!)
+                }
                 if let error { Text(error).foregroundStyle(.red) }
             }.disabled(busy).navigationTitle("Settings")
                 .toolbar { Button("Done") { dismiss() }.disabled(busy) }

@@ -24,6 +24,8 @@ targets:
       - path: Sources
       - path: ../apple-shared
       - path: Resources/Assets.xcassets
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: Resources/Web
         type: folder
     preBuildScripts:
@@ -53,6 +55,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.vladyslavnalyvaiko.memnoter.ipad
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: $(DERIVED_FILE_DIR)/LiveEditor.plist
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'NO'
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
