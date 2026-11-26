@@ -19,7 +19,7 @@ being asked each time:
    `batch/<yyyy-mm-dd>-<topic>` branch, `pnpm check:ci` once, and open one PR
    listing `Fixes PRI-<n>` for each issue it finishes (`Refs` for the rest), plus
    the `Acceptance:` and `Evidence:` lines from the PR template. Every PR and every merge to main runs
-   CI (main runs everything, iOS included), so no PR for a single small fix.
+   CI (main runs everything; iOS runs locally, see AGENTS.md), so no PR for a single small fix.
    Keep visual and behaviour-only work in separate batches only if one would
    hold the other up; one preview branch then covers all the visual changes.
    Risk score for Linear Reviews: add to the sol brief "Also reply
@@ -28,8 +28,7 @@ being asked each time:
    and again after any new push. Don't read the diff yourself for this.
 4. Watch CI (`watch_pull_request`) and fix red checks yourself; delegates
    don't wait for it. A visual PR needs green CI only at merge time, so
-   nothing waits on it before the user approves. A one-off iOS simulator
-   failure in code the PR didn't touch: rerun the failed job once.
+   nothing waits on it before the user approves.
 5. Merge when green, if the user approved the feature. Every ready issue sits
    in Linear **In Review**. A visual PR waits until the user has looked at
    it; a behaviour-only PR merges on green once the sol loop approves. When
