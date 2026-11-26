@@ -216,7 +216,9 @@ test("the first cut paste keeps cloze history across and within notes, while cop
     assert.deepEqual(log.get(moved.id), review);
     assert.equal(log.get(paris.id), undefined);
 
-    await page.keyboard.press("End");
+    // End doesn't move to the line end on macOS; place the caret explicitly.
+    await editor.evaluate(el => el.editor.commands.focus("end"));
+    await page.waitForFunction(() => window.getSelection()?.isCollapsed);
     await page.keyboard.type(" and ");
     await page.keyboard.press(`${mod}+v`);
     const repeated = await schedules(destination, 2);
@@ -226,7 +228,9 @@ test("the first cut paste keeps cloze history across and within notes, while cop
     await editor.evaluate(el => el.editor.commands.setTextSelection({ from: 1, to: 10 }));
     await page.waitForFunction(() => window.getSelection()?.toString().includes("{{Paris}}"));
     await page.keyboard.press(`${mod}+c`);
-    await page.keyboard.press("End");
+    // End doesn't move to the line end on macOS; place the caret explicitly.
+    await editor.evaluate(el => el.editor.commands.focus("end"));
+    await page.waitForFunction(() => window.getSelection()?.isCollapsed);
     await page.keyboard.type(" and ");
     await page.keyboard.press(`${mod}+v`);
     const copied = await schedules(destination, 3);
@@ -236,7 +240,9 @@ test("the first cut paste keeps cloze history across and within notes, while cop
     await page.waitForFunction(() => window.getSelection()?.toString().includes("{{Paris}}"));
     await page.keyboard.press(`${mod}+x`);
     await schedules(destination, 2);
-    await page.keyboard.press("End");
+    // End doesn't move to the line end on macOS; place the caret explicitly.
+    await editor.evaluate(el => el.editor.commands.focus("end"));
+    await page.waitForFunction(() => window.getSelection()?.isCollapsed);
     await page.keyboard.type(" and ");
     await page.keyboard.press(`${mod}+v`);
     const repasted = await schedules(destination, 3);
