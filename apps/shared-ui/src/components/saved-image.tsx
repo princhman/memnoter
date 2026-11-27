@@ -68,6 +68,7 @@ export function SavedImageView(props: NodeViewProps) {
     },
   });
   const caption = typeof node.attrs.caption === "string" ? node.attrs.caption.trim() : "";
+  const captionAlign = node.attrs.captionAlign === "left" || node.attrs.captionAlign === "right" ? node.attrs.captionAlign : undefined;
   const [editingCaption, setEditingCaption] = useState(false);
   // The actions menu returns focus to the editor as it closes; when it closes
   // to start a caption, the caption field keeps focus instead.
@@ -559,7 +560,7 @@ export function SavedImageView(props: NodeViewProps) {
         : <span className="text-sm text-muted-foreground">Image unavailable</span>)}
       {node.attrs.pdfSource && <PdfSourceCaption value={node.attrs.pdfSource} />}
       {editingCaption && editor.isEditable ? (
-        <span className="note-image-caption" data-empty={!caption || undefined}>
+        <span className="note-image-caption" data-align={captionAlign} data-empty={!caption || undefined}>
           <span className="note-image-caption-edit">
             <span>Figure {figureNumber}</span>
             <input
@@ -582,7 +583,7 @@ export function SavedImageView(props: NodeViewProps) {
           </span>
         </span>
       ) : caption ? (
-        <span className="note-image-caption">
+        <span className="note-image-caption" data-align={captionAlign}>
           {editor.isEditable
             ? <button type="button" onClick={() => setEditingCaption(true)}>Figure {figureNumber}: {caption}</button>
             : <>Figure {figureNumber}: {caption}</>}
@@ -594,6 +595,14 @@ export function SavedImageView(props: NodeViewProps) {
               {isNativeTablet && canEditDrawing && <DropdownMenuItem onClick={openDrawing}><Pencil />Edit drawing</DropdownMenuItem>}
               {(!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!hasImage} onClick={() => setPreviewOpen(true)}><Maximize2 />Open image full screen</DropdownMenuItem>}
               <DropdownMenuItem onClick={() => { captionFromMenu.current = true; setEditingCaption(true); }}><Subtitles />{caption ? "Edit caption" : "Add caption"}</DropdownMenuItem>
+              {caption && <Menu.SubmenuRoot>
+                <Menu.SubmenuTrigger render={<DropdownMenuItem />}><AlignCenter />Caption alignment<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="note-image-actions-submenu w-48">
+                  <DropdownMenuRadioGroup value={captionAlign ?? "center"}>
+                    {IMAGE_ALIGNMENTS.map(([alignment, label, Icon]) => <DropdownMenuRadioItem closeOnClick key={alignment} value={alignment} onClick={() => updateAttributes({ captionAlign: alignment === "center" ? null : alignment })}><Icon />{label}</DropdownMenuRadioItem>)}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </Menu.SubmenuRoot>}
               {(!isNativeTablet || canEditDrawing || hasImage) && <DropdownMenuSeparator />}
               {(!isNativeTablet || hasImage) && <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />} disabled={!hasImage}><Scaling />Size<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>

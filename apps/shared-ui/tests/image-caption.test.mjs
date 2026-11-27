@@ -92,6 +92,21 @@ test("desktop captions save with their image and renumber when it moves chapters
     await page.waitForFunction(before => JSON.parse(localStorage.getItem("caption-updates") || "[]").length > before, beforeMove);
     await page.reload();
     await caption("2.1").waitFor();
+
+    // The caption can sit left, centre (default) or right under the image.
+    const captionRow = page.locator(".note-image-caption").first();
+    assert.equal(await captionRow.evaluate(el => getComputedStyle(el).textAlign), "center");
+    await image.click();
+    await page.getByRole("button", { name: "Image actions" }).click();
+    await page.getByRole("menuitem", { name: "Caption alignment" }).hover();
+    await page.getByRole("menuitem", { name: "Caption alignment" }).press("ArrowRight");
+    const updatesBefore = await stored();
+    await page.getByRole("menuitemradio", { name: "Align right" }).click();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".note-image-caption")).textAlign === "right");
+    await page.waitForFunction(before => JSON.parse(localStorage.getItem("caption-updates") || "[]").length > before, updatesBefore);
+    await page.reload();
+    await caption("2.1").waitFor();
+    assert.equal(await page.locator(".note-image-caption").first().evaluate(el => getComputedStyle(el).textAlign), "right");
   } finally {
     await server.close();
   }

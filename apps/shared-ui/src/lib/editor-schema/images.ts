@@ -22,6 +22,12 @@ export const SavedImage = Image.extend({
         parseHTML: element => element.getAttribute("data-caption"),
         renderHTML: attrs => typeof attrs.caption === "string" && attrs.caption ? { "data-caption": attrs.caption } : {},
       },
+      // Left or right; none means centred under the image.
+      captionAlign: {
+        default: null,
+        parseHTML: element => element.getAttribute("data-caption-align"),
+        renderHTML: attrs => attrs.captionAlign === "left" || attrs.captionAlign === "right" ? { "data-caption-align": attrs.captionAlign } : {},
+      },
       pdfSource: { default: null,
         parseHTML: el => { try { return parsePdfSource(JSON.parse(el.getAttribute("data-pdf-source") || "null")); } catch { return null; } },
         renderHTML: attrs => { const source = parsePdfSource(attrs.pdfSource); return source ? { "data-pdf-source": JSON.stringify(source) } : {}; },

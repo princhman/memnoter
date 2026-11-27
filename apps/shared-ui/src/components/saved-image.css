@@ -61,6 +61,9 @@
   overflow-wrap: anywhere;
 }
 
+.note-image-caption[data-align="left"] { text-align: left; }
+.note-image-caption[data-align="right"] { text-align: right; }
+
 .note-image-caption[data-empty] {
   position: absolute;
   z-index: 1;
