@@ -158,7 +158,8 @@ export class ReviewSession {
       const coreCards = !hasSibling ? [] : await call<StoredCard[]>('due_cards', { moduleId: card.moduleId, now: Number.MAX_SAFE_INTEGER, createdAtCutoff: null }).catch(() => null);
       if (mine !== this.generation) return;
       const rest = coreCards ? separateSibling(remaining, card, coreCards) : remaining.filter(queued => !(card.kind === 'basic' && queued.kind === 'basic' && queued.moduleId === card.moduleId && queued.id === siblingOf(card.id)));
-      const queueAfter = result.card.dueAt < endOfDay(reviewTime) ? [...rest, { ...card, ...result.card }] : rest;
+      const rated = { ...card, ...result.card };
+      const queueAfter = reviewDueAt(rated) <= endOfDay(reviewTime) ? [...rest, rated] : rest;
       this.error = null; this.reviewed++; this.queue = queueAfter; this.retained = undefined;
       this.undoSteps.push({ before: card, result, queueBefore, queueAfter }); this.redoSteps = [];
     });
