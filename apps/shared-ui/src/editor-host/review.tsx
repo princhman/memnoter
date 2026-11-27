@@ -2,6 +2,7 @@ import { isWriteAdmitted, registerFlusher } from "../lib/write-lifecycle";
 import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState } from "react";
 import { CardFace } from "../components/card-face";
+import { Button } from "../components/ui/button";
 import { formatInterval, GRADES } from "../lib/fsrs";
 import { postNativeEvent } from "../lib/backend";
 import { useReviewSession } from "../lib/use-review-session";
@@ -63,6 +64,7 @@ function ReviewHost() {
   }, [state, card, counts, now, preview, revealed]);
   return <main key={card ? `${card.id}:${card.reps}` : 'waiting'} className="review-scroll-container p-8">
     {state.error && <p role="alert">{state.error}</p>}
+    {state.error && state.queue === null && <Button variant="secondary" onClick={session.refresh}>Retry</Button>}
     {state.unindexed.length > 0 && <p>Review is incomplete: {state.unindexed.length} notes could not be checked for cards. Open these notes to include their cards: {state.unindexed.map(note => note.name || 'Untitled note').join(', ')}.</p>}
     {card ? <><p className="mb-8 text-xs text-muted-foreground">{[...(scope ? [] : [card.moduleName]), ...card.section].join(' / ')}</p><CardFace kind={card.kind} front={card.front} back={card.back} revealed={revealed} revealedSteps={state.revealedSteps} /></>
       : (state.loading || state.queue === null) && !state.error ? <p role="status">Loading cards…</p>

@@ -94,18 +94,29 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
       state: 0, scheduleStatus: "new", lastReviewAt: null, reps: 0, lapses: 0, fsrsModel: null,
     }));
     window.__loads = 0;
+    window.__writes = [];
+    let failedReads = 0;
+    window.allowQueueReads = () => { failedReads = 0; };
     window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command.startsWith("plugin:")) return callbacks;
         if (command === "modules") return [{ id: "a", name: "Alpha" }];
         if (command === "due_cards") {
           window.__loads++;
+          if (failedReads > 0) {
+            failedReads--;
+            throw new Error("Queue read failed");
+          }
           // Enabling skip removes the currently displayed new card too.
           return structuredClone(cards.filter((c) => c.dueAt <= args.now &&
             (args.createdAtCutoff == null || c.reps > 0)));
         }
         if (command === "card_schedules") return structuredClone(cards);
-        if (command === "review_card") Object.assign(cards.find((c) => c.id === args.cardId), args.card);
-        if (command === "undo_review") Object.assign(cards.find((c) => c.id === args.cardId), args.previous);
+        if (command === "review_card" || command === "undo_review") {
+          window.__writes.push(command);
+          Object.assign(cards.find((c) => c.id === args.cardId), args.card ?? args.previous);
+          if (command === "undo_review") failedReads = 1;
+          else if (window.__writes.includes("undo_review") && window.__writes.length === 3) failedReads = Infinity;
+        }
         if (["list_documents", "due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes"].includes(command)) return [];
         return null;
       } } });
@@ -133,11 +144,23 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
     assert.equal(await page.getByText("answer", { exact: true }).count(), 1);
     assert.ok(await page.getByRole("button", { name: "Undo", exact: true }).isEnabled());
     await page.getByRole("button", { name: "Undo", exact: true }).click();
-    await page.getByText("First", { exact: true }).waitFor();
-    await toggle(false);
+    await page.getByText("First", { exact: true }).waitFor({ timeout: 5000 }).catch(async error => {
+      assert.equal(await page.getByRole("alert").textContent({ timeout: 1000 }), null, "Undo should recover from the failed queue read");
+      throw error;
+    });
     assert.ok(await page.getByRole("button", { name: "Redo", exact: true }).isEnabled());
+    await toggle(false);
     await page.getByRole("button", { name: "Redo", exact: true }).click();
+    const retry = page.getByRole("button", { name: "Retry", exact: true });
+    await retry.waitFor({ timeout: 5000 });
+    assert.equal(await page.getByText("First", { exact: true }).count(), 0);
+    await page.keyboard.press("Space");
+    await page.keyboard.press("4");
+    assert.deepEqual(await page.evaluate(() => window.__writes), ["review_card", "undo_review", "review_card"]);
+    await page.evaluate(() => window.allowQueueReads());
+    await retry.click();
     await page.getByText("Second", { exact: true }).waitFor();
+    assert.deepEqual(await page.evaluate(() => window.__writes), ["review_card", "undo_review", "review_card"]);
     // Clicks, not Space and 4: Redo keeps focus, and Space skips a focused button.
     await page.getByRole("button", { name: "Show answer" }).click();
     await page.getByRole("button", { name: /^Easy/ }).click();
