@@ -31,6 +31,7 @@ type appState = {
   // List foldable block titles under their heading in the outline popup.
   foldableBlocksInOutline: boolean;
   sidebarSections: boolean;
+  autoCorrectPastedImages: boolean;
 };
 
 declare global {
@@ -52,10 +53,12 @@ const defaultState: appState = {
   skipCardsCreatedToday: false,
   foldableBlocksInOutline: false,
   sidebarSections: false,
+  autoCorrectPastedImages: false,
 };
 
 function normalizeState(value: Partial<appState> | null): appState {
   const state = { ...defaultState, ...value };
+  state.autoCorrectPastedImages = state.autoCorrectPastedImages === true;
   const pages = state.modulePageByModule;
   state.modulePageByModule = pages && typeof pages === "object" && !Array.isArray(pages)
     ? Object.fromEntries(Object.entries(pages).filter(([, page]) => page === "notes" || page === "questions"))
@@ -176,6 +179,10 @@ export function setFoldableBlocksInOutline(foldableBlocksInOutline: boolean) {
 
 export function setSidebarSections(sidebarSections: boolean) {
   appStore.setState((state) => ({ ...state, sidebarSections }));
+}
+
+export function setAutoCorrectPastedImages(autoCorrectPastedImages: boolean) {
+  appStore.setState(state => ({ ...state, autoCorrectPastedImages }));
 }
 
 export function setLearnAhead(learnAhead: boolean) {

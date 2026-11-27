@@ -1,3 +1,6 @@
+import { useSelector } from "@tanstack/react-store";
+import { Switch } from "@/components/ui/switch";
+import { appStore, setAutoCorrectPastedImages } from "@/lib/store";
 import { createFileRoute, useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,6 +18,7 @@ export const Route = createFileRoute("/settings")({
 });
 
 function Settings() {
+  const autoCorrectPastedImages = useSelector(appStore, state => state.autoCorrectPastedImages);
   const router = useRouter();
   const canGoBack = useCanGoBack();
   const goBack = () => {
@@ -34,6 +38,17 @@ function Settings() {
       <ReviewSection />
       <NumberingSection />
       <OutlineSection />
+      <section>
+        <label className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h2 className="font-medium">Auto-correct pasted images</h2>
+            <p className="text-sm text-muted-foreground">
+              Adjust contrast and white balance when you paste or drop an image into a note.
+            </p>
+          </div>
+          <Switch checked={autoCorrectPastedImages} onCheckedChange={setAutoCorrectPastedImages} />
+        </label>
+      </section>
       <SpellingSection />
       <BackupsSection />
       <AboutSection />
