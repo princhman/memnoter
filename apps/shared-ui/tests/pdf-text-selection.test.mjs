@@ -94,3 +94,135 @@ test('native PDF text selections quote only on demand, with per-page sources and
     assert.deepEqual(errors, []);
   } finally { await browser?.close(); await server.close(); }
 });
+
+test('PDF text menu stays in view on a zoomed PDF panned to the right', async () => {
+  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0 }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 300, height: 800 } });
+    await page.addInitScript(`(${installTestBridge.toString()})({ tauri: { invoke: async command => {
+      if (command === 'list_documents') return [{ id: 'pan', moduleId: 'note', name: 'Reading.pdf', size: 1000, pageCount: 3, available: true }];
+      if (command === 'document_path') return '/reading.pdf';
+      if (command === 'load_annotations') return { state: null, revision: 0, generation: 'pan-test' };
+      return [];
+    } } });`);
+    await page.route('**/reading.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/files/pan`);
+    const first = page.locator('[data-pdf-page="1"] .textLayer span').filter({ hasText: 'Page 1 first line' });
+    await first.waitFor();
+    const zoomIn = page.getByRole('button', { name: 'Zoom in' });
+    for (let step = 0; step < 15; step++) await zoomIn.click();
+    await page.getByLabel('Zoom level').filter({ hasText: '250%' }).waitFor();
+    const viewport = page.locator('.pdf-viewport');
+    await page.waitForFunction(() => { const v = document.querySelector('.pdf-viewport'); return v.scrollWidth > v.clientWidth + 100; });
+    // Pan right so the first line's end sits near the viewport's right edge.
+    await viewport.evaluate((element, span) => {
+      span.scrollIntoView({ block: 'center', inline: 'nearest' });
+      const line = span.getBoundingClientRect(), view = element.getBoundingClientRect();
+      element.scrollLeft += line.right - (view.right - 30);
+    }, await first.elementHandle());
+    const view = await viewport.boundingBox();
+    const box = await first.boundingBox();
+    assert.ok(box.x + box.width > view.x + 40 && box.x + box.width < view.x + view.width, 'the line must end in view');
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width - 1, y);
+    await page.mouse.down();
+    await page.mouse.move(Math.max(box.x + 1, view.x + 10), y, { steps: 12 });
+    await page.mouse.up();
+    const menu = page.getByRole('button', { name: 'Quote text', exact: true });
+    await menu.waitFor();
+    const menuBox = await menu.boundingBox();
+    assert.ok(menuBox.x >= view.x && menuBox.x + menuBox.width <= view.x + view.width, `menu at ${menuBox.x} must be inside the viewport ${view.x}..${view.x + view.width}`);
+    await page.close();
+  } finally { await browser?.close(); await server.close(); }
+});
+
+test('PDF text menu stays anchored during selection and scrolling', async () => {
+  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0 }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+    await page.addInitScript(`(${installTestBridge.toString()})({ tauri: { invoke: async command => {
+      if (command === 'list_documents') return [{ id: 'drag', moduleId: 'note', name: 'Reading.pdf', size: 1000, pageCount: 3, available: true }];
+      if (command === 'document_path') return '/reading.pdf';
+      if (command === 'load_annotations') return { state: null, revision: 0, generation: 'reading-test' };
+      return [];
+    } } });`);
+    await page.route('**/reading.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/files/drag`);
+    const first = page.locator('[data-pdf-page="1"] .textLayer span').filter({ hasText: 'Page 1 first line' });
+    await first.waitFor();
+    const box = await first.boundingBox();
+    const y = box.y + box.height / 2;
+    const menu = page.getByRole('button', { name: 'Quote text', exact: true });
+    const pause = process.env.PROOF_DIR ? 850 : 70;
+    await page.mouse.move(box.x + box.width - 1, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * .65, y, { steps: 12 });
+    await menu.waitFor();
+    const position = await menu.boundingBox();
+    await page.waitForTimeout(pause);
+    await page.mouse.move(box.x + 1, y, { steps: 25 });
+    await page.waitForTimeout(pause);
+    assert.deepEqual(await menu.boundingBox(), position);
+    await page.mouse.up();
+    await page.waitForTimeout(pause);
+    assert.deepEqual(await menu.boundingBox(), position);
+    assert.match(await page.evaluate(() => window.getSelection().toString()), /Page 1 first line/);
+    const viewport = page.locator('.pdf-viewport');
+    const watchScroll = () => viewport.evaluate(element => {
+      const menu = element.ownerDocument.querySelector('[aria-label="PDF text actions"]');
+      const anchor = menu.getBoundingClientRect().top + element.scrollTop;
+      const offsets = [];
+      const sample = () => offsets.push(menu.getBoundingClientRect().top + element.scrollTop - anchor);
+      element.addEventListener('scroll', sample);
+      window.stopWatchingPdfScroll = () => {
+        element.removeEventListener('scroll', sample);
+        return offsets;
+      };
+    });
+    const assertScroll = async () => {
+      const offsets = await page.evaluate(() => window.stopWatchingPdfScroll());
+      assert.ok(offsets.length > 0, 'the gesture must scroll the PDF');
+      assert.ok(offsets.every(offset => Math.abs(offset) < 1), 'the menu must move with the PDF on every scroll: ' + offsets.join(', '));
+    };
+    const nextLine = page.locator('[data-pdf-page="1"] .textLayer span').filter({ hasText: 'Second line' });
+    const nextLineBox = await nextLine.boundingBox();
+    const lineY = nextLineBox.y + nextLineBox.height / 2;
+    await page.mouse.move(nextLineBox.x + 1, lineY);
+    await page.mouse.down();
+    await page.mouse.move(nextLineBox.x + nextLineBox.width - 1, lineY, { steps: 20 });
+    await page.mouse.up();
+    await menu.waitFor();
+    await page.waitForTimeout(pause);
+    await watchScroll();
+    for (let step = 0; step < 3; step++) {
+      await page.mouse.wheel(0, 12);
+      await page.waitForTimeout(pause);
+    }
+    await assertScroll();
+
+    const secondPage = page.locator('[data-pdf-page="2"] .textLayer span').filter({ hasText: 'Page 2 first line' });
+    await secondPage.waitFor();
+    const secondBox = await secondPage.boundingBox();
+    const secondY = secondBox.y + secondBox.height / 2;
+    await page.mouse.move(secondBox.x + 1, secondY);
+    await page.mouse.down();
+    await page.mouse.move(secondBox.x + secondBox.width - 1, secondY, { steps: 16 });
+    await menu.waitFor();
+    await page.waitForTimeout(pause);
+    await watchScroll();
+    const beforeDragScroll = await viewport.evaluate(element => element.scrollTop);
+    const viewportBox = await viewport.boundingBox();
+    await page.mouse.move(secondBox.x + secondBox.width - 1, viewportBox.y + viewportBox.height + 2, { steps: 25 });
+    await page.waitForFunction(before => document.querySelector('.pdf-viewport').scrollTop > before.top + before.distance, { top: beforeDragScroll, distance: process.env.PROOF_DIR ? 100 : 30 }, { timeout: 3000 });
+    await page.mouse.up();
+    await assertScroll();
+    if (process.env.PROOF_DIR) await page.waitForTimeout(900);
+    await page.close();
+  } finally { await browser?.close(); await server.close(); }
+});

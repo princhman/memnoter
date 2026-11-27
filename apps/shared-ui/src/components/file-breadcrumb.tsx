@@ -1,4 +1,6 @@
 import { MiddleTruncate } from "./middle-truncate";
+import { HeadingTitle } from "./table-of-contents";
+import type { Node as PMNode } from "@tiptap/pm/model";
 import { useAnyWorksheetOpen, WORKSHEET_CRUMB_SLOT } from "@/lib/pdf-pane";
 import { useDocuments } from "@/lib/use-documents";
 import { documentName } from "@/lib/pdf-state";
@@ -36,6 +38,13 @@ import { Button } from "./ui/button";
 // Clears the window controls and toolbar, whose width the root layout sets.
 const TOOLBAR_OFFSET = "w-[calc(var(--toolbar-width,10.75rem)+0.75rem)]";
 
+function SectionTitle({ title, node }: { title: string; node: PMNode | null }) {
+  if (node?.children.some(child => child.type.name === "inlineMath")) {
+    return <span className="block truncate" title={title}><HeadingTitle node={node} /></span>;
+  }
+  return <MiddleTruncate text={title} />;
+}
+
 export function FileBreadcrumb() {
   const { state } = useSidebar();
 
@@ -64,7 +73,10 @@ export function FileBreadcrumb() {
   const sectionPath =
     useEditorState({
       editor,
-      selector: ({ editor }) => (editor ? getFocusedSectionPath(editor) : []),
+      selector: ({ editor }) => editor ? getFocusedSectionPath(editor).map(crumb => ({
+        ...crumb,
+        node: editor.state.doc.nodeAt(crumb.pos),
+      })) : [],
       equalityFn: (previous, next) => {
         if (previous === next) return true;
         if (!previous || !next) return false;
@@ -73,7 +85,7 @@ export function FileBreadcrumb() {
           previous.every(
             (crumb, index) =>
               crumb.pos === next[index].pos &&
-              crumb.title === next[index].title,
+              crumb.node === next[index].node,
           )
         );
       },
@@ -156,7 +168,7 @@ export function FileBreadcrumb() {
                                 editor?.commands.showSection(crumb.pos)
                               }
                             >
-                              <MiddleTruncate text={crumb.title} />
+                              <SectionTitle title={crumb.title} node={crumb.node} />
                             </DropdownMenuItem>
                           ))}
                       </DropdownMenuGroup>
@@ -177,7 +189,7 @@ export function FileBreadcrumb() {
 
                   <BreadcrumbItem>
                     {index === Math.min(2, sectionPath.length) - 1 ? (
-                      <BreadcrumbPage data-tauri-drag-region="deep"><MiddleTruncate text={crumb.title} /></BreadcrumbPage>
+                      <BreadcrumbPage data-tauri-drag-region="deep"><SectionTitle title={crumb.title} node={crumb.node} /></BreadcrumbPage>
                     ) : (
                       <BreadcrumbLink
                         render={
@@ -187,7 +199,7 @@ export function FileBreadcrumb() {
                               editor?.commands.showSection(crumb.pos)
                             }
                           >
-                            <MiddleTruncate text={crumb.title} />
+                            <SectionTitle title={crumb.title} node={crumb.node} />
                           </button>
                         }
                       />

@@ -94,18 +94,30 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
       state: 0, scheduleStatus: "new", lastReviewAt: null, reps: 0, lapses: 0, fsrsModel: null,
     }));
     window.__loads = 0;
+    window.__writes = [];
+    let failedReads = 0;
+    window.allowQueueReads = () => { failedReads = 0; };
     window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command.startsWith("plugin:")) return callbacks;
         if (command === "modules") return [{ id: "a", name: "Alpha" }];
         if (command === "due_cards") {
           window.__loads++;
+          if (failedReads > 0) {
+            failedReads--;
+            throw new Error("Queue read failed");
+          }
           // Enabling skip removes the currently displayed new card too.
           return structuredClone(cards.filter((c) => c.dueAt <= args.now &&
             (args.createdAtCutoff == null || c.reps > 0)));
         }
-        if (command === "review_card") Object.assign(cards.find((c) => c.id === args.cardId), args.card);
-        if (command === "undo_review") Object.assign(cards.find((c) => c.id === args.cardId), args.previous);
-        if (["list_documents", "due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes", "card_schedules"].includes(command)) return [];
+        if (command === "card_schedules") return structuredClone(cards);
+        if (command === "review_card" || command === "undo_review") {
+          window.__writes.push(command);
+          Object.assign(cards.find((c) => c.id === args.cardId), args.card ?? args.previous);
+          if (command === "undo_review") failedReads = 1;
+          else if (window.__writes.includes("undo_review") && window.__writes.length === 3) failedReads = Infinity;
+        }
+        if (["list_documents", "due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes"].includes(command)) return [];
         return null;
       } } });
 
@@ -132,11 +144,23 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
     assert.equal(await page.getByText("answer", { exact: true }).count(), 1);
     assert.ok(await page.getByRole("button", { name: "Undo", exact: true }).isEnabled());
     await page.getByRole("button", { name: "Undo", exact: true }).click();
-    await page.getByText("First", { exact: true }).waitFor();
-    await toggle(false);
+    await page.getByText("First", { exact: true }).waitFor({ timeout: 5000 }).catch(async error => {
+      assert.equal(await page.getByRole("alert").textContent({ timeout: 1000 }), null, "Undo should recover from the failed queue read");
+      throw error;
+    });
     assert.ok(await page.getByRole("button", { name: "Redo", exact: true }).isEnabled());
+    await toggle(false);
     await page.getByRole("button", { name: "Redo", exact: true }).click();
+    const retry = page.getByRole("button", { name: "Retry", exact: true });
+    await retry.waitFor({ timeout: 5000 });
+    assert.equal(await page.getByText("First", { exact: true }).count(), 0);
+    await page.keyboard.press("Space");
+    await page.keyboard.press("4");
+    assert.deepEqual(await page.evaluate(() => window.__writes), ["review_card", "undo_review", "review_card"]);
+    await page.evaluate(() => window.allowQueueReads());
+    await retry.click();
     await page.getByText("Second", { exact: true }).waitFor();
+    assert.deepEqual(await page.evaluate(() => window.__writes), ["review_card", "undo_review", "review_card"]);
     // Clicks, not Space and 4: Redo keeps focus, and Space skips a focused button.
     await page.getByRole("button", { name: "Show answer" }).click();
     await page.getByRole("button", { name: /^Easy/ }).click();
@@ -312,3 +336,70 @@ test('a list reveals each step before one grade, and undo restores one review', 
     assert.equal(await page.getByText('Prophase',{exact:true}).count(),0);
   } finally { await page.close(); }
 });
+
+for (const scenario of ['deletion', 'schedule refresh']) {
+  test(`review history follows ${scenario} outside the grade operation`, async () => {
+    const page = await browser.newPage();
+    try {
+      await page.addInitScript(() => {
+        const card = (id, offset) => ({
+          id, moduleId: 'a', moduleName: 'Alpha', section: [], kind: 'basic',
+          front: [{ type: 'text', text: id }], back: [{ type: 'text', text: 'answer' }],
+          dueAt: Date.now() + offset, stability: 0, stabilityFast: 0, difficulty: 0,
+          scheduledDays: 0, learningStep: 0, state: 0, scheduleStatus: 'new',
+          lastReviewAt: null, reps: 0, lapses: 0, fsrsModel: null,
+        });
+        const cards = [card('graded', -120_000), card('updated', -60_000)];
+        window.changeCards = (scenario) => {
+          if (scenario === 'deletion') cards.shift();
+          else {
+            cards[1].dueAt += 30_000;
+            cards.push(card('added', -10_000));
+          }
+          return cards[1]?.dueAt;
+        };
+        window.installTestBridge({ tauri: { invoke: async (command, args) => {
+          if (command === 'due_cards') return structuredClone(cards.filter(card => card.dueAt <= args.now));
+          if (command === 'card_schedules') return structuredClone(cards);
+          if (command === 'review_card' || command === 'undo_review') {
+            const target = cards.find(card => card.id === args.cardId);
+            if (!target) throw new Error('Card was deleted');
+            Object.assign(target, args.card ?? args.previous);
+          }
+          return [];
+        } } });
+      });
+      await page.goto(`${url}/review`);
+      const result = await page.evaluate(async scenario => {
+        const { ReviewSession } = await import('/src/lib/review-session.ts');
+        const session = new ReviewSession();
+        await session.load();
+        session.reveal();
+        await session.rate(4);
+        const graded = session.getSnapshot();
+        const updatedDue = window.changeCards(scenario);
+        await session.load();
+        const refreshed = session.getSnapshot();
+        await session.undo();
+        const undone = session.getSnapshot();
+        await session.redo();
+        return { graded, refreshed, undone, redone: session.getSnapshot(), updatedDue };
+      }, scenario);
+      assert.equal(result.graded.canUndo, true);
+      assert.deepEqual(result.graded.queue.map(card => card.id), ['updated']);
+      if (scenario === 'deletion') {
+        assert.equal(result.refreshed.canUndo, false);
+        assert.equal(result.undone.error, null);
+      } else {
+        for (const snapshot of [result.undone, result.redone]) {
+          assert.ok(snapshot.queue.some(card => card.id === 'added'), 'card added by refresh stays queued');
+          assert.equal(snapshot.queue.find(card => card.id === 'updated').dueAt, result.updatedDue);
+        }
+        assert.equal(result.undone.queue.find(card => card.id === 'graded').reps, 0);
+        assert.equal(result.redone.queue.some(card => card.id === 'graded'), false);
+      }
+    } finally {
+      await page.close();
+    }
+  });
+}

@@ -439,6 +439,8 @@ test("Chromium: dragging selected text inside a focused section does not throw",
     const target = await paragraph.boundingBox();
     await page.mouse.move(source.x, source.y);
     await page.mouse.down();
+    // macOS distinguishes a click from a drag of selected text with a short hold.
+    if (process.platform === "darwin") await page.waitForTimeout(200);
     await page.mouse.move(target.x + 25, target.y + target.height / 2, { steps: 18 });
     await page.mouse.up();
     assert.equal(await editor.getAttribute("data-trusted-drag"), "true");
@@ -590,10 +592,11 @@ function selectAcrossHiddenSections(node) {
   });
 }
 
-async function focusFromHeadingToolbar(page, headingIndex) {
+async function focusFromHeadingToolbar(page, headingIndex, afterHover) {
   const heading = page.locator(".tiptap > h1").nth(headingIndex);
   const toolbar = page.getByRole("toolbar", { name: "Heading controls" });
   await heading.hover();
+  await afterHover?.();
   // The toolbar follows the hovered heading asynchronously; clicking before it
   // moves would focus the previous heading's section instead.
   await page.waitForFunction(([target, bar]) => {
@@ -715,8 +718,8 @@ test("a list shortcut cannot join across the focused edge, while a programmatic 
     const editor = page.locator(".tiptap");
     const hiddenList = editor.locator(":scope > ul").first();
     await editor.locator(":scope > h1").first().click();
-    await editor.evaluate(selectAcrossHiddenSections);
-    await focusFromHeadingToolbar(page, 1);
+    // A selection transaction after hover must leave the toolbar on Middle.
+    await focusFromHeadingToolbar(page, 1, () => editor.evaluate(selectAcrossHiddenSections));
     await page.keyboard.press("Meta+Shift+8");
     assert.deepEqual(await hiddenList.locator("li").allTextContents(), ["Hidden list"]);
     await editor.locator(":scope > h1.section-focus-start").waitFor();
@@ -1205,7 +1208,10 @@ for (const sections of [true, false]) {
       await focused.waitFor();
       const saved = await leaveAndReadSaved(page, moduleId);
       assert.match(saved[3], /^<image .*fileId=/);
-      assert.deepEqual(saved.filter((_, i) => i !== 3), beforeImage);
+      // Nothing follows the image inside the focused chapter, so the paste adds
+      // an empty line after it (PRI-381).
+      assert.equal(saved[4], "<paragraph></paragraph>");
+      assert.deepEqual(saved.filter((_, i) => i !== 3 && i !== 4), beforeImage);
     } finally {
       release.resolve();
       await page.close();

@@ -1,6 +1,6 @@
-const listeners = new Set<() => void>();
-export function cardsChanged() { listeners.forEach(listener => listener()); }
-export function onCardsChanged(listener: () => void) {
+const listeners = new Set<(command?: string) => void>();
+export function cardsChanged(command?: string) { listeners.forEach(listener => listener(command)); }
+export function onCardsChanged(listener: (command?: string) => void) {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
 }
