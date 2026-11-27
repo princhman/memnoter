@@ -37,6 +37,13 @@ export const HeadingActionOverlay = ({
     if (!editor) return;
     const follow = () => {
       if (backlinksOpen || shellRef.current?.querySelector("[data-heading-action]:focus-within")) return;
+      // Editor transactions can arrive while the pointer is moving to the controls.
+      const heading = hoveredHeadingRef.current;
+      if (mouseInsideRef.current && heading?.isConnected &&
+        (heading.matches(":hover") || shellRef.current?.querySelector("[data-heading-action]:hover"))) {
+        positionHeadingAction(heading);
+        return;
+      }
       if (editor.view.hasFocus() || isCoarsePointer()) showCaretHeading();
     };
     follow();
@@ -139,8 +146,7 @@ export const HeadingActionOverlay = ({
     positionHeadingAction(heading);
   }
 
-  // `refresh` re-renders even when the button stays put, e.g. to swap its icon.
-  function positionHeadingAction(heading: HTMLElement, refresh = false) {
+  function positionHeadingAction(heading: HTMLElement) {
     const shell = shellRef.current;
     if (!shell) return;
 
@@ -149,11 +155,11 @@ export const HeadingActionOverlay = ({
     const left = headingRect.right - shellRect.left - HEADING_ACTION_SIZE;
     const top =
       headingRect.top - shellRect.top + (headingRect.height - HEADING_ACTION_SIZE) / 2;
-    // Touch screens reposition on every transaction; skip renders that move nothing.
+    const focused = isCurrentlyInFocus();
     setHeadingActionPosition((current) =>
-      !refresh && current?.left === left && current.top === top
+      current?.left === left && current.top === top && current.focused === focused
         ? current
-        : { left, top },
+        : { left, top, focused },
     );
   }
 
@@ -188,7 +194,7 @@ export const HeadingActionOverlay = ({
       heading.scrollIntoView({ block: "start" });
     }
     // The heading moved inside the shell, so move the button with it.
-    positionHeadingAction(heading, true);
+    positionHeadingAction(heading);
   }
 
   function isCurrentlyInFocus(): boolean {
@@ -244,7 +250,6 @@ export const HeadingActionOverlay = ({
           position={headingActionPosition}
           level={hoveredHeadingRef.current?.tagName ?? ""}
           onClick={onClick}
-          inFocus={isCurrentlyInFocus}
         />
       )}
     </main>
@@ -254,6 +259,7 @@ export const HeadingActionOverlay = ({
 type HeadingActionPosition = {
   left: number;
   top: number;
+  focused: boolean;
 };
 
 type HeadingActionProps = {
@@ -261,17 +267,14 @@ type HeadingActionProps = {
   position: HeadingActionPosition;
   level: string;
   onClick: () => void;
-  inFocus: () => boolean;
 };
 
 function HeadingAction({
   backlinks,
-  position,
+  position: { focused, ...position },
   level,
   onClick,
-  inFocus,
 }: HeadingActionProps) {
-  const focused = inFocus();
   const label = focused ? "Show the whole note" : "Focus on this section";
   return (
     <div

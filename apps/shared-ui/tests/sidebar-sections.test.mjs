@@ -590,10 +590,11 @@ function selectAcrossHiddenSections(node) {
   });
 }
 
-async function focusFromHeadingToolbar(page, headingIndex) {
+async function focusFromHeadingToolbar(page, headingIndex, afterHover) {
   const heading = page.locator(".tiptap > h1").nth(headingIndex);
   const toolbar = page.getByRole("toolbar", { name: "Heading controls" });
   await heading.hover();
+  await afterHover?.();
   // The toolbar follows the hovered heading asynchronously; clicking before it
   // moves would focus the previous heading's section instead.
   await page.waitForFunction(([target, bar]) => {
@@ -715,8 +716,8 @@ test("a list shortcut cannot join across the focused edge, while a programmatic 
     const editor = page.locator(".tiptap");
     const hiddenList = editor.locator(":scope > ul").first();
     await editor.locator(":scope > h1").first().click();
-    await editor.evaluate(selectAcrossHiddenSections);
-    await focusFromHeadingToolbar(page, 1);
+    // A selection transaction after hover must leave the toolbar on Middle.
+    await focusFromHeadingToolbar(page, 1, () => editor.evaluate(selectAcrossHiddenSections));
     await page.keyboard.press("Meta+Shift+8");
     assert.deepEqual(await hiddenList.locator("li").allTextContents(), ["Hidden list"]);
     await editor.locator(":scope > h1.section-focus-start").waitFor();
