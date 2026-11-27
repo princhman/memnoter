@@ -265,6 +265,9 @@ export function createSyncEngine({
 
   async function applyEntries(wire: WireEntry[]) {
     if (wire.length === 0) return;
+    // A manual timeout abandons this connection while it may be suspended
+    // below; its entries must not land or publish after a newer one's.
+    const owner = generation;
     const entries: RemoteEntry[] = [];
     for (const entry of wire) {
       let bytes: Uint8Array;
@@ -281,10 +284,13 @@ export function createSyncEngine({
       }
       entries.push({ seq: entry.seq, doc: entry.doc, bytes });
     }
-    const cursor = Math.max(await store.cursor(), ...entries.map((entry) => entry.seq));
+    const stored = await store.cursor();
+    if (owner !== generation) return;
+    const cursor = Math.max(stored, ...entries.map((entry) => entry.seq));
     await store.applyRemote(entries, cursor);
+    // Once written, open notes must still hear about it.
     onApplied?.(new Set(entries.map((entry) => entry.doc)));
-    if (ready && status.state === "synced") setStatus({ lastSyncedAt: now() });
+    if (owner === generation && ready && status.state === "synced") setStatus({ lastSyncedAt: now() });
   }
 
   async function compact(doc: string, upTo: number) {

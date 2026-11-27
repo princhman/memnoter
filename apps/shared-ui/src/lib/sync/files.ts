@@ -37,9 +37,10 @@ export function createFileSync({ generation, signal, server, token, key, onStore
   let stoppedError: string | null = null;
   let draining: Promise<string | null> | null = null;
   let again = false;
-  // Manual syncs wait for the uploads that existed when they asked, not for
-  // the deletes and downloads that follow them in the same pass.
-  let uploadWaiters: ((error: string | null) => void)[] = [];
+  // Uploads run one batch at a time on their own queue, so a manual sync can
+  // wait for them without waiting for deletes or downloads.
+  let uploads: Promise<string | null> = Promise.resolve(null);
+  let failed = false;
   let kickTimer: number | undefined;
   let retryTimer: number | undefined;
   // Images someone is looking at come first.
@@ -78,50 +79,51 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     onStored(file.moduleId, stored);
   }
 
-  async function pass(): Promise<string | null> {
-    let failed = false;
-    const attempt = async (fileId: string, task: () => Promise<void>) => {
-      try {
-        await task();
-        return null;
-      } catch (error) {
-        if (!running || controller.signal.aborted) return null;
-        if (error instanceof SyncApiError && error.status === 410) {
-          await invoke("sync_file_gone", { fileId, generation });
-          wanted.delete(fileId);
-          notYet.delete(fileId);
-          return null;
-        }
-        if (error instanceof SyncApiError && error.status === 426) {
-          stoppedError = error.message;
-          running = false;
-        } else if (error instanceof SyncApiError && error.status === 401) {
-          running = false;
-          onUnauthorized();
-        } else {
-          console.error("Image sync failed:", error);
-          failed = true;
-        }
-        return error instanceof Error ? error.message : String(error);
-      }
-    };
-
-    let uploadError: string | null = null;
-    const waiters = uploadWaiters;
-    uploadWaiters = [];
+  async function attempt(fileId: string, task: () => Promise<void>) {
     try {
-      for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
-        if (!running) return uploadError;
-        const error = await attempt(fileId, () => upload(fileId));
-        if (error !== null) uploadError ??= `Image upload failed: ${error}`;
-      }
+      await task();
+      return null;
     } catch (error) {
-      uploadError ??= `Image upload failed: ${error instanceof Error ? error.message : String(error)}`;
-      throw error;
-    } finally {
-      const result = uploadError ?? stoppedError;
-      for (const settle of waiters) settle(result);
+      if (!running || controller.signal.aborted) return null;
+      if (error instanceof SyncApiError && error.status === 410) {
+        await invoke("sync_file_gone", { fileId, generation });
+        wanted.delete(fileId);
+        notYet.delete(fileId);
+        return null;
+      }
+      if (error instanceof SyncApiError && error.status === 426) {
+        stoppedError = error.message;
+        running = false;
+      } else if (error instanceof SyncApiError && error.status === 401) {
+        running = false;
+        onUnauthorized();
+      } else {
+        console.error("Image sync failed:", error);
+        failed = true;
+      }
+      return error instanceof Error ? error.message : String(error);
     }
+  }
+
+  async function uploadPending(): Promise<string | null> {
+    let uploadError: string | null = null;
+    for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
+      if (!running) break;
+      const error = await attempt(fileId, () => upload(fileId));
+      if (error !== null) uploadError ??= `Image upload failed: ${error}`;
+    }
+    return uploadError ?? (running ? null : stoppedError);
+  }
+
+  function queueUploads(): Promise<string | null> {
+    const next = uploads.then(uploadPending);
+    uploads = next.catch(() => null);
+    return next.catch(error => `Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  async function pass(): Promise<string | null> {
+    failed = false;
+    const uploadError = await queueUploads();
     for (const fileId of await invoke<string[]>("sync_pending_deletes", { generation })) {
       if (!running) return uploadError;
       await attempt(fileId, async () => {
@@ -185,7 +187,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     flushUploads() {
       window.clearTimeout(kickTimer);
       if (stoppedError || !running) return Promise.resolve(stoppedError);
-      const uploaded = new Promise<string | null>(settle => uploadWaiters.push(settle));
+      const uploaded = queueUploads();
       void run();
       return uploaded;
     },
@@ -197,7 +199,6 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     },
     stop() {
       running = false;
-      for (const settle of uploadWaiters.splice(0)) settle(stoppedError);
       controller.abort();
       signal?.removeEventListener("abort", abort);
       window.clearTimeout(kickTimer);

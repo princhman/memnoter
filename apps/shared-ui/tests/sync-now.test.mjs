@@ -191,3 +191,22 @@ test('a stalled image download does not hold up a manual sync', async t => {
   await until(() => status().state === 'synced' && session.acks === 1);
   assert.equal(status().error, null);
 });
+
+test('a manual sync waits for an upload but not for a download already stuck in a pass', async t => {
+  const { session } = await desktopSync(t);
+  const stuck = Promise.withResolvers();
+  let downloading = false;
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if ((init?.method ?? 'GET') === 'GET') { downloading = true; return stuck.promise; }
+    return Promise.resolve(new Response());
+  });
+  session.missing = [{ fileId: 'remote-image', moduleId: 'note', fileType: 'image/png' }];
+  session.uploads = [];
+  await syncNow();
+  await until(() => downloading);
+  session.uploads = ['image'];
+  session.outbox = [{ id: 1, doc: 'note', bytes: [] }];
+  await syncNow();
+  await until(() => status().state === 'synced' && session.acks === 1);
+  assert.deepEqual(session.uploads, []);
+});
