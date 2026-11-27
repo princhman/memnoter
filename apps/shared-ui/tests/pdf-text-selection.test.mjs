@@ -95,6 +95,50 @@ test('native PDF text selections quote only on demand, with per-page sources and
   } finally { await browser?.close(); await server.close(); }
 });
 
+test('PDF text menu stays in view on a zoomed PDF panned to the right', async () => {
+  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0 }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 300, height: 800 } });
+    await page.addInitScript(`(${installTestBridge.toString()})({ tauri: { invoke: async command => {
+      if (command === 'list_documents') return [{ id: 'pan', moduleId: 'note', name: 'Reading.pdf', size: 1000, pageCount: 3, available: true }];
+      if (command === 'document_path') return '/reading.pdf';
+      if (command === 'load_annotations') return { state: null, revision: 0, generation: 'pan-test' };
+      return [];
+    } } });`);
+    await page.route('**/reading.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/files/pan`);
+    const first = page.locator('[data-pdf-page="1"] .textLayer span').filter({ hasText: 'Page 1 first line' });
+    await first.waitFor();
+    const zoomIn = page.getByRole('button', { name: 'Zoom in' });
+    for (let step = 0; step < 15; step++) await zoomIn.click();
+    await page.getByLabel('Zoom level').filter({ hasText: '250%' }).waitFor();
+    const viewport = page.locator('.pdf-viewport');
+    await page.waitForFunction(() => { const v = document.querySelector('.pdf-viewport'); return v.scrollWidth > v.clientWidth + 100; });
+    // Pan right so the first line's end sits near the viewport's right edge.
+    await viewport.evaluate((element, span) => {
+      span.scrollIntoView({ block: 'center', inline: 'nearest' });
+      const line = span.getBoundingClientRect(), view = element.getBoundingClientRect();
+      element.scrollLeft += line.right - (view.right - 30);
+    }, await first.elementHandle());
+    const view = await viewport.boundingBox();
+    const box = await first.boundingBox();
+    assert.ok(box.x + box.width > view.x + 40 && box.x + box.width < view.x + view.width, 'the line must end in view');
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width - 1, y);
+    await page.mouse.down();
+    await page.mouse.move(Math.max(box.x + 1, view.x + 10), y, { steps: 12 });
+    await page.mouse.up();
+    const menu = page.getByRole('button', { name: 'Quote text', exact: true });
+    await menu.waitFor();
+    const menuBox = await menu.boundingBox();
+    assert.ok(menuBox.x >= view.x && menuBox.x + menuBox.width <= view.x + view.width, `menu at ${menuBox.x} must be inside the viewport ${view.x}..${view.x + view.width}`);
+    await page.close();
+  } finally { await browser?.close(); await server.close(); }
+});
+
 test('PDF text menu stays anchored during selection and scrolling', async () => {
   const server = await browserHarness(import.meta.url).createServer({ server: { port: 0 }, logLevel: 'error' });
   let browser;

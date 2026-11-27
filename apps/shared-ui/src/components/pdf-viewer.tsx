@@ -531,7 +531,11 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const [textAction, setTextAction] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
     const menu = textMenu.current;
-    if (menu && container.current && textAction) menu.style.left = `${Math.max(8, Math.min(textAction.left, container.current.clientWidth - menu.offsetWidth - 8))}px`;
+    const viewport = container.current, host = scrollingContent.current;
+    if (!menu || !viewport || !host || !textAction) return;
+    // `left` is in the scrolling content's coordinates, so clamp to the part of it in view.
+    const visibleLeft = viewport.getBoundingClientRect().left - host.getBoundingClientRect().left;
+    menu.style.left = `${Math.max(visibleLeft + 8, Math.min(textAction.left, visibleLeft + viewport.clientWidth - menu.offsetWidth - 8))}px`;
   }, [textAction]);
   useEffect(() => {
     const reader = content.current;
