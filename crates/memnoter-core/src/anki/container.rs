@@ -149,13 +149,24 @@ impl AnkiArchive {
     }
 
     pub fn read_media(&self, name: &str) -> CommandResult<Vec<u8>> {
+        let mut zip = self.open_zip()?;
+        self.read_media_entry(&mut zip, name)
+    }
+
+    pub(super) fn open_zip(&self) -> CommandResult<zip::ZipArchive<File>> {
+        zip::ZipArchive::new(File::open(&self.path).map_err(|e| e.to_string())?).map_err(unzip_err)
+    }
+
+    pub(super) fn read_media_entry(
+        &self,
+        zip: &mut zip::ZipArchive<File>,
+        name: &str,
+    ) -> CommandResult<Vec<u8>> {
         let entry = self
             .media
             .get(name)
             .ok_or_else(|| format!("Media file not found: {name}"))?;
-        let mut zip = zip::ZipArchive::new(File::open(&self.path).map_err(|e| e.to_string())?)
-            .map_err(unzip_err)?;
-        let bytes = read_entry(&mut zip, entry, MAX_MEDIA_BYTES)?
+        let bytes = read_entry(zip, entry, MAX_MEDIA_BYTES)?
             .ok_or_else(|| format!("Media file not found: {name}"))?;
         match self.version {
             Version::Legacy => Ok(bytes),

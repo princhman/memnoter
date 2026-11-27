@@ -14,6 +14,7 @@ import { extractCards } from "@/lib/cards";
 import { extractFromDoc } from "@/lib/search-text";
 import { createSaveQueue } from "@/lib/save-queue";
 import { headingNumberingKey } from "@/lib/heading-numbering";
+import { defaultSelection, prepareAnkiImport, type AnkiPackage } from "@/lib/anki-import";
 import "@/App.css";
 
 // No app backend or persisted module: imported assets are served by the runner.
@@ -35,9 +36,17 @@ function timed<T>(name: string, run: () => T): T {
 const paint = () => new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
 Object.assign(window, {
   prepareFolderImport,
-  async openLargeNote(folder: ImportFolder) {
+  prepareLargeAnki(pkg: AnkiPackage) {
+    const start = performance.now();
+    const plan = prepareAnkiImport(pkg, defaultSelection(pkg.decks));
+    const largest = plan.modules.reduce((a, b) => a.cards >= b.cards ? a : b);
+    return { prepare: performance.now() - start, cards: plan.cards, moduleCards: plan.modules.map(m => m.cards), document: largest.document };
+  },
+  async openLargeNote(folder: ImportFolder | JSONContent) {
     mount?.unmount(); activeEditor?.destroy(); activeDoc?.destroy(); root.replaceChildren();
-    const plan = await prepareFolderImport(folder);
+    const fromFolder = "entries" in folder;
+    const plan = fromFolder ? await prepareFolderImport(folder) : { document: folder };
+    const encodeStart = performance.now();
     // Reproduce import normalization, then reopening the saved Yjs snapshot.
     const scratch = new Y.Doc();
     const normalizer = new Editor({ extensions: noteExtensions({ document: scratch }) });
@@ -54,8 +63,11 @@ Object.assign(window, {
     assets(normalized);
     const saved = prosemirrorJSONToYDoc(normalizer.schema, normalized, "default");
     normalizer.destroy(); scratch.destroy();
-    const doc = new Y.Doc(); Y.applyUpdate(doc, Y.encodeStateAsUpdate(saved)); saved.destroy();
-    const start = performance.now();
+    const bytes = Y.encodeStateAsUpdate(saved); saved.destroy();
+    const encode = performance.now() - encodeStart;
+    const decodeStart = performance.now();
+    const doc = new Y.Doc(); Y.applyUpdate(doc, bytes);
+    const start = fromFolder ? performance.now() : decodeStart;
     const store = createTocStore();
     const tocCommits: number[] = [];
     const extensions = visibleNoteExtensions({ document: doc, onTocUpdate: items => store.setState(() => items) }).map(extension => {
@@ -87,7 +99,7 @@ Object.assign(window, {
     }
     editor.view.updateState(editor.state.reconfigure({ plugins: editor.state.plugins }));
     let nodes = 0; editor.state.doc.descendants(() => { nodes++; });
-    const stats = { nodes, characters: editor.state.doc.textContent.length, opening };
+    const stats = { nodes, characters: editor.state.doc.textContent.length, opening, ...(fromFolder ? {} : { encode, savedBytes: bytes.length }) };
     const positions: number[] = [];
     editor.state.doc.descendants((node, pos) => { if (node.type.name === "paragraph" && node.textContent.length > 20) positions.push(pos + 5); });
     Object.assign(window, { editor, timings, doc, paint, stats, positions, tocCommits,

@@ -22,6 +22,7 @@ export type AnkiPackage = { decks: AnkiDeck[]; items: AnkiItem[]; media: string[
 export type DeckRole = "module" | "heading" | "merge" | "skip";
 export type AnkiSelection = {
   roles: Record<string, DeckRole>;
+  splitLargeDecks?: boolean;
   /** Module names; a deck's own name by default. */
   names?: Record<string, string>;
   /** The sidebar folder of each module, by deck; none by default. */
@@ -93,6 +94,8 @@ export function defaultSelection(decks: AnkiDeck[]): AnkiSelection {
   return { roles, folders };
 }
 
+export const ANKI_CARDS_PER_MODULE = 2_000;
+
 export type PlannedModule = {
   key: string;
   name: string;
@@ -109,6 +112,7 @@ export type AnkiImportPlan = {
   cards: number;
   warnings: string[];
   labels: Record<string, AnkiLabel[]>;
+  hasLargeDeck: boolean;
 };
 
 const text = (value: string): JSONContent => ({ type: "text", text: value });
@@ -217,64 +221,88 @@ export function prepareAnkiImport(pkg: AnkiPackage, selection: AnkiSelection): A
   const itemsByDeck = new Map<string, AnkiItem[]>();
   for (const item of pkg.items) {
     const key = idToKey.get(item.deckId);
-    if (key !== undefined) itemsByDeck.set(key, [...itemsByDeck.get(key) ?? [], item]);
+    if (key === undefined) continue;
+    const items = itemsByDeck.get(key);
+    if (items) items.push(item);
+    else itemsByDeck.set(key, [item]);
   }
   const context: Context = { media: new Set(pkg.media), images: new Set(), warnings: new Map(), labels: {} };
   const role = (node: DeckNode): DeckRole => selection.roles[node.key] ?? "skip";
   let notes = 0, cards = 0;
-  function section(node: DeckNode, level: number): { blocks: JSONContent[]; cards: number; histories: CardMapping[] } {
-    const blocks: JSONContent[] = [];
-    let count = 0;
+  function makeItem(item: AnkiItem) {
+    if (item.kind === "unsupported") return undefined;
     const histories: CardMapping[] = [];
-    for (const item of itemsByDeck.get(node.key) ?? []) {
-      if (item.kind === "unsupported") continue;
-      const made = item.kind === "basic" ? basicBlocks(context, item) : item.kind === "cloze" ? clozeBlocks(context, item) : occlusionBlocks(context, item);
-      if (made.cards) notes++;
-      for (const anki of item.cards ?? []) {
-        let cardId: string | undefined;
-        if (item.kind === "basic" && made.cards) cardId = made.blocks[0].attrs?.cardId + (anki.ord === 1 ? ":reverse" : "");
-        if (item.kind === "cloze" && "owners" in made) {
-          const owner = made.owners?.find(o => o.n === anki.ord + 1);
-          if (owner) cardId = made.blocks[0].attrs?.cardId + ":" + owner.id;
-        }
-        if (item.kind === "occlusion") {
-          const image = made.blocks.find(b => b.type === "image");
-          const group = maskCards(validMasks(item.masks)).find(g => g.members.some(m => m.id === anki.mask));
-          if (image && group) cardId = occlusionCardId(image.attrs?.imageId, group.owner.id);
-        }
-        if (cardId) histories.push({ cardId, anki });
+    const made = item.kind === "basic" ? basicBlocks(context, item) : item.kind === "cloze" ? clozeBlocks(context, item) : occlusionBlocks(context, item);
+    if (made.cards) notes++;
+    for (const anki of item.cards ?? []) {
+      let cardId: string | undefined;
+      if (item.kind === "basic" && made.cards) cardId = made.blocks[0].attrs?.cardId + (anki.ord === 1 ? ":reverse" : "");
+      if (item.kind === "cloze" && "owners" in made) {
+        const owner = made.owners?.find(o => o.n === anki.ord + 1);
+        if (owner) cardId = made.blocks[0].attrs?.cardId + ":" + owner.id;
       }
-      blocks.push(...made.blocks);
-      count += made.cards;
-    }
-    for (const child of node.children) {
-      if (role(child) === "heading") {
-        const inner = section(child, level + 1);
-        blocks.push(heading(child.name, level + 1), ...inner.blocks);
-        count += inner.cards;
-        histories.push(...inner.histories);
-      } else if (role(child) === "merge") {
-        const inner = section(child, level);
-        blocks.push(...inner.blocks);
-        count += inner.cards;
-        histories.push(...inner.histories);
+      if (item.kind === "occlusion") {
+        const image = made.blocks.find(b => b.type === "image");
+        const group = maskCards(validMasks(item.masks)).find(g => g.members.some(m => m.id === anki.mask));
+        if (image && group) cardId = occlusionCardId(image.attrs?.imageId, group.owner.id);
       }
+      if (cardId) histories.push({ cardId, anki });
     }
-    return { blocks, cards: count, histories };
+    return { ...made, histories };
   }
+
   const modules: PlannedModule[] = [];
+  let hasLargeDeck = false;
   for (const node of walk(roots)) {
     if (role(node) !== "module") continue;
-    const built = section(node, 0);
-    if (!built.cards) { warn(context, `${node.name} has no cards that could be imported, so it was left out.`); continue; }
-    cards += built.cards;
-    modules.push({
-      key: node.key,
-      name: selection.names?.[node.key]?.trim() || node.name,
-      folder: selection.folders?.[node.key]?.trim() || null,
-      document: { type: "doc", content: built.blocks },
-      cards: built.cards,
-      histories: built.histories,
+    const chunks: { blocks: JSONContent[]; cards: number; histories: CardMapping[] }[] = [];
+    let chunk = { blocks: [] as JSONContent[], cards: 0, histories: [] as CardMapping[] };
+    chunks.push(chunk);
+    let count = 0;
+
+    function section(sectionNode: DeckNode, headings: JSONContent[]) {
+      for (const item of itemsByDeck.get(sectionNode.key) ?? []) {
+        const made = makeItem(item);
+        if (!made) continue;
+        count += made.cards;
+        if (selection.splitLargeDecks !== false && chunk.cards && chunk.cards + made.cards > ANKI_CARDS_PER_MODULE) {
+          while (headings.includes(chunk.blocks[chunk.blocks.length - 1])) chunk.blocks.pop();
+          chunk = { blocks: [...headings], cards: 0, histories: [] };
+          chunks.push(chunk);
+        }
+        chunk.blocks.push(...made.blocks);
+        chunk.histories.push(...made.histories);
+        chunk.cards += made.cards;
+      }
+      for (const child of sectionNode.children) {
+        if (role(child) === "heading") {
+          const title = heading(child.name, headings.length + 1);
+          chunk.blocks.push(title);
+          section(child, [...headings, title]);
+        } else if (role(child) === "merge") {
+          section(child, headings);
+        }
+      }
+    }
+
+    section(node, []);
+    if (!count) { warn(context, `${node.name} has no cards that could be imported, so it was left out.`); continue; }
+    cards += count;
+    hasLargeDeck ||= count > ANKI_CARDS_PER_MODULE;
+    chunks.forEach((built, index) => {
+      // Anki deck paths are arbitrary strings. Escape the part separator for
+      // chunked keys and reserve it in module keys that contain it already.
+      const deckKey = node.key.replace(/\0/g, "\0\0");
+      const key = chunks.length === 1 ? deckKey : `${deckKey}\0${index + 1}`;
+      const name = chunks.length === 1 ? node.name : `${node.name} (Part ${index + 1})`;
+      modules.push({
+        key,
+        name: selection.names?.[key]?.trim() || name,
+        folder: (selection.folders && key in selection.folders ? selection.folders[key] : selection.folders?.[deckKey])?.trim() || null,
+        document: { type: "doc", content: built.blocks },
+        cards: built.cards,
+        histories: built.histories,
+      });
     });
   }
   const suspended = modules.flatMap(m => m.histories).filter(h => h.anki.suspended).length;
@@ -283,5 +311,5 @@ export function prepareAnkiImport(pkg: AnkiPackage, selection: AnkiSelection): A
     ...pkg.warnings,
     ...[...context.warnings].map(([message, count]) => count > 1 ? `${message} (${count})` : message),
   ];
-  return { modules, images: [...context.images], notes, cards, warnings, labels: context.labels };
+  return { modules, images: [...context.images], notes, cards, warnings, labels: context.labels, hasLargeDeck };
 }

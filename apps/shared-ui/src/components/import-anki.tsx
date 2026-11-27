@@ -3,7 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IMPORT_ANKI_EVENT } from "@/lib/app-events";
 import { call } from "@/lib/backend";
-import { deckTree, defaultSelection, prepareAnkiImport, type AnkiSelection, type DeckNode, type DeckRole } from "@/lib/anki-import";
+import { ANKI_CARDS_PER_MODULE, deckTree, defaultSelection, prepareAnkiImport, type AnkiImportPlan, type AnkiSelection, type DeckNode, type DeckRole } from "@/lib/anki-import";
 import { importAnki, type AnkiSession } from "@/lib/import-anki";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
 import { Button } from "./ui/button";
@@ -17,12 +17,15 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
   const active = useRef<AnkiSession | undefined>(undefined);
   const busyRef = useRef(false);
   const [selection, setSelection] = useState<AnkiSelection>({ roles: {} });
+  const [splitLargeDecks, setSplitLargeDecks] = useState(true);
+  const [namesByKey, setNames] = useState<Record<string, string>>({});
+  const [foldersByKey, setFolders] = useState<Record<string, string>>({});
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
-  const close = () => { setSession(undefined); };
+  const close = () => { setSession(undefined); setPrepared(undefined); };
   useEffect(() => {
     let picking = false;
     let mounted = true;
@@ -35,6 +38,7 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
         if (!mounted) { await call("close_anki_package", { sourceId: selected.sourceId }); return; }
         active.current = selected;
         setSelection(defaultSelection(selected.package.decks));
+        setSplitLargeDecks(true); setNames({}); setFolders({});
         setStep(0); setError(""); setAttempted(false); setSession(selected);
       } catch (e) { if (mounted) importToast("error", "Could not open Anki package", [String(e)], "error details"); }
       finally { picking = false; }
@@ -49,10 +53,43 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
       void call("close_anki_package", { sourceId: session.sourceId }).catch(e => console.error("Could not release Anki package", e));
     };
   }, [session]);
-  const plan = useMemo(() => session ? prepareAnkiImport(session.package, selection) : undefined, [session, selection]);
+  const options = useMemo(() => ({ ...selection, splitLargeDecks }), [selection, splitLargeDecks]);
+  const large = useMemo(() => (session?.package.decks.reduce((sum, deck) => sum + deck.cardCount, 0) ?? 0) > ANKI_CARDS_PER_MODULE, [session]);
+  const [prepared, setPrepared] = useState<{ session: AnkiSession; options: AnkiSelection; result: { plan: AnkiImportPlan } | { error: string } }>();
+  useEffect(() => {
+    if (!session || !large) return;
+    const worker = new Worker(new URL("../lib/anki-import.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = ({ data }: MessageEvent<{ plan: AnkiImportPlan } | { error: string }>) => {
+      setPrepared({ session, options, result: data });
+      worker.terminate();
+    };
+    worker.onmessageerror = () => {
+      setPrepared({ session, options, result: { error: "Could not read the prepared Anki import." } });
+      worker.terminate();
+    };
+    worker.onerror = event => {
+      setPrepared({ session, options, result: { error: event.message || "Could not prepare Anki import." } });
+      worker.terminate();
+    };
+    try {
+      worker.postMessage({ package: session.package, selection: options });
+    } catch (error) {
+      setPrepared({ session, options, result: { error: String(error) } });
+      worker.terminate();
+    }
+    return () => worker.terminate();
+  }, [session, options, large]);
+  const localPlan = useMemo(() => session && !large ? prepareAnkiImport(session.package, options) : undefined, [session, options, large]);
+  const result = prepared?.session === session && prepared?.options === options ? prepared.result : undefined;
+  const plan = localPlan ?? (result && "plan" in result ? result.plan : undefined);
+  const prepareError = result && "error" in result ? result.error : undefined;
   const tree = useMemo(() => deckTree(session?.package.decks ?? []), [session]);
-  const names = plan?.modules.map(m => selection.names?.[m.key] ?? m.name) ?? [];
-  const invalid = !plan?.modules.length || names.some(n => !n.trim()) || new Set(names.map(n => n.trim())).size !== names.length;
+  const modules = plan?.modules.map(module => ({
+    ...module,
+    name: (namesByKey[module.key] ?? module.name).trim(),
+    folder: (foldersByKey[module.key] ?? module.folder)?.trim() || null,
+  })) ?? [];
+  const invalid = !modules.length || modules.some(module => !module.name) || new Set(modules.map(module => module.name)).size !== modules.length;
   const changeRole = (node: DeckNode, role: DeckRole) => {
     const roles = { ...selection.roles, [node.key]: role };
     const children = (parent: DeckNode) => parent.children.forEach(child => {
@@ -79,7 +116,7 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
               <ChevronRight className={cn("size-4 transition-transform", open && "rotate-90")} />
             </button>
           : <span className="size-5 shrink-0" aria-hidden />}
-        <span className="min-w-0 flex-1 truncate">{node.name} <span className="text-muted-foreground">{node.total} {node.total === 1 ? "card" : "cards"}</span></span>
+        <span className="min-w-0 flex-1 truncate">{node.name} <span className="text-muted-foreground">{node.total.toLocaleString()} {node.total === 1 ? "card" : "cards"}</span></span>
         <select aria-label={`Role for ${node.key}`} value={role} disabled={busy} onChange={e => changeRole(node, e.target.value as DeckRole)} className="w-44 shrink-0 rounded bg-muted px-2 py-1 text-foreground">
           <option value="module">Module</option>
           {ancestor && <><option value="heading">Heading</option><option value="merge">Merge into parent</option></>}
@@ -91,11 +128,11 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
   };
   const save = async () => {
     if (!session || !plan || invalid || attempted) return;
-    setBusy(true); busyRef.current = true; setError(""); setAttempted(true);
+    setProgress(""); setBusy(true); busyRef.current = true; setError(""); setAttempted(true);
     // Saved modules may already sit in folders; the sidebar must see them before anything can reorder it.
     const refresh = () => Promise.all([modulesCache.invalidate(), queryClient.invalidateQueries({ queryKey: ["sidebar-items"] })]);
     try {
-      const result = await importAnki(session, plan, setProgress);
+      const result = await importAnki(session, { ...plan, modules }, setProgress);
       await refresh();
       close();
       importToast("success", `Imported ${result.modules.length} modules and ${result.cards} cards.`, result.warnings, result.warnings.length === 1 ? "warning" : "warnings");
@@ -110,18 +147,24 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
         <div className="min-h-0 overflow-auto space-y-3 text-sm">
           <p>{session?.fileName}</p>
           {step === 0 && tree.map(node => renderNode(node, false))}
-          {step === 1 && plan?.modules.map(module => <section key={module.key} className="space-y-2">
-            <h3>{module.key} ({module.cards} cards)</h3>
-            <label className="block">Module name<Input value={selection.names?.[module.key] ?? module.name} onChange={e => setSelection({ ...selection, names: { ...selection.names, [module.key]: e.target.value } })} /></label>
-            <label className="block">Folder<Input value={selection.folders?.[module.key] ?? ""} placeholder="No folder" onChange={e => setSelection({ ...selection, folders: { ...selection.folders, [module.key]: e.target.value } })} /></label>
+          {step === 0 && (plan?.hasLargeDeck || !splitLargeDecks) && <label className="flex items-center gap-2">
+            <input type="checkbox" className="accent-[var(--primary)]" checked={splitLargeDecks} onChange={event => setSplitLargeDecks(event.target.checked)} />
+            Split large decks into modules of about 2,000 cards
+          </label>}
+          {session && !plan && !prepareError && <p role="status">Preparing decks…</p>}
+          {prepareError && <p role="alert" className="text-destructive">{prepareError}</p>}
+          {step === 1 && modules.map(module => <section key={module.key} className="space-y-2">
+            <h3>{module.name} ({module.cards} cards)</h3>
+            <label className="block">Module name<Input value={namesByKey[module.key] ?? module.name} onChange={e => setNames({ ...namesByKey, [module.key]: e.target.value })} /></label>
+            <label className="block">Folder<Input value={foldersByKey[module.key] ?? module.folder ?? ""} placeholder="No folder" onChange={e => setFolders({ ...foldersByKey, [module.key]: e.target.value })} /></label>
           </section>)}
           {step > 0 && <p>{plan?.modules.length} modules, {plan?.cards} cards, {plan?.images.length} images and {plan?.warnings.length} warnings.</p>}
-          {step === 2 && <ul>{plan?.modules.map(m => <li key={m.key}>{m.name}{m.folder ? ` in ${m.folder}` : ""}: {m.cards} cards</li>)}</ul>}
+          {step === 2 && <ul>{modules.map(m => <li key={m.key}>{m.name}{m.folder ? ` in ${m.folder}` : ""}: {m.cards} cards</li>)}</ul>}
           {!!plan?.warnings.length && <details><summary>Import warnings</summary><ul>{plan.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
-          {invalid && step === 1 && <p role="alert">Choose at least one module and give each module a unique, non-empty name.</p>}
+          {plan && invalid && step === 1 && <p role="alert">Choose at least one module and give each module a unique, non-empty name.</p>}
           {error && <p role="alert" className="text-destructive">{error}</p>}
-          {busy && <p role="status">{progress}</p>}
         </div>
+        {step === 2 && <p role="status" className="min-h-5 text-sm">{progress}</p>}
         <DialogFooter><Button variant="outline" disabled={busy} onClick={close}>Cancel</Button>{step > 0 && <Button variant="outline" disabled={busy || attempted} onClick={() => setStep(step - 1)}>Back</Button>}
           {step < 2 ? <Button disabled={step === 0 ? !plan?.modules.length : invalid} onClick={() => setStep(step + 1)}>Next</Button> : <Button disabled={busy || invalid || attempted} onClick={() => void save()}>Import</Button>}</DialogFooter>
       </DialogContent>

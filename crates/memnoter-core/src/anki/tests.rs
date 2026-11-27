@@ -507,3 +507,51 @@ fn literal_anki_shape_values_and_svg_labels() {
         }
     );
 }
+
+#[test]
+#[ignore]
+fn synthetic_import_benchmark() {
+    let dir = temp();
+    let db = dir.0.join("collection.anki21");
+    let notes: Vec<Note> = (1..=30_000)
+        .map(|id| {
+            let front = if id % 1000 == 0 {
+                "<img src='image.png' > What is the answer to this question?"
+            } else {
+                "What is the answer to this question?"
+            };
+            (id, 100, vec![front, "Answer"], vec![(0, 11)])
+        })
+        .collect();
+    legacy_db(&db, &notes);
+    let conn = Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "insert into revlog select id + 1600000000000, id, 0, 3, 5, 1, 2500, 1000, 1 from cards;",
+    )
+    .unwrap();
+    drop(conn);
+    let output = PathBuf::from(std::env::var_os("ANKI_BENCH_PACKAGE").unwrap());
+    zip_of(
+        &output.with_extension("apkg"),
+        &[
+            ("collection.anki21", std::fs::read(&db).unwrap()),
+            ("media", br#"{"0":"image.png"}"#.to_vec()),
+            ("0", vec![0; 8192]),
+        ],
+    );
+    let start = std::time::Instant::now();
+    let archive = AnkiArchive::open(&output.with_extension("apkg")).unwrap();
+    let package = read_package(&archive).unwrap();
+    println!("read_ms={:.2}", start.elapsed().as_secs_f64() * 1000.0);
+    assert_eq!(package.items.len(), 30_000);
+    assert!(package.items.iter().all(|item| item.cards.len() == 1 && item.cards[0].reviews.len() == 1));
+    assert_eq!(archive.read_media("image.png").unwrap().len(), 8192);
+    let start = std::time::Instant::now();
+    let json = serde_json::to_vec(&package).unwrap();
+    println!(
+        "serialize_ms={:.2} json_bytes={}",
+        start.elapsed().as_secs_f64() * 1000.0,
+        json.len()
+    );
+    std::fs::write(output, json).unwrap();
+}

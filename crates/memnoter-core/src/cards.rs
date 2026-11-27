@@ -234,8 +234,16 @@ fn sync_module_cards(
                      back = excluded.back,
                      section = excluded.section,
                      deleted_at = null
-                 where cards.module_id = excluded.module_id or cards.deleted_at is not null",
+                 where cards.deleted_at is not null
+                    or (cards.module_id = excluded.module_id and (
+                           cards.kind is not excluded.kind
+                        or cards.front is not excluded.front
+                        or cards.back is not excluded.back
+                        or cards.section is not excluded.section))",
             )
+            .map_err(db_err)?;
+        let mut live_elsewhere = tx
+            .prepare("select exists(select 1 from cards where id = ?1 and module_id <> ?2 and deleted_at is null)")
             .map_err(db_err)?;
         for card in cards {
             if crate::card_moves::renews(&tx, module_id, &card.id, &snapshot)? {
@@ -269,7 +277,10 @@ fn sync_module_cards(
                     serde_json::to_string(&card.section).map_err(db_err)?
                 ])
                 .map_err(db_err)?;
-            if changed == 0 {
+            if changed == 0 && live_elsewhere
+                .query_row(params![card.id, module_id], |row| row.get::<_, bool>(0))
+                .map_err(db_err)?
+            {
                 conflicts.push(card.id.clone());
             }
         }
@@ -1298,7 +1309,7 @@ mod tests {
         let updated: i64 = f.column("select updated_at from cards where id = ?1", "1");
         assert_eq!(updated, 20);
         // An unchanged sync is not an edit.
-        f.sync("a", &[basic("1", "Question", "Answer")], 30);
+        assert!(f.sync("a", &[basic("1", "Question", "Answer")], 30).is_empty());
         let updated: i64 = f.column("select updated_at from cards where id = ?1", "1");
         assert_eq!(updated, 20);
     }
