@@ -67,9 +67,7 @@ pub fn index_note(
         return Ok(());
     };
     if let Some(snapshot) = snapshot {
-        if !crate::content::matches_note_snapshot(&tx, module_id, &snapshot)? {
-            return Ok(());
-        }
+        crate::content::check_note_snapshot(db, &tx, module_id, &snapshot)?;
     }
     tx.execute("delete from search_index where module_id = ?1", [module_id])
         .map_err(db_err)?;

@@ -306,6 +306,8 @@ pub fn add_update(db: &Db, module_id: String, bytes: Vec<u8>) -> CommandResult<C
     let id = tx.last_insert_rowid();
     sync::record_update(&tx, &module_id, &bytes)?;
     tx.commit().map_err(db_err)?;
+    // The save already replayed the note; its index writes need not again.
+    remember_snapshot(db, &conn, &module_id, &after)?;
     drop(conn);
 
     Ok(ContentUpdate { id, bytes })
@@ -360,14 +362,57 @@ pub fn save_compaction(
 
 // An index generated in one window may reach disk after another window's
 // saved edit. Deletes must count even when the state vector did not change.
-pub(crate) fn matches_note_snapshot(
+pub const STALE_NOTE: &str = "Note changed in another window";
+
+type StorageKey = (Option<i64>, i64, i64);
+
+#[derive(Clone)]
+pub(crate) struct StoredSnapshot {
+    key: StorageKey,
+    snapshot: yrs::Snapshot,
+}
+
+// Saved updates only ever get new ids; compaction and restore change the
+// count or the compacted state, so a changed note never keeps its key.
+fn storage_key(conn: &rusqlite::Connection, module_id: &str) -> CommandResult<StorageKey> {
+    conn.query_row(
+        "select (select max(id) from contents_updates where module_id = ?1),
+                (select count(*) from contents_updates where module_id = ?1),
+                coalesce((select length(state) from contents where module_id = ?1), -1)",
+        [module_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .map_err(db_err)
+}
+
+pub(crate) fn remember_snapshot(db: &Db, conn: &rusqlite::Connection, module_id: &str, doc: &yrs::Doc) -> CommandResult<()> {
+    use yrs::{ReadTxn, Transact};
+    let stored = StoredSnapshot { key: storage_key(conn, module_id)?, snapshot: doc.transact().snapshot() };
+    db.note_snapshots.lock().map_err(db_err)?.insert(module_id.to_owned(), stored);
+    Ok(())
+}
+
+// Errors with STALE_NOTE when the snapshot is not the stored note's, so the
+// caller indexes the stored note instead of keeping a window's older view.
+pub(crate) fn check_note_snapshot(
+    db: &Db,
     conn: &rusqlite::Connection,
     module_id: &str,
     snapshot: &[u8],
-) -> CommandResult<bool> {
-    use yrs::{updates::decoder::Decode, ReadTxn, Snapshot, Transact};
+) -> CommandResult<()> {
+    use yrs::{updates::decoder::Decode, Snapshot};
     let expected = Snapshot::decode_v1(snapshot).map_err(db_err)?;
-    let doc = crate::worksheets::load(conn, module_id)?;
-    let actual = doc.transact().snapshot();
-    Ok(expected == actual)
+    let key = storage_key(conn, module_id)?;
+    let cached = db.note_snapshots.lock().map_err(db_err)?.get(module_id).filter(|s| s.key == key).cloned();
+    let actual = match cached {
+        Some(stored) => stored.snapshot,
+        None => {
+            let doc = crate::worksheets::load(conn, module_id)?;
+            remember_snapshot(db, conn, module_id, &doc)?;
+            use yrs::{ReadTxn, Transact};
+            let snapshot = doc.transact().snapshot();
+            snapshot
+        }
+    };
+    if expected == actual { Ok(()) } else { Err(STALE_NOTE.into()) }
 }

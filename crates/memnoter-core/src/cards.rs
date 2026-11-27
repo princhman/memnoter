@@ -199,7 +199,6 @@ fn sync_module_cards(
     cards: &[CardContent],
     update_id: Option<i64>,
     now: i64,
-    snapshot: Option<&[u8]>,
 ) -> CommandResult<Vec<String>> {
     let tx = conn.transaction().map_err(db_err)?;
     // A final editor sync may arrive after the module was deleted.
@@ -212,11 +211,6 @@ fn sync_module_cards(
         .map_err(db_err)?
     {
         return Ok(Vec::new());
-    }
-    if let Some(snapshot) = snapshot {
-        if !crate::content::matches_note_snapshot(&tx, module_id, snapshot)? {
-            return Ok(Vec::new());
-        }
     }
     let mut conflicts = Vec::new();
     let mut unavailable = Vec::new();
@@ -659,7 +653,10 @@ pub fn sync_cards_at_snapshot(
     snapshot: Option<Vec<u8>>,
 ) -> CommandResult<Vec<String>> {
     let mut conn = db.lock()?;
-    sync_module_cards(&mut conn, &module_id, &cards, update_id, Utc::now().timestamp_millis(), snapshot.as_deref())
+    if let Some(snapshot) = snapshot {
+        crate::content::check_note_snapshot(db, &conn, &module_id, &snapshot)?;
+    }
+    sync_module_cards(&mut conn, &module_id, &cards, update_id, Utc::now().timestamp_millis())
 }
 
 #[derive(serde::Serialize)]
@@ -734,7 +731,7 @@ mod tests {
         }
 
         fn sync(&self, module: &str, cards: &[CardContent], now: i64) -> Vec<String> {
-            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, None, now, None).unwrap()
+            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, None, now).unwrap()
         }
 
         fn due(&self, module: Option<&str>, now: i64) -> Vec<Card> {
@@ -789,8 +786,29 @@ mod tests {
         crate::add_update(&f.db, "a".into(), update).unwrap();
         sync_cards_at_snapshot(&f.db, "a".into(), vec![], None, Some(after.encode_v1())).unwrap();
 
-        sync_cards_at_snapshot(&f.db, "a".into(), vec![card()], None, Some(before.encode_v1())).unwrap();
+        assert_eq!(
+            sync_cards_at_snapshot(&f.db, "a".into(), vec![card()], None, Some(before.encode_v1())),
+            Err(crate::content::STALE_NOTE.to_owned()),
+        );
         assert!(f.due(Some("a"), i64::MAX).is_empty());
+
+        // An edit stored by another path (sync, worksheets) must not leave the
+        // remembered snapshot of the last save looking current.
+        let mut restore = doc.transact_mut();
+        text.insert(&mut restore, 0, "card");
+        let update = restore.encode_update_v1();
+        drop(restore);
+        f.db.lock().unwrap().execute(
+            "insert into contents_updates (module_id, bytes, created_at) values ('a', ?1, 0)",
+            [update],
+        ).unwrap();
+        assert_eq!(
+            sync_cards_at_snapshot(&f.db, "a".into(), vec![], None, Some(after.encode_v1())),
+            Err(crate::content::STALE_NOTE.to_owned()),
+        );
+        let current = doc.transact().snapshot();
+        sync_cards_at_snapshot(&f.db, "a".into(), vec![card()], None, Some(current.encode_v1())).unwrap();
+        assert_eq!(f.due(Some("a"), i64::MAX).len(), 1);
     }
 
     #[test]

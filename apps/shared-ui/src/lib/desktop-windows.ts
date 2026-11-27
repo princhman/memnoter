@@ -1,14 +1,14 @@
 import { toast } from "sonner";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { call, isTauri, listen } from "./backend";
-import { appendSavedUpdate, contentKey, type ContentUpdate, type FileType } from "./content";
+import { contentKey, type ContentUpdate, type FileType } from "./content";
 import { cardsChanged } from "./card-events";
 import { dueCountsKey } from "./card-sync";
 import { modulesCache } from "./modules";
 import { refreshPdfAnnotations } from "./pdf-annotation-store";
 import { queryClient } from "./query-client";
 import { bankKey } from "./question-bank";
-import { applyRemoteChanges, MODULE_CONTENT_SYNCED_EVENT, onFileStored, type ApplyResult } from "./sync/apply-remote";
+import { applyRemoteChanges, onFileStored, type ApplyResult } from "./sync/apply-remote";
 import { requestSyncedFile, setSyncedFileHandler } from "./sync/file-requests";
 import { documentsKey } from "./use-documents";
 
@@ -33,10 +33,10 @@ export async function startWindowEvents() {
     });
   }
   await Promise.all([
-    listen<{ moduleId: string; update: ContentUpdate }>("note-update-saved", ({ payload: { moduleId, update } }) => {
-      if (queryClient.getQueryState(contentKey(moduleId))) appendSavedUpdate(moduleId, update);
-      window.dispatchEvent(new CustomEvent(MODULE_CONTENT_SYNCED_EVENT, { detail: moduleId }));
-    }),
+    // The same cache updates as a synced edit; the saving window indexes it.
+    listen<{ moduleId: string; update: ContentUpdate }>("note-update-saved", ({ payload }) => applyRemoteChanges({
+      updates: [payload], deleted: [], modulesChanged: false, reviewsChanged: false, filesChanged: false,
+    }, false)),
     listen<{ moduleId: string; file: FileType }>("note-file-saved", ({ payload: { moduleId, file } }) => {
       onFileStored(moduleId, file, false);
       // A read which began before the file write may still be in flight.

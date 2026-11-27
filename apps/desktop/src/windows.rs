@@ -108,6 +108,9 @@ pub fn begin_exit(app: &AppHandle, restart: bool) -> tauri::Result<()> {
         };
         advance_exit(app, &exit)?;
         *pending = Some(exit);
+    } else if let Some(exit) = pending.as_ref() {
+        // A window opened just before Quit may have missed the first request.
+        advance_exit(app, exit)?;
     }
     Ok(())
 }

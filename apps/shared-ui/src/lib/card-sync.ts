@@ -23,6 +23,11 @@ const DUE_REFRESH_MS = 60_000;
 
 const editorSync = createEditorWriteSync(SYNC_DEBOUNCE_MS);
 export const flushCardSyncs = editorSync.flush;
+
+// The core's answer when another window saved the note after this snapshot.
+export const isStaleNote = (error: unknown) => String(error instanceof Error ? error.message : error).includes("Note changed in another window");
+const refreshStoredNote = async (moduleId: string, permit?: WritePermit) =>
+  (await import("@/lib/note-index")).refreshDerived(moduleId, permit);
 registerFlusher("cards", flushCardSyncs);
 
 export const dueCountsKey = ["cards", "due-counts"];
@@ -90,7 +95,14 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
           throw error;
         });
         if (isSchemaReadOnly(editor)) return [];
-        return writeCards<string[]>("sync_cards", { moduleId, cards, updateId, noteSnapshot }, permit);
+        return writeCards<string[]>("sync_cards", { moduleId, cards, updateId, noteSnapshot }, permit)
+          .catch(async (error: unknown) => {
+            if (!isStaleNote(error)) throw error;
+            // Another window saved first. Index the stored note, which has
+            // both edits, even if every editor on it closes meanwhile.
+            await refreshStoredNote(moduleId, permit);
+            return [];
+          });
       })
       .then((conflicts) => {
         // Blocks copied from another note get their own cards here.

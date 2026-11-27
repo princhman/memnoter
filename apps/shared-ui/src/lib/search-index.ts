@@ -5,6 +5,7 @@ import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import type { Doc } from "yjs";
 import { desktopNoteSnapshot } from "./content";
 import { noteSaveCheckpoint } from "./saves";
+import { isStaleNote } from "./card-sync";
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/core";
 import { call as invoke } from "./backend.ts";
@@ -52,7 +53,8 @@ export function useSearchIndexing(editor: Editor | null, moduleId: string, isRea
         await receipt?.updateId();
         await indexNote(moduleId, extractFromDoc(snapshot), false, permit, noteSnapshot);
       }).catch(async error => {
-        console.error(`Failed to index open note ${moduleId}; retrying stored text:`, error);
+        // Another window saved first: the stored text has both edits.
+        if (!isStaleNote(error)) console.error(`Failed to index open note ${moduleId}; retrying stored text:`, error);
         await refreshDerived(moduleId, permit);
       });
       queue = settled(write);
