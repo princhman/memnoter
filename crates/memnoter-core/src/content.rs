@@ -357,7 +357,10 @@ pub fn save_compaction(
     )
     .map_err(db_err)?;
     asset_refs::retain_module(&tx, &module_id)?;
-    tx.commit().map_err(db_err)
+    tx.commit().map_err(db_err)?;
+    // A compaction may keep the update count and state length it replaced.
+    db.note_snapshots.lock().map_err(db_err)?.remove(&module_id);
+    Ok(())
 }
 
 // An index generated in one window may reach disk after another window's

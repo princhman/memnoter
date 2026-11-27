@@ -342,6 +342,8 @@ pub fn restore_backup(
     let dir = data_dir;
     let mut conn = db.lock()?;
     let result = restore(&mut conn, dir, &id, Utc::now()).map_err(crate::CoreError::from);
+    // Restored notes can reuse ids and lengths the remembered snapshots had.
+    db.note_snapshots.lock().map_err(db_err)?.clear();
     if result.is_ok() {
         *db.annotation_generation.lock().map_err(db_err)? = Uuid::new_v4().to_string();
     }

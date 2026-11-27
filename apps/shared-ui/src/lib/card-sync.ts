@@ -46,7 +46,9 @@ const openModules = new Map<string, number>();
 // Keeps a module's cards in the database in step with an editor's text: now,
 // after edits settle, and when stopped. `flush` waits until the database has
 // the editor's current cards, including ids renewed after a conflict.
-export function startCardSync(editor: Editor, moduleId: string, onSynced: () => void, admittedPermit?: WritePermit) {
+// In the background (no editor on screen) a stale write is the caller's to
+// retry: refreshing from here would wait on the refresh that started it.
+export function startCardSync(editor: Editor, moduleId: string, onSynced: () => void, admittedPermit?: WritePermit, background = false) {
   let lastSent: ReturnType<typeof snapshot> | undefined;
   let queue = Promise.resolve();
   let lastWrite = queue;
@@ -97,7 +99,7 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
         if (isSchemaReadOnly(editor)) return [];
         return writeCards<string[]>("sync_cards", { moduleId, cards, updateId, noteSnapshot }, permit)
           .catch(async (error: unknown) => {
-            if (!isStaleNote(error)) throw error;
+            if (background || !isStaleNote(error)) throw error;
             // Another window saved first. Index the stored note, which has
             // both edits, even if every editor on it closes meanwhile.
             await refreshStoredNote(moduleId, permit);
