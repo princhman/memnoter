@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import * as Y from "yjs";
-import { chromium } from "playwright";
+import { chromium, webkit } from "playwright";
 import { browserHarness, installTestBridge } from "./support/browser.mjs";
 
 function noteState() {
@@ -41,7 +41,8 @@ test("opening, resizing and closing a note beside a worksheet preserves both edi
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch();
+    const engine = process.env.BROWSER === "webkit" ? webkit : chromium;
+    browser = await engine.launch();
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     page.setDefaultTimeout(10000);
     const errors = [];
@@ -114,13 +115,34 @@ test("opening, resizing and closing a note beside a worksheet preserves both edi
     await answer.click();
     await page.keyboard.type("Subtract 3, then divide by 2. x = 4.", { delay: proof ? 50 : 0 });
     await pause();
+    await page.waitForFunction(() => window.answerUpdates.length &&
+      !Object.keys(localStorage).some(key => key.startsWith("worksheet-drafts:")));
+    // Click below the note's only paragraph, in the editor's trailing padding.
     await note.click();
+    const waitForNoteCaret = selectPosition => page.waitForFunction(selectPosition => {
+      const element = document.querySelector(".worksheet-beside-content .tiptap");
+      const { state, view } = element.editor;
+      const position = selectPosition === "end" ? state.doc.content.size - 1 : selectPosition;
+      const selection = window.getSelection();
+      return view.hasFocus() && state.selection.empty && state.selection.head === position &&
+        selection?.isCollapsed && selection.anchorNode && element.contains(selection.anchorNode) &&
+        view.posAtDOM(selection.anchorNode, selection.anchorOffset) === position;
+    }, selectPosition);
+    await waitForNoteCaret("end");
     await page.keyboard.press("End");
+    await waitForNoteCaret("end");
     await page.keyboard.press("Enter");
     await page.keyboard.type("Check by substituting x back in.", { delay: proof ? 50 : 0 });
+    assert.equal(await note.innerHTML(),
+      "<p>The same operation on both sides preserves an equation.</p><p>Check by substituting x back in.</p>");
     await pause();
     await page.waitForFunction(() => window.answerUpdates.length && window.noteUpdates.length &&
       !Object.keys(localStorage).some(key => key.startsWith("worksheet-drafts:")));
+    assert.equal(await answer.innerText(), "Subtract 3, then divide by 2. x = 4.");
+    const lastParagraph = note.locator("p").last();
+    const lastLine = await lastParagraph.boundingBox();
+    await page.mouse.click(lastLine.x + 2, lastLine.y + lastLine.height / 2);
+    await waitForNoteCaret("The same operation on both sides preserves an equation.".length + 3);
     assert.equal(await page.getByRole("alert").filter({ hasText: /acknowledge|Couldn't save/ }).count(), 0);
     const separator = page.getByRole("separator", { name: "Resize side pane" });
     const before = await aside.boundingBox();
@@ -147,27 +169,29 @@ test("opening, resizing and closing a note beside a worksheet preserves both edi
     await page.getByRole("button", { name: "Equation rules", exact: true }).click();
     await note.waitFor();
     assert.match(await note.innerText(), /Check by substituting/);
-    const touch = await page.context().newCDPSession(page);
-    await touch.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
-    await page.setViewportSize({ width: 1180, height: 820 });
-    assert.ok((await separator.boundingBox()).height > (await separator.boundingBox()).width);
-    if (proof) {
-      await page.waitForTimeout(250);
-      await page.screenshot({ path: join(proof, "ipad-landscape-dark.png") });
-      await page.emulateMedia({ colorScheme: "light" });
-      await page.locator("html:not(.dark)").waitFor({ state: "attached" });
-      await page.waitForTimeout(250);
-      await page.screenshot({ path: join(proof, "ipad-landscape-light.png") });
+    if (engine === chromium) {
+      const touch = await page.context().newCDPSession(page);
+      await touch.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+      await page.setViewportSize({ width: 1180, height: 820 });
+      assert.ok((await separator.boundingBox()).height > (await separator.boundingBox()).width);
+      if (proof) {
+        await page.waitForTimeout(250);
+        await page.screenshot({ path: join(proof, "ipad-landscape-dark.png") });
+        await page.emulateMedia({ colorScheme: "light" });
+        await page.locator("html:not(.dark)").waitFor({ state: "attached" });
+        await page.waitForTimeout(250);
+        await page.screenshot({ path: join(proof, "ipad-landscape-light.png") });
+      }
+      await page.setViewportSize({ width: 820, height: 1180 });
+      const portrait = await separator.boundingBox();
+      assert.ok(portrait.width > portrait.height);
+      const start = { x: Math.round(portrait.x + portrait.width / 2), y: Math.round(portrait.y + portrait.height / 2) };
+      const portraitHeight = (await aside.boundingBox()).height;
+      await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
+      await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: start.x, y: start.y - 50 }] });
+      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      assert.ok((await aside.boundingBox()).height > portraitHeight + 30);
     }
-    await page.setViewportSize({ width: 820, height: 1180 });
-    const portrait = await separator.boundingBox();
-    assert.ok(portrait.width > portrait.height);
-    const start = { x: Math.round(portrait.x + portrait.width / 2), y: Math.round(portrait.y + portrait.height / 2) };
-    const portraitHeight = (await aside.boundingBox()).height;
-    await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
-    await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: start.x, y: start.y - 50 }] });
-    await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-    assert.ok((await aside.boundingBox()).height > portraitHeight + 30);
     const openBeside = page.getByRole("button", { name: "Open beside", exact: true });
     await openBeside.click();
     await page.getByRole("button", { name: /Example Equation rules/ }).click();
