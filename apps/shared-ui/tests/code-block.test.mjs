@@ -5,7 +5,7 @@ import { browserHarness, installTestBridge } from "./support/browser.mjs";
 
 const { createServer } = browserHarness(import.meta.url);
 
-test("the desktop note creates, highlights, copies and reloads code blocks", async () => {
+test("the desktop note creates, indents, highlights, copies and reloads code blocks", async () => {
   const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   let browser;
   try {
@@ -47,14 +47,21 @@ test("the desktop note creates, highlights, copies and reloads code blocks", asy
     assert.equal(await language.inputValue(), "python");
     await settle();
 
-    const firstLine = "def greet():";
-    const secondLine = '    return "Hello, world!"';
-    const source = firstLine + "\n" + secondLine;
-    await type(firstLine);
+    await type("if x:");
     await page.keyboard.press("Enter");
-    await type(secondLine);
-    await code.getByText('"Hello, world!"', { exact: true }).waitFor();
-    const keyword = code.getByText("return", { exact: true });
+    assert.equal(await code.textContent(), "if x:\n    ");
+    await settle();
+    await type("print(x)");
+    await page.keyboard.press("Enter");
+    assert.equal(await code.textContent(), "if x:\n    print(x)\n    ");
+    await page.keyboard.press("Shift+Tab");
+    await type("else:");
+    await page.keyboard.press("Enter");
+    assert.equal(await code.textContent(), "if x:\n    print(x)\nelse:\n    ");
+    await settle();
+    await type('print("Hello, world!")');
+    const source = 'if x:\n    print(x)\nelse:\n    print("Hello, world!")';
+    const keyword = code.getByText("else", { exact: true });
     const color = element => getComputedStyle(element).color;
     const light = await keyword.evaluate(color);
     assert.notEqual(light, await code.evaluate(color));
@@ -83,10 +90,11 @@ test("the desktop note creates, highlights, copies and reloads code blocks", asy
     assert.equal(await language.inputValue(), "rust");
     assert.equal(await code.textContent(), source);
 
-    await code.click();
+    await code.getByText('"Hello, world!"', { exact: true }).click();
     await page.keyboard.press("End");
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");
+    assert.equal(await code.textContent(), source);
     await type("``` ");
     assert.equal(await language.nth(1).inputValue(), "");
     assert.equal(await code.nth(1).textContent(), "");
@@ -95,6 +103,13 @@ test("the desktop note creates, highlights, copies and reloads code blocks", asy
     await type("```c++");
     await page.keyboard.press("Enter");
     assert.equal(await editor.locator("blockquote").getByRole("combobox").inputValue(), "cpp");
+    const nestedCode = editor.locator("blockquote pre code");
+    await page.keyboard.insertText("if (x) {\n\tif (y) {");
+    await page.keyboard.press("Enter");
+    assert.equal(await nestedCode.textContent(), "if (x) {\n\tif (y) {\n\t\t");
+    await page.keyboard.press("Control+Enter");
+    await type("Outside code");
+    assert.equal(await editor.locator("blockquote > p").textContent(), "Outside code");
   } finally {
     await browser?.close();
     await server.close();

@@ -21,8 +21,10 @@ test("prose spacing survives document serialization without changing card delimi
   const doc = run("paragraph", "Q :: {{A}}", 3, 3);
   assert.equal(schema.nodeFromJSON(doc.toJSON()).textContent, "Q \t:: {{A}}");
 });
-test("code indentation handles a selection and removes at most two leading spaces per line", () => {
-  assert.equal(run("codeBlock", "a\nb", 1, 4).textContent, "  a\n  b");
-  assert.equal(run("codeBlock", "   a\n b", 2, 8, true).textContent, " a\nb");
-  assert.equal(run("codeBlock", "ab", 2, 2).textContent, "a  b");
+test("code Tab and Shift-Tab use the block indentation for a caret or selection", () => {
+  assert.equal(run("codeBlock", "a\nb", 1, 4).textContent, "    a\n    b");
+  assert.equal(run("codeBlock", "   a\n  b", 2, 9, true).textContent, " a\nb");
+  assert.equal(run("codeBlock", "ab", 2, 2).textContent, "a    b");
+  assert.equal(run("codeBlock", "a\n  b", 1, 6).textContent, "  a\n    b");
+  assert.equal(run("codeBlock", "a\n\tb", 1, 5, true).textContent, "a\nb");
 });
