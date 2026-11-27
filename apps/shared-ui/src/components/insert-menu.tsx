@@ -304,7 +304,7 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
                 aria-hidden="true"
                 className={cn(
                   "px-2 pb-0.5 text-xs text-muted-foreground",
-                  index === 0 ? "pt-1" : "mt-1 border-t pt-1.5",
+                  index === 0 ? "pt-1" : wide ? "mt-1 pt-1" : "mt-1 border-t pt-1.5",
                 )}
               >
                 {item.group}
@@ -324,8 +324,8 @@ export const InsertMenu = forwardRef<InsertMenuHandle, InsertMenuProps>(
               onMouseEnter={() => setSelected(index)}
               onClick={() => command(item)}
             >
-              <span className={item.detail !== undefined ? "min-w-0 break-words" : "shrink-0"}>{item.label ?? item.title}</span>
-              {item.detail && <span className="min-w-0 truncate text-xs text-muted-foreground">{item.detail}</span>}
+              <span className={wide ? "min-w-0 flex-1 truncate" : item.detail !== undefined ? "min-w-0 break-words" : "shrink-0"}>{item.label ?? item.title}</span>
+              {item.detail && <span className={cn("min-w-0 truncate text-xs text-muted-foreground", wide && "max-w-[45%]")}>{item.detail}</span>}
               {item.expandable && index === selected && <Kbd aria-hidden="true">Tab</Kbd>}
               {item.hint && (
                 <Kbd className="min-w-0 shrink truncate">

@@ -1,27 +1,49 @@
 import { IconTooltip } from "@/components/ui/icon-tooltip";
 import { Popover } from "@base-ui/react/popover";
 import { FileText, ArrowUpRight } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useState, useRef, forwardRef, useImperativeHandle, type ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useMemo, useState, useRef, forwardRef, useImperativeHandle, type ReactNode } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, ReactRenderer, type NodeViewProps } from "@tiptap/react";
 import { Extension, type Editor } from "@tiptap/core";
-import { PluginKey } from "@tiptap/pm/state";
+import { NodeSelection, PluginKey } from "@tiptap/pm/state";
 import Suggestion, { type SuggestionProps } from "@tiptap/suggestion";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { createStore } from "@tanstack/react-store";
 import { getFoldedRanges, getFoldedIds } from "@/lib/heading-fold";
 import { stopScrollRestore } from "@/lib/view-persistence";
-import { Mention, mentionTarget, type MentionTarget } from "@/lib/mention";
+import { Mention, mentionPage, mentionTarget, type MentionTarget } from "@/lib/mention";
 import { useMentionNotes } from "@/lib/use-mentions";
 import { useDocuments } from "@/lib/use-documents";
-import { backlinks, mentionLabel } from "@/lib/mention-index";
+import { backlinks, mentionLabel, type MentionBankItem } from "@/lib/mention-index";
+import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { bankQuery, questionLabel, useBankGate, type Bank } from "@/lib/question-bank";
+import { setModulePage } from "@/lib/store";
+import type { DocumentRecord } from "@/lib/documents";
+import { requestSyncedFile } from "@/lib/sync/file-requests";
 import { InsertMenu, type InsertMenuHandle, type InsertItem } from "./insert-menu";
 
-const Context = createContext<ReturnType<typeof useMentionNotes> & { files: { id: string; name: string }[] } | null>(null);
+type Target = NonNullable<ReturnType<typeof mentionTarget>>;
+const Context = createContext<Omit<ReturnType<typeof useMentionNotes>, "modules"> & { files: DocumentRecord[]; bankItems: MentionBankItem[] } | null>(null);
 export function MentionProvider({ children }: { children: ReactNode }) {
-  const notes = useMentionNotes();
+  const { modules, ...notes } = useMentionNotes();
   const { data: files = [] } = useDocuments();
-  return <Context.Provider value={{ ...notes, files }}>{children}</Context.Provider>;
+  const bankEnabled = useBankGate();
+  const queries = useMemo(() => modules.map(module => bankQuery(module.id, bankEnabled)), [modules, bankEnabled]);
+  const combine = useCallback((results: UseQueryResult<Bank | null>[]) => ({
+    items: results.flatMap(({ data: bank }, index): MentionBankItem[] => {
+      const moduleId = modules[index].id;
+      const questions = Object.entries(bank?.questions ?? {}).filter(([, question]) => !question.deleted)
+        .sort(([a, first], [b, second]) => first.order - second.order || a.localeCompare(b));
+      const worksheets = Object.entries(bank?.attempts ?? {}).filter(([, attempt]) => !attempt.deleted);
+      return [
+        ...questions.map(([id, question], number) => ({ kind: "question" as const, moduleId, id, title: questionLabel(question.title, number + 1) })),
+        ...worksheets.map(([id, attempt]) => ({ kind: "worksheet" as const, moduleId, id, title: attempt.title || "Worksheet" })),
+      ];
+    }),
+    loading: bankEnabled && results.some(result => result.isPending),
+  }), [modules, bankEnabled]);
+  const banks = useQueries({ queries, combine });
+  return <Context.Provider value={{ ...notes, files, bankItems: banks.items, loading: notes.loading || banks.loading }}>{children}</Context.Provider>;
 }
 function useCatalog() {
   const value = useContext(Context);
@@ -30,13 +52,23 @@ function useCatalog() {
 }
 // The module open in the editor, so @ lists it first.
 let editingModule = "";
-const jump = createStore<{ moduleId: string; kind: "heading" | "mention"; id: string } | null>(null);
+const jump = createStore<{ moduleId: string; kind: "heading" | "image" | "mention"; id: string } | null>(null);
 function useOpenReference() {
   const navigate = useNavigate();
-  return (target: MentionTarget) => {
-    if (target.kind === "file") { void navigate({ to: "/files/$documentId", params: { documentId: target.id } }); return; }
-    if (target.kind !== "module" && target.kind !== "heading") return;
-    jump.setState(() => target.nodeId ? { moduleId: target.id, kind: "heading", id: target.nodeId } : null);
+  return (target: Target) => {
+    if (target.kind === "file" || target.kind === "pdf-page") {
+      const page = target.kind === "pdf-page" ? mentionPage(target.locator) : undefined;
+      void navigate({ to: "/files/$documentId", params: { documentId: target.id }, search: page ? { page } : {} });
+      return;
+    }
+    if (target.kind === "question" || target.kind === "worksheet") {
+      if (target.nodeId) void navigate({ to: "/questions", search: { module: target.id, [target.kind]: target.nodeId } });
+      return;
+    }
+    if (target.kind !== "module" && target.kind !== "heading" && target.kind !== "image") return;
+    const kind = target.kind === "image" ? "image" : "heading";
+    if (kind === "image") setModulePage(target.id, "notes");
+    jump.setState(() => target.nodeId ? { moduleId: target.id, kind, id: target.nodeId } : null);
     void navigate({ to: "/$moduleId", params: { moduleId: target.id } });
   };
 }
@@ -47,7 +79,10 @@ export function MentionNavigation({ editor, moduleId, ready }: { editor: Editor 
     if (!editor || !ready || request?.moduleId !== moduleId) return;
     let position: number | null = null;
     editor.state.doc.descendants((node, pos) => {
-      if (request.kind === "heading" ? node.type.name === "heading" && node.attrs["data-toc-id"] === request.id : node.type.name === "mention" && node.attrs.mentionId === request.id) position = pos;
+      const id = request.kind === "heading" && node.type.name === "heading" ? node.attrs["data-toc-id"]
+        : request.kind === "image" && (node.type.name === "image" || node.type.name === "inlineImage") ? node.attrs.imageId
+        : request.kind === "mention" && node.type.name === "mention" ? node.attrs.mentionId : null;
+      if (id === request.id) position = pos;
     });
     if (position !== null) {
       // A pending restore of this note's saved scroll would pull the view
@@ -57,9 +92,17 @@ export function MentionNavigation({ editor, moduleId, ready }: { editor: Editor 
       const destination = position;
       const hiddenBy = new Set(getFoldedRanges(editor.state).filter(range => destination >= range.from && destination < range.to).map(range => range.id));
       if (hiddenBy.size) editor.commands.setFolds(getFoldedIds(editor.state).filter(id => !hiddenBy.has(id)));
-      editor.commands.setTextSelection(position + (request.kind === "heading" ? 1 : 0));
-      editor.commands.focus();
-      editor.commands.scrollIntoView();
+      if (request.kind === "image") {
+        const { state, view } = editor;
+        view.dispatch(state.tr.setSelection(NodeSelection.create(state.doc, destination)));
+        view.dom.focus({ preventScroll: true });
+        const image = view.nodeDOM(destination);
+        if (image instanceof HTMLElement) image.scrollIntoView({ block: "center", inline: "nearest" });
+      } else {
+        editor.commands.setTextSelection(position + (request.kind === "heading" ? 1 : 0));
+        editor.commands.focus();
+        editor.commands.scrollIntoView();
+      }
     }
     jump.setState(() => null);
   }, [editor, ready, moduleId, request]);
@@ -69,8 +112,8 @@ function MentionChip({ node }: NodeViewProps) {
   const catalog = useCatalog();
   const open = useOpenReference();
   const target = mentionTarget(node.attrs.target);
-  const label = target ? mentionLabel(catalog.notes, catalog.files, target) : undefined;
-  return <NodeViewWrapper as="span" className="mention-chip" contentEditable={false}><button type="button" onMouseDown={event => event.preventDefault()} onClick={() => target && open(target)} title={label ?? "Reference unavailable"}>@{label ?? (catalog.loading ? "Loading…" : "Reference unavailable")}</button></NodeViewWrapper>;
+  const label = target ? mentionLabel(catalog.notes, catalog.files, target, catalog.bankItems) : undefined;
+  return <NodeViewWrapper as="span" className="mention-chip" contentEditable={false}><button type="button" onMouseDown={event => event.preventDefault()} onClick={() => target && label && open(target)} title={label ?? "Reference unavailable"}>@{label ?? (catalog.loading ? "Loading…" : "Reference unavailable")}</button></NodeViewWrapper>;
 }
 export const MentionView = Mention.extend({ addNodeView: () => ReactNodeViewRenderer(MentionChip) });
 
@@ -79,6 +122,27 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
   const menu = useRef<InsertMenuHandle>(null);
   // Where Tab has dug to: a module id, then one section id per level below it.
   const [trail, setTrail] = useState<string[]>([]);
+  const [pdfScope, setPdfScope] = useState<{ id: string; query: string } | null>(null);
+  const pdf = catalog.files.find(file => file.id === pdfScope?.id);
+  const pdfCount = useQuery({
+    queryKey: ["mention-pdf-pages", pdf?.id],
+    enabled: !!pdf?.available && pdf.pageCount == null,
+    queryFn: async ({ signal }) => {
+      if (!pdf) throw new Error("PDF unavailable");
+      const { loadPdf } = await import("@/lib/pdf-loading");
+      const task = await loadPdf(pdf.id, signal);
+      const cancel = () => { void task.destroy(); };
+      signal.addEventListener("abort", cancel, { once: true });
+      try { return (await task.promise).numPages; }
+      finally {
+        signal.removeEventListener("abort", cancel);
+        if (!signal.aborted) await task.destroy();
+      }
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
+  const pageCount = pdf?.pageCount ?? pdfCount.data ?? 0;
   const model = useMemo(() => {
     // The module being edited comes first; the rest keep their order.
     const notes = [...catalog.notes].sort((a, b) => Number(b.id === editingModule) - Number(a.id === editingModule));
@@ -88,9 +152,20 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
     const scope = trail[0];
     const parent = trail.length > 1 ? trail[trail.length - 1] : null;
     const enter = new Map<string, string[]>();
-    const candidates: { id: string; title: string; group: string; detail?: string; expandable?: boolean; target: MentionTarget }[] = [];
+    const candidates: { id: string; title: string; group: string; detail?: string; expandable?: boolean; target?: MentionTarget }[] = [];
     let header = "";
-    for (const note of notes) {
+    if (pdf && pdfScope) {
+      header = pdf.name;
+      const pageQuery = props.query.startsWith(pdfScope.query) ? props.query.slice(pdfScope.query.length) : props.query;
+      const prefix = pageQuery.trim().toLocaleLowerCase().replace(/^p(?:age)?[. ]*/, "");
+      for (let page = 1; page <= pageCount && candidates.length < 100; page++) {
+        const locator = String(page);
+        if (locator.startsWith(prefix)) candidates.push({
+          id: `page:${locator}`, title: `Page ${locator}`, group: "",
+          target: { kind: "pdf-page", id: pdf.id, nodeId: null, locator },
+        });
+      }
+    } else for (const note of notes) {
       if (scope && note.id !== scope) continue;
       const byId = new Map(note.note.headings.map(heading => [heading.id, heading]));
       const parents = new Set(note.note.headings.map(heading => heading.parentId));
@@ -113,17 +188,51 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
         if (expandable) enter.set(id, [note.id, ...chain(heading.id)]);
       }
     }
-    if (!scope) for (const file of catalog.files) if (matches([file.name])) candidates.push({ id: `file:${file.id}`, title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
+    if (!scope && !pdfScope) {
+      const files = catalog.files.filter(file => matches([file.name]));
+      for (const file of files) candidates.push({ id: `file:${file.id}`, title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
+      for (const note of notes) for (const image of note.note.images) {
+        if (matches([note.name, image.title, "image"])) candidates.push({
+          id: `image:${note.id}:${image.id}`, title: image.title, detail: note.name, group: "Images",
+          target: { kind: "image", id: note.id, nodeId: image.id, locator: null },
+        });
+      }
+      for (const file of catalog.files) if (matches([file.name, "pdf pages"])) candidates.push({
+        id: `pdf:${file.id}`, title: `${file.name} pages`, group: "PDF pages", expandable: true,
+      });
+      for (const kind of ["question", "worksheet"] as const) for (const item of catalog.bankItems) {
+        if (item.kind !== kind) continue;
+        const moduleName = notes.find(note => note.id === item.moduleId)?.name ?? "";
+        if (matches([moduleName, item.title, kind])) candidates.push({
+          id: `${kind}:${item.moduleId}:${item.id}`, title: item.title, detail: moduleName,
+          group: kind === "question" ? "Questions" : "Worksheets",
+          target: { kind, id: item.moduleId, nodeId: item.id, locator: null },
+        });
+      }
+    }
     const items = candidates.slice(0, 100).map(({ target, ...item }): InsertItem => ({
       ...item, hint: "", keywords: [],
-      run: (editor, range) => { editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
+      run: (editor, range) => { if (target) editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
     }));
     return { items, enter, header };
-  }, [catalog.notes, catalog.files, props.query, trail]);
+  }, [catalog.notes, catalog.files, catalog.bankItems, pageCount, pdf, pdfScope, props.query, trail]);
+  const browsePdf = (item: InsertItem | undefined) => {
+    if (!item?.id?.startsWith("pdf:")) return false;
+    const file = catalog.files.find(file => file.id === item.id?.slice(4));
+    if (!file) return false;
+    if (file.pageCount == null && !file.available) requestSyncedFile(file.id);
+    setPdfScope({ id: file.id, query: props.query });
+    return true;
+  };
   // Tab digs into the highlighted row, Shift+Tab (or Backspace on an empty query) climbs out.
   // The document is never touched, and browser focus never moves.
   const onKey = (event: KeyboardEvent, item: InsertItem | undefined) => {
+    if (pdfScope && ((event.key === "Tab" && event.shiftKey) || (event.key === "Backspace" && props.query === pdfScope.query))) {
+      setPdfScope(null);
+      return true;
+    }
     if (event.key === "Tab") {
+      if (!event.shiftKey && browsePdf(item)) return true;
       const next = item?.id ? model.enter.get(item.id) : undefined;
       if (next && !event.shiftKey) setTrail(next);
       else if (event.shiftKey) setTrail(current => current.slice(0, -1));
@@ -133,8 +242,12 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
     return false;
   };
   useImperativeHandle(ref, () => ({ onKeyDown: args => menu.current ? menu.current.onKeyDown(args) : onKey(args.event, undefined) }));
-  if (!model.items.length) return <div role="status" className="rounded-lg bg-popover p-3 text-sm text-muted-foreground shadow-md">{catalog.error ? "Could not load references" : catalog.loading ? "Loading…" : "No matches"}</div>;
-  return <InsertMenu ref={menu} editor={props.editor} items={model.items} header={model.header} onKey={onKey} wide command={item => props.command(item)} />;
+  if (!model.items.length) return <div role="status" className="rounded-lg bg-popover p-3 text-sm text-muted-foreground shadow-md">
+    {pdf && !pageCount
+      ? pdfCount.isError ? "Could not read PDF pages" : pdf.available ? "Loading pages…" : "Downloading PDF…"
+      : catalog.error ? "Could not load references" : catalog.loading ? "Loading…" : "No matches"}
+  </div>;
+  return <InsertMenu ref={menu} editor={props.editor} items={model.items} header={model.header} onKey={onKey} wide command={item => { if (!browsePdf(item)) props.command(item); }} />;
 });
 export const MentionSuggest = Extension.create({
   name: "mention-suggest", priority: 201,
@@ -159,7 +272,7 @@ export const MentionSuggest = Extension.create({
     })];
   },
 });
-export function MentionedIn({ target, onOpenChange }: { target: MentionTarget; onOpenChange?: (open: boolean) => void }) {
+export function MentionedIn({ target, onOpenChange }: { target: Target; onOpenChange?: (open: boolean) => void }) {
   const catalog = useCatalog();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -171,7 +284,7 @@ export function MentionedIn({ target, onOpenChange }: { target: MentionTarget; o
     : target.kind === "heading"
       ? module?.note.headings.find(heading => heading.id === target.nodeId)?.title
       : module?.name;
-  const fullLabel = mentionLabel(catalog.notes, catalog.files, target);
+  const fullLabel = mentionLabel(catalog.notes, catalog.files, target, catalog.bankItems);
   const label = `${sources.length} incoming ${sources.length === 1 ? "reference" : "references"}${title ? ` to ${title}` : ""}`;
 
   if (!sources.length && !open) return null;

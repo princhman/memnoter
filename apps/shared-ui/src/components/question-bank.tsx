@@ -189,7 +189,7 @@ function rememberWorksheet(moduleId: string, id: string | null) {
   catch { /* Storage may be unavailable; the worksheet just won't reopen. */ }
 }
 
-export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false, hideWhenEmpty = false }: { moduleId: string; onOpenSource?: (documentId: string) => void; nativeToolbar?: boolean; hideWhenEmpty?: boolean }) {
+export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false, hideWhenEmpty = false, questionReference, worksheetReference, onCloseWorksheetReference }: { questionReference?: string; worksheetReference?: string; onCloseWorksheetReference?: () => void; moduleId: string; onOpenSource?: (documentId: string) => void; nativeToolbar?: boolean; hideWhenEmpty?: boolean }) {
   const { data: savedBank, error, isLoading, refetch } = useBank(moduleId, true);
   const [pendingBank, setPendingBank] = useState<{ moduleId: string; bank: Bank; received?: boolean } | null>(null);
   const bank = pendingBank?.moduleId === moduleId ? pendingBank.bank : savedBank;
@@ -263,6 +263,25 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false, hi
   const shownQuestions = grouped ? sources.flatMap(source => questions.filter(([qid]) => (sourceOf(qid) ?? "") === source)) : questions;
   const firstOfGroup = new Set(sources.map(source => shownQuestions.find(([qid]) => (sourceOf(qid) ?? "") === source)?.[0]).filter((id): id is string => !!id));
   useEffect(() => { setFailure(""); setReordering(false); setReorderFolds({}); setPicking(false); setSelectedQuestions(new Set()); setWorksheetTitle(""); setActiveAttemptState(openWorksheet(moduleId)); }, [moduleId]);
+  useEffect(() => {
+    if (!savedBank) return;
+    if (worksheetReference && savedBank.attempts[worksheetReference] && !savedBank.attempts[worksheetReference].deleted) {
+      setActiveAttempt({ moduleId, id: worksheetReference });
+    } else if (questionReference && savedBank.questions[questionReference] && !savedBank.questions[questionReference].deleted) {
+      setActiveAttempt(null);
+      const question = savedBank.questions[questionReference];
+      const rootPartId = savedBank.revisions[question.revisionId]?.rootPartId;
+      setFolds(previous => ({ ...previous, [`${moduleId}:${questionReference}:${rootPartId}`]: false }));
+    }
+  }, [moduleId, questionReference, worksheetReference, !!savedBank]);
+  useEffect(() => {
+    if (!questionReference || worksheetOpen || !savedBank) return;
+    const frame = requestAnimationFrame(() => {
+      const question = section.current?.querySelector(`[data-question-id="${CSS.escape(questionReference)}"]`);
+      question?.scrollIntoView({ block: "start", inline: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [questionReference, worksheetOpen, !!savedBank]);
   const changeMode = (enabled: boolean) => {
     if (dragging || busy) return;
     const rows = section.current?.querySelectorAll<HTMLElement>("[data-bank-row]");
@@ -395,7 +414,7 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false, hi
   };
   if (activeAttempt?.moduleId === moduleId) {
     if (!savedBank) return <section className="space-y-3"><Button variant="ghost" onClick={() => setActiveAttempt(null)}>Back to questions</Button><p role={error ? "alert" : "status"}>{error ? `Could not load worksheet: ${error.message}` : "Loading worksheet…"}</p></section>;
-    return <WorksheetAttempt key={`${moduleId}:${activeAttempt.id}`} moduleId={moduleId} attemptId={activeAttempt.id} bank={savedBank} onBack={() => setActiveAttempt(null)} />;
+    return <WorksheetAttempt key={`${moduleId}:${activeAttempt.id}`} moduleId={moduleId} attemptId={activeAttempt.id} bank={savedBank} onBack={() => { setActiveAttempt(null); onCloseWorksheetReference?.(); }} />;
   }
   // All modules lists only modules with questions; the page shows one shared hint
   // when none have any. Markers let the page hide the heading and that hint by CSS.
@@ -549,7 +568,7 @@ export function QuestionBank({ moduleId, onOpenSource, nativeToolbar = false, hi
       const revision = bank!.revisions[question.revisionId]; const outline = partOutline(revision, questionLabel(question.title, index + 1));
       const group = grouped ? sourceOf(qid) : undefined;
       const header = grouped && firstOfGroup.has(qid) ? <h3 className="bank-source-heading mt-6 mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground first:mt-0"><FileText size={14} />{group ? documents.find(d => d.id === group)?.name ?? "Deleted file" : "No source file"}</h3> : null;
-      return <Fragment key={qid}>{header}<article aria-label={`Question ${index + 1}`} className={cn("group/question last:pb-0", !reordering && !visibleFolds[`${moduleId}:${qid}:${revision.rootPartId}`] && "pb-4")}>
+      return <Fragment key={qid}>{header}<article data-question-id={qid} aria-label={`Question ${index + 1}`} className={cn("group/question last:pb-0", !reordering && !visibleFolds[`${moduleId}:${qid}:${revision.rootPartId}`] && "pb-4")}>
         {outline.map((part, position) => {
           const ancestors: typeof outline = [];
           for (const preceding of outline.slice(0, position)) { ancestors[preceding.depth] = preceding; ancestors.length = preceding.depth + 1; }

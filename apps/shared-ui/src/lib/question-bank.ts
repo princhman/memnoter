@@ -67,8 +67,11 @@ export function useBankGate() {
   const supported = isTauri() || isNativeHost();
   return useQuery({ queryKey: ["question-bank-enabled"], queryFn: () => call<boolean>("question_bank_enabled"), enabled: supported, staleTime: Infinity, retry: false }).data === true && supported;
 }
+export function bankQuery(moduleId: string, enabled: boolean) {
+  return { queryKey: bankKey(moduleId), queryFn: () => call<Bank | null>("question_bank_get", { moduleId }), enabled, retry: false } as const;
+}
 export function useBank(moduleId: string, enabled: boolean) {
-  return useQuery({ queryKey: bankKey(moduleId), queryFn: () => call<Bank | null>("question_bank_get", { moduleId }), enabled, retry: false });
+  return useQuery(bankQuery(moduleId, enabled));
 }
 export function useBankEdit(moduleId: string) {
   const client = useQueryClient();

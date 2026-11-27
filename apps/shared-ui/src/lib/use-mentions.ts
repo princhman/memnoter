@@ -8,9 +8,11 @@ import { useActiveEditor } from "./active-editor-context";
 import { loadStoredNote } from "./note-index";
 import { extractMentions } from "./mention-index";
 
+const EMPTY_MODULES: NonNullable<ReturnType<typeof useModules>["data"]> = [];
+
 // Rebuilt from authoritative Yjs content. No backlink writes or migrations.
 export function useMentionNotes() {
-  const { data: modules = [] } = useModules();
+  const { data: modules = EMPTY_MODULES } = useModules();
   const { activeEditor } = useActiveEditor();
   const live = useEditorState({ editor: activeEditor?.editor ?? null, selector: ({ editor }) => editor?.state.doc, equalityFn: Object.is });
   const liveNote = useMemo(() => live ? extractMentions(live.toJSON()) : null, [live]);
@@ -45,5 +47,5 @@ export function useMentionNotes() {
     // is active, the invalidated (stale) query refetches on being enabled.
     enabled: activeEditor?.moduleId !== module.id,
   })) });
-  return { notes: modules.map((module, index) => ({ ...module, note: activeEditor?.moduleId === module.id && liveNote ? liveNote : queries[index].data ?? { headings: [], mentions: [] } })), loading: queries.some((query, index) => query.isPending && !(activeEditor?.moduleId === modules[index].id && liveNote)), error: queries.find(query => query.error)?.error };
+  return { modules, notes: modules.map((module, index) => ({ ...module, note: activeEditor?.moduleId === module.id && liveNote ? liveNote : queries[index].data ?? { headings: [], images: [], mentions: [] } })), loading: queries.some((query, index) => query.isPending && !(activeEditor?.moduleId === modules[index].id && liveNote)), error: queries.find(query => query.error)?.error };
 }
