@@ -56,15 +56,18 @@ test("desktop captions save with their image and renumber when it moves chapters
     const pauseForProof = async () => {
       if (process.env.PROOF_DIR) await page.waitForTimeout(1000);
     };
-    const addCaption = page.getByRole("button", { name: "Add caption", exact: true });
-    assert.equal(await addCaption.count(), 0);
+    const actions = page.getByRole("button", { name: "Image actions" });
+    const addCaption = page.getByRole("menuitem", { name: "Add caption" });
+    assert.equal(await actions.count(), 0);
     const belowImage = editor.getByText("Initial measurements", { exact: true });
     const beforeSelection = await belowImage.boundingBox();
     await pauseForProof();
     await image.click();
-    await addCaption.waitFor();
+    await actions.waitFor();
+    // Selecting the image no longer adds a caption row below it.
     assert.equal((await belowImage.boundingBox()).y, beforeSelection.y);
     await pauseForProof();
+    await actions.click();
     await addCaption.click();
     const input = page.getByRole("textbox", { name: "Image caption" });
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Image caption");

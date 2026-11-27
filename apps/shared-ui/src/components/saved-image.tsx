@@ -20,7 +20,7 @@ import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/rea
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { call as invoke, fileUrl as convertFileSrc, isTauri, postNativeEvent } from "../lib/backend.ts";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Scan, Scaling, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Subtitles, Scan, Scaling, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
 import type { FileType } from "@/lib/content";
@@ -69,6 +69,9 @@ export function SavedImageView(props: NodeViewProps) {
   });
   const caption = typeof node.attrs.caption === "string" ? node.attrs.caption.trim() : "";
   const [editingCaption, setEditingCaption] = useState(false);
+  // The actions menu returns focus to the editor as it closes; when it closes
+  // to start a caption, the caption field keeps focus instead.
+  const captionFromMenu = useRef(false);
   const figureNumber = useEditorState({
     editor,
     selector: ({ editor }) => {
@@ -80,6 +83,7 @@ export function SavedImageView(props: NodeViewProps) {
   });
   const finishCaption = (value: string) => {
     setEditingCaption(false);
+    captionFromMenu.current = false;
     if (!editor.isEditable || editor.isDestroyed || !isWriteAdmitted()) return;
     const pos = props.getPos();
     if (pos !== undefined && editor.state.doc.nodeAt(pos) === node && value !== caption) {
@@ -583,16 +587,13 @@ export function SavedImageView(props: NodeViewProps) {
             ? <button type="button" onClick={() => setEditingCaption(true)}>Figure {figureNumber}: {caption}</button>
             : <>Figure {figureNumber}: {caption}</>}
         </span>
-      ) : selected && editor.isEditable && (
-        <span className="note-image-caption" data-empty>
-          <Button size="xs" variant="ghost" onClick={() => setEditingCaption(true)}>Add caption</Button>
-        </span>
-      )}
+      ) : null}
       {selected && editor.isEditable && (
         <ImageControlsLayer anchor={controlsAnchor}>
-          <ImageActionsMenu label="Image actions" className="note-image-actions-menu w-60" sideOffset={isNativeTablet ? 10 : undefined} finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}>
+          <ImageActionsMenu label="Image actions" className="note-image-actions-menu w-60" sideOffset={isNativeTablet ? 10 : undefined} finalFocus={environment.isNative || captionFromMenu.current ? false : () => editor.isDestroyed ? null : editor.view.dom}>
               {isNativeTablet && canEditDrawing && <DropdownMenuItem onClick={openDrawing}><Pencil />Edit drawing</DropdownMenuItem>}
               {(!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!hasImage} onClick={() => setPreviewOpen(true)}><Maximize2 />Open image full screen</DropdownMenuItem>}
+              <DropdownMenuItem onClick={() => { captionFromMenu.current = true; setEditingCaption(true); }}><Subtitles />{caption ? "Edit caption" : "Add caption"}</DropdownMenuItem>
               {(!isNativeTablet || canEditDrawing || hasImage) && <DropdownMenuSeparator />}
               {(!isNativeTablet || hasImage) && <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />} disabled={!hasImage}><Scaling />Size<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
