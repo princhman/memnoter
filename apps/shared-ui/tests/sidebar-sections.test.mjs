@@ -411,6 +411,47 @@ test("forward Delete at the focused end keeps the next chapter intact", async ()
   }
 });
 
+test("Chromium: dragging selected text inside a focused section does not throw", async () => {
+  const moduleId = await createModule("Text drag", ["Before", "Middle", "After"]);
+  const page = await openNote(moduleId, { sections: true });
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  try {
+    const editor = page.locator(".tiptap");
+    const sidebar = page.getByRole("list", { name: "Sections of Text drag" });
+    await sidebar.getByRole("button", { name: "2 Middle", exact: true }).click();
+    const heading = editor.locator(".section-focus-start");
+    const paragraph = editor.getByText("Notes for Middle.", { exact: true });
+    await heading.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowLeft" : "Home");
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+Shift+ArrowRight" : "Shift+End");
+    const source = await page.evaluate(() => {
+      const selection = getSelection();
+      const { x, y, width, height } = selection.getRangeAt(0).getBoundingClientRect();
+      return { text: selection.toString(), x: x + width / 2, y: y + height / 2 };
+    });
+    assert.equal(source.text, "Middle");
+    await editor.evaluate(node => {
+      node.addEventListener("dragstart", event => {
+        node.dataset.trustedDrag = String(event.isTrusted);
+      }, { capture: true, once: true });
+    });
+    const target = await paragraph.boundingBox();
+    await page.mouse.move(source.x, source.y);
+    await page.mouse.down();
+    await page.mouse.move(target.x + 25, target.y + target.height / 2, { steps: 18 });
+    await page.mouse.up();
+    assert.equal(await editor.getAttribute("data-trusted-drag"), "true");
+
+    await page.getByRole("link", { name: "Text drag", exact: true }).click();
+    assert.equal(await editor.getByText("Notes for Before.", { exact: true }).isVisible(), true);
+    assert.equal(await editor.getByText("Notes for After.", { exact: true }).isVisible(), true);
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+});
+
 test("a programmatic edit reveals hidden changes regardless of caret placement", async () => {
   const moduleId = await createModule("Programmatic edits", ["Before", "Middle", "After"]);
   const page = await openNote(moduleId, { sections: true });

@@ -19,7 +19,7 @@ export const ImageMoveHistory = Extension.create({
       },
       props: { handleDOMEvents: {
       dragstart(view, event) {
-        if ((event.target as HTMLElement).closest(".note-image-block")) {
+        if (event.target instanceof Element && event.target.closest(".note-image-block")) {
           yUndoPluginKey.getState(view.state)?.undoManager.stopCapturing();
         }
         return false;
