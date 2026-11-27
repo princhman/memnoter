@@ -96,7 +96,15 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 pub fn handle_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     let id = event.id().as_ref();
     if CUSTOM_ITEMS.contains(&id) {
-        let Some(window) = app.get_focused_window() else { return; };
+        // The menu acts on the focused window; with none focused, on the main one.
+        let windows = app.webview_windows();
+        let Some(window) = windows
+            .values()
+            .find(|window| window.is_focused().unwrap_or(false))
+            .or_else(|| windows.get("main"))
+        else {
+            return;
+        };
         if crate::drawing::handle_menu(app, window.label(), id) {
             return;
         }
