@@ -323,7 +323,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   function clearPreview() {
     for (const page of previewPages.current) { page.style.transform = ""; page.style.transformOrigin = ""; page.style.willChange = ""; }
     previewPages.current = [];
-    if (content.current) content.current.style.pointerEvents = "";
+    if (content.current) {
+      content.current.style.pointerEvents = "";
+      content.current.style.overflow = "";
+    }
   }
   function restoreZoomAnchor(anchor: ZoomAnchor | null) {
     const element = container.current;
@@ -371,6 +374,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     let releaseTouchTargets: (() => void)[] = [];
     const clearTouchTargets = () => { releaseTouchTargets.forEach(release => release()); releaseTouchTargets = []; };
     function finish() {
+      if (native) { native = false; ignoreWheelUntil = performance.now() + 250; }
       if (!anchor) return zoomValue.current;
       clearTimeout(timer);
       cancelAnimationFrame(previewFrame); previewFrame = 0;
@@ -379,7 +383,6 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         touch = null; touchBlocked = true;
         ignoreNativeUntil = ignoreWheelUntil = performance.now() + 250;
       }
-      if (native) { native = false; ignoreWheelUntil = performance.now() + 250; }
       if (preview !== zoomValue.current) {
         zoomAnchor.current = anchor;
         setZoom(preview);
@@ -408,6 +411,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         });
         previewPages.current.forEach((page, index) => { page.style.transformOrigin = origins[index]; page.style.willChange = "transform"; });
         grid.style.pointerEvents = "none";
+        // Transforms can otherwise grow the scrollable overflow and introduce
+        // a scrollbar (and a narrower viewport) before the zoom commits.
+        if (!touch) grid.style.overflow = "clip";
       }
       preview = clampZoom(value);
       if (!previewFrame) previewFrame = requestAnimationFrame(() => {
@@ -433,12 +439,19 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       if (touch || touchBlocked || performance.now() < ignoreNativeUntil) return;
       if (event.type === "gesturestart") {
         native = true;
-        // Discard a leading wheel preview if WebKit sends both protocols.
-        clearTimeout(timer); cancelAnimationFrame(previewFrame); previewFrame = 0; clearPreview(); anchor = null;
-        nativeBase = zoomValue.current;
+        // Continue a leading wheel preview if WebKit sends both protocols.
+        nativeBase = anchor ? preview : zoomValue.current;
       }
-      if ("scale" in event && typeof event.scale === "number" && Number.isFinite(event.scale) && event.scale > 0) show(nativeBase * event.scale, { clientX: "clientX" in event && typeof event.clientX === "number" ? event.clientX : undefined, clientY: "clientY" in event && typeof event.clientY === "number" ? event.clientY : undefined });
-      if (event.type === "gestureend") { native = false; ignoreWheelUntil = performance.now() + 250; finish(); }
+      if (!native) return;
+      if (event.type === "gestureend") { finish(); return; }
+      const { scale = 1, clientX, clientY } = event as Event & Partial<Pick<MouseEvent, "clientX" | "clientY">> & { scale?: number };
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      if (anchor && typeof clientX === "number" && typeof clientY === "number") {
+        panX += clientX - anchor.clientX;
+        panY += clientY - anchor.clientY;
+        anchor = { ...anchor, clientX, clientY };
+      }
+      show(nativeBase * scale, { clientX, clientY });
     }
     const ownTouch = (contact: Touch) => contact.target instanceof Node && element.contains(contact.target);
     const beginTouch = (event: TouchEvent) => {
