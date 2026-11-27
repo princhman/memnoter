@@ -95,7 +95,7 @@ test('native PDF text selections quote only on demand, with per-page sources and
   } finally { await browser?.close(); await server.close(); }
 });
 
-test('PDF text menu holds its position during a backward selection drag', async () => {
+test('PDF text menu stays anchored during selection and scrolling', async () => {
   const server = await browserHarness(import.meta.url).createServer({ server: { port: 0 }, logLevel: 'error' });
   let browser;
   try {
@@ -129,6 +129,55 @@ test('PDF text menu holds its position during a backward selection drag', async 
     await page.waitForTimeout(pause);
     assert.deepEqual(await menu.boundingBox(), position);
     assert.match(await page.evaluate(() => window.getSelection().toString()), /Page 1 first line/);
+    const viewport = page.locator('.pdf-viewport');
+    const watchScroll = () => viewport.evaluate(element => {
+      const menu = element.ownerDocument.querySelector('[aria-label="PDF text actions"]');
+      const anchor = menu.getBoundingClientRect().top + element.scrollTop;
+      const offsets = [];
+      const sample = () => offsets.push(menu.getBoundingClientRect().top + element.scrollTop - anchor);
+      element.addEventListener('scroll', sample);
+      window.stopWatchingPdfScroll = () => {
+        element.removeEventListener('scroll', sample);
+        return offsets;
+      };
+    });
+    const assertScroll = async () => {
+      const offsets = await page.evaluate(() => window.stopWatchingPdfScroll());
+      assert.ok(offsets.length > 0, 'the gesture must scroll the PDF');
+      assert.ok(offsets.every(offset => Math.abs(offset) < 1), 'the menu must move with the PDF on every scroll: ' + offsets.join(', '));
+    };
+    const nextLine = page.locator('[data-pdf-page="1"] .textLayer span').filter({ hasText: 'Second line' });
+    const nextLineBox = await nextLine.boundingBox();
+    const lineY = nextLineBox.y + nextLineBox.height / 2;
+    await page.mouse.move(nextLineBox.x + 1, lineY);
+    await page.mouse.down();
+    await page.mouse.move(nextLineBox.x + nextLineBox.width - 1, lineY, { steps: 20 });
+    await page.mouse.up();
+    await menu.waitFor();
+    await page.waitForTimeout(pause);
+    await watchScroll();
+    for (let step = 0; step < 3; step++) {
+      await page.mouse.wheel(0, 12);
+      await page.waitForTimeout(pause);
+    }
+    await assertScroll();
+
+    const secondPage = page.locator('[data-pdf-page="2"] .textLayer span').filter({ hasText: 'Page 2 first line' });
+    await secondPage.waitFor();
+    const secondBox = await secondPage.boundingBox();
+    const secondY = secondBox.y + secondBox.height / 2;
+    await page.mouse.move(secondBox.x + 1, secondY);
+    await page.mouse.down();
+    await page.mouse.move(secondBox.x + secondBox.width - 1, secondY, { steps: 16 });
+    await menu.waitFor();
+    await page.waitForTimeout(pause);
+    await watchScroll();
+    const beforeDragScroll = await viewport.evaluate(element => element.scrollTop);
+    const viewportBox = await viewport.boundingBox();
+    await page.mouse.move(secondBox.x + secondBox.width - 1, viewportBox.y + viewportBox.height + 2, { steps: 25 });
+    await page.waitForFunction(before => document.querySelector('.pdf-viewport').scrollTop > before.top + before.distance, { top: beforeDragScroll, distance: process.env.PROOF_DIR ? 100 : 30 }, { timeout: 3000 });
+    await page.mouse.up();
+    await assertScroll();
     if (process.env.PROOF_DIR) await page.waitForTimeout(900);
     await page.close();
   } finally { await browser?.close(); await server.close(); }
