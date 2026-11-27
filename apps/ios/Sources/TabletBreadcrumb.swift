@@ -13,6 +13,7 @@ struct TabletBreadcrumb: View {
     let changeSection: (String) -> Void
     var compact: Bool = false
     var combinesMenus = false
+    var showsCombinedSection = true
     var showWholeNote: (() -> Void)?
 
     private var moduleTitle: String { modules.first { $0.id == scope }?.name ?? "All modules" }
@@ -26,7 +27,7 @@ struct TabletBreadcrumb: View {
     }
     private var trailingTitle: String? {
         if let distinctItem { return distinctItem }
-        guard combinesMenus, section != "notes",
+        guard combinesMenus, showsCombinedSection, section != "notes",
               section.localizedCaseInsensitiveCompare(moduleTitle) != .orderedSame else { return nil }
         return section.capitalized
     }
@@ -42,7 +43,7 @@ struct TabletBreadcrumb: View {
         let section = combinesMenus ? 0 : Self.textWidth(section.capitalized)
         let itemChrome: CGFloat = trailingTitle == nil ? 0 : 24
         // Navigation bar menus add native button padding around their labels.
-        let menuChrome: CGFloat = combinesMenus ? 64 : (compact ? 114 : 78)
+        let menuChrome: CGFloat = combinesMenus ? (showsCombinedSection ? 64 : 44) : (compact ? 114 : 78)
         let chrome = menuChrome + itemChrome
         let available = max(40, maximumWidth - chrome - section)
         let module = Self.textWidth(moduleTitle)
