@@ -50,15 +50,19 @@ export function correctImagePixels(data: Uint8ClampedArray): boolean {
 
   const neutralLight = luminance(neutral[0], neutral[1], neutral[2]) / highlights;
   const blackTarget = Math.min(black, 12);
-  const scale = Math.min(2.4, (247 - blackTarget) / (white - black));
-  const lift = Math.min(18, 247 - blackTarget - (white - black) * scale);
+  // Map the typical paper level, not the brightest corner, to near white:
+  // phone photos of pages are vignetted, so the 99th percentile leaves most
+  // of the page grey.
+  const paper = Math.max(black + 32, Math.min(white, neutralLight));
+  const scale = Math.min(4.5, (244 - blackTarget) / (paper - black));
+  const lift = Math.max(0, Math.min(18, 244 - blackTarget - (paper - black) * scale));
   const offsets = neutral.map(total => Math.max(-25, Math.min(25, neutralLight - total / highlights)));
   for (let i = 0; i < data.length; i += 4) {
     if (data[i + 3] === 0) continue;
     const light = luminance(data[i], data[i + 1], data[i + 2]);
     // Keep the balance adjustment small in shadows and strongest on the paper.
     const balance = Math.min(1, light / neutralLight);
-    const shift = Math.max(8, Math.min(247, (light - black) * scale + blackTarget + lift)) - light;
+    const shift = Math.max(8, Math.min(250, (light - black) * scale + blackTarget + lift)) - light;
     for (let channel = 0; channel < 3; channel++) {
       data[i + channel] += shift + offsets[channel] * balance;
     }
