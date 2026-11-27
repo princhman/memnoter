@@ -1,6 +1,6 @@
 import { useCallback, type ReactElement } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { ChevronDown, FileText, Files, CircleHelp, Layers } from "lucide-react";
+import { ChevronDown, FileText, Files, CircleHelp, Layers, MoveDiagonal2 } from "lucide-react";
 import { openReview } from "./card-navigation-guard";
 import { useBankGate } from "@/lib/question-bank";
 import { appStore, setModulePage } from "@/lib/store";
@@ -10,7 +10,7 @@ import { useDocuments } from "@/lib/use-documents";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { IconTooltip } from "./ui/icon-tooltip";
 import { Button } from "./ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
 export type ModuleSection = "notes" | "files" | "questions" | "review";
 
@@ -66,7 +66,12 @@ export function SectionTooltip({ section, children, allModules = false }: { sect
   return <IconTooltip label={label} hint={formatKeys(keys)} side="right">{children}</IconTooltip>;
 }
 
-export function ModuleSectionMenu({ page, moduleId, onNotes }: { page: ModuleSection; moduleId?: string; onNotes?: () => void }) {
+export function ModuleSectionMenu({ page, moduleId, onNotes, onWholeNote }: {
+  page: ModuleSection;
+  moduleId?: string;
+  onNotes?: () => void;
+  onWholeNote?: () => void;
+}) {
   const bankEnabled = useBankGate();
   const navigateSection = useModuleSectionNavigation();
   return <DropdownMenu>
@@ -80,6 +85,12 @@ export function ModuleSectionMenu({ page, moduleId, onNotes }: { page: ModuleSec
         {bankEnabled && <SectionTooltip section="questions"><DropdownMenuRadioItem value="questions" showIndicator={false} closeOnClick><CircleHelp aria-hidden="true" />Questions</DropdownMenuRadioItem></SectionTooltip>}
         <SectionTooltip section="review"><DropdownMenuRadioItem value="review" showIndicator={false} closeOnClick><Layers aria-hidden="true" />Review</DropdownMenuRadioItem></SectionTooltip>
       </DropdownMenuRadioGroup>
+      {onWholeNote && <>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="m-0.5" onClick={onWholeNote}>
+          <MoveDiagonal2 aria-hidden="true" />Whole Note
+        </DropdownMenuItem>
+      </>}
     </DropdownMenuContent>
   </DropdownMenu>;
 }

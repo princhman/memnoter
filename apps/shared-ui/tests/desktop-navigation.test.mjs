@@ -207,3 +207,110 @@ test("a focused heading renders inline math in the desktop breadcrumb", async ()
     await server.close();
   }
 });
+
+test("the Notes breadcrumb returns from section focus to the whole note", async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "light" });
+    page.setDefaultTimeout(6000);
+    await page.route("https://api.github.com/repos/princhman/memnoter/releases/latest",
+      route => route.fulfill({ status: 404, json: {} }));
+
+    const chapters = [
+      ["Introduction", "An algorithm is a sequence of steps for solving a problem."],
+      ["Searching", "Binary search narrows a sorted range by comparing its middle element with the target."],
+      ["Sorting", "Merge sort combines sorted runs into increasingly larger sorted runs."],
+    ];
+    const doc = new Y.Doc();
+    doc.getXmlFragment("default").insert(0, chapters.flatMap(([title, body]) => {
+      const heading = new Y.XmlElement("heading");
+      heading.setAttribute("level", 1);
+      heading.insert(0, [new Y.XmlText(title)]);
+      const paragraph = new Y.XmlElement("paragraph");
+      paragraph.insert(0, [new Y.XmlText(body)]);
+      return [heading, paragraph];
+    }));
+    const state = Array.from(Y.encodeStateAsUpdate(doc));
+    doc.destroy();
+
+    const setup = state => {
+      Object.defineProperty(navigator, "platform", { value: "MacIntel" });
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
+        if (command.startsWith("plugin:")) return null;
+        if (command === "modules") return [{ id: "m1", name: "Algorithms", heading_numbering: false }];
+        if (command === "get_content") return { state, updates: [], files: [] };
+        if (command === "add_update") return { id: 1, bytes: args.bytes };
+        if (command === "question_bank_enabled") return true;
+        if (command === "question_bank_get") return null;
+        return [];
+      } } });
+    };
+    const origin = `http://localhost:${server.httpServer.address().port}`;
+    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; (${setup.toString()})(${JSON.stringify(state)});`);
+    await page.goto(`${origin}/m1`);
+
+    const trigger = page.getByRole("button", { name: "Select module section" });
+    const menu = page.getByRole("menu");
+    const menuRows = menu.locator('[role="menuitem"], [role="menuitemradio"], [role="separator"]');
+    const sectionLabels = ["Notes", "Files", "Questions", "Review"];
+    const wholeNote = menu.getByRole("menuitem", { name: "Whole Note", exact: true });
+    const headings = page.locator(".tiptap > h1:visible");
+    await headings.getByText("Searching", { exact: true }).waitFor();
+    await trigger.click();
+    await menu.getByRole("menuitemradio", { name: "Questions", exact: true }).waitFor();
+    assert.deepEqual(await menuRows.allTextContents(), sectionLabels);
+    await page.keyboard.press("Escape");
+
+    for (const keyboard of [false, true]) {
+      await headings.filter({ hasText: "Searching" }).hover();
+      await page.getByRole("toolbar", { name: "Heading controls" })
+        .getByRole("button", { name: "Focus on this section", exact: true }).click();
+      await page.getByRole("navigation", { name: "breadcrumb" }).getByText("Searching", { exact: true }).waitFor();
+      assert.deepEqual(await headings.allTextContents(), ["Searching"]);
+      const headingTop = (await headings.first().boundingBox()).y;
+
+      if (keyboard) await trigger.press("ArrowDown");
+      else await trigger.click();
+      await wholeNote.waitFor();
+      assert.deepEqual(await menuRows.allTextContents(), [...sectionLabels, "", "Whole Note"]);
+      assert.equal(await menuRows.nth(sectionLabels.length).getAttribute("role"), "separator");
+      if (keyboard) {
+        for (const label of sectionLabels) {
+          const item = menu.getByRole("menuitemradio", { name: label, exact: true });
+          assert.equal(await item.evaluate(node => node === document.activeElement), true, `focuses ${label}`);
+          await page.keyboard.press("ArrowDown");
+        }
+        assert.equal(await wholeNote.evaluate(node => node === document.activeElement), true);
+        await page.keyboard.press("Enter");
+      } else {
+        await wholeNote.click();
+      }
+
+      await headings.filter({ hasText: "Introduction" }).waitFor();
+      assert.deepEqual(await headings.allTextContents(), chapters.map(([title]) => title));
+      const restoredTop = (await headings.filter({ hasText: "Searching" }).boundingBox()).y;
+      assert.ok(Math.abs(restoredTop - headingTop) <= 1, "keeps the focused chapter at its reading position");
+    }
+
+    for (const [label, destination] of [
+      ["Files", `${origin}/files?module=m1`],
+      ["Questions", `${origin}/m1`],
+      ["Review", `${origin}/review?module=m1`],
+    ]) {
+      await trigger.click();
+      assert.equal(await wholeNote.count(), 0);
+      await menu.getByRole("menuitemradio", { name: label, exact: true }).click();
+      await page.waitForURL(destination);
+      await trigger.getByText(label, { exact: true }).waitFor();
+      await trigger.click();
+      await menu.getByRole("menuitemradio", { name: "Notes", exact: true }).click();
+      await trigger.getByText("Notes", { exact: true }).waitFor();
+    }
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});
