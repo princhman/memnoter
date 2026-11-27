@@ -120,3 +120,43 @@ test("long breadcrumbs remain within the desktop header", async () => {
     await server.close();
   }
 });
+
+test("the desktop header hides Review while a worksheet is open and restores it on exit", async () => {
+  const server = await createServer({ server: { port: 0 }, logLevel: "error" });
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 1100, height: 720 } });
+    page.setDefaultTimeout(8000);
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { value: "MacIntel" });
+      localStorage.setItem("app-state", JSON.stringify({ modulePageByModule: { m1: "questions" } }));
+      window.installTestBridge({ tauri: { invoke: async command => {
+        if (command.startsWith("plugin:")) return 1;
+        if (command === "modules") return [{ id: "m1", name: "Algebra" }];
+        if (command === "question_bank_enabled") return true;
+        if (command === "question_bank_get") return {
+          questions: { q: { title: "Linear equations", order: 0, revisionId: "r" } },
+          revisions: { r: { questionId: "q", rootPartId: "p", parts: { p: { label: "", cropIds: [] } } } },
+          attempts: { a: { title: "Algebra practice", questions: [{ questionId: "q", revisionId: "r" }] } },
+          answers: {}, crops: {},
+        };
+        if (command === "worksheet_answer_document_load") return { document: [0, 0], expected: "empty", plainText: null };
+        if (command === "get_content") return { state: [], updates: [], files: [] };
+        return [];
+      } } });
+    });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/m1`);
+    const header = page.locator("header");
+    const review = header.locator('a[href^="/review"]');
+    await review.waitFor();
+    await page.getByRole("button", { name: /Algebra practice/ }).click();
+    await header.getByRole("button", { name: "Finish", exact: true }).waitFor();
+    await header.getByRole("navigation", { name: "Worksheet questions" }).waitFor();
+    await review.waitFor({ state: "hidden" });
+    await header.getByRole("button", { name: "Back to questions" }).click();
+    await review.waitFor();
+  } finally {
+    await server.close();
+  }
+});
