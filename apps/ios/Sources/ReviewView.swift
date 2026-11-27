@@ -51,7 +51,7 @@ struct ReviewView: View {
                 if #available(iOS 26.0, *) {
                     ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 }
-                ToolbarItem(placement: .topBarTrailing) { reviewActions }
+                ToolbarItem(placement: .topBarTrailing) { reviewActions() }
             } else {
                 ToolbarItemGroup(placement: .topBarLeading) {
                     historyActions
@@ -91,9 +91,8 @@ struct ReviewView: View {
                 Spacer(minLength: 0)
                 HStack(alignment: .center, spacing: 8) {
                     countsLabel
-                    reviewActions
+                    reviewActions(fillsPill: true)
                         .buttonStyle(.plain)
-                        .frame(width: 44, height: 44)
                         .modifier(TabletGlassPill())
                 }
                 .fixedSize()
@@ -102,12 +101,18 @@ struct ReviewView: View {
         }
         .frame(width: rowWidth > 0 ? rowWidth : nil, alignment: .leading)
     }
-    private var reviewActions: some View {
+    private func reviewActions(fillsPill: Bool = false) -> some View {
         Menu {
             historyActions
             cardActions
         } label: {
-            Image(systemName: "ellipsis")
+            if fillsPill {
+                Image(systemName: "ellipsis")
+                    .frame(width: 44, height: 44)
+                    .contentShape(Capsule())
+            } else {
+                Image(systemName: "ellipsis")
+            }
         }
         .accessibilityLabel("Review actions")
     }
