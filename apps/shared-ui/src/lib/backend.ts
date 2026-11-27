@@ -21,7 +21,14 @@ declare global {
 }
 
 export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-export const isSecondaryWindow = () => isTauri() && getCurrentWindow().label.startsWith("note-");
+export function isSecondaryWindow() {
+  if (!isTauri()) return false;
+  try {
+    return getCurrentWindow().label.startsWith("note-");
+  } catch {
+    return false;
+  }
+}
 export const windowViewStorage = () => isSecondaryWindow() ? sessionStorage : localStorage;
 export const isNativeHost = () => !isTauri() && !!window.webkit?.messageHandlers?.memnoter;
 let sequence = 0;

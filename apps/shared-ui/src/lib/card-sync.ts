@@ -15,6 +15,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { blockIdOf, extractCards } from "@/lib/cards";
 import type { CardSchedule } from "@/lib/flashcards";
 
+import { isStaleNote } from "./stale-note";
 import { appStore } from "./store.ts";
 import { useSelector } from "@tanstack/react-store";
 
@@ -24,8 +25,6 @@ const DUE_REFRESH_MS = 60_000;
 const editorSync = createEditorWriteSync(SYNC_DEBOUNCE_MS);
 export const flushCardSyncs = editorSync.flush;
 
-// The core's answer when another window saved the note after this snapshot.
-export const isStaleNote = (error: unknown) => String(error instanceof Error ? error.message : error).includes("Note changed in another window");
 const refreshStoredNote = async (moduleId: string, permit?: WritePermit) =>
   (await import("@/lib/note-index")).refreshDerived(moduleId, permit);
 registerFlusher("cards", flushCardSyncs);
