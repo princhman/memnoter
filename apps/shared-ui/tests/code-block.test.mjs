@@ -150,6 +150,9 @@ test("saved code blocks can change language and indent in Plain text", async t =
     await page.keyboard.type("case 1:");
     await page.keyboard.press("Enter");
     assert.equal(await code.textContent(), "case 1:\n    ");
+    await page.keyboard.type("std::");
+    await page.keyboard.press("Enter");
+    assert.equal(await code.textContent(), "case 1:\n    std::\n    ", "A trailing :: keeps the indent without adding a level");
   });
   await t.test("the picker changes language after a cold load", async () => {
     await page.reload({ waitUntil: "commit" });

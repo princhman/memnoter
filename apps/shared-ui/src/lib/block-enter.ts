@@ -99,7 +99,8 @@ export const BlockEnter = Extension.create({
           const line = before.slice(before.lastIndexOf("\n") + 1);
           const indent = line.match(/^[ \t]*/)?.[0] ?? "";
           const end = line.trimEnd();
-          const opensScope = /[{\[(:]$/.test(end);
+          // A trailing `::` (Rust, C++ paths) doesn't open a scope.
+          const opensScope = /(?:[{\[(]|(?<!:):)$/.test(end);
           const extra = opensScope ? codeIndentUnit(source) : "";
           const { state, view } = this.editor;
           view.dispatch(state.tr.insertText("\n" + indent + extra).scrollIntoView());

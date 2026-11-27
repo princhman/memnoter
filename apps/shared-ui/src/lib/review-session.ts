@@ -215,6 +215,8 @@ export class ReviewSession {
         }
         this.emit();
         await new Promise<void>(resolve => setTimeout(resolve, delay));
+        // Review closed while waiting: the next open loads the queue itself.
+        if (!this.listeners.size) return;
       }
     }
   }
