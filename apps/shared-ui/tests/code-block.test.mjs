@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chromium } from "playwright";
+import * as Y from "yjs";
 import { browserHarness, installTestBridge } from "./support/browser.mjs";
 
-const { createServer } = browserHarness(import.meta.url);
+const { createServer, webkit } = browserHarness(import.meta.url);
 
 test("the desktop note creates, indents, highlights, copies and reloads code blocks", async () => {
   const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
@@ -114,4 +115,47 @@ test("the desktop note creates, indents, highlights, copies and reloads code blo
     await browser?.close();
     await server.close();
   }
+});
+
+test("saved code blocks can change language and indent in Plain text", async t => {
+  const doc = new Y.Doc();
+  const block = new Y.XmlElement("codeBlock");
+  doc.getXmlFragment("default").insert(0, [block]);
+  const state = [...Y.encodeStateAsUpdate(doc)];
+  doc.destroy();
+
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  t.after(() => server.close());
+  await server.listen();
+  const browser = await webkit.launch();
+  const page = await browser.newPage();
+  page.setDefaultTimeout(7000);
+  await page.addInitScript(state => {
+    window.installTestBridge({ tauri: { invoke: async (command, args) => {
+      if (command === "modules") return [{ id: "code", name: "Code examples" }];
+      if (command === "get_content") return { state: [], updates: [{ id: 1, bytes: state }], files: [] };
+      if (command === "add_update") return { id: 2, bytes: args.bytes };
+      if (command === "plugin:window|is_fullscreen") return false;
+      return [];
+    } } });
+  }, state);
+  await page.goto(`http://localhost:${server.httpServer.address().port}/code`, { waitUntil: "commit" });
+
+  const editor = page.locator(".tiptap[contenteditable=true]");
+  const code = editor.locator("pre code");
+  const language = editor.getByRole("combobox", { name: "Code language" });
+  await t.test("Enter after a colon indents in Plain text", async () => {
+    assert.equal(await language.inputValue(), "");
+    await editor.locator("pre").click();
+    await page.keyboard.type("case 1:");
+    await page.keyboard.press("Enter");
+    assert.equal(await code.textContent(), "case 1:\n    ");
+  });
+  await t.test("the picker changes language after a cold load", async () => {
+    await page.reload({ waitUntil: "commit" });
+    await language.waitFor();
+    assert.equal(await language.isEnabled(), true, "The saved block's language picker should be enabled");
+    await language.selectOption("python");
+    assert.equal(await code.getAttribute("class"), "language-python");
+  });
 });

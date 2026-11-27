@@ -75,13 +75,13 @@ export const MermaidView = Extension.create({
 function mermaidNodeViews(editor: Editor): Record<string, NodeViewConstructor> {
   const defer = createViewportRenderer();
   return {
-    codeBlock: (node, _view, getPos, decorations) => {
+    codeBlock: (node, view, getPos, decorations) => {
       const mermaid = isMermaid(node);
       const pre = document.createElement("pre");
       const contentDOM = document.createElement("code");
       if (node.attrs.language) contentDOM.className = `language-${node.attrs.language}`;
       pre.append(contentDOM);
-      if (!mermaid) return codeBlockView(editor, node, getPos, pre, contentDOM);
+      if (!mermaid) return codeBlockView(view, node, getPos, pre, contentDOM);
 
       const dom = document.createElement("div");
       dom.className = "mermaid-block";

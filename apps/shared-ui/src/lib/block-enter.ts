@@ -3,7 +3,6 @@ import { canSplit } from "@tiptap/pm/transform";
 import { keydownHandler } from "@tiptap/pm/keymap";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 import { codeIndentUnit } from "./editor-schema/code-indent";
-import { codeLanguage } from "./editor-schema/code-languages";
 
 export const codeFence = /^```(?:[ \t]*([a-zA-Z][\w+.-]*))?[ \n]$/;
 
@@ -100,8 +99,7 @@ export const BlockEnter = Extension.create({
           const line = before.slice(before.lastIndexOf("\n") + 1);
           const indent = line.match(/^[ \t]*/)?.[0] ?? "";
           const end = line.trimEnd();
-          const opensScope = /[{\[(]$/.test(end) ||
-            (end.endsWith(":") && codeLanguage(parent.attrs.language) === "python");
+          const opensScope = /[{\[(:]$/.test(end);
           const extra = opensScope ? codeIndentUnit(source) : "";
           const { state, view } = this.editor;
           view.dispatch(state.tr.insertText("\n" + indent + extra).scrollIntoView());

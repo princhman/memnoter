@@ -3,9 +3,8 @@ import { IconTooltip } from "@/components/ui/icon-tooltip";
 import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { Editor } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
-import type { NodeView } from "@tiptap/pm/view";
+import type { EditorView, NodeView } from "@tiptap/pm/view";
 import { codeLanguage, codeLanguages } from "./code-languages";
 
 async function copyText(text: string) {
@@ -72,7 +71,7 @@ function CopyCodeButton({ getText }: { getText: () => string }) {
 }
 
 export function codeBlockView(
-  editor: Editor, node: Node, getPos: () => number | undefined, pre: HTMLElement, code: HTMLElement,
+  view: EditorView, node: Node, getPos: () => number | undefined, pre: HTMLElement, code: HTMLElement,
 ): NodeView {
   const dom = document.createElement("div");
   dom.className = "note-code-block";
@@ -102,12 +101,15 @@ export function codeBlockView(
     }
     picker.value = language ?? imported?.value ?? "";
     label.textContent = picker.selectedOptions[0]?.text ?? "";
-    picker.disabled = !editor.isEditable;
   };
+  const syncEditable = () => { picker.disabled = !view.editable; };
+  const editability = new MutationObserver(syncEditable);
+  editability.observe(view.dom, { attributeFilter: ["contenteditable"] });
+  syncEditable();
   picker.addEventListener("change", () => {
     const pos = getPos();
-    if (pos === undefined || !editor.isEditable) return;
-    const { state, view } = editor;
+    if (pos === undefined || !view.editable) return;
+    const { state } = view;
     if (state.doc.nodeAt(pos) !== current) return;
     view.dispatch(state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, language: picker.value || null }));
   });
@@ -133,6 +135,9 @@ export function codeBlockView(
     stopEvent: event => event.target instanceof window.Node && toolbar.contains(event.target),
     ignoreMutation: mutation => mutation.type !== "selection" &&
       (toolbar.contains(mutation.target) || (mutation.type === "attributes" && mutation.target === code)),
-    destroy() { queueMicrotask(() => copyRoot.unmount()); },
+    destroy() {
+      editability.disconnect();
+      queueMicrotask(() => copyRoot.unmount());
+    },
   };
 }
