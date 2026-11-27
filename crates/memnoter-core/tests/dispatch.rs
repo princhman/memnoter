@@ -771,7 +771,7 @@ fn file_order_survives_restart_and_syncs_in_both_directions() {
 }
 
 #[test]
-fn synced_pdf_from_an_earlier_clock_appends_and_converges() {
+fn synced_pdf_from_an_earlier_clock_appends_to_local_arrival_order() {
     let a = Fixture::new();
     let b = Fixture::new();
     let module = a.call("create_module", json!({"name":"PDFs"}));
@@ -799,7 +799,41 @@ fn synced_pdf_from_an_earlier_clock_appends_and_converges() {
     transfer_vault(&b, &a, 2);
     assert_eq!(list(&a), [&existing, &new].map(Clone::clone));
     transfer_vault(&a, &b, 3);
-    assert_eq!(list(&b), list(&a));
+    assert_eq!(list(&b), [&new, &existing].map(Clone::clone));
     transfer_vault(&b, &a, 4);
     assert_eq!(list(&a), [&existing, &new].map(Clone::clone));
+}
+
+#[test]
+fn receiving_an_import_before_its_reorder_does_not_publish_an_order() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"PDFs"}));
+    let add = |name: &str| {
+        a.call("add_document_bytes", json!({
+            "moduleId":module, "name":name, "bytes":b"%PDF-"
+        }))["id"].clone()
+    };
+    let existing = add("Existing.pdf");
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    let generation = b.call("sync_status", json!({}))["generation"].clone();
+    transfer_vault(&a, &b, 1);
+    let outbox = || b.call("sync_outbox", json!({"limitBytes":1048576,"generation":generation}));
+    let before_import = outbox();
+
+    let new = add("New.pdf");
+    transfer_vault(&a, &b, 2);
+    let after_import = outbox();
+    a.call("move_document", json!({"id":new,"targetId":existing,"after":false}));
+    transfer_vault(&a, &b, 3);
+    transfer_vault(&b, &a, 4);
+    transfer_vault(&a, &b, 5);
+
+    assert_eq!(after_import.as_array().unwrap().len(), before_import.as_array().unwrap().len(),
+        "receiving a PDF must not queue an order update");
+    for device in [&a, &b] {
+        let documents = device.call("list_documents", json!({}));
+        assert_eq!([&documents[0]["id"], &documents[1]["id"]], [&new, &existing]);
+    }
 }

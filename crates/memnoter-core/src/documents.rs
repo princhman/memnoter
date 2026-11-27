@@ -1,5 +1,8 @@
 use crate::*;
-use std::{collections::HashMap, io::Read};
+use std::{
+    collections::{HashMap, HashSet},
+    io::Read,
+};
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +115,7 @@ pub fn add_document_bytes(
             )
             .map_err(db_err)?;
         }
+        remember_arrivals(&tx)?;
         sync::record_document(&tx, &id, false)?;
         tx.commit().map_err(db_err)
     })();
@@ -178,7 +182,7 @@ pub fn list_documents(
     let conn = db.lock()?;
     let mut documents = records(data_dir, &conn, module_id.as_deref())?;
     let ranks = order_ranks(&conn)?;
-    documents.sort_by_key(|document| rank(&ranks, &document.id));
+    documents.sort_by_key(|document| ranks.get(&document.id).copied().unwrap_or(usize::MAX));
     Ok(documents)
 }
 
@@ -201,16 +205,68 @@ pub(crate) fn read_order(conn: &Connection) -> CommandResult<Vec<String>> {
         .map(Option::unwrap_or_default)
 }
 
-fn order_ranks(conn: &Connection) -> CommandResult<HashMap<String, usize>> {
-    Ok(read_order(conn)?
-        .into_iter()
-        .enumerate()
-        .map(|(rank, id)| (id, rank))
-        .collect())
+pub(crate) fn migrate_arrival_order(conn: &Connection) -> CommandResult<()> {
+    let has_arrivals = conn
+        .query_row(
+            "select exists(select 1 from pragma_table_info('document_order') where name = 'arrivals')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(db_err)?;
+    if !has_arrivals {
+        conn.execute_batch(
+            "alter table document_order add column arrivals TEXT NOT NULL DEFAULT '[]'",
+        )
+        .map_err(db_err)?;
+    }
+    remember_arrivals(conn)
 }
 
-fn rank(ranks: &HashMap<String, usize>, id: &str) -> usize {
-    ranks.get(id).copied().unwrap_or(usize::MAX)
+fn read_arrivals(conn: &Connection) -> CommandResult<Vec<String>> {
+    let data: Option<String> = conn
+        .query_row(
+            "select arrivals from document_order where id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_err)?;
+    data.map(|value| serde_json::from_str(&value).map_err(db_err))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+pub(crate) fn remember_arrivals(conn: &Connection) -> CommandResult<()> {
+    let mut arrivals = read_arrivals(conn)?;
+    let ids = document_ids(conn)?;
+    let present: HashSet<_> = ids.iter().collect();
+    arrivals.retain(|id| present.contains(id));
+    let known: HashSet<_> = arrivals.iter().collect();
+    let new: Vec<_> = ids
+        .iter()
+        .filter(|id| !known.contains(id))
+        .cloned()
+        .collect();
+    arrivals.extend(new);
+    conn.execute(
+        "insert into document_order (id, data, arrivals) values (1, '[]', ?1)
+         on conflict(id) do update set arrivals = excluded.arrivals where arrivals != excluded.arrivals",
+        [serde_json::to_string(&arrivals).map_err(db_err)?],
+    )
+    .map(|_| ())
+    .map_err(db_err)
+}
+
+fn order_ranks(conn: &Connection) -> CommandResult<HashMap<String, usize>> {
+    let mut ranks = HashMap::new();
+    for (rank, id) in read_order(conn)?
+        .into_iter()
+        .chain(read_arrivals(conn)?)
+        .enumerate()
+    {
+        ranks.entry(id).or_insert(rank);
+    }
+    Ok(ranks)
 }
 
 pub(crate) fn store_order(conn: &Connection, order: &[String]) -> CommandResult<()> {
@@ -223,7 +279,7 @@ pub(crate) fn store_order(conn: &Connection, order: &[String]) -> CommandResult<
     .map_err(db_err)
 }
 
-pub(crate) fn document_ids(conn: &Connection) -> CommandResult<Vec<String>> {
+fn document_ids(conn: &Connection) -> CommandResult<Vec<String>> {
     let mut stmt = conn
         .prepare("select id from documents order by created_at,id")
         .map_err(db_err)?;
@@ -239,7 +295,7 @@ pub fn move_document(db: &Db, id: String, target_id: String, after: bool) -> Com
     let tx = conn.transaction().map_err(db_err)?;
     let mut ids = document_ids(&tx)?;
     let ranks = order_ranks(&tx)?;
-    ids.sort_by_key(|id| rank(&ranks, id));
+    ids.sort_by_key(|id| ranks.get(id).copied().unwrap_or(usize::MAX));
     let source = ids
         .iter()
         .position(|entry| entry == &id)

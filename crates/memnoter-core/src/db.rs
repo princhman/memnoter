@@ -288,6 +288,7 @@ const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] = &[
     asset_refs::migrate_worksheet_leases,
     crate::card_moves::migrate,
     documents::migrate_order,
+    documents::migrate_arrival_order,
 ];
 
 fn migrate_sidebar_items(conn: &Connection) -> CommandResult<()> {
