@@ -52,8 +52,8 @@ async function desktopSync(t) {
       case 'sync_outbox': return session.readOutbox();
       case 'sync_ack': session.acks++; session.outbox = []; return;
       case 'sync_pending_uploads': return session.uploads;
-      case 'sync_pending_deletes':
-      case 'sync_missing_files': return [];
+      case 'sync_pending_deletes': return [];
+      case 'sync_missing_files': return session.missing ?? [];
       case 'read_file': return { bytes: [42] };
       case 'sync_upload_done': session.uploads = []; return;
       case 'sync_disable':
@@ -144,4 +144,50 @@ test('manual sync waits for queued images and reports a failed upload', async t 
   await until(() => status().state === 'synced');
   assert.equal(status().error, null);
   assert.deepEqual(session.uploads, []);
+});
+
+test('a manual retry does not wait behind a store call that never settles', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const { session } = await desktopSync(t);
+  session.outbox = [{ id: 1, doc: 'note', bytes: [] }];
+  session.readOutbox = () => new Promise(() => {});
+  await syncNow();
+  await tick();
+  t.mock.timers.tick(30_000);
+  await tick();
+  assert.equal(status().state, 'error');
+
+  session.readOutbox = () => session.outbox;
+  await syncNow();
+  await until(() => status().state === 'synced');
+  assert.equal(session.acks, 1);
+});
+
+test('background sync resumes by itself after a manual sync times out', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const { session } = await desktopSync(t);
+  session.stall = 'hello';
+  await syncNow();
+  await tick();
+  t.mock.timers.tick(30_000);
+  await tick();
+  assert.equal(status().state, 'error');
+
+  session.stall = null;
+  session.outbox = [{ id: 1, doc: 'note', bytes: [] }];
+  for (let i = 0; i < 20 && session.acks === 0; i++) {
+    t.mock.timers.tick(2_000);
+    await delay(5);
+  }
+  assert.equal(session.acks, 1, 'the edit synced without pressing Sync now');
+});
+
+test('a stalled image download does not hold up a manual sync', async t => {
+  const { session } = await desktopSync(t);
+  session.missing = [{ fileId: 'remote-image', moduleId: 'note', fileType: 'image/png' }];
+  t.mock.method(globalThis, 'fetch', () => new Promise(() => {}));
+  session.outbox = [{ id: 1, doc: 'note', bytes: [] }];
+  await syncNow();
+  await until(() => status().state === 'synced' && session.acks === 1);
+  assert.equal(status().error, null);
 });

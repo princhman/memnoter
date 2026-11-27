@@ -37,6 +37,9 @@ export function createFileSync({ generation, signal, server, token, key, onStore
   let stoppedError: string | null = null;
   let draining: Promise<string | null> | null = null;
   let again = false;
+  // Manual syncs wait for the uploads that existed when they asked, not for
+  // the deletes and downloads that follow them in the same pass.
+  let uploadWaiters: ((error: string | null) => void)[] = [];
   let kickTimer: number | undefined;
   let retryTimer: number | undefined;
   // Images someone is looking at come first.
@@ -104,10 +107,20 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     };
 
     let uploadError: string | null = null;
-    for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
-      if (!running) return uploadError;
-      const error = await attempt(fileId, () => upload(fileId));
-      if (error !== null) uploadError ??= `Image upload failed: ${error}`;
+    const waiters = uploadWaiters;
+    uploadWaiters = [];
+    try {
+      for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
+        if (!running) return uploadError;
+        const error = await attempt(fileId, () => upload(fileId));
+        if (error !== null) uploadError ??= `Image upload failed: ${error}`;
+      }
+    } catch (error) {
+      uploadError ??= `Image upload failed: ${error instanceof Error ? error.message : String(error)}`;
+      throw error;
+    } finally {
+      const result = uploadError ?? stoppedError;
+      for (const settle of waiters) settle(result);
     }
     for (const fileId of await invoke<string[]>("sync_pending_deletes", { generation })) {
       if (!running) return uploadError;
@@ -171,7 +184,10 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     },
     flushUploads() {
       window.clearTimeout(kickTimer);
-      return stoppedError ? Promise.resolve(stoppedError) : run();
+      if (stoppedError || !running) return Promise.resolve(stoppedError);
+      const uploaded = new Promise<string | null>(settle => uploadWaiters.push(settle));
+      void run();
+      return uploaded;
     },
     // An image on screen is missing: fetch it before the others.
     request(fileId: string) {
@@ -181,6 +197,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     },
     stop() {
       running = false;
+      for (const settle of uploadWaiters.splice(0)) settle(stoppedError);
       controller.abort();
       signal?.removeEventListener("abort", abort);
       window.clearTimeout(kickTimer);

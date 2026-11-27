@@ -462,7 +462,12 @@ export function createSyncEngine({
       const timer = setTimeout(() => {
         // Invalidate the stalled socket so a retry starts from the durable cursor.
         disconnect();
+        // A stalled store call may never settle; the next connection's work
+        // must not queue behind it. Its own results are discarded by generation.
+        chain = Promise.resolve();
         setStatus({ state: "error", error: "Sync timed out. Check your connection and try again." });
+        // Background sync carries on with its usual backoff.
+        scheduleReconnect();
       }, MANUAL_SYNC_TIMEOUT_MS);
       manualSync = { timer, finishUploads, waitingForUploads: false };
       if (!running) {
