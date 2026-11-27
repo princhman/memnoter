@@ -104,7 +104,6 @@ test("an unselected image can be dragged from a corner to the marked block bound
   const proof = process.env.PROOF_DIR;
   const { page, editor, image } = await openNote(t, { colorScheme: "light" });
   const marker = page.locator(".note-image-drop-indicator");
-  const preview = page.locator(".note-image-drag-preview");
   const results = editor.getByRole("heading", { name: /Results/ });
   const paragraph = editor.getByText("The next set of measurements", { exact: true });
   assert.equal(await page.getByRole("button", { name: "Image actions" }).count(), 0);
@@ -122,8 +121,6 @@ test("an unselected image can be dragged from a corner to the marked block bound
   await page.mouse.move(following.x + following.width - 10, following.y + 4, { steps: 26 });
   await marker.waitFor();
   const line = await marker.boundingBox();
-  const thumbnail = await preview.boundingBox();
-  assert.ok(thumbnail.width < picture.width / 2, "the drag preview is compact");
   assert.ok(Math.abs(line.x - following.x) < 1 && Math.abs(line.width - following.width) < 1, "line spans the text column");
   assert.ok(line.height >= 3 && line.y + line.height / 2 >= preceding.y + preceding.height &&
     line.y + line.height / 2 <= following.y, "line marks the gap above the paragraph");
@@ -142,7 +139,6 @@ test("an unselected image can be dragged from a corner to the marked block bound
       block?.nextElementSibling?.textContent === "The next set of measurements";
   });
   assert.equal(await marker.count(), 0);
-  assert.equal(await preview.count(), 0);
   if (proof) {
     await page.waitForTimeout(1000);
     const video = page.video();

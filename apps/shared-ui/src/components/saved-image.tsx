@@ -435,7 +435,7 @@ export function SavedImageView(props: NodeViewProps) {
     // keyboard even when the preceding selection was a text caret.
     if (environment.isNative) selectImage();
     cancelMove.current?.();
-    cancelMove.current = startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent, image.current);
+    cancelMove.current = startImagePointerMove(editor.view, () => latest.current.getPos(), event.nativeEvent);
   };
 
   const layout: ImageLayout = isInline ? "inline" : node.attrs.wrap && !inTableCell ? "wrap" : "break";

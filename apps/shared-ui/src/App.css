@@ -1810,16 +1810,6 @@ body {
   border-radius: 2px;
   background: var(--control-accent);
 }
-.note-image-drag-preview {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-drag);
-  pointer-events: none;
-  border-radius: 0.4rem;
-  box-shadow: var(--floating-shadow);
-}
-
 /* Preserve selection feedback over syntax backgrounds without replacing their
    arrow image or cloze underline. */
 .tiptap .text-range-selected:is(.card-sep, .cloze-text) {

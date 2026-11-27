@@ -96,7 +96,7 @@ function stopCapturing(view: EditorView) {
 // Returns a function that cancels the move (for example when the editor is
 // destroyed mid-drag), removing the marker and every window listener.
 export function startImagePointerMove(
-  view: EditorView, getPos: () => number | undefined, down: PointerEvent, picture: HTMLImageElement | null,
+  view: EditorView, getPos: () => number | undefined, down: PointerEvent,
 ): () => void {
   const from = getPos();
   if (from === undefined) return () => {};
@@ -107,7 +107,6 @@ export function startImagePointerMove(
   let insert: number | null = null;
   const indicator = document.createElement("div");
   indicator.className = "note-image-drop-indicator";
-  let preview: HTMLImageElement | undefined;
 
   const update = (event: PointerEvent) => {
     if (event.pointerId !== down.pointerId) return;
@@ -116,23 +115,7 @@ export function startImagePointerMove(
       moving = true;
       if (element instanceof Element) element.setAttribute("data-moving", "");
       document.documentElement.classList.add("is-moving-image");
-      if (down.pointerType === "mouse" && picture?.naturalWidth) {
-        const { width, height } = picture.getBoundingClientRect();
-        const scale = Math.min(1, 144 / width, 96 / height);
-        preview = new Image(Math.round(width * scale), Math.round(height * scale));
-        preview.src = picture.currentSrc;
-        preview.alt = "";
-        preview.className = "note-image-drag-preview";
-        document.body.append(preview);
-      }
       document.body.append(indicator);
-    }
-    if (preview) {
-      const x = event.clientX + 14 + preview.width <= window.innerWidth
-        ? event.clientX + 14 : event.clientX - 14 - preview.width;
-      const y = event.clientY + 14 + preview.height <= window.innerHeight
-        ? event.clientY + 14 : event.clientY - 14 - preview.height;
-      preview.style.transform = `translate(${x}px, ${y}px)`;
     }
     autoScroll(view, event.clientY);
     const target = targetPosition(view, event, node.isInline);
@@ -150,7 +133,6 @@ export function startImagePointerMove(
     window.removeEventListener("blur", cancel);
     window.removeEventListener("keydown", escape, true);
     indicator.remove();
-    preview?.remove();
     if (element instanceof Element) element.removeAttribute("data-moving");
     document.documentElement.classList.remove("is-moving-image");
     const current = getPos();
