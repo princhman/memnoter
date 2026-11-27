@@ -13,6 +13,8 @@ import { maskCards, validMasks } from "@/lib/occlusion";
 import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
 import { CropDialog, type Crop as ImageCrop } from "./image-crop-dialog";
 import { copyImageAttrs } from "@/lib/editor-schema/images";
+import { figureNumbers } from "@/lib/figure-numbering";
+import { headingNumberingKey } from "@/lib/heading-numbering";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { ResizableNodeView } from "@tiptap/core";
@@ -65,6 +67,25 @@ export function SavedImageView(props: NodeViewProps) {
       return selection instanceof NodeSelection && selection.from === props.getPos();
     },
   });
+  const caption = typeof node.attrs.caption === "string" ? node.attrs.caption.trim() : "";
+  const [editingCaption, setEditingCaption] = useState(false);
+  const figureNumber = useEditorState({
+    editor,
+    selector: ({ editor }) => {
+      const pos = props.getPos();
+      if (pos === undefined || (!caption && !editingCaption)) return null;
+      const { state } = editor;
+      return figureNumbers(state.doc, !!headingNumberingKey.getState(state)).get(pos) ?? null;
+    },
+  });
+  const finishCaption = (value: string) => {
+    setEditingCaption(false);
+    if (!editor.isEditable || editor.isDestroyed || !isWriteAdmitted()) return;
+    const pos = props.getPos();
+    if (pos !== undefined && editor.state.doc.nodeAt(pos) === node && value !== caption) {
+      updateAttributes({ caption: value || null });
+    }
+  };
   const { files, saveImage, readImage, moduleId, editDrawing, unsavedDrawingId, flashcards = true, worksheet = false } = useContext(FilesContext);
   const drawing = drawingReference(node.attrs.drawing);
   const macDrawing = !!drawing && IS_MAC && isTauri();
@@ -533,6 +554,40 @@ export function SavedImageView(props: NodeViewProps) {
         ? <Button variant="outline" onClick={openDrawing}>{canEditDrawing ? "Open drawing" : "Drawing (edit on iPad)"}</Button>
         : <span className="text-sm text-muted-foreground">Image unavailable</span>)}
       {node.attrs.pdfSource && <PdfSourceCaption value={node.attrs.pdfSource} />}
+      {editingCaption && editor.isEditable ? (
+        <span className="note-image-caption" data-empty={!caption || undefined}>
+          <span className="note-image-caption-edit">
+            <span>Figure {figureNumber}</span>
+            <input
+              aria-label="Image caption"
+              autoFocus
+              defaultValue={caption}
+              key={caption}
+              placeholder="Caption"
+              onBlur={event => finishCaption(event.currentTarget.value.trim())}
+              onKeyDown={event => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === "Escape") event.currentTarget.value = caption;
+                if (event.key === "Enter" || event.key === "Escape") {
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                  editor.view.focus();
+                }
+              }}
+            />
+          </span>
+        </span>
+      ) : caption ? (
+        <span className="note-image-caption">
+          {editor.isEditable
+            ? <button type="button" onClick={() => setEditingCaption(true)}>Figure {figureNumber}: {caption}</button>
+            : <>Figure {figureNumber}: {caption}</>}
+        </span>
+      ) : selected && editor.isEditable && (
+        <span className="note-image-caption" data-empty>
+          <Button size="xs" variant="ghost" onClick={() => setEditingCaption(true)}>Add caption</Button>
+        </span>
+      )}
       {selected && editor.isEditable && (
         <ImageControlsLayer anchor={controlsAnchor}>
           <ImageActionsMenu label="Image actions" className="note-image-actions-menu w-60" sideOffset={isNativeTablet ? 10 : undefined} finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}>
@@ -693,6 +748,7 @@ const IMAGE_SIZES = [
 // that drag swallows the click that selects the image and opens its toolbar.
 export function imageStopEvent({ event }: { event: Event }) {
   const { type } = event;
+  if (event.target instanceof HTMLInputElement && event.target.closest(".note-image-caption")) return true;
   // Other content can still be dropped on or beside the image.
   if (type === "dragover" || type === "dragenter" || type === "drop") return false;
   if (type === "dragstart") { event.preventDefault(); return true; }

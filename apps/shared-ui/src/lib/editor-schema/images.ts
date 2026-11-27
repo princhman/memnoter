@@ -17,6 +17,11 @@ export const SavedImage = Image.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
+      caption: {
+        default: null,
+        parseHTML: element => element.getAttribute("data-caption"),
+        renderHTML: attrs => typeof attrs.caption === "string" && attrs.caption ? { "data-caption": attrs.caption } : {},
+      },
       pdfSource: { default: null,
         parseHTML: el => { try { return parsePdfSource(JSON.parse(el.getAttribute("data-pdf-source") || "null")); } catch { return null; } },
         renderHTML: attrs => { const source = parsePdfSource(attrs.pdfSource); return source ? { "data-pdf-source": JSON.stringify(source) } : {}; },
