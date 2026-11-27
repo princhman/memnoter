@@ -126,6 +126,8 @@ test('PDF text menu holds its position during a backward selection drag', async 
     await page.waitForTimeout(pause);
     assert.deepEqual(await menu.boundingBox(), position);
     await page.mouse.up();
+    await page.waitForTimeout(pause);
+    assert.deepEqual(await menu.boundingBox(), position);
     assert.match(await page.evaluate(() => window.getSelection().toString()), /Page 1 first line/);
     if (process.env.PROOF_DIR) await page.waitForTimeout(900);
     await page.close();

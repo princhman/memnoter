@@ -532,10 +532,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     const endDrag = () => {
       if (!dragging) return;
       dragging = false;
-      dragPosition = null;
       update();
     };
     const clear = () => {
+      dragPosition = null;
       setTextAction(null);
       savedTextSelection.current = null;
       const selection = window.getSelection();
@@ -545,7 +545,11 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const selected = !selecting && !cropping && !pinching && !pendingPdfQuote.state && readPdfTextSelection(reader, doc);
-        if (!selected) { setTextAction(null); return; }
+        if (!selected) {
+          if (!dragging) dragPosition = null;
+          setTextAction(null);
+          return;
+        }
         savedTextSelection.current = selected;
         const bounds = host.getBoundingClientRect(), view = viewport.getBoundingClientRect();
         if (selected.anchor.bottom < view.top || selected.anchor.top > view.bottom) { setTextAction(null); return; }
