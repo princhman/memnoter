@@ -82,21 +82,25 @@ struct ReviewView: View {
     private func compactToolbar(_ breadcrumb: (CGFloat) -> AnyView) -> some View {
         // Leave room for native Back and the navigation bar margins. Only the
         // breadcrumb gives up width as the queue counts grow.
-        let rowWidth = max(0, toolbarWidth - 88)
+        let trailingMargin: CGFloat = toolbarWidth >= 414 ? 20 : 16
+        let rowWidth = max(0, toolbarWidth - 72 - trailingMargin)
         let breadcrumbWidth = max(112, rowWidth - 8 - max(92, compactActionsWidth))
         return TabletGlassRow {
             breadcrumb(breadcrumbWidth).modifier(TabletGlassPill())
-            HStack(alignment: .center, spacing: 10) {
-                countsLabel
-                reviewActions
-                    .buttonStyle(.plain)
-                    .frame(width: 44, height: 44)
-                    .modifier(TabletGlassPill())
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                HStack(alignment: .center, spacing: 8) {
+                    countsLabel
+                    reviewActions
+                        .buttonStyle(.plain)
+                        .frame(width: 44, height: 44)
+                        .modifier(TabletGlassPill())
+                }
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { compactActionsWidth = $0 }
             }
-            .fixedSize()
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { compactActionsWidth = $0 }
         }
-        .frame(minWidth: rowWidth, alignment: .leading)
+        .frame(width: rowWidth > 0 ? rowWidth : nil, alignment: .leading)
     }
     private var reviewActions: some View {
         Menu {
