@@ -105,7 +105,8 @@ export async function correctImageFile(file: File): Promise<File> {
       if (!correctImagePixels(pixels.data)) return file;
       context.putImageData(pixels, 0, 0);
       const corrected = await encode(file.type, 0.88);
-      if (corrected.type !== file.type || corrected.size > file.size * 1.5 + 256 * 1024) return file;
+      // Re-encoding a small or heavily compressed file can multiply its size.
+      if (corrected.type !== file.type || corrected.size > file.size * 1.5) return file;
       return new File([corrected], file.name, { type: file.type, lastModified: file.lastModified });
     } finally {
       bitmap.close();
