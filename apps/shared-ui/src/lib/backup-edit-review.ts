@@ -34,8 +34,11 @@ function ownsNote(file: EditedFile, module: Module) {
   return path === filename || path.startsWith(filename.slice(0, -3) + " - ");
 }
 
-export async function readBackupReview(folder: string): Promise<BackupReviewFile[]> {
-  const edited = await call<EditedFile[]>("read_local_backup_edits", { folder });
+export function readBackupEdits(folder: string) {
+  return call<EditedFile[]>("read_local_backup_edits", { folder });
+}
+
+export async function buildBackupReview(edited: EditedFile[]): Promise<BackupReviewFile[]> {
   if (!edited.length) return [];
 
   const [modules, pdfs, images] = await Promise.all([
@@ -77,7 +80,7 @@ export async function readBackupReview(folder: string): Promise<BackupReviewFile
 
 export async function recheckBackupFile(folder: string, note: Extract<BackupReviewFile, { kind: "note" }>) {
   const [files, modules, pdfs] = await Promise.all([
-    call<EditedFile[]>("read_local_backup_edits", { folder }), call<Module[]>("modules"), listDocuments(),
+    readBackupEdits(folder), call<Module[]>("modules"), listDocuments(),
   ]);
   const file = files.find(file => file.path === note.path && file.hash === note.hash && file.moduleId === note.moduleId);
   const module = modules.find(module => module.id === note.moduleId);

@@ -1,13 +1,77 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { createStore, useSelector } from "@tanstack/react-store";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { applyBackupHunks, recheckBackupFile, type BackupReviewFile } from "@/lib/backup-edit-review";
+import { applyBackupHunks, buildBackupReview, readBackupEdits, recheckBackupFile, type BackupReviewFile } from "@/lib/backup-edit-review";
+import { localBackupSettings } from "@/lib/local-backup";
+import { queryClient } from "@/lib/query-client";
 import { cn } from "@/lib/utils";
 
-export const backupReview = createStore<{ folder: string; files: BackupReviewFile[] } | null>(null);
+const backupReview = createStore<{ folder: string; files: BackupReviewFile[] } | null>(null);
+const toastId = "local-backup-edits";
+const shownByFolder = new Map<string, Map<string, string>>();
+
+function shownEdits(folder: string) {
+  const cached = shownByFolder.get(folder);
+  if (cached) return cached;
+  const hashes = new Map<string, string>();
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(`local-backup-edits:${folder}`) ?? "{}");
+    if (saved && typeof saved === "object") {
+      for (const [path, hash] of Object.entries(saved)) {
+        if (typeof hash === "string") hashes.set(path, hash);
+      }
+    }
+  } catch { /* Keep tracking edits in this session if storage is unavailable. */ }
+  shownByFolder.set(folder, hashes);
+  return hashes;
+}
+
+function rememberEdits(folder: string, files: Awaited<ReturnType<typeof readBackupEdits>>) {
+  const hashes = new Map(files.map(file => [file.path, file.hash]));
+  shownByFolder.set(folder, hashes);
+  try {
+    localStorage.setItem(`local-backup-edits:${folder}`, JSON.stringify(Object.fromEntries(hashes)));
+  } catch { /* The in-memory hashes still suppress repeated notices. */ }
+}
+
+export async function openBackupEdits(folder: string) {
+  const shown = shownEdits(folder);
+  const edited = await readBackupEdits(folder);
+  const files = await buildBackupReview(edited);
+  if (queryClient.getQueryData(localBackupSettings.queryKey)?.folder !== folder || backupReview.state) return;
+  if (shownEdits(folder) === shown) rememberEdits(folder, edited);
+  toast.dismiss(toastId);
+  backupReview.setState(() => ({ folder, files }));
+}
+
+export async function notifyOfBackupEdits(folder: string, isActive: () => boolean) {
+  const edited = await readBackupEdits(folder);
+  if (!isActive()) return;
+  const shown = shownEdits(folder);
+  const fresh = edited.filter(file => shown.get(file.path) !== file.hash);
+  if (fresh.length || shown.size !== edited.length) rememberEdits(folder, edited);
+  if (!fresh.length) return;
+
+  const unit = fresh.some(file => file.path.startsWith("attachments/")) ? "file" : "note";
+  toast(`Edits found in the backup: ${fresh.length} ${unit}${fresh.length === 1 ? "" : "s"}`, {
+    id: toastId,
+    closeButton: true,
+    duration: 8000,
+    action: {
+      label: "Review",
+      onClick: () => {
+        if (isActive()) void openBackupEdits(folder).catch(error => {
+          toast.error(error instanceof Error ? error.message : "Could not review the backup edits.");
+        });
+      },
+    },
+  });
+}
+
 type NoteFile = Extract<BackupReviewFile, { kind: "note" }>;
 
 export function BackupEditsDialog() {

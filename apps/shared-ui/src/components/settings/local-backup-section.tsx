@@ -1,6 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { backupReview } from "./backup-edits-dialog";
-import { readBackupReview } from "@/lib/backup-edit-review";
+import { openBackupEdits } from "./backup-edits-dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { call } from "@/lib/backend";
@@ -18,8 +17,7 @@ export default function LocalBackupSection() {
     onSuccess: settings => queryClient.setQueryData(localBackupSettings.queryKey, settings),
   });
   const check = useMutation({
-    mutationFn: async (folder: string) => ({ folder, files: await readBackupReview(folder) }),
-    onSuccess: review => backupReview.setState(() => review),
+    mutationFn: openBackupEdits,
   });
   const error = loadError?.message ?? save.error?.message ?? check.error?.message ?? backupError;
 

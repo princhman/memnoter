@@ -96,7 +96,7 @@ async function buildSnapshot(shouldContinue: () => boolean) {
   return { modules: snapshot };
 }
 
-export function useLocalBackup() {
+export function useLocalBackup(checkForEdits: (folder: string, isActive: () => boolean) => Promise<void>) {
   const { data } = useQuery(localBackupSettings);
   const folder = data?.enabled ? data.folder : null;
   useEffect(() => {
@@ -110,13 +110,19 @@ export function useLocalBackup() {
       running = true;
       try {
         const snapshot = await buildSnapshot(() => active);
-        if (!active || !snapshot) return;
-        const warnings = await call<string[]>("write_local_backup", { folder, snapshot });
-        for (const warning of warnings) console.warn(warning);
-        if (active) queryClient.setQueryData(localBackupError.queryKey, warnings.join("\n") || null);
+        if (active && snapshot) {
+          const warnings = await call<string[]>("write_local_backup", { folder, snapshot });
+          for (const warning of warnings) console.warn(warning);
+          if (active) queryClient.setQueryData(localBackupError.queryKey, warnings.join("\n") || null);
+        }
       } catch (error) {
         if (active) queryClient.setQueryData(localBackupError.queryKey,
           error instanceof Error ? error.message : String(error));
+      }
+      try {
+        if (active) await checkForEdits(folder, () => active);
+      } catch (error) {
+        if (active) console.warn("Could not check the local backup for edits.", error);
       } finally {
         running = false;
       }
@@ -127,5 +133,5 @@ export function useLocalBackup() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [folder]);
+  }, [folder, checkForEdits]);
 }

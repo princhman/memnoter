@@ -7,6 +7,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -467,4 +468,84 @@ test("selective backup edits persist, undo, and keep an untouched card's review 
     if (command === "read_local_backup_edits") return [file];
     return call(command, args);
   }, { mac: true });
+});
+
+test("scheduled backup notices deduplicate file contents and Review applies an edit", async () => {
+  const folder = await mkdtemp(join(await realpath(tmpdir()), "memnoter-backup-"));
+  const backupFolder = join(folder, "Memnoter Backup");
+  let scans = 0;
+  try {
+    await withCore(async ({ page, source, call, editor, open }) => {
+      const original = "Review the maps on Friday.";
+      const firstEdit = "Review the maps on Monday.";
+      const secondEdit = "Review the maps on Tuesday.";
+      const doc = new Y.Doc();
+      const paragraph = new Y.XmlElement("paragraph");
+      const text = new Y.XmlText();
+      text.insert(0, original);
+      paragraph.insert(0, [text]);
+      doc.getXmlFragment("default").insert(0, [paragraph]);
+      await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc)) });
+      doc.destroy();
+
+      await page.clock.install();
+      await page.emulateMedia({ colorScheme: "light" });
+      const pace = () => process.env.PROOF_DIR ? delay(1050) : Promise.resolve();
+      const scan = async (count, startup = false) => {
+        if (!startup) await page.clock.fastForward(10 * 60 * 1000);
+        for (let attempt = 0; scans < count && attempt < 100; attempt++) await delay(50);
+        assert.equal(scans, count);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      };
+      const notice = page.locator("[data-sonner-toast]").filter({ hasText: "Edits found in the backup: 1 note" });
+      const dialog = page.getByRole("dialog", { name: "Backup edits" });
+      await open(source);
+      await scan(1, true);
+      const filenames = await readdir(backupFolder);
+      const path = join(backupFolder, filenames.find(name => name.startsWith("geography") && name.endsWith(".md")));
+      const exported = await readFile(path, "utf8");
+      assert.ok(exported.includes(original));
+
+      await pace();
+      await writeFile(path, exported.replace(original, firstEdit));
+      await scan(2);
+      await notice.waitFor();
+      assert.equal(await dialog.count(), 0);
+      assert.equal(await editor.evaluate(el => el === document.activeElement), true);
+      await pace();
+      if (process.env.PROOF_DIR) await page.screenshot({ path: join(process.env.PROOF_DIR, "backup-toast-light.png") });
+      await notice.getByRole("button", { name: "Close toast" }).click();
+      await notice.waitFor({ state: "hidden" });
+      await scan(3);
+      assert.equal(await notice.count(), 0);
+
+      await page.reload();
+      await scan(4, true);
+      assert.equal(await notice.count(), 0);
+
+      await writeFile(path, exported.replace(original, secondEdit));
+      if (process.env.PROOF_DIR) await page.emulateMedia({ colorScheme: "dark" });
+      await page.reload();
+      await scan(5, true);
+      await notice.waitFor();
+      await pace();
+      if (process.env.PROOF_DIR) await page.screenshot({ path: join(process.env.PROOF_DIR, "backup-toast-dark.png") });
+      await notice.getByRole("button", { name: "Review", exact: true }).click();
+      await dialog.getByText(secondEdit, { exact: true }).waitFor();
+      await pace();
+      await dialog.getByRole("checkbox", { name: "Apply change" }).check();
+      await pace();
+      await dialog.getByRole("button", { name: "Apply selected changes" }).click();
+      await editor.getByText(secondEdit, { exact: true }).waitFor();
+      await pace();
+    }, async (command, args, call) => {
+      if (command === "local_backup_settings") return { folder, enabled: true };
+      if (command === "local_backup_image_types") return {};
+      const result = await call(command, args);
+      if (command === "read_local_backup_edits") scans++;
+      return result;
+    }, { mac: true });
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
 });
