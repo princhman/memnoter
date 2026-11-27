@@ -10,7 +10,7 @@ import { BubbleMenu } from "@tiptap/react/menus";
 import { CellSelection } from "@tiptap/pm/tables";
 import { TableControls } from "@/components/table-controls";
 import { TableBubbleActions } from "@/components/table-bubble-actions";
-import type { Node } from "@tiptap/pm/model";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import {
   Bold,
@@ -49,7 +49,7 @@ function setSelectedBlockType(type: string, attrs: Record<string, unknown> = {})
     const target = doc.type.schema.nodes[type];
     if (!target || !(selection instanceof TextSelection)) return false;
 
-    const blocks: { pos: number; node: Node }[] = [];
+    const blocks: { pos: number; node: ProseMirrorNode }[] = [];
     let canConvert = true;
     doc.nodesBetween(selection.from, selection.to, (node, pos, parent, index) => {
       if (!node.isTextblock) return true;
@@ -275,6 +275,19 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
       className={`${surfaceClass} z-40 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-x-2 gap-y-0.5 p-1`}
       // Keep the editor selection while clicking menu buttons.
       onMouseDown={(event) => event.preventDefault()}
+      onContextMenu={event => {
+        const toolbar = event.currentTarget;
+        const editorDOM = editor.view.dom;
+        if (!(event.target instanceof Node) || !toolbar.contains(event.target) || !editor.isEditable || editorDOM.hasAttribute("data-native-editor")) return;
+        // The toolbar can overlap nearby text when it flips below a selection.
+        const { clientX, clientY } = event.nativeEvent;
+        const underneath = toolbar.ownerDocument.elementsFromPoint(clientX, clientY)
+          .find(element => !toolbar.contains(element));
+        if (!underneath || !editorDOM.contains(underneath)) return;
+
+        const forwarded = new MouseEvent("contextmenu", event.nativeEvent);
+        if (!underneath.dispatchEvent(forwarded)) event.preventDefault();
+      }}
     >
       {active.cells ? <TableBubbleActions editor={editor} /> : active.inMathBlock ? clozeButton : <>
       <DropdownMenu onOpenChange={open => { pickerOpen.current = open; }}>
