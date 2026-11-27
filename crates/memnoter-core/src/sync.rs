@@ -438,6 +438,7 @@ pub(crate) fn deleted_annotation_documents(
 }
 
 fn reconcile_documents(conn: &Connection, doc: &Doc) -> CommandResult<()> {
+    let existing = crate::documents::document_ids(conn)?;
     let modules = vault_modules(doc);
     for (id, record) in string_entries(doc, DOCUMENTS_MAP) {
         if uuid::Uuid::parse_str(&id).is_err() {
@@ -465,6 +466,26 @@ fn reconcile_documents(conn: &Connection, doc: &Doc) -> CommandResult<()> {
             ],
         )
         .map_err(db_err)?;
+    }
+    if !existing.is_empty() {
+        let mut order = crate::documents::read_order(conn)?;
+        let ranked: HashSet<_> = order.iter().collect();
+        let known: HashSet<_> = existing.iter().collect();
+        let arrivals: Vec<_> = crate::documents::document_ids(conn)?
+            .into_iter()
+            .filter(|id| !known.contains(id) && !ranked.contains(id))
+            .collect();
+        if !arrivals.is_empty() {
+            // Publish the append so peers converge without relying on the sender's clock.
+            let unranked: Vec<_> = existing
+                .into_iter()
+                .filter(|id| !ranked.contains(id))
+                .collect();
+            order.extend(unranked);
+            order.extend(arrivals);
+            crate::documents::store_order(conn, &order)?;
+            record_document_order(conn, &order)?;
+        }
     }
     Ok(())
 }

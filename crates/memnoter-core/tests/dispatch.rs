@@ -713,6 +713,16 @@ fn document_commands_keep_typed_frontend_payloads_and_local_availability() {
     assert_eq!(f.call("list_documents", json!({})), json!([]));
 }
 
+fn transfer_vault(sender: &Fixture, receiver: &Fixture, seq: i32) {
+    let sender_gen = sender.call("sync_status", json!({}))["generation"].clone();
+    let receiver_gen = receiver.call("sync_status", json!({}))["generation"].clone();
+    let vault = sender.call("sync_snapshot", json!({"doc":"vault","generation":sender_gen}));
+    receiver.call("sync_apply", json!({
+        "entries":[{"doc":"vault","bytes":vault,"seq":seq}],
+        "cursor":seq,"generation":receiver_gen
+    }));
+}
+
 #[test]
 fn file_order_survives_restart_and_syncs_in_both_directions() {
     let source = Fixture::new();
@@ -742,18 +752,9 @@ fn file_order_survives_restart_and_syncs_in_both_directions() {
     );
     drop(reopened);
 
-    let transfer = |sender: &Fixture, receiver: &Fixture, seq: i32| {
-        let sender_gen = sender.call("sync_status", json!({}))["generation"].clone();
-        let receiver_gen = receiver.call("sync_status", json!({}))["generation"].clone();
-        let vault = sender.call("sync_snapshot", json!({"doc":"vault","generation":sender_gen}));
-        receiver.call("sync_apply", json!({
-            "entries":[{"doc":"vault","bytes":vault,"seq":seq}],
-            "cursor":seq,"generation":receiver_gen
-        }));
-    };
     source.call("sync_enable", json!({"account":"{}"}));
     target.call("sync_enable", json!({"account":"{}"}));
-    transfer(&source, &target, 1);
+    transfer_vault(&source, &target, 1);
     assert_eq!(list(&target), [&third, &first, &second].map(Clone::clone));
     assert_eq!(
         ids(target.call("list_documents", json!({"moduleId":module}))),
@@ -761,10 +762,44 @@ fn file_order_survives_restart_and_syncs_in_both_directions() {
     );
 
     move_file(&target, &first, &second, true);
-    transfer(&target, &source, 2);
+    transfer_vault(&target, &source, 2);
     assert_eq!(list(&source), [&third, &second, &first].map(Clone::clone));
     let new = add(&module, "New.pdf");
     source.call("delete_document", json!({"id":third}));
-    transfer(&source, &target, 3);
+    transfer_vault(&source, &target, 3);
     assert_eq!(list(&target), [&second, &first, &new].map(Clone::clone));
+}
+
+#[test]
+fn synced_pdf_from_an_earlier_clock_appends_and_converges() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"PDFs"}));
+    let add = |fixture: &Fixture, name: &str| {
+        fixture.call("add_document_bytes", json!({
+            "moduleId":module, "name":name, "bytes":b"%PDF-"
+        }))["id"].clone()
+    };
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    transfer_vault(&a, &b, 1);
+
+    let existing = add(&a, "Existing.pdf");
+    // Advance A's import clock without changing the machine clock for both cores.
+    rusqlite::Connection::open(a.dir.join("main.db"))
+        .unwrap()
+        .execute("update documents set created_at = created_at + 86400000", [])
+        .unwrap();
+    a.call("rename_document", json!({"id":existing,"name":"Existing renamed.pdf"}));
+    let new = add(&b, "New.pdf");
+    let list = |fixture: &Fixture| -> Vec<Value> {
+        fixture.call("list_documents", json!({})).as_array().unwrap()
+            .iter().map(|doc| doc["id"].clone()).collect()
+    };
+    transfer_vault(&b, &a, 2);
+    assert_eq!(list(&a), [&existing, &new].map(Clone::clone));
+    transfer_vault(&a, &b, 3);
+    assert_eq!(list(&b), list(&a));
+    transfer_vault(&b, &a, 4);
+    assert_eq!(list(&a), [&existing, &new].map(Clone::clone));
 }

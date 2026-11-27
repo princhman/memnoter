@@ -87,12 +87,18 @@ function Files() {
           const target = over?.data.current;
           if (typeof id !== "string" || typeof target?.id !== "string" || typeof target.after !== "boolean" || mutation.isPending) return;
           const { id: targetId, after } = target;
+          const visibleSource = docs.findIndex(doc => doc.id === id);
+          const visibleTarget = docs.findIndex(doc => doc.id === targetId);
+          if (visibleSource < 0 || visibleTarget < 0 || visibleSource === visibleTarget) return;
+          const visibleSlot = visibleTarget + Number(after);
+          if (visibleSlot === visibleSource || visibleSlot === visibleSource + 1) return;
+
+          // Move only the dragged row in the full list, preserving the order of hidden rows.
           const remaining = allDocs.filter(doc => doc.id !== id);
           const targetIndex = remaining.findIndex(doc => doc.id === targetId);
           const moved = allDocs.find(doc => doc.id === id);
-          const sourceIndex = allDocs.findIndex(doc => doc.id === id);
           const insertAt = targetIndex + Number(after);
-          if (!moved || targetIndex < 0 || sourceIndex === insertAt) return;
+          if (!moved || targetIndex < 0) return;
           remaining.splice(insertAt, 0, moved);
           void client.cancelQueries({ queryKey: documentsKey });
           client.setQueryData(documentsKey, remaining);

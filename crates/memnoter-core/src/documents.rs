@@ -223,19 +223,21 @@ pub(crate) fn store_order(conn: &Connection, order: &[String]) -> CommandResult<
     .map_err(db_err)
 }
 
+pub(crate) fn document_ids(conn: &Connection) -> CommandResult<Vec<String>> {
+    let mut stmt = conn
+        .prepare("select id from documents order by created_at,id")
+        .map_err(db_err)?;
+    let rows = stmt.query_map([], |row| row.get(0)).map_err(db_err)?;
+    rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+}
+
 pub fn move_document(db: &Db, id: String, target_id: String, after: bool) -> CommandResult<()> {
     if id == target_id {
         return Ok(());
     }
     let mut conn = db.lock()?;
     let tx = conn.transaction().map_err(db_err)?;
-    let mut ids: Vec<String> = {
-        let mut stmt = tx
-            .prepare("select id from documents order by created_at,id")
-            .map_err(db_err)?;
-        let rows = stmt.query_map([], |row| row.get(0)).map_err(db_err)?;
-        rows.collect::<rusqlite::Result<_>>().map_err(db_err)?
-    };
+    let mut ids = document_ids(&tx)?;
     let ranks = order_ranks(&tx)?;
     ids.sort_by_key(|id| rank(&ranks, id));
     let source = ids
