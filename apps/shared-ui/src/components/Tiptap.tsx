@@ -45,10 +45,11 @@ import {
 
 type TipTapProps = {
   moduleId: string;
+  beside?: boolean;
   sidebarSectionsEnabled?: () => boolean;
 };
 
-const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sidebarSections }: TipTapProps) => {
+const Tiptap = ({ moduleId, beside = false, sidebarSectionsEnabled = () => appStore.state.sidebarSections }: TipTapProps) => {
   const host = useEditorHost();
   const element = useRef<HTMLDivElement>(null);
   const { data: modules } = useModules();
@@ -89,7 +90,7 @@ const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sideba
       }),
       editorProps: {
         handleScrollToSelection: (view) => {
-          if (host.isNative) { traceScroll("prosemirror.scrollIntoView.suppressed"); return true; }
+          if (host.isNative && !beside) { traceScroll("prosemirror.scrollIntoView.suppressed"); return true; }
           if (!view.state.selection.empty) return false;
           const container = host.scrollContainer(view.dom);
           if (!container) return false;
@@ -169,7 +170,7 @@ const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sideba
     redo: () => editor && yRedo(editor.state),
   }, editor);
 
-  usePersistedView(editor, moduleId, isSuccess);
+  usePersistedView(editor, moduleId, isSuccess, beside);
   useSearchIndexing(editor, moduleId, isSuccess && !newerVersion);
 
   useCardSync(editor, moduleId, isSuccess && !newerVersion);

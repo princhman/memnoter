@@ -2224,3 +2224,100 @@ body {
   text-underline-offset: 0.18em;
 }
 .mention-chip button:hover { text-decoration-color: var(--link); }
+
+/* The worksheet and its reference each keep their own scroll position. */
+.app-scroll-container:has(.worksheet-beside[data-split]):not(.worksheet-beside-main, .worksheet-beside-content *) {
+  container-type: size;
+  overflow: hidden;
+}
+
+.questions-all:has(.worksheet-beside[data-split]) {
+  max-width: none;
+  padding-block: 0;
+}
+
+.worksheet-beside[data-split] {
+  display: grid;
+  height: 100cqh;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 12px var(--beside-share);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.worksheet-beside-main {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.worksheet-beside-content {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.worksheet-beside-divider {
+  position: relative;
+  touch-action: none;
+  cursor: col-resize;
+}
+
+.worksheet-beside-divider::after {
+  position: absolute;
+  inset: 0 5px;
+  background: var(--border);
+  content: "";
+}
+
+.worksheet-beside-divider:is(:hover, :active, :focus-visible)::after {
+  background: var(--primary);
+}
+
+@media (pointer: coarse) {
+  .worksheet-beside[data-split] {
+    grid-template-columns: minmax(0, 1fr) 24px var(--beside-share);
+  }
+
+  .worksheet-beside-divider::after {
+    inset-inline: 11px;
+  }
+
+  .worksheet-beside-close {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@container (width < 680px) {
+  .worksheet-beside[data-split] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 24px var(--beside-share);
+  }
+
+  .worksheet-beside-divider {
+    cursor: row-resize;
+  }
+
+  .worksheet-beside-divider::after {
+    inset: 11px 0;
+  }
+}
+
+.worksheet-beside-content .pdf-reader-tools {
+  height: auto;
+  min-height: 36px;
+  flex-wrap: wrap;
+}
+
+@media (pointer: coarse) {
+  .worksheet-beside-open {
+    width: 44px;
+    height: 44px;
+  }
+
+  #worksheet-actions-slot .worksheet-beside-open {
+    height: 32px;
+  }
+}

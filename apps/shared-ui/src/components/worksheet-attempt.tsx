@@ -1,3 +1,4 @@
+import { WorksheetBeside } from "./worksheet-beside";
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
@@ -181,7 +182,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
       refresh={(...args) => answers.refreshDocument(pin!.revisionId, partId, ...args)}
       save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
   };
-  return <section ref={page} aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
+  return <WorksheetBeside toolbar={slots.actions}><section ref={page} aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
     <Dialog open={confirmFinish} onOpenChange={open => { if (!finishing) setConfirmFinish(open); }}>
       <DialogContent><DialogTitle>Finish worksheet?</DialogTitle>
         <p className="text-sm text-muted-foreground">Answers become read-only.</p>
@@ -272,5 +273,5 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
         </section>;
       })}
     </article>}
-  </section>;
+  </section></WorksheetBeside>;
 }
