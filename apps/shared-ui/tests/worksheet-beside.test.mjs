@@ -101,6 +101,10 @@ test("opening, resizing and closing a note beside a worksheet preserves both edi
     await page.getByRole("button", { name: /Algebra practice/ }).click();
     const answer = page.locator(".worksheet-answer-input[contenteditable=true]");
     await answer.waitFor();
+    // The side pane button sits to the right of Finish in the header.
+    const finishBox = await page.getByRole("button", { name: "Finish", exact: true }).boundingBox();
+    const besideBox = await page.getByRole("button", { name: "Open beside", exact: true }).boundingBox();
+    assert.ok(besideBox.x > finishBox.x + finishBox.width, "Open beside follows Finish");
     const proof = process.env.PROOF_DIR;
     const pause = () => proof ? page.waitForTimeout(900) : Promise.resolve();
     await pause();

@@ -2311,6 +2311,11 @@ body {
   flex-wrap: wrap;
 }
 
+/* The header slot is display: contents; the side pane button follows Finish. */
+#worksheet-actions-slot .worksheet-beside-open {
+  order: 1;
+}
+
 @media (pointer: coarse) {
   .worksheet-beside-open {
     width: 44px;
