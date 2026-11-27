@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef } from "react";
 import { queryClient } from "./query-client";
 import { useQueries } from "@tanstack/react-query";
 import { useEditorState } from "@tiptap/react";
+import type { Editor } from "@tiptap/core";
+import type { Node } from "@tiptap/pm/model";
 import { yDocToProsemirrorJSON } from "@tiptap/y-tiptap";
 import { useModules } from "./modules";
 import { useActiveEditor } from "./active-editor-context";
@@ -14,8 +16,21 @@ const EMPTY_MODULES: NonNullable<ReturnType<typeof useModules>["data"]> = [];
 export function useMentionNotes() {
   const { data: modules = EMPTY_MODULES } = useModules();
   const { activeEditor } = useActiveEditor();
-  const live = useEditorState({ editor: activeEditor?.editor ?? null, selector: ({ editor }) => editor?.state.doc, equalityFn: Object.is });
-  const liveNote = useMemo(() => live ? extractMentions(live.toJSON()) : null, [live]);
+  const selectMentions = useMemo(() => {
+    let previousDoc: Node | undefined;
+    let result: ReturnType<typeof extractMentions> | null = null;
+    return ({ editor }: { editor: Editor | null }) => {
+      const doc = editor?.state.doc;
+      if (doc !== previousDoc) {
+        previousDoc = doc;
+        result = doc ? extractMentions(doc.toJSON()) : null;
+      }
+      return result;
+    };
+  }, []);
+  // Ordinary typing leaves the references equal. Keep the catalog stable
+  // so it doesn't render again alongside the suggestion popup.
+  const liveNote = useEditorState({ editor: activeEditor?.editor ?? null, selector: selectMentions });
   // On leaving a note, keep its last live mentions as the stored result, so
   // the next note's opening never competes with re-reading this one from disk.
   const leaving = useRef<{ id: string; note: ReturnType<typeof extractMentions> } | null>(null);

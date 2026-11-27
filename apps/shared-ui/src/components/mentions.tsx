@@ -23,12 +23,14 @@ import { requestSyncedFile } from "@/lib/sync/file-requests";
 import { InsertMenu, type InsertMenuHandle, type InsertItem } from "./insert-menu";
 
 type Target = NonNullable<ReturnType<typeof mentionTarget>>;
+const EMPTY_FILES: DocumentRecord[] = [];
+const MAX_MENTION_RESULTS = 100;
 const Context = createContext<Omit<ReturnType<typeof useMentionNotes>, "modules"> & { files: DocumentRecord[]; bankItems: MentionBankItem[] } | null>(null);
 export function MentionProvider({ children }: { children: ReactNode }) {
   const { modules, ...notes } = useMentionNotes();
-  const { data: files = [] } = useDocuments();
+  const { data: files = EMPTY_FILES } = useDocuments();
   const bankEnabled = useBankGate();
-  const queries = useMemo(() => modules.map(module => bankQuery(module.id, bankEnabled)), [modules, bankEnabled]);
+  const queries = useMemo(() => modules.map(module => ({ ...bankQuery(module.id, bankEnabled), staleTime: Infinity })), [modules, bankEnabled]);
   const combine = useCallback((results: UseQueryResult<Bank | null>[]) => ({
     items: results.flatMap(({ data: bank }, index): MentionBankItem[] => {
       const moduleId = modules[index].id;
@@ -158,7 +160,7 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
       header = pdf.name;
       const pageQuery = props.query.startsWith(pdfScope.query) ? props.query.slice(pdfScope.query.length) : props.query;
       const prefix = pageQuery.trim().toLocaleLowerCase().replace(/^p(?:age)?[. ]*/, "");
-      for (let page = 1; page <= pageCount && candidates.length < 100; page++) {
+      for (let page = 1; page <= pageCount && candidates.length < MAX_MENTION_RESULTS; page++) {
         const locator = String(page);
         if (locator.startsWith(prefix)) candidates.push({
           id: `page:${locator}`, title: `Page ${locator}`, group: "",
@@ -166,19 +168,21 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
         });
       }
     } else for (const note of notes) {
+      if (candidates.length >= MAX_MENTION_RESULTS) break;
       if (scope && note.id !== scope) continue;
-      const byId = new Map(note.note.headings.map(heading => [heading.id, heading]));
-      const parents = new Set(note.note.headings.map(heading => heading.parentId));
-      // Section ids from the module's top down to (and including) a section.
-      const chain = (id: string) => { const ids: string[] = []; for (let at = byId.get(id); at && ids.length < 50; at = at.parentId ? byId.get(at.parentId) : undefined) ids.unshift(at.id); return ids; };
-      if (scope) header = [note.name, ...trail.slice(1).map(id => byId.get(id)?.title ?? "")].join(" / ");
       if (!scope && matches([note.name])) {
         const expandable = note.note.headings.length > 0;
         candidates.push({ id: `module:${note.id}`, title: note.name, group: "", expandable, target: { kind: "module", id: note.id, nodeId: null, locator: null } });
         if (expandable) enter.set(`module:${note.id}`, [note.id]);
       }
-      if (!scope && !searching) continue;
+      if ((!scope && !searching) || candidates.length >= MAX_MENTION_RESULTS) continue;
+      const byId = new Map(note.note.headings.map(heading => [heading.id, heading]));
+      const parents = new Set(note.note.headings.map(heading => heading.parentId));
+      // Section ids from the module's top down to (and including) a section.
+      const chain = (id: string) => { const ids: string[] = []; for (let at = byId.get(id); at && ids.length < 50; at = at.parentId ? byId.get(at.parentId) : undefined) ids.unshift(at.id); return ids; };
+      if (scope) header = [note.name, ...trail.slice(1).map(id => byId.get(id)?.title ?? "")].join(" / ");
       for (const heading of note.note.headings) {
+        if (candidates.length >= MAX_MENTION_RESULTS) break;
         const path = [note.name, ...(heading.path ?? [])];
         if (searching ? !matches([...path, heading.title]) : parent ? heading.parentId !== parent : (heading.path ?? []).length > 0) continue;
         if (searching && parent && !chain(heading.id).slice(0, -1).includes(parent)) continue;
@@ -188,7 +192,7 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
         if (expandable) enter.set(id, [note.id, ...chain(heading.id)]);
       }
     }
-    if (!scope && !pdfScope) {
+    if (!scope && !pdfScope && candidates.length < MAX_MENTION_RESULTS) {
       const files = catalog.files.filter(file => matches([file.name]));
       for (const file of files) candidates.push({ id: `file:${file.id}`, title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
       for (const note of notes) for (const image of note.note.images) {
@@ -210,7 +214,7 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
         });
       }
     }
-    const items = candidates.slice(0, 100).map(({ target, ...item }): InsertItem => ({
+    const items = candidates.slice(0, MAX_MENTION_RESULTS).map(({ target, ...item }): InsertItem => ({
       ...item, hint: "", keywords: [],
       run: (editor, range) => { if (target) editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
     }));
@@ -242,10 +246,11 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
     return false;
   };
   useImperativeHandle(ref, () => ({ onKeyDown: args => menu.current ? menu.current.onKeyDown(args) : onKey(args.event, undefined) }));
+  if (!model.items.length && (pdf ? pdfCount.isFetching : catalog.loading)) return null;
   if (!model.items.length) return <div role="status" className="rounded-lg bg-popover p-3 text-sm text-muted-foreground shadow-md">
     {pdf && !pageCount
-      ? pdfCount.isError ? "Could not read PDF pages" : pdf.available ? "Loading pages…" : "Downloading PDF…"
-      : catalog.error ? "Could not load references" : catalog.loading ? "Loading…" : "No matches"}
+      ? pdfCount.isError ? "Could not read PDF pages" : pdf.available ? "No matches" : "Downloading PDF…"
+      : catalog.error ? "Could not load references" : "No matches"}
   </div>;
   return <InsertMenu ref={menu} editor={props.editor} items={model.items} header={model.header} onKey={onKey} wide command={item => { if (!browsePdf(item)) props.command(item); }} />;
 });
@@ -253,6 +258,8 @@ export const MentionSuggest = Extension.create({
   name: "mention-suggest", priority: 201,
   addProseMirrorPlugins() {
     return [Suggestion<InsertItem, InsertItem>({ editor: this.editor, pluginKey: new PluginKey("mention-suggest"), char: "@", allowSpaces: true,
+      // MentionMenu filters the warm catalog. Skip Suggestion’s async items lifecycle.
+      minQueryLength: Infinity,
       allow: ({ state, range }) => {
         const resolved = state.doc.resolve(range.from);
         for (let depth = resolved.depth; depth > 0; depth--) if (["codeBlock", "mathBlock", "inlineMath"].includes(resolved.node(depth).type.name)) return false;

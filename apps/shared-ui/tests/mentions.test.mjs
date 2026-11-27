@@ -425,3 +425,128 @@ test('insert and follow image, PDF page, question and worksheet mentions', async
     await page.close();
   } finally { await server.close(); }
 });
+
+test('the warmed mention menu shows cached results without loading', async t => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const proof = process.env.MENTION_PROOF_DIR;
+  const samples = Number(process.env.MENTION_SAMPLES ?? 1);
+  const holdBank = !process.env.MENTION_SAMPLES;
+  const notes = Array.from({ length: 200 }, (_, index) => ({
+    id: 'note-' + index,
+    name: index === 0 ? 'Research notes' : 'Course notes ' + index,
+  }));
+  const contents = notes.map((_, index) => ({
+    state: seed(index === 0 ? [['heading', 'Reading notes', { level: 1, 'data-toc-id': 'reading-notes' }], ['paragraph', 'See ']] : [
+      ['heading', 'Chapter ' + index, { level: 1, 'data-toc-id': 'chapter-' + index }],
+      ...Array.from({ length: index <= 100 ? 2 : index <= 198 ? 1 : 2 }, (_, image) =>
+        ['image', '', { imageId: 'image-' + image, title: 'Diagram ' + index + '.' + image }]),
+    ]),
+    updates: [],
+    files: [],
+  }));
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    for (let sample = 0; sample < samples; sample++) {
+      const page = await browser.newPage({
+        viewport: { width: 1120, height: 720 },
+        ...(proof && sample === 0 ? { recordVideo: { dir: proof } } : {}),
+      });
+      try {
+        page.setDefaultTimeout(10000);
+        await page.addInitScript(({ notes, contents, holdBank }) => {
+          Object.defineProperty(navigator, 'platform', { value: 'MacIntel' });
+          const files = Array.from({ length: 50 }, (_, index) => ({
+            id: 'pdf-' + index, moduleId: 'note-1', name: 'Course guide ' + index + '.pdf',
+            available: true, pageCount: 100,
+          }));
+          const loads = window.mentionLoads = { content: 0, banks: 0 };
+          const lastBank = new Promise(resolve => { window.finishMentionBank = resolve; });
+          window.installTestBridge({ tauri: { invoke: async (command, args) => {
+            if (command.startsWith('plugin:')) return 1;
+            if (command === 'modules') return notes;
+            if (command === 'get_content') {
+              loads.content++;
+              return contents[Number(args.moduleId.slice(5))];
+            }
+            if (command === 'add_update') {
+              const update = { id: Date.now(), bytes: args.bytes };
+              contents[Number(args.moduleId.slice(5))].updates.push(update);
+              return update;
+            }
+            if (command === 'list_documents') return files;
+            if (command === 'question_bank_enabled') return true;
+            if (command === 'question_bank_get') {
+              loads.banks++;
+              const index = Number(args.moduleId.slice(5));
+              if (holdBank && index === 199) await lastBank;
+              if (index >= 50) return null;
+              return {
+                schemaVersion: 1, revisions: {}, answers: {},
+                questions: { question: { title: 'Review question ' + index, order: 0 } },
+                attempts: { worksheet: { title: 'Practice worksheet ' + index } },
+              };
+            }
+            return [];
+          } } });
+        }, { notes, contents, holdBank });
+        await page.goto(`http://localhost:${server.httpServer.address().port}/note-0`);
+        const editor = page.locator('.tiptap[contenteditable=true]');
+        await editor.getByRole('heading', { name: 'Reading notes' }).waitFor();
+        await page.waitForFunction(() => window.mentionLoads.content >= 200 && window.mentionLoads.banks === 200);
+        await editor.evaluate(element => element.editor.commands.focus('end'));
+        await page.waitForFunction(() => {
+          const element = document.querySelector('.tiptap[contenteditable=true]');
+          const editor = element.editor;
+          const selection = document.getSelection();
+          const end = editor.state.doc.content.size - 1;
+          return editor.view.hasFocus() && editor.state.selection.head === end && selection?.isCollapsed &&
+            element.contains(selection.anchorNode) && editor.view.posAtDOM(selection.anchorNode, selection.anchorOffset) === end;
+        });
+        const before = await page.evaluate(() => ({ ...window.mentionLoads }));
+        if (proof && sample === 0) await page.waitForTimeout(900);
+        await page.evaluate(() => {
+          window.mentionTiming = new Promise(resolve => {
+            document.addEventListener('keydown', () => {
+              const start = performance.now();
+              let loading = false;
+              const observer = new MutationObserver(records => {
+                loading ||= records.some(record => [...record.addedNodes].some(node =>
+                  node.textContent.includes('Loading…')));
+                const first = document.querySelector('[role="option"]');
+                if (first && first.closest(".react-renderer").style.visibility !== "hidden") {
+                  observer.disconnect();
+                  window.mentionMeasured = true;
+                  resolve({ ms: performance.now() - start, loading, first: first.firstElementChild.textContent });
+                }
+              });
+              observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
+            }, { capture: true, once: true });
+          });
+        });
+        await page.keyboard.press('@');
+        await page.getByRole('option', { name: 'Research notes', exact: true }).waitFor();
+        await page.waitForFunction(() => window.mentionMeasured);
+        const measurement = await page.evaluate(() => window.mentionTiming);
+        assert.equal(measurement.first, 'Research notes');
+        assert.equal(measurement.loading, false);
+        if (process.env.MENTION_SAMPLES) t.diagnostic(measurement.ms.toFixed(1) + ' ms');
+        if (proof && sample === 0) await page.waitForTimeout(1500);
+        await page.keyboard.type('Diagram 1.0');
+        await page.getByRole('option', { name: 'Diagram 1.0 Course notes 1', exact: true }).waitFor();
+        await page.keyboard.type(' missing');
+        if (holdBank) {
+          await page.getByRole('option').first().waitFor({ state: 'hidden' });
+          assert.equal(await page.getByText('Loading…', { exact: true }).count(), 0);
+          await page.evaluate(() => window.finishMentionBank());
+        }
+        await page.getByRole('status').filter({ hasText: 'No matches' }).waitFor();
+        assert.deepEqual(await page.evaluate(() => window.mentionLoads), before);
+      } finally {
+        await page.context().close();
+      }
+    }
+  } finally {
+    await server.close();
+  }
+});
