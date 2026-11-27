@@ -18,6 +18,20 @@ struct ReviewView: View {
     private var intervals: [String] { state.intervals }
     var body: some View {
         VStack {
+            if horizontalSizeClass == .compact {
+                HStack {
+                    countsLabel
+                    Spacer()
+                    Menu {
+                        historyActions
+                        cardActions
+                    } label: {
+                        Image(systemName: "ellipsis").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Review actions")
+                }
+                .padding(.horizontal)
+            }
             if let error = session?.error { Text(error).foregroundStyle(.red).padding() }
             if let session {
                 WebSurface(session: session)
@@ -40,20 +54,8 @@ struct ReviewView: View {
             if #available(iOS 26.0, *), horizontalSizeClass != .compact {
                 ToolbarSpacer(.fixed, placement: .topBarLeading)
             }
-            if horizontalSizeClass == .compact {
-                countsToolbar
-                if #available(iOS 26.0, *) {
-                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                }
-            }
-            ToolbarItemGroup(placement: horizontalSizeClass == .compact ? .topBarTrailing : .topBarLeading) {
-                if horizontalSizeClass == .compact {
-                    Menu {
-                        historyActions
-                        cardActions
-                    } label: { Image(systemName: "ellipsis") }
-                        .accessibilityLabel("Review actions")
-                } else {
+            if horizontalSizeClass != .compact {
+                ToolbarItemGroup(placement: .topBarLeading) {
                     historyActions
                     if toolbarWidth < 700 {
                         Menu { cardActions } label: { Label("Card actions", systemImage: "ellipsis") }
@@ -62,8 +64,8 @@ struct ReviewView: View {
                         cardActions
                     }
                 }
+                countsToolbar
             }
-            if horizontalSizeClass != .compact { countsToolbar }
         }
         .onAppear {
             guard session == nil else { return }

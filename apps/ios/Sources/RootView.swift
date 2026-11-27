@@ -850,7 +850,7 @@ struct RootView: View {
     }
     /// Room the trailing bar item needs, so the breadcrumb truncates instead of evicting it.
     private var phoneBarTrailingWidth: CGFloat {
-        if selected == "review" { return 230 }
+        if selected == "review" { return phoneSplitLayout ? 230 : 96 }
         return module != nil && selected != "questions" ? 165 : 120
     }
     private var showWholeNoteFromBreadcrumb: (() -> Void)? {
@@ -863,7 +863,7 @@ struct RootView: View {
                          questionsEnabled: session != nil,
                          maximumWidth: max(120, detailWidth - phoneBarTrailingWidth),
                          changeScope: changeSectionScope, changeSection: selectSection, compact: true,
-                         combinesMenus: !phoneSplitLayout && detailWidth < 400,
+                         combinesMenus: selected != "review" && !phoneSplitLayout && detailWidth < 400,
                          showWholeNote: showWholeNoteFromBreadcrumb)
             .disabled(busy)
     }
