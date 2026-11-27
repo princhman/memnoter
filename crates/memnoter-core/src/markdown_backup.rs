@@ -218,6 +218,60 @@ fn read_module_files(
     Ok(files)
 }
 
+fn note_filenames(
+    modules: &BTreeMap<String, Module>,
+    previous: &BTreeMap<String, OwnedFile>,
+) -> BTreeMap<String, String> {
+    let mut claimed = BTreeSet::new();
+    let mut filenames = BTreeMap::new();
+    for (path, file) in previous.iter().filter(|(path, _)| note_path(path)) {
+        for id in &file.modules {
+            let key = path.to_lowercase();
+            match modules.get(id) {
+                Some(Module::Ready { filename, .. }) if note_path(filename) => {
+                    let stem = filename.strip_suffix(".md").unwrap().to_lowercase();
+                    let suffix = format!("{stem} - {}-", &content_hash(id.as_bytes())[..8]);
+                    if (key == filename.to_lowercase() || key.starts_with(&suffix))
+                        && !filenames.contains_key(id)
+                        && claimed.insert(key)
+                    {
+                        filenames.insert(id.clone(), path.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // A module with an unavailable attachment can still need its old export.
+    claimed.extend(
+        previous
+            .iter()
+            .filter(|(path, file)| {
+                note_path(path) && file.modules.iter().any(|id| modules.contains_key(id))
+            })
+            .map(|(path, _)| path.to_lowercase()),
+    );
+    for (id, module) in modules {
+        if let Module::Ready { filename, .. } = module {
+            if filenames.contains_key(id) || !note_path(filename) {
+                continue;
+            }
+            let mut path = filename.clone();
+            let stem = filename.strip_suffix(".md").unwrap();
+            let hash = content_hash(id.as_bytes());
+            for number in 1.. {
+                if claimed.insert(path.to_lowercase()) {
+                    break;
+                }
+                path = format!("{stem} - {}-{number}.md", &hash[..8]);
+            }
+            filenames.insert(id.clone(), path);
+        }
+    }
+    filenames
+}
+
 pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandResult<Vec<String>> {
     let root = selected.join(FOLDER);
     if selected.canonicalize().map_err(db_err)? != selected
@@ -226,7 +280,7 @@ pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandRes
         return Err("Choose a folder outside Memnoter's app data".into());
     }
     directory(&root)?;
-    let mut previous = load_manifest(&root)?;
+    let previous = load_manifest(&root)?;
     let attachments = root.join("attachments");
     if previous.keys().any(|path| path.starts_with("attachments/")) {
         match fs::symlink_metadata(&attachments) {
@@ -239,6 +293,21 @@ pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandRes
         save_manifest(&root, &previous)?;
     }
 
+    reconcile(data_dir, &root, snapshot, previous)
+}
+
+fn reconcile(
+    data_dir: &Path,
+    root: &Path,
+    snapshot: Snapshot,
+    previous: BTreeMap<String, OwnedFile>,
+) -> CommandResult<Vec<String>> {
+    let attachments = root.join("attachments");
+    let mut filenames = note_filenames(&snapshot.modules, &previous);
+    let previous_by_path: BTreeMap<_, _> = previous
+        .iter()
+        .map(|(path, file)| (path.to_lowercase(), file))
+        .collect();
     let mut current = BTreeMap::<String, OwnedFile>::new();
     let mut conflicts = BTreeSet::new();
     let mut warnings = Vec::new();
@@ -251,12 +320,13 @@ pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandRes
                 attachments,
             } => (name, filename, markdown, attachments),
             Module::Skipped { reason } => {
-                preserve_module(&root, &id, &previous, &mut current);
+                preserve_module(root, &id, &previous, &mut current);
                 warnings.push(reason);
                 continue;
             }
         };
         let result = (|| -> CommandResult<()> {
+            let filename = filenames.remove(&id).unwrap_or(filename);
             let files = read_module_files(data_dir, filename, markdown, module_attachments)?;
             if files.len() > 1 {
                 directory(&attachments)?;
@@ -266,13 +336,19 @@ pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandRes
                 let Some(existing) = existing_bytes(&root.join(path))? else {
                     continue;
                 };
-                let owned = current.get(path).or_else(|| previous.get(path));
-                let matches = owned.is_some_and(|file| match &file.hash {
-                    Some(hash) => *hash == content_hash(&existing),
-                    None => existing == *bytes,
-                });
+                if existing == *bytes {
+                    continue;
+                }
+                let key = path.to_lowercase();
+                let owned = current
+                    .get(path)
+                    .or_else(|| previous.get(path))
+                    .or_else(|| previous_by_path.get(&key).copied());
+                let matches = owned
+                    .and_then(|file| file.hash.as_ref())
+                    .is_some_and(|hash| *hash == content_hash(&existing));
                 if !matches {
-                    conflicts.insert(path.clone());
+                    conflicts.insert(key);
                     return Err(format!("Backup would overwrite {path}"));
                 }
             }
@@ -285,17 +361,18 @@ pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandRes
             Ok(())
         })();
         if let Err(error) = result {
-            preserve_module(&root, &id, &previous, &mut current);
+            preserve_module(root, &id, &previous, &mut current);
             warnings.push(format!("Skipped backup of “{name}”: {error}"));
         }
     }
 
-    for path in conflicts {
-        current.remove(&path);
-        previous.remove(&path);
-    }
+    current.retain(|path, _| !conflicts.contains(&path.to_lowercase()));
+    save_manifest(root, &current)?;
+
+    let current_paths: BTreeSet<_> = current.keys().map(|path| path.to_lowercase()).collect();
     for (path, file) in previous {
-        if current.contains_key(&path) {
+        let key = path.to_lowercase();
+        if current_paths.contains(&key) || conflicts.contains(&key) {
             continue;
         }
         let Some(hash) = file.hash else { continue };
@@ -311,7 +388,6 @@ pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandRes
             Err(error) => return Err(db_err(error)),
         }
     }
-    save_manifest(&root, &current)?;
     Ok(warnings)
 }
 
@@ -472,6 +548,96 @@ mod tests {
     }
 
     #[test]
+    fn case_insensitive_filename_collisions_keep_both_exports() {
+        let backup = Backup::new();
+        let snapshot = |first_title, first_body, second_body| {
+            with_modules([
+                ("first", ready(first_title, first_body, BTreeMap::new())),
+                ("second", ready("biology", second_body, BTreeMap::new())),
+            ])
+        };
+
+        assert!(backup
+            .run(snapshot("Biology", "First", "Second"))
+            .is_empty());
+        let first = backup.root.join("Biology.md");
+        let second = fs::read_dir(&backup.root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path != &first && path.extension().is_some_and(|ext| ext == "md"))
+            .unwrap();
+        assert_ne!(
+            first.file_name().unwrap().to_string_lossy().to_lowercase(),
+            second.file_name().unwrap().to_string_lossy().to_lowercase(),
+        );
+        assert_eq!(fs::read_to_string(&first).unwrap(), "First");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "Second");
+
+        assert!(backup
+            .run(snapshot("Biology", "First edit", "Second edit"))
+            .is_empty());
+        assert_eq!(fs::read_to_string(&first).unwrap(), "First edit");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "Second edit");
+
+        assert!(backup
+            .run(snapshot("BIOLOGY", "Case-only rename", "Second edit"))
+            .is_empty());
+        assert_eq!(fs::read_to_string(&first).unwrap(), "Case-only rename");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "Second edit");
+
+        assert!(backup
+            .run(with_modules([(
+                "second",
+                ready("biology", "First removed", BTreeMap::new())
+            ),]))
+            .is_empty());
+        assert!(!first.exists());
+        assert_eq!(fs::read_to_string(&second).unwrap(), "First removed");
+    }
+
+    #[test]
+    fn manifest_save_failure_leaves_stale_files_and_next_run_adopts_written_files() {
+        let backup = Backup::new();
+        assert!(backup
+            .run(with_modules([
+                ("existing", ready("Existing", "Before", BTreeMap::new())),
+                (
+                    "obsolete",
+                    ready("Obsolete", "Keep until commit", BTreeMap::new())
+                ),
+            ]))
+            .is_empty());
+        let snapshot = || {
+            with_modules([
+                ("existing", ready("Existing", "After", BTreeMap::new())),
+                ("new", ready("New", "New export", BTreeMap::new())),
+            ])
+        };
+        let existing = backup.root.join("Existing.md");
+        let new = backup.root.join("New.md");
+        let obsolete = backup.root.join("Obsolete.md");
+
+        let previous = load_manifest(&backup.root).unwrap();
+        let manifest = backup.root.join(MANIFEST);
+        let saved_manifest = fs::read(&manifest).unwrap();
+        fs::remove_file(&manifest).unwrap();
+        fs::create_dir(&manifest).unwrap();
+        let error = reconcile(&backup.source, &backup.root, snapshot(), previous).unwrap_err();
+        assert!(error.contains(MANIFEST));
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "After");
+        assert_eq!(fs::read_to_string(&new).unwrap(), "New export");
+        assert!(obsolete.exists());
+
+        fs::remove_dir(&manifest).unwrap();
+        fs::write(&manifest, saved_manifest).unwrap();
+        assert!(backup.run(snapshot()).is_empty());
+        assert!(!obsolete.exists());
+        assert!(backup.run(with_modules([])).is_empty());
+        assert!(!existing.exists());
+        assert!(!new.exists());
+    }
+
+    #[test]
     fn leaves_user_files_after_backup_retry_rename_and_deletion() {
         let backup = Backup::new();
         let snapshot = |title| {
@@ -489,7 +655,7 @@ mod tests {
         assert!(warnings[0].contains("Original"));
         assert_eq!(fs::read_to_string(&original).unwrap(), "Obsidian edit");
 
-        // Even restoring the exported bytes does not restore relinquished ownership.
+        // Restoring the old bytes before a rename leaves the old file unowned.
         fs::write(&original, "From Memnoter").unwrap();
         let mut renamed = snapshot("Renamed");
         fs::write(&deleted, "User replacement").unwrap();
