@@ -90,6 +90,8 @@ export type SyncEngineOptions = {
 // An error that retrying cannot fix, such as a wrong passphrase.
 class FatalSyncError extends Error {}
 
+const MANUAL_SYNC_TIMEOUT_MS = 30_000;
+
 
 export function createSyncEngine({
   store,
@@ -112,6 +114,11 @@ export function createSyncEngine({
   let pushTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
+  let manualSync: {
+    timer: ReturnType<typeof setTimeout>;
+    finishUploads?: () => Promise<string | null>;
+    waitingForUploads: boolean;
+  } | null = null;
   let awaitingPong = false;
   let attempts = 0;
   // Server messages are handled strictly one after another. Each task belongs
@@ -124,8 +131,19 @@ export function createSyncEngine({
   let status: SyncStatus = { state: "idle", error: null, lastSyncedAt: null };
 
   function setStatus(next: Partial<SyncStatus>) {
+    if (next.state && next.state !== "connecting" && next.state !== "syncing") {
+      if (manualSync) clearTimeout(manualSync.timer);
+      manualSync = null;
+    }
     status = { ...status, ...next };
     onStatus?.(status);
+  }
+
+  async function hello() {
+    const owner = generation;
+    const cursor = await store.cursor();
+    if (owner !== generation) return;
+    send({ t: "hello", cursor, v: PROTOCOL_VERSION });
   }
 
   function open() {
@@ -140,10 +158,7 @@ export function createSyncEngine({
       if (socket !== current) return;
       attempts = 0;
       setStatus({ state: "syncing", error: null });
-      enqueue(async () => {
-        const cursor = await store.cursor();
-        send({ t: "hello", cursor, v: PROTOCOL_VERSION });
-      });
+      enqueue(hello);
       startPing(current);
     };
     current.onmessage = (data) => {
@@ -179,7 +194,7 @@ export function createSyncEngine({
         setStatus({ state: "error", error: reason || "The sync server refused this device" });
         return;
       }
-      setStatus({ state: "offline" });
+      setStatus({ state: "offline", error: reason || "Could not connect to sync." });
       scheduleReconnect();
     };
   }
@@ -187,7 +202,7 @@ export function createSyncEngine({
   function enqueue(task: () => Promise<void>) {
     const owner = generation;
     chain = chain.then(() => (owner === generation ? task() : undefined)).catch((error) => {
-      if (!running) return;
+      if (!running || owner !== generation) return;
       console.error("Sync failed:", error);
       // Whatever is still queued from this connection must not run.
       generation += 1;
@@ -216,25 +231,28 @@ export function createSyncEngine({
       case "entries":
         return applyEntries(message.entries);
       case "ready": {
+        const owner = generation;
         const cursor = await store.cursor();
+        if (owner !== generation) return;
         if (message.head > cursor) await store.setCursor(message.head);
+        if (owner !== generation) return;
         ready = true;
-        setStatus({ state: "synced", lastSyncedAt: now() });
-        schedulePush(0);
-        return;
+        return push();
       }
       case "ack": {
         if (!inflight || inflight.id !== message.id) return;
+        const owner = generation;
         await store.ackOutbox(inflight.maxOutboxId);
+        if (owner !== generation) return;
         // Every entry before this one already reached this socket and was
         // applied: the server handles messages one at a time and broadcasts
         // each push before acknowledging the next.
         const cursor = await store.cursor();
+        if (owner !== generation) return;
         if (message.seq > cursor) await store.setCursor(message.seq);
+        if (owner !== generation) return;
         inflight = null;
-        setStatus({ state: "synced", lastSyncedAt: now() });
-        schedulePush(0);
-        return;
+        return push();
       }
       case "compact-hint":
         return compact(message.doc, message.upTo);
@@ -247,6 +265,9 @@ export function createSyncEngine({
 
   async function applyEntries(wire: WireEntry[]) {
     if (wire.length === 0) return;
+    // A manual timeout abandons this connection while it may be suspended
+    // below; its entries must not land or publish after a newer one's.
+    const owner = generation;
     const entries: RemoteEntry[] = [];
     for (const entry of wire) {
       let bytes: Uint8Array;
@@ -263,10 +284,13 @@ export function createSyncEngine({
       }
       entries.push({ seq: entry.seq, doc: entry.doc, bytes });
     }
-    const cursor = Math.max(await store.cursor(), ...entries.map((entry) => entry.seq));
+    const stored = await store.cursor();
+    if (owner !== generation) return;
+    const cursor = Math.max(stored, ...entries.map((entry) => entry.seq));
     await store.applyRemote(entries, cursor);
+    // Once written, open notes must still hear about it.
     onApplied?.(new Set(entries.map((entry) => entry.doc)));
-    if (ready) setStatus({ state: "synced", lastSyncedAt: now() });
+    if (owner === generation && ready && status.state === "synced") setStatus({ lastSyncedAt: now() });
   }
 
   async function compact(doc: string, upTo: number) {
@@ -303,10 +327,39 @@ export function createSyncEngine({
     }, delay);
   }
 
+  async function finishUploads(attempt: NonNullable<typeof manualSync>, upload: () => Promise<string | null>) {
+    let error: string | null;
+    try {
+      error = await upload();
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    if (manualSync !== attempt) return;
+    if (error) {
+      setStatus({ state: "error", error });
+      return;
+    }
+    attempt.waitingForUploads = false;
+    enqueue(push);
+  }
+
   async function push() {
     if (!ready || inflight || !socket) return;
+    const current = socket;
     const outbox = await store.outbox(PUSH_BATCH_BYTES);
-    if (outbox.length === 0) return;
+    if (socket !== current) return;
+    if (outbox.length === 0) {
+      if (manualSync?.waitingForUploads) return;
+      if (manualSync?.finishUploads) {
+        const upload = manualSync.finishUploads;
+        manualSync.finishUploads = undefined;
+        manualSync.waitingForUploads = true;
+        void finishUploads(manualSync, upload);
+        return;
+      }
+      if (status.state === "syncing") setStatus({ state: "synced", error: null, lastSyncedAt: now() });
+      return;
+    }
 
     // One blob per document, in the order documents first appear, so a new
     // module's vault entry still precedes its content. A deleted document
@@ -341,6 +394,7 @@ export function createSyncEngine({
         entries.push({ doc, data: toBase64(data) });
       }
     }
+    if (socket !== current) return;
     const id = nextPushId++;
     inflight = { id, maxOutboxId: outbox[outbox.length - 1].id };
     setStatus({ state: "syncing" });
@@ -367,8 +421,7 @@ export function createSyncEngine({
     pingTimer = null;
   }
 
-  function stopEngine() {
-    running = false;
+  function disconnect() {
     generation += 1;
     if (pushTimer) clearTimeout(pushTimer);
     if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -379,6 +432,11 @@ export function createSyncEngine({
     ready = false;
     inflight = null;
     current?.close(1000, "stopped");
+  }
+
+  function stopEngine() {
+    running = false;
+    disconnect();
   }
 
   function scheduleReconnect(delay?: number) {
@@ -404,6 +462,36 @@ export function createSyncEngine({
     // Local changes were written to the outbox.
     nudge() {
       schedulePush();
+    },
+    syncNow(finishUploads?: () => Promise<string | null>) {
+      if (manualSync) return;
+      const timer = setTimeout(() => {
+        // Invalidate the stalled socket so a retry starts from the durable cursor.
+        disconnect();
+        // A stalled store call may never settle; the next connection's work
+        // must not queue behind it. Its own results are discarded by generation.
+        chain = Promise.resolve();
+        setStatus({ state: "error", error: "Sync timed out. Check your connection and try again." });
+        // Background sync carries on with its usual backoff.
+        scheduleReconnect();
+      }, MANUAL_SYNC_TIMEOUT_MS);
+      manualSync = { timer, finishUploads, waitingForUploads: false };
+      if (!running) {
+        this.start();
+        return;
+      }
+      if (!socket) {
+        this.reconnectNow();
+        return;
+      }
+      if (!ready || status.state === "syncing") return;
+      setStatus({ state: "syncing", error: null });
+      enqueue(async () => {
+        // The live socket accepts another hello to catch up from disk.
+        if (inflight) return;
+        ready = false;
+        await hello();
+      });
     },
     // The network came back or the app returned to the foreground.
     reconnectNow() {
