@@ -101,3 +101,18 @@ test("display math in a pasted Markdown table retains its formula inside the cel
   assert.equal(await page.evaluate(() => editor.state.doc.child(0).child(1).child(0).textContent), "x^2");
   assert.equal(await page.evaluate(() => editor.state.doc.child(0).type.name), "table");
 });
+
+test("pasting a saved block image leaves an empty paragraph with the caret below it", async () => {
+  await page.evaluate(() => {
+    editor.commands.setContent("<p></p>");
+    editor.commands.setTextSelection(1);
+  });
+  await paste({ "text/html": '<img data-file-id="saved-image">' });
+  const result = await page.evaluate(() => ({
+    blocks: editor.state.doc.children.map(node => node.type.name),
+    caretParent: editor.state.selection.$from.parent.type.name,
+    caretOffset: editor.state.selection.$from.parentOffset,
+    empty: editor.state.selection.empty,
+  }));
+  assert.deepEqual(result, { blocks: ["image", "paragraph"], caretParent: "paragraph", caretOffset: 0, empty: true });
+});

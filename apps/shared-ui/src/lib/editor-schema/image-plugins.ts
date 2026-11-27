@@ -1,7 +1,30 @@
-import { isImageNode } from "../cards.ts";
-import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { changedRanges, isImageNode } from "../cards.ts";
+import { NodeSelection, Plugin, PluginKey, TextSelection, type Transaction } from "@tiptap/pm/state";
 import type { NodeType } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
+import { changesOutsideSection, getFocusedSectionRange } from "../section-focus";
+
+export function addLineAfterPastedImage(tr: Transaction, sectionEnd?: number) {
+  const image = tr.doc.type.schema.nodes.image;
+  const paragraph = tr.doc.type.schema.nodes.paragraph;
+  let imageEnd = -1;
+  for (const { from, to } of changedRanges(tr.mapping.maps)) {
+    tr.doc.nodesBetween(from, to, (node, pos) => {
+      if (node.type === image && pos >= from && pos + node.nodeSize <= to) {
+        imageEnd = Math.max(imageEnd, pos + node.nodeSize);
+      }
+    });
+  }
+  if (imageEnd < 0) return false;
+  const after = tr.doc.resolve(imageEnd);
+  const atSectionEnd = after.depth === 0 && sectionEnd !== undefined &&
+    imageEnd === tr.mapping.map(sectionEnd, 1);
+  if (after.nodeAfter && !atSectionEnd) return false;
+  if (!after.parent.canReplaceWith(after.index(), after.index(), paragraph)) return false;
+  tr.insert(imageEnd, paragraph.create());
+  tr.setSelection(TextSelection.create(tr.doc, imageEnd + 1)).scrollIntoView();
+  return true;
+}
 
 // Puts the cursor in the text flowing beside a wrapped image: at the end of
 // the last text block that starts above the click, or in a new paragraph when
@@ -59,6 +82,16 @@ export function imageTextPlugin(type: NodeType) {
   return new Plugin({
     key: new PluginKey("image-text"),
     props: {
+      handlePaste(view, event, slice) {
+        if (event.clipboardData?.files.length || !slice.content.childCount ||
+            !slice.content.content.every(node => node.type === type)) return false;
+        const range = getFocusedSectionRange(view.state);
+        const tr = view.state.tr.replaceSelection(slice);
+        if (!addLineAfterPastedImage(tr, range?.to)) return false;
+        if (range && changesOutsideSection(tr, range)) return false;
+        view.dispatch(tr.setMeta("paste", true).setMeta("uiEvent", "paste").scrollIntoView());
+        return true;
+      },
       handleTextInput(view, _from, _to, text) {
         const { selection } = view.state;
         if (!(selection instanceof NodeSelection) || !isImageNode(selection.node)) return false;

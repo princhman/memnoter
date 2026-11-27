@@ -82,8 +82,8 @@ const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sideba
           mermaidView: MermaidView,
           menus: [...(!host.isNative ? [MentionSuggest] : []), SlashCommand.configure({ insertImages, insertDrawing: current => { void launchDrawing(current); } }), LatexSuggest],
         },
-        insertImages: (currentEditor, files, position) => {
-          void insertImages(currentEditor, files, position);
+        insertImages: (currentEditor, files, position, pasted) => {
+          void insertImages(currentEditor, files, position, pasted);
         },
         onTocUpdate: (content) => tocStore.setState(() => content),
       }),
