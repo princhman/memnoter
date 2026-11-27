@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useBankGate, type CropDraft } from "@/lib/question-bank";
 import { QuestionCropDialog } from "./question-crop-dialog";
 import { IconTooltip } from "@/components/ui/icon-tooltip";
@@ -185,7 +186,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     finally { cropBusy.current = false; setCropping(false); }
   }, [doc.id, doc.moduleId, doc.name, annotationArea, annotationPosition, questionCropping, bankEnabled]);
   const navigate = useNavigate();
-  const [saved] = useState(() => ({ ...readPdfView(doc.id), ...(initialPage ? { page: initialPage } : {}) }));
+  const [saved] = useState(() => readPdfView(doc.id));
   const [zoom, setZoom] = useState(saved.zoom);
   const [pinching, setPinching] = useState(false);
   const zoomValue = useRef(zoom);
@@ -299,7 +300,15 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   }
   const find = usePdfFind(pdf, root, fullscreen, jump);
   useLayoutEffect(() => {
-    if (pages.length && !restored.current) { restored.current = true; jump(Math.min(saved.page, pages.length)); }
+    if (pages.length && !restored.current) {
+      restored.current = true;
+      if (initialPage !== undefined && initialPage > pages.length) {
+        toast(`Page ${initialPage} is unavailable in this PDF.`, { duration: 6000 });
+        jump(1);
+      } else {
+        jump(initialPage ?? Math.min(saved.page, pages.length));
+      }
+    }
     const element = container.current;
     if (!element) return;
     measure();

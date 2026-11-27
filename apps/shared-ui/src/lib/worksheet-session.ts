@@ -3,7 +3,7 @@ import * as Y from "yjs";
 import { isNoteFromNewerVersion } from "./editor-schema";
 import { useQueryClient } from "@tanstack/react-query";
 import { call } from "./backend";
-import { bankKey, type Bank } from "./question-bank";
+import { bankKey, refreshBankIndex, type Bank } from "./question-bank";
 import { queryClient } from "./query-client";
 import { assertWritable, registerFlusher, writeOperation, type WritePermit } from "./write-lifecycle";
 
@@ -218,6 +218,7 @@ export function useCreateWorksheet(moduleId: string) {
       revisions: { ...receipt.bank.revisions, ...current.revisions },
       attempts: { ...current.attempts, [receipt.attemptId]: receipt.bank.attempts[receipt.attemptId] },
     } : receipt.bank);
+    void refreshBankIndex(moduleId);
     return receipt.attemptId;
   });
 }

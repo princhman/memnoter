@@ -671,6 +671,16 @@ fn finish_retains_answers_and_pins_and_rejects_further_writes() {
     let leaf = before.revisions[&pin.revision_id].parts.iter().find(|(id, _)| !before.revisions[&pin.revision_id].parts.values().any(|p| p.parent_id.as_ref() == Some(id))).unwrap().0.clone();
     attempts::save_answer(&core, module.clone(), attempt.clone(), pin.revision_id.clone(), leaf.clone(), "Final answer".into()).unwrap();
     let saved = bank::get(&core, module.clone()).unwrap().unwrap();
+    let index: Value = serde_json::from_str(&crate::dispatch::dispatch(
+        &core, "question_bank_index", &json!({"moduleId": module}).to_string(),
+    ).unwrap()).unwrap();
+    let questions: Vec<_> = saved.questions.iter().filter(|(_, question)| !question.deleted)
+        .map(|(id, question)| json!({"id": id, "title": question.title, "order": question.order}))
+        .collect();
+    assert_eq!(index, json!({
+        "questions": questions,
+        "worksheets": [{"id": attempt, "title": saved.attempts[&attempt].title}],
+    }));
     attempts::finish(&core, module.clone(), attempt.clone()).unwrap();
     let finished = bank::get(&core, module.clone()).unwrap().unwrap();
     assert!(finished.attempts[&attempt].finished);

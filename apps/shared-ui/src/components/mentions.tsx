@@ -16,7 +16,7 @@ import { useMentionNotes } from "@/lib/use-mentions";
 import { useDocuments } from "@/lib/use-documents";
 import { backlinks, mentionLabel, type MentionBankItem } from "@/lib/mention-index";
 import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { bankQuery, questionLabel, useBankGate, type Bank } from "@/lib/question-bank";
+import { bankIndexQuery, questionLabel, useBankGate, type BankIndex } from "@/lib/question-bank";
 import { setModulePage } from "@/lib/store";
 import type { DocumentRecord } from "@/lib/documents";
 import { requestSyncedFile } from "@/lib/sync/file-requests";
@@ -30,16 +30,14 @@ export function MentionProvider({ children }: { children: ReactNode }) {
   const { modules, ...notes } = useMentionNotes();
   const { data: files = EMPTY_FILES } = useDocuments();
   const bankEnabled = useBankGate();
-  const queries = useMemo(() => modules.map(module => ({ ...bankQuery(module.id, bankEnabled), staleTime: Infinity })), [modules, bankEnabled]);
-  const combine = useCallback((results: UseQueryResult<Bank | null>[]) => ({
+  const queries = useMemo(() => modules.map(module => bankIndexQuery(module.id, bankEnabled)), [modules, bankEnabled]);
+  const combine = useCallback((results: UseQueryResult<BankIndex | null>[]) => ({
     items: results.flatMap(({ data: bank }, index): MentionBankItem[] => {
       const moduleId = modules[index].id;
-      const questions = Object.entries(bank?.questions ?? {}).filter(([, question]) => !question.deleted)
-        .sort(([a, first], [b, second]) => first.order - second.order || a.localeCompare(b));
-      const worksheets = Object.entries(bank?.attempts ?? {}).filter(([, attempt]) => !attempt.deleted);
+      const questions = [...(bank?.questions ?? [])].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
       return [
-        ...questions.map(([id, question], number) => ({ kind: "question" as const, moduleId, id, title: questionLabel(question.title, number + 1) })),
-        ...worksheets.map(([id, attempt]) => ({ kind: "worksheet" as const, moduleId, id, title: attempt.title || "Worksheet" })),
+        ...questions.map(({ id, title }, number) => ({ kind: "question" as const, moduleId, id, title: questionLabel(title, number + 1) })),
+        ...(bank?.worksheets ?? []).map(({ id, title }) => ({ kind: "worksheet" as const, moduleId, id, title: title || "Worksheet" })),
       ];
     }),
     loading: bankEnabled && results.some(result => result.isPending),
@@ -148,7 +146,8 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
   const model = useMemo(() => {
     // The module being edited comes first; the rest keep their order.
     const notes = [...catalog.notes].sort((a, b) => Number(b.id === editingModule) - Number(a.id === editingModule));
-    const terms = props.query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    const terms = props.query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    const query = terms.join(" ");
     const searching = terms.length > 0;
     const matches = (path: string[]) => { const text = path.join(" / ").toLocaleLowerCase(); return terms.every(term => text.includes(term)); };
     const scope = trail[0];
@@ -168,21 +167,19 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
         });
       }
     } else for (const note of notes) {
-      if (candidates.length >= MAX_MENTION_RESULTS) break;
       if (scope && note.id !== scope) continue;
       if (!scope && matches([note.name])) {
         const expandable = note.note.headings.length > 0;
         candidates.push({ id: `module:${note.id}`, title: note.name, group: "", expandable, target: { kind: "module", id: note.id, nodeId: null, locator: null } });
         if (expandable) enter.set(`module:${note.id}`, [note.id]);
       }
-      if ((!scope && !searching) || candidates.length >= MAX_MENTION_RESULTS) continue;
+      if (!scope && !searching) continue;
       const byId = new Map(note.note.headings.map(heading => [heading.id, heading]));
       const parents = new Set(note.note.headings.map(heading => heading.parentId));
       // Section ids from the module's top down to (and including) a section.
       const chain = (id: string) => { const ids: string[] = []; for (let at = byId.get(id); at && ids.length < 50; at = at.parentId ? byId.get(at.parentId) : undefined) ids.unshift(at.id); return ids; };
       if (scope) header = [note.name, ...trail.slice(1).map(id => byId.get(id)?.title ?? "")].join(" / ");
       for (const heading of note.note.headings) {
-        if (candidates.length >= MAX_MENTION_RESULTS) break;
         const path = [note.name, ...(heading.path ?? [])];
         if (searching ? !matches([...path, heading.title]) : parent ? heading.parentId !== parent : (heading.path ?? []).length > 0) continue;
         if (searching && parent && !chain(heading.id).slice(0, -1).includes(parent)) continue;
@@ -192,7 +189,7 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
         if (expandable) enter.set(id, [note.id, ...chain(heading.id)]);
       }
     }
-    if (!scope && !pdfScope && candidates.length < MAX_MENTION_RESULTS) {
+    if (!scope && !pdfScope) {
       const files = catalog.files.filter(file => matches([file.name]));
       for (const file of files) candidates.push({ id: `file:${file.id}`, title: file.name, group: "Files", target: { kind: "file", id: file.id, nodeId: null, locator: null } });
       for (const note of notes) for (const image of note.note.images) {
@@ -204,9 +201,10 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
       for (const file of catalog.files) if (matches([file.name, "pdf pages"])) candidates.push({
         id: `pdf:${file.id}`, title: `${file.name} pages`, group: "PDF pages", expandable: true,
       });
+      const noteNames = new Map(notes.map(note => [note.id, note.name]));
       for (const kind of ["question", "worksheet"] as const) for (const item of catalog.bankItems) {
         if (item.kind !== kind) continue;
-        const moduleName = notes.find(note => note.id === item.moduleId)?.name ?? "";
+        const moduleName = noteNames.get(item.moduleId) ?? "";
         if (matches([moduleName, item.title, kind])) candidates.push({
           id: `${kind}:${item.moduleId}:${item.id}`, title: item.title, detail: moduleName,
           group: kind === "question" ? "Questions" : "Worksheets",
@@ -214,7 +212,37 @@ const MentionMenu = forwardRef<InsertMenuHandle, SuggestionProps<InsertItem, Ins
         });
       }
     }
-    const items = candidates.slice(0, MAX_MENTION_RESULTS).map(({ target, ...item }): InsertItem => ({
+    const rank = (title: string) => {
+      const text = title.toLocaleLowerCase().trim().replace(/\s+/g, " ");
+      return text === query ? 0 : text.startsWith(query) ? 1 : 2;
+    };
+    const ranked = searching && !pdfScope
+      ? candidates.map(candidate => ({ candidate, rank: rank(candidate.title) }))
+        .sort((a, b) => a.rank - b.rank).map(({ candidate }) => candidate)
+      : candidates;
+    const kindOf = (candidate: typeof candidates[number]) => candidate.target?.kind ?? "pdf";
+    const counts = new Map<string, number>();
+    const kindCount = new Set(ranked.map(kindOf)).size;
+    const share = Math.floor(MAX_MENTION_RESULTS / Math.max(1, kindCount));
+    const selected = new Set(ranked.filter(candidate => {
+      const kind = kindOf(candidate);
+      const count = counts.get(kind) ?? 0;
+      if (count >= share) return false;
+      counts.set(kind, count + 1);
+      return true;
+    }));
+    for (const candidate of ranked) {
+      if (selected.size >= MAX_MENTION_RESULTS) break;
+      selected.add(candidate);
+    }
+    // Keep each group together, ordered by its highest-ranked selected item.
+    const groups = new Map<string, typeof candidates>();
+    for (const candidate of ranked) if (selected.has(candidate)) {
+      const rows = groups.get(candidate.group) ?? [];
+      rows.push(candidate);
+      groups.set(candidate.group, rows);
+    }
+    const items = [...groups.values()].flat().map(({ target, ...item }): InsertItem => ({
       ...item, hint: "", keywords: [],
       run: (editor, range) => { if (target) editor.chain().focus().insertContentAt(range, [{ type: "mention", attrs: { target, mentionId: crypto.randomUUID() } }, { type: "text", text: " " }]).run(); },
     }));

@@ -4,6 +4,8 @@ import { call, isNativeHost, isTauri } from "./backend";
 import type { WorksheetRevision, WorksheetCrop, WorksheetPin, WorksheetAnswer } from "./worksheets";
 import { writeOperation, assertWritable } from "./write-lifecycle";
 import { setModulePage } from "./store";
+import { settled } from "./async-work";
+import { queryClient } from "./query-client";
 
 export type Bank = {
   schemaVersion: 1;
@@ -63,6 +65,33 @@ type BankEditFields = {
   cropId?: string; index?: number; crop?: Omit<CropDraft, "blob" | "url"> & { bytes: number[] };
 };
 export const bankKey = (moduleId: string) => ["question-bank", moduleId] as const;
+export type BankIndex = {
+  questions: { id: string; title: string; order: number }[];
+  worksheets: { id: string; title: string }[];
+};
+const bankIndexKey = (moduleId: string) => ["question-bank-index", moduleId] as const;
+const indexLanes = Array.from({ length: 3 }, () => Promise.resolve());
+let nextIndexLane = 0;
+export function bankIndexQuery(moduleId: string, enabled: boolean) {
+  return {
+    queryKey: bankIndexKey(moduleId), enabled, staleTime: Infinity, retry: false,
+    queryFn: ({ signal }: { signal: AbortSignal }) => {
+      const lane = nextIndexLane++ % indexLanes.length;
+      const lookup = indexLanes[lane].then(() => {
+        signal.throwIfAborted();
+        return call<BankIndex | null>("question_bank_index", { moduleId });
+      });
+      // Give editor work a turn between reads even if the backend responds immediately.
+      indexLanes[lane] = settled(lookup).then(() => new Promise<void>(resolve => setTimeout(resolve, 0)));
+      return lookup;
+    },
+  };
+}
+export async function refreshBankIndex(moduleId: string) {
+  const queryKey = bankIndexKey(moduleId);
+  await queryClient.cancelQueries({ queryKey });
+  await queryClient.invalidateQueries({ queryKey });
+}
 export function useBankGate() {
   const supported = isTauri() || isNativeHost();
   return useQuery({ queryKey: ["question-bank-enabled"], queryFn: () => call<boolean>("question_bank_enabled"), enabled: supported, staleTime: Infinity, retry: false }).data === true && supported;
@@ -79,6 +108,7 @@ export function useBankEdit(moduleId: string) {
     assertWritable(permit);
     const receipt = await call<{ bank: Bank; questionId: string; partId: string }>("question_bank_edit", { moduleId, edit });
     client.setQueryData(bankKey(moduleId), receipt.bank);
+    void refreshBankIndex(moduleId);
     setBankTarget({ moduleId, questionId: receipt.questionId, partId: receipt.partId });
     setModulePage(moduleId, "questions");
     return receipt;

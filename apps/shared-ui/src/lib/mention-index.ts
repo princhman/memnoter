@@ -50,12 +50,12 @@ export function backlinks(notes: { id: string; name: string; note: MentionNote }
 export type MentionBankItem = { kind: "question" | "worksheet"; moduleId: string; id: string; title: string };
 
 /** Display label computed live so it follows target renames and deletions. */
-export function mentionLabel(notes: { id: string; name: string; note: MentionNote }[], files: { id: string; name: string; pageCount?: number | null }[], target: Target, bankItems: MentionBankItem[] = []): string | undefined {
+export function mentionLabel(notes: { id: string; name: string; note: MentionNote }[], files: { id: string; name: string }[], target: Target, bankItems: MentionBankItem[] = []): string | undefined {
   if (target.kind === "file") return files.find(file => file.id === target.id)?.name;
   if (target.kind === "pdf-page") {
     const file = files.find(file => file.id === target.id);
     const page = mentionPage(target.locator);
-    return file && page && (file.pageCount == null || page <= file.pageCount) ? `${file.name} p.${page}` : undefined;
+    return file && page ? `${file.name} p.${page}` : undefined;
   }
   if (target.kind === "question" || target.kind === "worksheet") {
     return bankItems.find(item => item.kind === target.kind && item.moduleId === target.id && item.id === target.nodeId)?.title;

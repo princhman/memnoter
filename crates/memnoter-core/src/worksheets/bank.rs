@@ -11,6 +11,76 @@ pub fn get(core: &Core, module: String) -> CommandResult<Option<Bank>> {
     let conn = core.db.lock()?;
     read(&load(&conn, &module)?)
 }
+#[derive(Serialize)]
+pub struct BankIndex {
+    questions: Vec<IndexedQuestion>,
+    worksheets: Vec<IndexLabel>,
+}
+#[derive(Serialize)]
+struct IndexLabel {
+    id: String,
+    title: String,
+}
+#[derive(Serialize)]
+struct IndexedQuestion {
+    #[serde(flatten)]
+    label: IndexLabel,
+    order: u32,
+}
+
+/// Read browse labels directly from the shared maps without materializing the
+/// revision graph, worksheet pins, or answer documents.
+pub fn index(core: &Core, module: String) -> CommandResult<Option<BankIndex>> {
+    let doc = {
+        let conn = core.db.lock()?;
+        load(&conn, &module)?
+    };
+    let txn = doc.transact();
+    if txn
+        .root_refs()
+        .any(|(name, _)| name != "default" && name != ROOT)
+    {
+        return Err(invalid());
+    }
+    if !txn.root_refs().any(|(name, _)| name == ROOT) {
+        return Ok(None);
+    }
+    let root = txn.get_map(ROOT).ok_or_else(invalid)?;
+    if root.get(&txn, "schemaVersion").and_then(|value| u32::try_from(value).ok()) != Some(1) {
+        return Err(invalid());
+    }
+    let labels = |key| -> CommandResult<Vec<_>> {
+        let Some(Out::YMap(records)) = root.get(&txn, key) else {
+            return Err(invalid());
+        };
+        let mut labels = Vec::new();
+        for (id, value) in records.iter(&txn) {
+            let Out::YMap(record) = value else {
+                return Err(invalid());
+            };
+            let deleted = bool::try_from(record.get(&txn, "deleted").ok_or_else(invalid)?)
+                .map_err(|_| invalid())?;
+            if deleted {
+                continue;
+            }
+            let title = String::try_from(record.get(&txn, "title").ok_or_else(invalid)?)
+                .map_err(|_| invalid())?;
+            labels.push((IndexLabel { id: id.to_string(), title }, record));
+        }
+        Ok(labels)
+    };
+    let questions = labels("questions")?
+        .into_iter()
+        .map(|(label, record)| {
+            let order = u32::try_from(record.get(&txn, "order").ok_or_else(invalid)?)
+                .map_err(|_| invalid())?;
+            Ok(IndexedQuestion { label, order })
+        })
+        .collect::<CommandResult<Vec<_>>>()?;
+    let mut worksheets: Vec<_> = labels("attempts")?.into_iter().map(|(label, _)| label).collect();
+    worksheets.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(Some(BankIndex { questions, worksheets }))
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CropInput {

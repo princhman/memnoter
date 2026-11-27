@@ -297,6 +297,8 @@ test('insert and follow image, PDF page, question and worksheet mentions', async
         bank.revisions[revisionId] = { questionId, rootPartId, parts: { [rootPartId]: { parentId: null, order: 0, label: '', cropIds: [] } }, crops: {} };
       }
       bank.attempts.a1 = { title: 'Study practice worksheet', questions: [{ questionId: 'q23', revisionId: 'r23' }], deleted: false };
+      bank.attempts.cell = { title: 'Cell', questions: [], deleted: false };
+      bank.attempts.extra = { title: 'Practice Cell', questions: [], deleted: false };
       let pageCount = null;
       window.installTestBridge({ tauri: { invoke: async (command, args) => {
         if (command.startsWith('plugin:')) return 1;
@@ -312,12 +314,16 @@ test('insert and follow image, PDF page, question and worksheet mentions', async
         if (command === 'set_document_page_count') { pageCount = args.pageCount; return; }
         if (command === 'question_bank_enabled') return true;
         if (command === 'question_bank_get') return args.moduleId === 'm2' ? bank : null;
+        if (command === 'question_bank_index') return args.moduleId === 'm2' ? {
+          questions: Object.entries(bank.questions).map(([id, { title, order }]) => ({ id, title, order })),
+          worksheets: Object.entries(bank.attempts).map(([id, { title }]) => ({ id, title })),
+        } : null;
         if (command === 'worksheet_answer_document_load') return { document: [0, 0], expected: 'empty', plainText: null };
         return [];
       } } });
     }, {
       source: seed([['heading', 'Reading notes'], ['paragraph', 'See ']]),
-      destination: seed([...Array.from({ length: 42 }, (_, i) => ['paragraph', `Background note ${i + 1}`]), ['heading', 'Cell diagrams', { level: 1 }], ['image', '', { imageId: 'cell', title: 'Study cell diagram', src: image, width: 420, height: 180 }]]),
+      destination: seed([...Array.from({ length: 42 }, (_, i) => ['paragraph', `Background note ${i + 1}`]), ['heading', 'Cell diagrams', { level: 1 }], ['image', '', { imageId: 'cell', title: 'Study cell diagram', src: image, width: 420, height: 180 }], ...Array.from({ length: 110 }, (_, i) => ['heading', `Cell topic ${i + 1}`, { level: 1, 'data-toc-id': `cell-${i}` }])]),
     });
     await page.route('**/study-guide.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes(12) }));
     const origin = `http://localhost:${server.httpServer.address().port}`;
@@ -340,6 +346,13 @@ test('insert and follow image, PDF page, question and worksheet mentions', async
     };
     const option = name => page.getByRole('option', { name, exact: true });
     const chip = name => page.getByRole('button', { name, exact: true });
+    await insertQuery('@Cell');
+    await option('Cell Biology').waitFor({ timeout: 5000 });
+    assert.equal(await option('Practice Cell Biology').count(), 1);
+    assert.equal(await page.getByRole('option').first().getAttribute('id'), await option('Cell Biology').getAttribute('id'));
+    assert.equal(await page.getByRole('option').count(), 100);
+    await page.keyboard.press('Escape');
+    for (const _ of '@Cell') await page.keyboard.press('Backspace');
     await insertQuery('@Study');
     await option('Study cell diagram Biology').waitFor();
     await option('Study guide.pdf pages').waitFor();
@@ -426,6 +439,43 @@ test('insert and follow image, PDF page, question and worksheet mentions', async
   } finally { await server.close(); }
 });
 
+test('a stale PDF page mention reports the missing page', async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const note = new Y.Doc();
+  const paragraph = new Y.XmlElement('paragraph');
+  const mention = new Y.XmlElement('mention');
+  mention.setAttribute('target', { kind: 'pdf-page', id: 'pdf1', nodeId: null, locator: '12' });
+  mention.setAttribute('mentionId', 'stale-page');
+  note.getXmlFragment('default').push([paragraph]);
+  paragraph.push([mention]);
+  const source = [...Y.encodeStateAsUpdate(note)];
+  note.destroy();
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    await page.addInitScript(source => {
+      window.installTestBridge({ tauri: { invoke: async command => {
+        if (command.startsWith('plugin:')) return 1;
+        if (command === 'modules') return [{ id: 'm1', name: 'Research' }];
+        if (command === 'get_content') return { state: source, updates: [], files: [] };
+        if (command === 'document_path') return '/short-guide.pdf';
+        if (command === 'list_documents') return [{ id: 'pdf1', moduleId: 'm1', name: 'Guide.pdf', pageCount: 12, available: true }];
+        return [];
+      } } });
+    }, source);
+    await page.route('**/short-guide.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes(10) }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/m1`);
+    await page.getByRole('button', { name: '@Guide.pdf p.12', exact: true }).click();
+    const input = page.getByRole('textbox', { name: 'Page number' });
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Page number"]')?.disabled &&
+      !!document.querySelector('.pdf-viewport'));
+    assert.equal(await input.inputValue(), '1');
+    await page.getByText('Page 12 is unavailable in this PDF.', { exact: true }).waitFor();
+  } finally { await server.close(); }
+});
+
 test('the warmed mention menu shows cached results without loading', async t => {
   const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
   const proof = process.env.MENTION_PROOF_DIR;
@@ -460,7 +510,7 @@ test('the warmed mention menu shows cached results without loading', async t => 
             id: 'pdf-' + index, moduleId: 'note-1', name: 'Course guide ' + index + '.pdf',
             available: true, pageCount: 100,
           }));
-          const loads = window.mentionLoads = { content: 0, banks: 0 };
+          const loads = window.mentionLoads = { content: 0, fullBanks: 0, indexes: 0, inFlight: 0, peak: 0 };
           const lastBank = new Promise(resolve => { window.finishMentionBank = resolve; });
           window.installTestBridge({ tauri: { invoke: async (command, args) => {
             if (command.startsWith('plugin:')) return 1;
@@ -477,14 +527,21 @@ test('the warmed mention menu shows cached results without loading', async t => 
             if (command === 'list_documents') return files;
             if (command === 'question_bank_enabled') return true;
             if (command === 'question_bank_get') {
-              loads.banks++;
+              loads.fullBanks++;
+              return null;
+            }
+            if (command === 'question_bank_index') {
+              loads.indexes++;
+              loads.inFlight++;
+              loads.peak = Math.max(loads.peak, loads.inFlight);
               const index = Number(args.moduleId.slice(5));
+              await new Promise(resolve => setTimeout(resolve, 0));
               if (holdBank && index === 199) await lastBank;
+              loads.inFlight--;
               if (index >= 50) return null;
               return {
-                schemaVersion: 1, revisions: {}, answers: {},
-                questions: { question: { title: 'Review question ' + index, order: 0 } },
-                attempts: { worksheet: { title: 'Practice worksheet ' + index } },
+                questions: [{ id: 'question', title: 'Review question ' + index, order: 0 }],
+                worksheets: [{ id: 'worksheet', title: 'Practice worksheet ' + index }],
               };
             }
             return [];
@@ -493,7 +550,13 @@ test('the warmed mention menu shows cached results without loading', async t => 
         await page.goto(`http://localhost:${server.httpServer.address().port}/note-0`);
         const editor = page.locator('.tiptap[contenteditable=true]');
         await editor.getByRole('heading', { name: 'Reading notes' }).waitFor();
-        await page.waitForFunction(() => window.mentionLoads.content >= 200 && window.mentionLoads.banks === 200);
+        await page.waitForFunction(held => window.mentionLoads.fullBanks > 0 ||
+          (window.mentionLoads.content >= 200 && window.mentionLoads.indexes === 200 &&
+            window.mentionLoads.inFlight === Number(held)), holdBank);
+        const startup = await page.evaluate(() => window.mentionLoads);
+        assert.equal(startup.fullBanks, 0, 'catalog warming must not load whole banks');
+        assert.equal(startup.indexes, notes.length);
+        assert.ok(startup.peak > 0 && startup.peak <= 3, `peak concurrent index calls: ${startup.peak}`);
         await editor.evaluate(element => element.editor.commands.focus('end'));
         await page.waitForFunction(() => {
           const element = document.querySelector('.tiptap[contenteditable=true]');
@@ -541,7 +604,7 @@ test('the warmed mention menu shows cached results without loading', async t => 
           await page.evaluate(() => window.finishMentionBank());
         }
         await page.getByRole('status').filter({ hasText: 'No matches' }).waitFor();
-        assert.deepEqual(await page.evaluate(() => window.mentionLoads), before);
+        assert.deepEqual(await page.evaluate(() => window.mentionLoads), { ...before, inFlight: 0 });
       } finally {
         await page.context().close();
       }
