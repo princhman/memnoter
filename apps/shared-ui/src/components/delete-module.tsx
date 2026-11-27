@@ -4,6 +4,7 @@ import { exclusiveWrite, MUTATIONS } from "@/lib/write-lifecycle";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { call as invoke } from "../lib/backend.ts";
+import { cardsChanged } from "@/lib/card-events";
 import { dueCountsKey } from "@/lib/card-sync";
 import { forgetModule } from "@/lib/store";
 import { saveQueue } from "@/lib/saves";
@@ -37,6 +38,7 @@ const DeleteModule = ({
       await invoke("delete_module", { moduleId });
       saveQueue.drop(moduleId);
       forgetModule(moduleId);
+      cardsChanged();
       void queryClient.invalidateQueries({ queryKey: dueCountsKey });
       if (
         router.state.matches.some(

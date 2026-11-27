@@ -323,7 +323,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   function clearPreview() {
     for (const page of previewPages.current) { page.style.transform = ""; page.style.transformOrigin = ""; page.style.willChange = ""; }
     previewPages.current = [];
-    if (content.current) content.current.style.pointerEvents = "";
+    if (content.current) {
+      content.current.style.pointerEvents = "";
+      content.current.style.overflow = "";
+    }
   }
   function restoreZoomAnchor(anchor: ZoomAnchor | null) {
     const element = container.current;
@@ -371,6 +374,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     let releaseTouchTargets: (() => void)[] = [];
     const clearTouchTargets = () => { releaseTouchTargets.forEach(release => release()); releaseTouchTargets = []; };
     function finish() {
+      if (native) { native = false; ignoreWheelUntil = performance.now() + 250; }
       if (!anchor) return zoomValue.current;
       clearTimeout(timer);
       cancelAnimationFrame(previewFrame); previewFrame = 0;
@@ -379,7 +383,6 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         touch = null; touchBlocked = true;
         ignoreNativeUntil = ignoreWheelUntil = performance.now() + 250;
       }
-      if (native) { native = false; ignoreWheelUntil = performance.now() + 250; }
       if (preview !== zoomValue.current) {
         zoomAnchor.current = anchor;
         setZoom(preview);
@@ -408,6 +411,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         });
         previewPages.current.forEach((page, index) => { page.style.transformOrigin = origins[index]; page.style.willChange = "transform"; });
         grid.style.pointerEvents = "none";
+        // Transforms can otherwise grow the scrollable overflow and introduce
+        // a scrollbar (and a narrower viewport) before the zoom commits.
+        if (!touch) grid.style.overflow = "clip";
       }
       preview = clampZoom(value);
       if (!previewFrame) previewFrame = requestAnimationFrame(() => {
@@ -433,12 +439,22 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       if (touch || touchBlocked || performance.now() < ignoreNativeUntil) return;
       if (event.type === "gesturestart") {
         native = true;
-        // Discard a leading wheel preview if WebKit sends both protocols.
-        clearTimeout(timer); cancelAnimationFrame(previewFrame); previewFrame = 0; clearPreview(); anchor = null;
-        nativeBase = zoomValue.current;
+        // Continue a leading wheel preview if WebKit sends both protocols.
+        nativeBase = anchor ? preview : zoomValue.current;
       }
-      if ("scale" in event && typeof event.scale === "number" && Number.isFinite(event.scale) && event.scale > 0) show(nativeBase * event.scale, { clientX: "clientX" in event && typeof event.clientX === "number" ? event.clientX : undefined, clientY: "clientY" in event && typeof event.clientY === "number" ? event.clientY : undefined });
-      if (event.type === "gestureend") { native = false; ignoreWheelUntil = performance.now() + 250; finish(); }
+      if (!native) return;
+      const ending = event.type === "gestureend";
+      const { scale = ending ? undefined : 1, clientX, clientY } = event as Event & Partial<Pick<MouseEvent, "clientX" | "clientY">> & { scale?: number };
+      const validScale = typeof scale === "number" && Number.isFinite(scale) && scale > 0;
+      if (!validScale && !ending) return;
+      const hasPoint = typeof clientX === "number" && Number.isFinite(clientX) && typeof clientY === "number" && Number.isFinite(clientY);
+      if (anchor && hasPoint) {
+        panX += clientX - anchor.clientX;
+        panY += clientY - anchor.clientY;
+        anchor = { ...anchor, clientX, clientY };
+      }
+      if (validScale) show(nativeBase * scale, hasPoint ? { clientX, clientY } : {});
+      if (ending) finish();
     }
     const ownTouch = (contact: Touch) => contact.target instanceof Node && element.contains(contact.target);
     const beginTouch = (event: TouchEvent) => {
@@ -511,18 +527,36 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     };
   }, [doc.available, error]);
   const textMenu = useRef<HTMLDivElement>(null);
+  const scrollingContent = useRef<HTMLDivElement>(null);
   const [textAction, setTextAction] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
     const menu = textMenu.current;
-    if (menu && root.current && textAction) menu.style.left = `${Math.max(8, Math.min(textAction.left, root.current.clientWidth - menu.offsetWidth - 8))}px`;
+    const viewport = container.current, host = scrollingContent.current;
+    if (!menu || !viewport || !host || !textAction) return;
+    // `left` is in the scrolling content's coordinates, so clamp to the part of it in view.
+    const visibleLeft = viewport.getBoundingClientRect().left - host.getBoundingClientRect().left;
+    menu.style.left = `${Math.max(visibleLeft + 8, Math.min(textAction.left, visibleLeft + viewport.clientWidth - menu.offsetWidth - 8))}px`;
   }, [textAction]);
   useEffect(() => {
     const reader = content.current;
     const viewport = container.current;
-    const host = root.current;
+    const host = scrollingContent.current;
     if (!reader || !viewport || !host) return;
     let frame = 0;
+    let dragging = false;
+    let dragPosition: { left: number; top: number } | null = null;
+    const startDrag = (event: PointerEvent) => {
+      if (event.button !== 0 || event.pointerType === "touch") return;
+      dragging = true;
+      dragPosition = null;
+    };
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      update();
+    };
     const clear = () => {
+      dragPosition = null;
       setTextAction(null);
       savedTextSelection.current = null;
       const selection = window.getSelection();
@@ -532,18 +566,30 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const selected = !selecting && !cropping && !pinching && !pendingPdfQuote.state && readPdfTextSelection(reader, doc);
-        if (!selected) { setTextAction(null); return; }
+        if (!selected) {
+          if (!dragging) dragPosition = null;
+          setTextAction(null);
+          return;
+        }
         savedTextSelection.current = selected;
-        const bounds = host.getBoundingClientRect(), view = viewport.getBoundingClientRect();
-        if (selected.anchor.bottom < view.top || selected.anchor.top > view.bottom) { setTextAction(null); return; }
-        setTextAction({ left: Math.max(8, Math.min(bounds.width - 240, selected.anchor.left - bounds.left)),
-          top: Math.max(40, Math.min(bounds.height - 36, selected.anchor.top - bounds.top - 32)) });
+        const bounds = host.getBoundingClientRect();
+        // Keep the menu in the same scrolling coordinate space as the selection.
+        const live = { left: selected.anchor.left - bounds.left,
+          top: Math.max(0, selected.anchor.top - bounds.top - 32) };
+        if (dragging) dragPosition ??= live;
+        const position = dragPosition ?? live;
+        setTextAction(previous => previous?.left === position.left && previous.top === position.top ? previous : position);
       });
     };
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") clear(); };
     document.addEventListener("selectionchange", update);
     window.addEventListener("keydown", key);
-    viewport.addEventListener("scroll", update);
+    if (!nativeSelectionMenu) {
+      reader.addEventListener("pointerdown", startDrag);
+      window.addEventListener("pointerup", endDrag, true);
+      window.addEventListener("pointercancel", endDrag, true);
+      window.addEventListener("blur", endDrag);
+    }
     viewport.addEventListener("pointercancel", clear);
     let width = viewport.clientWidth, height = viewport.clientHeight;
     const resize = new ResizeObserver(() => {
@@ -557,10 +603,13 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       cancelAnimationFrame(frame); clear(); resize.disconnect(); mutations.disconnect();
       document.removeEventListener("selectionchange", update);
       window.removeEventListener("keydown", key);
-      viewport.removeEventListener("scroll", update);
+      reader.removeEventListener("pointerdown", startDrag);
+      window.removeEventListener("pointerup", endDrag, true);
+      window.removeEventListener("pointercancel", endDrag, true);
+      window.removeEventListener("blur", endDrag);
       viewport.removeEventListener("pointercancel", clear);
     };
-  }, [doc.id, doc.name, doc.available, selecting, cropping, pinching, pending?.id, zoom, error]);
+  }, [doc.id, doc.name, doc.available, selecting, cropping, pinching, pending?.id, zoom, error, nativeSelectionMenu]);
   useLayoutEffect(() => {
     if (!annotationEditor) return;
     const editor = annotationEditor;
@@ -756,17 +805,6 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     return pdfReaderControls.set({ documentId: doc.id, state: JSON.parse(nativeState), actions });
   }, [nativeState, doc.id]);
   return <div ref={root} data-pdf-ios={IS_IOS || undefined} tabIndex={-1} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
-    {!nativeSelectionMenu && textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
-      <div className="flex items-center gap-0.5 overflow-x-auto">
-        <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
-        <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}><Button size="xs" variant="ghost" className="px-1.5" aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button></IconTooltip>
-        <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => setShowHighlightColors(value => !value)}>
-          <span className="size-2 rounded-full" style={{ backgroundColor: pdfHighlightColors[highlightColor].value }} /><ChevronDown className="size-3" />
-        </ToolButton>
-        <Button size="xs" variant="ghost" className="px-1.5" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("comment")}><MessageSquare aria-hidden="true" />Comment</Button>
-      </div>
-      {showHighlightColors && <div className="mt-1 px-1"><PdfHighlightColors color={highlightColor} disabled={!annotations.ready || writeBlocked} onChange={color => { chooseHighlightColor(color); annotateText("highlight", color); }} /></div>}
-    </div>}
     {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={annotationEditor}>
       <div className="flex items-center gap-0.5">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Highlight area" disabled={!annotations.ready || writeBlocked} onClick={() => highlightArea()}><Highlighter aria-hidden="true" />Highlight</Button>
@@ -833,7 +871,20 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     </div>}
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="pdf-viewport min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF</p>}
-      <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage find={find} key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} annotations={annotations.annotations} onAnnotationOpen={openAnnotation} quoteRegions={quoteRegions.get(index + 1)} onQuoteNavigate={navigateToQuote} quoteNavigationDisabled={selecting || cropping || pinching} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
+      <div ref={scrollingContent} className="relative">
+        <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage find={find} key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} annotations={annotations.annotations} onAnnotationOpen={openAnnotation} quoteRegions={quoteRegions.get(index + 1)} onQuoteNavigate={navigateToQuote} quoteNavigationDisabled={selecting || cropping || pinching} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
+        {!nativeSelectionMenu && textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
+          <div className="flex items-center gap-0.5 overflow-x-auto">
+            <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
+            <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}><Button size="xs" variant="ghost" className="px-1.5" aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button></IconTooltip>
+            <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => setShowHighlightColors(value => !value)}>
+              <span className="size-2 rounded-full" style={{ backgroundColor: pdfHighlightColors[highlightColor].value }} /><ChevronDown className="size-3" />
+            </ToolButton>
+            <Button size="xs" variant="ghost" className="px-1.5" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("comment")}><MessageSquare aria-hidden="true" />Comment</Button>
+          </div>
+          {showHighlightColors && <div className="mt-1 px-1"><PdfHighlightColors color={highlightColor} disabled={!annotations.ready || writeBlocked} onChange={color => { chooseHighlightColor(color); annotateText("highlight", color); }} /></div>}
+        </div>}
+      </div>
     </div>}
   </div>;
 }

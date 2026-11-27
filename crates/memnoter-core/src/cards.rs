@@ -354,7 +354,7 @@ pub fn due_cards(
              where c.deleted_at is null and c.review_due_at <= ?1
                and (?2 is null or c.module_id = ?2)
                and (?3 is null or c.state != 0 or c.last_review_at is not null or c.created_at < ?3)
-             order by c.review_due_at, c.id"
+             order by c.review_due_at, case when c.state = 0 then c.created_at end, c.id"
         ))
         .map_err(db_err)?;
     let rows = stmt
@@ -888,6 +888,66 @@ mod tests {
             reviewed(due_at, expected_reps + 1),
             log(3),
         )
+    }
+
+    #[test]
+    fn queue_orders_due_cards_and_counts_the_same_rows() {
+        let f = Fixture::new();
+        f.sync("a", &[basic("z-older", "Older new", "A")], 10);
+        f.sync(
+            "a",
+            &[
+                basic("z-older", "Older new", "A"),
+                basic("a-newer", "Newer new", "A"),
+                basic("learning", "Learning", "A"),
+                basic("review", "Review", "A"),
+                basic("later", "Later", "A"),
+                basic("deleted", "Deleted", "A"),
+            ],
+            20,
+        );
+        f.db.conn
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "update cards set due_at = 30 where id in ('z-older', 'a-newer');
+             update cards set state = 1, due_at = 22 where id = 'learning';
+             update cards set state = 2, due_at = 25 where id = 'review';
+             update cards set state = 3, due_at = 40 where id = 'later';
+             update cards set deleted_at = 21 where id = 'deleted';",
+            )
+            .unwrap();
+
+        let counts = due_counts(&f.db, 30, 40, None).unwrap();
+        let count = &counts[0];
+        assert_eq!(
+            (count.count, count.learning, count.review, count.new),
+            (4, 1, 1, 2)
+        );
+        assert_eq!(
+            (count.later_learning, count.later_review, count.later_new),
+            (1, 0, 0)
+        );
+        let ids = |now| {
+            f.due(Some("a"), now)
+                .into_iter()
+                .map(|card| card.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(30), ["learning", "review", "z-older", "a-newer"]);
+        assert_eq!(
+            ids(40),
+            ["learning", "review", "z-older", "a-newer", "later"]
+        );
+
+        review(&f, "learning", 0, 40).unwrap();
+        assert_eq!(ids(30), ["review", "z-older", "a-newer"]);
+        let count = &due_counts(&f.db, 30, 40, None).unwrap()[0];
+        assert_eq!(
+            (count.count, count.learning, count.review, count.new),
+            (3, 0, 1, 2)
+        );
+        assert_eq!((count.later_learning, count.later_review), (1, 1));
     }
 
     #[test]

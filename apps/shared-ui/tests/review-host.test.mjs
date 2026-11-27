@@ -100,3 +100,43 @@ test('WK review host scrolls long questions and revealed answers within its view
 
   }
 });
+
+test('a same-scope reload advances past a deleted card and clears native controls when empty', async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(installReviewHost);
+    await page.goto(`http://localhost:${server.httpServer.address().port}/review-native.html`);
+    await page.waitForFunction(() => window.memnoterReview);
+    await page.evaluate(async () => {
+      await window.loadCard({
+        id: 'first', reps: 0, kind: 'basic',
+        front: [{ type: 'text', text: 'First question' }],
+        back: [{ type: 'text', text: 'First answer' }],
+      }, true);
+    });
+    await page.getByText('First answer', { exact: true }).waitFor();
+    await page.evaluate(async () => {
+      window.__card = { ...window.__card, id: 'second', front: [{ type: 'text', text: 'Second question' }] };
+      await window.memnoterReview.load('first0');
+    });
+    await page.getByText('Second question', { exact: true }).waitFor({ timeout: 3000 });
+    assert.equal(await page.evaluate(() => window.__states.at(-1).revealed), false);
+    await page.evaluate(async () => {
+      window.__card = null;
+      await window.memnoterReview.load('first0');
+    });
+    await page.getByRole('heading', { name: 'All caught up' }).waitFor();
+    const state = await page.evaluate(() => window.__states.at(-1));
+    assert.equal(state.hasCard, false);
+    assert.equal(state.canShowNow, false);
+    assert.equal(state.cardId, null);
+    assert.deepEqual(state.counts, { new: 0, learning: 0, review: 0, laterToday: { new: 0, learning: 0, review: 0 } });
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});

@@ -210,6 +210,10 @@ compare before recording; preserve local edits when updating the checkout.
   exactly what to open. Say what to open, what to do and what they should see.
   When they ask for comparison proof, give a matched before/after for every
   item.
+- **Look at visual proof yourself before asking for approval.** Open every
+  screenshot or video and check it against the issue's Done means and
+  `DESIGN.md` (truncation, overlap, spacing). Fix what's wrong first; never
+  forward a delegate's proof unchecked.
 - **Cheap** checks: do them yourself. **Expensive** ones on platforms the issue
   didn't name: ask first.
 - **Chromium/WebKit proof:** `PROOF_DIR=<dir>` makes every page a shared-ui test

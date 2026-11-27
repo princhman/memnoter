@@ -109,9 +109,10 @@ function Review() {
           </section>
         )}
         {error && (
-          <p role="alert" className="text-center text-sm text-destructive">
-            {error}
-          </p>
+          <div className="grid justify-items-center gap-2 text-center">
+            <p role="alert" className="text-sm text-destructive">{error}</p>
+            {queue === null && <Button variant="secondary" onClick={session.refresh}>Retry</Button>}
+          </div>
         )}
         {queue === null && !error && (
           <p className="text-center text-muted-foreground">Loading cards…</p>

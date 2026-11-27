@@ -14,7 +14,7 @@ export function installReviewHost() {
       window.__writes.push(message.command);
       Object.assign(window.__card, message.args.card ?? message.args.previous);
     }
-    if (message.command === 'due_cards') value = window.__card ? [structuredClone(window.__card)] : [];
+    if (message.command === 'due_cards') value = window.__card?.dueAt <= message.args.now ? [structuredClone(window.__card)] : [];
     if (['unindexed_modules', 'unindexed_card_modules'].includes(message.command)) value = [];
     queueMicrotask(() => window.__memnoterBridge.resolve(message.id, value));
   } });

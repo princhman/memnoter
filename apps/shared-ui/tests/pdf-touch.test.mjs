@@ -163,3 +163,77 @@ test('PDF touch pinch/pan preserves the reading point and cancels a captured cro
     assert.deepEqual(errors, []);
   } finally { await browser?.close(); await server.close(); }
 });
+
+test('desktop PDF pinch keeps the pointer anchored without growing the scroll area mid-gesture', async () => {
+  const { textPdfBytes } = await import('./browser/pdf-text-selection-pdf.mjs');
+  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await browserHarness(import.meta.url).webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    await page.addInitScript(`(${installTestBridge.toString()})({ tauri: { invoke: async command => {
+      if (command === 'list_documents') return [{ id: 'pinch', moduleId: 'note', name: 'Reading.pdf', size: 1000, pageCount: 3, available: true }];
+      if (command === 'document_path') return '/reading.pdf';
+      if (command === 'load_annotations') return { state: null, revision: 0, generation: 'reading-test' };
+      return [];
+    } } });`);
+    await page.route('**/reading.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/files/pinch`);
+    const viewport = page.locator('.pdf-viewport');
+    const sheet = viewport.locator('[data-pdf-page="1"]');
+    const text = sheet.locator('.textLayer span').first();
+    await text.waitFor();
+    const textBox = await text.boundingBox();
+    const x = textBox.x + textBox.width - 2, y = textBox.y + textBox.height / 2;
+    const geometry = (point = { x, y }) => sheet.evaluate((sheet, { x, y }) => {
+      const box = sheet.getBoundingClientRect();
+      const viewport = sheet.closest('.pdf-viewport');
+      return { x: (x - box.left) / box.width, y: (y - box.top) / box.height,
+        width: box.width, scrollWidth: viewport.scrollWidth, layoutWidth: sheet.offsetWidth };
+    }, point);
+    const before = await geometry();
+    const samePoint = actual => assert.ok(Math.abs(actual.x - before.x) < .004 && Math.abs(actual.y - before.y) < .004,
+      JSON.stringify({ before, actual }));
+    await page.mouse.move(x, y);
+    if (process.env.PROOF_DIR) await page.waitForTimeout(850);
+    await page.keyboard.down('Control');
+    for (let step = 0; step < 16; step++) {
+      await page.mouse.wheel(0, -6);
+      await page.waitForTimeout(65);
+      const preview = await geometry();
+      samePoint(preview);
+      assert.equal(preview.scrollWidth, before.scrollWidth, 'preview does not expand the scrollable area');
+      assert.equal(preview.layoutWidth, before.layoutWidth, 'preview leaves page layout alone');
+    }
+    await page.keyboard.up('Control');
+    await page.waitForFunction(() => document.querySelector('[data-pdf-page="1"]').offsetWidth > 900);
+    const committed = await geometry();
+    samePoint(committed);
+    assert.ok(committed.width > 900);
+    assert.equal(await page.evaluate(() => window.visualViewport.scale), 1);
+    if (process.env.PROOF_DIR) await page.waitForTimeout(1000);
+    const gesture = (type, scale, point) => viewport.evaluate((element, { type, scale, point }) => {
+      const event = new MouseEvent(type, { cancelable: true, clientX: point.x, clientY: point.y });
+      Object.defineProperty(event, 'scale', { value: scale });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    }, { type, scale, point });
+    const moved = { x: x + 25, y: y - 10 };
+    assert.ok(await gesture('gesturestart', 1, { x, y }));
+    assert.ok(await gesture('gesturechange', 1.1, moved));
+    await page.waitForFunction(() => {
+      const sheet = document.querySelector('[data-pdf-page="1"]');
+      return sheet.getBoundingClientRect().width > sheet.offsetWidth * 1.09;
+    });
+    samePoint(await geometry(moved));
+    assert.equal((await geometry(moved)).layoutWidth, committed.layoutWidth);
+    const endPoint = { x: x + 40, y: y - 20 };
+    assert.ok(await gesture('gestureend', 1.06, endPoint));
+    await page.waitForFunction(width => document.querySelector('[data-pdf-page="1"]').offsetWidth > width, committed.layoutWidth);
+    const final = await geometry(endPoint);
+    assert.ok(Math.abs(final.width / committed.width - 1.06) < .005, JSON.stringify(final));
+    samePoint(final);
+    await page.close();
+  } finally { await browser?.close(); await server.close(); }
+});
