@@ -11,6 +11,8 @@ import NumberingSection from "@/components/settings/numbering-section";
 import OutlineSection from "@/components/settings/outline-section";
 import ReviewSection from "@/components/settings/review-section";
 import SpellingSection from "@/components/settings/spelling-section";
+import { isSecondaryWindow, call } from "@/lib/backend";
+import { toast } from "sonner";
 import SyncSection from "@/components/settings/sync-section";
 
 export const Route = createFileRoute("/settings")({
@@ -26,6 +28,7 @@ function Settings() {
     else void router.navigate({ to: "/", replace: true });
   };
 
+  const secondary = isSecondaryWindow();
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 pb-16">
       <div className="flex items-center gap-2">
@@ -34,7 +37,9 @@ function Settings() {
         </IconTooltip>
         <h1 className="text-xl font-semibold">Settings</h1>
       </div>
-      <SyncSection />
+      {secondary ? <Button variant="outline" className="self-start" onClick={() => {
+        void call("show_main_settings").catch(error => toast.error(error.message));
+      }}>Open sync and backups in main window</Button> : <SyncSection />}
       <ReviewSection />
       <NumberingSection />
       <OutlineSection />
@@ -50,7 +55,7 @@ function Settings() {
         </label>
       </section>
       <SpellingSection />
-      <BackupsSection />
+      {!secondary && <BackupsSection />}
       <AboutSection />
     </div>
   );

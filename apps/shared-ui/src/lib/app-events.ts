@@ -1,3 +1,4 @@
+import { openDesktopWindow } from "./desktop-windows";
 import { capabilities, listen } from "./backend.ts";
 import { action, SHORTCUTS, bindsInJS, matchesShortcut } from "./shortcuts.ts";
 
@@ -23,6 +24,7 @@ const APP_ACTIONS: Record<string, () => void> = {
   "settings.open": () => requestApp(OPEN_SETTINGS_EVENT),
   "module.importAnki": () => requestApp(IMPORT_ANKI_EVENT),
   "module.import": () => requestApp(IMPORT_FOLDER_EVENT),
+  "window.new": () => { if (capabilities.windowControls) void openDesktopWindow(); },
   "module.new": () => requestApp(NEW_MODULE_EVENT),
   "find.open": () => requestApp(FIND_EVENT),
   "sidebar.toggle": () => requestApp(TOGGLE_SIDEBAR_EVENT),
@@ -31,7 +33,8 @@ const APP_ACTIONS: Record<string, () => void> = {
 export function listenToMenu() {
   // Native macOS owns these accelerators; other hosts need JS fallbacks.
   window.addEventListener("keydown", (event) => {
-    for (const id of ["module.new", "settings.open"]) {
+    if (event.defaultPrevented || event.repeat || event.isComposing) return;
+    for (const id of ["module.new", "settings.open", ...(capabilities.windowControls ? ["window.new"] : [])]) {
       const entry = action(id);
       if (bindsInJS(entry, usesNativeMenuShortcuts()) && matchesShortcut(event, entry.keys)) {
         event.preventDefault();

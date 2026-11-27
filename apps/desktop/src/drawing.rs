@@ -5,19 +5,16 @@ use std::{
     fs,
     os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
-    },
+    sync::{mpsc, Arc, Mutex},
 };
 use tauri::Manager;
 
 #[derive(Default)]
-pub struct DrawingGate(Arc<AtomicBool>);
-struct Editing(Arc<AtomicBool>);
+pub struct DrawingGate(Arc<Mutex<Option<String>>>);
+struct Editing(Arc<Mutex<Option<String>>>);
 impl Drop for Editing {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        *self.0.lock().unwrap() = None;
     }
 }
 
@@ -40,14 +37,16 @@ extern "C" fn drawing_finished(context: u64, status: i32) {
     let _ = sender.send(status);
 }
 
-pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if app.state::<DrawingGate>().0.load(Ordering::SeqCst) {
+pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>, window: Option<&str>) {
+    let gate = app.state::<DrawingGate>();
+    let owner = gate.0.lock().unwrap();
+    if owner.as_deref().is_some_and(|label| window.is_none_or(|window| window == label)) {
         let _ = app.run_on_main_thread(|| unsafe { memnoter_close_drawing() });
     }
 }
 
-pub fn handle_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) -> bool {
-    if !app.state::<DrawingGate>().0.load(Ordering::SeqCst) {
+pub fn handle_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>, window: &str, id: &str) -> bool {
+    if app.state::<DrawingGate>().0.lock().unwrap().as_deref() != Some(window) {
         return false;
     }
     if id == "editor-undo" || id == "editor-redo" {
@@ -82,21 +81,27 @@ fn call(core: &Core, command: &str, args: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn edit_drawing(
-    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, Arc<Core>>,
     gate: tauri::State<'_, DrawingGate>,
     module_id: String,
     image_id: String,
     source_id: Option<String>,
 ) -> Result<Value, String> {
-    if gate.0.swap(true, Ordering::SeqCst) {
-        app.run_on_main_thread(|| unsafe { memnoter_focus_drawing() })
-            .map_err(|error| error.to_string())?;
-        return Ok(json!({"status":"active","asCopy":false,"hasChanges":false}));
+    let app = window.app_handle().clone();
+    {
+        let mut owner = gate.0.lock().unwrap();
+        if owner.is_some() {
+            app.run_on_main_thread(|| unsafe { memnoter_focus_drawing() })
+                .map_err(|error| error.to_string())?;
+            return Ok(json!({"status":"active","asCopy":false,"hasChanges":false}));
+        }
+        *owner = Some(window.label().into());
     }
     let editing = Editing(gate.0.clone());
     let core = state.inner().clone();
     let native_app = app.clone();
+    let drawing_window = window.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let _editing = editing;
         let draft = draft_path(&core, &module_id, &image_id)?;
@@ -111,12 +116,11 @@ pub async fn edit_drawing(
         fs::write(&request_path, json!({"moduleId":module_id,"imageId":image_id,"sourceId":source_id,"sourcePath":source_path,
             "draftPath":draft,"resultPath":result_path,"maximumBytes":maximum,
             "preferencesScope":core.data_dir().file_name().unwrap_or_default().to_string_lossy()}).to_string()).map_err(|error| error.to_string())?;
-        let window = native_app.get_webview_window("main").ok_or("The note window is closed")?;
         let request = CString::new(request_path.to_string_lossy().as_bytes()).map_err(|error| error.to_string())?;
         let (sender, receiver) = mpsc::channel::<i32>();
         let context = Box::into_raw(Box::new(sender)) as u64;
         if let Err(error) = native_app.run_on_main_thread(move || {
-            match window.ns_window() {
+            match drawing_window.ns_window() {
                 Ok(pointer) => unsafe { memnoter_present_drawing(pointer, request.as_ptr(), context, drawing_finished) },
                 Err(_) => drawing_finished(context, 1),
             }
@@ -154,9 +158,7 @@ pub async fn edit_drawing(
         result.as_object_mut().unwrap().remove("previewPath");
         Ok(result)
     }).await.map_err(|error| error.to_string())?;
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
+    if window.is_visible().unwrap_or(false) {
         let _ = window.set_focus();
     }
     result

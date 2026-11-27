@@ -1,6 +1,8 @@
-import { capabilities } from "./backend.ts";
+import { capabilities, call } from "./backend.ts";
 import { createStore } from "@tanstack/react-store";
-import { check } from "@tauri-apps/plugin-updater";
+import { IS_WINDOWS } from "./platform";
+import { exclusiveWrite } from "./write-lifecycle";
+import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 
 export type UpdateStatus =
   | { state: "idle" }
@@ -53,7 +55,7 @@ export async function checkForUpdates({ manual = false } = {}) {
     let total: number | undefined;
     let received = 0;
     updateStore.setState(() => ({ state: "downloading", version, progress: null }));
-    await update.downloadAndInstall((event) => {
+    const onDownload = (event: DownloadEvent) => {
       if (event.event === "Started") {
         total = event.data.contentLength;
       } else if (event.event === "Progress") {
@@ -64,7 +66,20 @@ export async function checkForUpdates({ manual = false } = {}) {
           progress: total ? Math.min(received / total, 1) : null,
         }));
       }
-    });
+    };
+    if (IS_WINDOWS) {
+      await update.download(onDownload);
+      await exclusiveWrite(async () => {
+        await call("set_update_installing", { installing: true });
+        try {
+          await update.install();
+        } finally {
+          await call("set_update_installing", { installing: false });
+        }
+      }, { kind: "close" });
+    } else {
+      await update.downloadAndInstall(onDownload);
+    }
     updateStore.setState(() => ({ state: "ready", version }));
   } catch (error) {
     console.error("Update failed:", error);

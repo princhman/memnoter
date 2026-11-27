@@ -1,5 +1,5 @@
 import type { NativeViewState } from "../editor-host/protocol";
-import { capabilities, postNativeEvent, listen } from "./backend.ts";
+import { capabilities, postNativeEvent, isSecondaryWindow, isTauri, listen, windowViewStorage } from "./backend.ts";
 import { createStore, useSelector } from "@tanstack/react-store";
 
 export type ModulePage = "notes" | "questions";
@@ -42,6 +42,9 @@ const RECENT_LIMIT = 20;
 
 const STORAGE_KEY = "app-state";
 const SAVE_DEBOUNCE_MS = 250;
+const preferenceNames = ["learnAhead", "skipCardsCreatedToday", "foldableBlocksInOutline", "sidebarSections"] as const;
+type Preference = typeof preferenceNames[number];
+const preferenceKey = (name: Preference) => `app-preference:${name}`;
 
 const defaultState: appState = {
   openedModuleId: null,
@@ -76,7 +79,16 @@ function loadState(): appState {
     }
     const saved = localStorage.getItem(STORAGE_KEY);
     // Merge so state saved by older versions picks up new fields.
-    return saved ? normalizeState(JSON.parse(saved)) : defaultState;
+    const mainState = normalizeState(saved ? JSON.parse(saved) : null);
+    if (!isTauri()) return mainState;
+    const view = isSecondaryWindow()
+      ? normalizeState(JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? "null"))
+      : mainState;
+    for (const name of preferenceNames) {
+      const stored = localStorage.getItem(preferenceKey(name));
+      view[name] = stored === null ? mainState[name] : stored === "true";
+    }
+    return view;
   } catch (error) {
     console.error("Failed to load saved app state:", error);
     return defaultState;
@@ -97,7 +109,7 @@ export function saveState() {
     return;
   }
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(appStore.state));
+    windowViewStorage().setItem(STORAGE_KEY, JSON.stringify(appStore.state));
   } catch (error) {
     console.error("Failed to save app state:", error);
   }
@@ -173,12 +185,29 @@ export function setSidebarOpen(open: boolean) {
   appStore.setState((state) => ({ ...state, sidebarOpen: open }));
 }
 
+function setPreference(name: Preference, value: boolean) {
+  if (isTauri()) {
+    try { localStorage.setItem(preferenceKey(name), String(value)); } catch { /* Storage may be unavailable. */ }
+  }
+  appStore.setState(state => ({ ...state, [name]: value }));
+}
+
+if (isTauri()) {
+  window.addEventListener("storage", event => {
+    const name = preferenceNames.find(name => preferenceKey(name) === event.key);
+    if (name && event.newValue !== null) {
+      const value = event.newValue === "true";
+      if (appStore.state[name] !== value) appStore.setState(state => ({ ...state, [name]: value }));
+    }
+  });
+}
+
 export function setFoldableBlocksInOutline(foldableBlocksInOutline: boolean) {
-  appStore.setState((state) => ({ ...state, foldableBlocksInOutline }));
+  setPreference("foldableBlocksInOutline", foldableBlocksInOutline);
 }
 
 export function setSidebarSections(sidebarSections: boolean) {
-  appStore.setState((state) => ({ ...state, sidebarSections }));
+  setPreference("sidebarSections", sidebarSections);
 }
 
 export function setAutoCorrectPastedImages(autoCorrectPastedImages: boolean) {
@@ -186,11 +215,11 @@ export function setAutoCorrectPastedImages(autoCorrectPastedImages: boolean) {
 }
 
 export function setLearnAhead(learnAhead: boolean) {
-  appStore.setState((state) => ({ ...state, learnAhead }));
+  setPreference("learnAhead", learnAhead);
 }
 
 export function setSkipCardsCreatedToday(skipCardsCreatedToday: boolean) {
-  appStore.setState((state) => ({ ...state, skipCardsCreatedToday }));
+  setPreference("skipCardsCreatedToday", skipCardsCreatedToday);
 }
 
 if (capabilities.nativeViewState) {

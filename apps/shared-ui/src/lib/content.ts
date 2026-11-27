@@ -1,6 +1,6 @@
 import { isNoteFromNewerVersion } from "./editor-schema";
 import { queryClient } from "./query-client.ts";
-import { call as invoke } from "./backend.ts";
+import { call as invoke, isTauri } from "./backend.ts";
 import * as Y from "yjs";
 import { drawingReference } from "./drawing";
 
@@ -159,4 +159,8 @@ export function appendSavedUpdate(moduleId: string, update: ContentUpdate) {
   acknowledgeContent(moduleId, update);
   patchContent(moduleId, content => ({ ...content, updates: [...content.updates.filter(known => known.id !== update.id), update] }));
   void queryClient.invalidateQueries({ queryKey: sidebarSectionsKey(moduleId) });
+}
+
+export function desktopNoteSnapshot(doc: Y.Doc) {
+  return isTauri() ? Array.from(Y.encodeSnapshot(Y.snapshot(doc))) : undefined;
 }

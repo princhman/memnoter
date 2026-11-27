@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { call as invoke } from "../lib/backend.ts";
 import { listen } from "../lib/backend.ts";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -39,12 +38,23 @@ async function waitForRestore() {
 }
 
 // Set by whichever request (Quit/close or Restart to update) is in progress.
-let exitCommand: "confirm_exit" | "confirm_restart" = "confirm_exit";
+type ExitCommand = "confirm_exit" | "confirm_restart" | "confirm_window_close";
+let exitCommand: ExitCommand = "confirm_exit";
 
 async function confirmExitAfterRestore(discard = false, retryImages = false) {
   await waitForRestore();
   if (restorePending()) throw new Error("Restore is in progress.");
-  await exclusiveWrite(() => invoke(exitCommand), { kind: "exit", unsaved: discard ? "discard" : retryImages ? "retry" : undefined });
+  const command = exitCommand;
+  await exclusiveWrite(async () => {
+    await invoke(command);
+    if (command === "confirm_window_close" && discard) {
+      saveQueue.clear();
+      window.location.reload();
+    }
+  }, {
+    kind: command === "confirm_window_close" ? "close" : "exit",
+    unsaved: discard ? "discard" : retryImages ? "retry" : undefined,
+  });
 }
 
 // Shown once saving has failed repeatedly. Editing carries on meanwhile and
@@ -60,6 +70,11 @@ const SaveStatus = () => {
   const failing = useSelector(saveStatusStore, (state) => state.failing);
   const lastError = useSelector(saveStatusStore, (state) => state.lastError);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [closingWindow, setClosingWindow] = useState(false);
+  const changeConfirmClose = (open: boolean) => {
+    setConfirmClose(open);
+    if (!open) void invoke("cancel_window_exit").catch(console.error);
+  };
 
   useEffect(() => {
     const id = "pdf-annotation-saves";
@@ -101,10 +116,15 @@ const SaveStatus = () => {
     let disposed = false;
 
     let busy = false;
-    const requestExit = async (command: typeof exitCommand) => {
-      if (busy) return;
+    let queued: ExitCommand | undefined;
+    const requestExit = async (command: ExitCommand) => {
+      if (busy) {
+        if (command !== exitCommand) queued = command;
+        return;
+      }
       busy = true;
       exitCommand = command;
+      setClosingWindow(command === "confirm_window_close");
       try {
         await waitForRestore();
         if (disposed || restorePending()) return;
@@ -112,20 +132,23 @@ const SaveStatus = () => {
       } catch (error) {
         setExitError(error instanceof Error ? error.message : String(error));
         setConfirmClose(true);
-      } finally { busy = false; }
+      } finally {
+        busy = false;
+        const next = queued;
+        queued = undefined;
+        if (next && !disposed) void requestExit(next);
+      }
     };
     const stops: (() => void)[] = [];
     void Promise.all([
       listen("request-safe-exit", () => void requestExit("confirm_exit")),
-      getCurrentWindow().onCloseRequested((event) => {
-        event.preventDefault();
-        void requestExit("confirm_exit");
-      }),
+      listen("request-safe-close", () => void requestExit("confirm_window_close")),
+      listen("request-safe-restart", () => void requestExit("confirm_restart")),
     ]).then((listeners) => {
       if (disposed) listeners.forEach(stop => stop());
       else stops.push(...listeners);
-    });
-    const requestRestart = () => void requestExit("confirm_restart");
+    }).catch(console.error);
+    const requestRestart = () => void invoke("request_restart").catch(error => toast.error(error.message));
     window.addEventListener(RESTART_REQUEST_EVENT, requestRestart);
     return () => {
       disposed = true;
@@ -136,13 +159,12 @@ const SaveStatus = () => {
 
   return (
     <>
-      <Dialog open={confirmClose} onOpenChange={setConfirmClose}>
+      <Dialog open={confirmClose} onOpenChange={changeConfirmClose}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Quit without saving?</DialogTitle>
+            <DialogTitle>{closingWindow ? "Close without saving?" : "Quit without saving?"}</DialogTitle>
             <DialogDescription>
-              Some changes could not be saved. If you quit now, unsaved changes
-              will be lost.
+              Some changes could not be saved. Unsaved changes in this window will be lost if you continue.
               {exitError && <span role="alert" className="block">{exitError}</span>}
             </DialogDescription>
           </DialogHeader>
@@ -162,7 +184,7 @@ const SaveStatus = () => {
               disabled={retrying || blocked}
               onClick={() => void confirmExitAfterRestore(true).catch(() => setConfirmClose(true))}
             >
-              Quit anyway
+              {closingWindow ? "Close anyway" : "Quit anyway"}
             </Button>
           </DialogFooter>
         </DialogContent>
