@@ -71,9 +71,10 @@ test("desktop captions save with their image and renumber when it moves chapters
     await addCaption.click();
     const input = page.getByRole("textbox", { name: "Image caption" });
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Image caption");
-    await input.pressSequentially("Measured signal", { delay: process.env.PROOF_DIR ? 85 : 0 });
+    const captionText = "Measured signal from the detector after the second calibration";
+    await input.pressSequentially(captionText, { delay: process.env.PROOF_DIR ? 85 : 0 });
     await page.keyboard.press("Enter");
-    const caption = number => page.getByRole("button", { name: `Figure ${number}: Measured signal`, exact: true });
+    const caption = number => page.getByRole("button", { name: `Figure ${number}: ${captionText}`, exact: true });
     await caption("1.1").waitFor();
     await pauseForProof();
 
@@ -96,17 +97,43 @@ test("desktop captions save with their image and renumber when it moves chapters
     // The caption can sit left, centre (default) or right under the image.
     const captionRow = page.locator(".note-image-caption").first();
     assert.equal(await captionRow.evaluate(el => getComputedStyle(el).textAlign), "center");
-    await image.click();
-    await page.getByRole("button", { name: "Image actions" }).click();
-    await page.getByRole("menuitem", { name: "Caption alignment" }).hover();
-    await page.getByRole("menuitem", { name: "Caption alignment" }).press("ArrowRight");
-    const updatesBefore = await stored();
-    await page.getByRole("menuitemradio", { name: "Align right" }).click();
-    await page.waitForFunction(() => getComputedStyle(document.querySelector(".note-image-caption")).textAlign === "right");
-    await page.waitForFunction(before => JSON.parse(localStorage.getItem("caption-updates") || "[]").length > before, updatesBefore);
-    await page.reload();
-    await caption("2.1").waitFor();
-    assert.equal(await page.locator(".note-image-caption").first().evaluate(el => getComputedStyle(el).textAlign), "right");
+    const captionButton = caption("2.1");
+    for (const alignment of ["left", "right"]) {
+      await image.click();
+      await actions.click();
+      const submenu = page.getByRole("menuitem", { name: "Caption alignment" });
+      await submenu.hover();
+      await submenu.press("ArrowRight");
+      const updatesBefore = await stored();
+      await page.getByRole("menuitemradio", { name: `Align ${alignment}` }).click();
+      await page.waitForFunction(before => JSON.parse(localStorage.getItem("caption-updates") || "[]").length > before, updatesBefore);
+      await page.reload();
+      const layout = await captionButton.evaluate(button => {
+        const range = document.createRange();
+        range.selectNodeContents(button);
+        const fragments = Array.from(range.getClientRects());
+        const last = fragments.at(-1);
+        const lastLine = fragments.filter(fragment => fragment.top === last.top);
+        const left = Math.min(...lastLine.map(fragment => fragment.left));
+        const right = Math.max(...lastLine.map(fragment => fragment.right));
+        const bounds = button.getBoundingClientRect();
+        return {
+          alignment: getComputedStyle(button).textAlign,
+          wraps: last.top > fragments[0].top,
+          left: left - bounds.left,
+          rightAlignedLeft: bounds.right - bounds.left - (right - left),
+        };
+      });
+      assert.ok(layout.wraps, "the caption spans multiple lines");
+      assert.equal(layout.alignment, alignment);
+      assert.ok(layout.rightAlignedLeft > 4, "the final line has room to shift");
+      const expectedLeft = alignment === "left" ? 0 : layout.rightAlignedLeft;
+      assert.ok(Math.abs(layout.left - expectedLeft) < 1, `the last line is flush ${alignment}`);
+
+      await captionButton.click();
+      assert.equal(await input.evaluate(el => getComputedStyle(el).textAlign), alignment);
+      await input.press("Escape");
+    }
   } finally {
     await server.close();
   }

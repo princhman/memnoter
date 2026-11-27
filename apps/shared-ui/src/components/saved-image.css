@@ -74,6 +74,7 @@
 
 .note-image-caption button {
   cursor: pointer;
+  text-align: inherit;
 }
 
 .note-image-caption[data-empty] button,
@@ -100,6 +101,7 @@
   min-width: 0;
   color: var(--foreground);
   background: transparent;
+  text-align: inherit;
   outline: none;
 }
 

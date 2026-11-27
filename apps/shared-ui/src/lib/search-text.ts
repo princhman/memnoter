@@ -2,13 +2,14 @@ import type { Node } from "@tiptap/pm/model";
 import * as Y from "yjs";
 
 // Bump when the extracted text changes, so stored notes are indexed again.
-export const EXTRACTOR_VERSION = 1;
+export const EXTRACTOR_VERSION = 2;
 
 export type SearchText = { body: string; math: string };
 
 // Node names whose text is LaTeX source. It goes to its own column, so a
 // formula's commands do not crowd out prose in search snippets.
 const MATH_NODES = new Set(["inlineMath", "mathBlock"]);
+const IMAGE_NODES = new Set(["image", "inlineImage"]);
 const INLINE_NODES = new Set(["inlineMath", "hardBreak", "inlineImage"]);
 
 // The two document shapes the extractor reads: a ProseMirror node from a live
@@ -17,12 +18,14 @@ const INLINE_NODES = new Set(["inlineMath", "hardBreak", "inlineImage"]);
 type Tree<N> = {
   name(node: N): string | null;
   text(node: N): string;
+  caption(node: N): unknown;
   children(node: N): N[];
 };
 
 const proseMirrorTree: Tree<Node> = {
   name: (node) => (node.isText ? null : node.type.name),
   text: (node) => node.text ?? "",
+  caption: (node) => node.attrs.caption,
   children: (node) => {
     const children: Node[] = [];
     node.forEach((child) => children.push(child));
@@ -39,6 +42,7 @@ const yTree: Tree<YNode> = {
       : node instanceof Y.XmlElement
         ? node.nodeName
         : "doc",
+  caption: (node) => node instanceof Y.XmlElement ? node.getAttribute("caption") : undefined,
   // toString() would render marks as XML tags; the delta has the plain text.
   text: (node) =>
     (node as Y.XmlText)
@@ -68,6 +72,10 @@ function extract<N>(tree: Tree<N>, root: N): SearchText {
       return;
     }
     body += separator;
+    if (IMAGE_NODES.has(name)) {
+      const caption = tree.caption(node);
+      if (typeof caption === "string") body += caption;
+    }
     for (const child of tree.children(node)) visit(child);
     body += separator;
   };

@@ -23,6 +23,7 @@ const doc = n.doc.create(null, [
     text("is"),
     n.hardBreak.create(),
     text("next line"),
+    n.inlineImage.create({ fileId: "inline", caption: "Spectrogram" }),
   ]),
   n.bulletList.create(null, [
     n.listItem.create(null, [n.paragraph.create(null, text("first"))]),
@@ -32,7 +33,7 @@ const doc = n.doc.create(null, [
     ]),
   ]),
   n.paragraph.create(),
-  n.image.create({ fileId: "x" }),
+  n.image.create({ fileId: "x", caption: "Interferometer calibration" }),
   n.mathBlock.create(null, text("\\sum_{n=0}^\\infty\n  a_n \\cos(nx)")),
   n.codeBlock.create(null, text("let x = 1;\nx += 2")),
 ]);
@@ -40,10 +41,11 @@ const doc = n.doc.create(null, [
 const expected = {
   body: [
     "Fourier series",
-    "The bolder part is next line",
+    "The bolder part is next line Spectrogram",
     "first",
     "second",
     "nested",
+    "Interferometer calibration",
     "let x = 1;",
     "x += 2",
   ].join("\n"),
