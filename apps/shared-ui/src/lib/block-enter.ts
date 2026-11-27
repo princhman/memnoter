@@ -2,6 +2,9 @@ import { Extension } from "@tiptap/core";
 import { canSplit } from "@tiptap/pm/transform";
 import { keydownHandler } from "@tiptap/pm/keymap";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
+import { codeIndentUnit } from "./editor-schema/code-indent";
+
+export const codeFence = /^```(?:[ \t]*([a-zA-Z][\w+.-]*))?[ \n]$/;
 
 const blocks = new Set(["codeBlock", "mathBlock", "blockquote", "details", "bulletList", "orderedList"]);
 
@@ -18,14 +21,14 @@ export const BlockEnter = Extension.create({
       return 0;
     };
 
-    const leave = (depth: number, trimEmptyLine = false) => {
+    const leave = (depth: number, trimEmptyLine = false, trailingIndent = 0) => {
       const { state, view } = this.editor;
       const { $head } = state.selection;
       const tr = state.tr;
       const after = $head.after(depth);
       if (trimEmptyLine) {
         if ($head.parent.type.spec.code || $head.parent.lastChild?.type.name === "hardBreak") {
-          if ($head.parent.content.size) tr.delete($head.pos - 1, $head.pos);
+          if ($head.parent.content.size) tr.delete($head.pos - 1 - trailingIndent, $head.pos);
           else tr.delete($head.before(depth), after);
         } else {
           // Remove the empty paragraph, or its now-empty list item/wrapper.
@@ -78,14 +81,30 @@ export const BlockEnter = Extension.create({
         // Inline formulas own Enter to finish editing their source.
         if (parent.type.name === "inlineMath") return false;
         const atEnd = $head.parentOffset === parent.content.size;
+        const indentCode = parent.type.name === "codeBlock" && parent.attrs.language !== "mermaid";
+        const source = parent.type.spec.code ? parent.textContent : "";
+        const trailingIndent = indentCode ? source.match(/\n([ \t]*)$/)?.[1] : undefined;
         const emptyLine = parent.content.size === 0 ||
-          (parent.type.spec.code && parent.textContent.endsWith("\n")) ||
+          trailingIndent !== undefined ||
+          (parent.type.spec.code && source.endsWith("\n")) ||
           parent.lastChild?.type.name === "hardBreak";
         let last = true;
         for (let d = $head.depth; d > depth; d--) {
           if ($head.index(d - 1) !== $head.node(d - 1).childCount - 1) last = false;
         }
-        if (selection.empty && atEnd && emptyLine && last) return leave(depth, true);
+        if (selection.empty && atEnd && emptyLine && last) return leave(depth, true, trailingIndent?.length);
+        if (indentCode && selection.$from.sameParent(selection.$to)) {
+          const offset = selection.$from.parentOffset;
+          const before = source.slice(0, offset);
+          const line = before.slice(before.lastIndexOf("\n") + 1);
+          const indent = line.match(/^[ \t]*/)?.[0] ?? "";
+          const end = line.trimEnd();
+          const opensScope = /[{\[(:]$/.test(end);
+          const extra = opensScope ? codeIndentUnit(source) : "";
+          const { state, view } = this.editor;
+          view.dispatch(state.tr.insertText("\n" + indent + extra).scrollIntoView());
+          return true;
+        }
         if (parent.type.spec.code) return this.editor.commands.newlineInCode();
         if (parent.type.name === "detailsSummary") {
           // A title is a single textblock: Enter continues in the body.
@@ -126,6 +145,15 @@ export const BlockEnter = Extension.create({
                 "active" in suggestion && suggestion.active === true &&
                 "decorationId" in suggestion && typeof suggestion.decorationId === "string" &&
                 plugin.props.handleKeyDown?.call(plugin, view, event)) return true;
+            }
+            const { selection, plugins } = view.state;
+            const { $head } = selection;
+            if (selection.empty && $head.parent.type.name === "paragraph" &&
+                $head.parentOffset === $head.parent.content.size &&
+                codeFence.test($head.parent.textContent + "\n")) {
+              // Nested blocks own Enter before TipTap's input rules.
+              if (plugins.some(plugin => plugin.spec.isInputRules &&
+                  plugin.props.handleKeyDown?.call(plugin, view, event))) return true;
             }
           }
           return handleKeyDown(view, event);

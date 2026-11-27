@@ -1,8 +1,8 @@
 import { Mention } from "./mention";
-import { BlockEnter } from "./block-enter";
+import { BlockEnter, codeFence } from "./block-enter";
 import { LiteralDollar } from "./literal-dollar";
 import { MarkdownPaste } from "./markdown-paste-plugin";
-import { getSchema, type Editor, type AnyExtension } from "@tiptap/core";
+import { getSchema, textblockTypeInputRule, type Editor, type AnyExtension } from "@tiptap/core";
 import { CodeSpacing } from "@/lib/code-spacing";
 import { TabSpacing } from "@/lib/tab-spacing";
 import { HeadingNumbering } from "@/lib/heading-numbering";
@@ -64,13 +64,28 @@ export function noteExtensions({
   withCardTransfers,
 }: NoteExtensionOptions) {
   return [
-    (reduced ? StarterKit.extend({
+    StarterKit.extend({
       addExtensions() {
-        return (this.parent?.() ?? []).map(extension => extension.name === "heading"
-          ? extension.extend({ addKeyboardShortcuts: () => ({}), addInputRules: () => [] })
-          : extension);
+        return (this.parent?.() ?? []).map(extension => {
+          if (reduced && extension.name === "heading") {
+            return extension.extend({ addKeyboardShortcuts: () => ({}), addInputRules: () => [] });
+          }
+          if (extension.name !== "codeBlock") return extension;
+          return extension.extend({
+            addInputRules() {
+              return [
+                textblockTypeInputRule({
+                  find: codeFence,
+                  type: this.editor.schema.nodes.codeBlock,
+                  getAttributes: match => ({ language: match[1]?.toLowerCase() ?? null }),
+                }),
+                ...(this.parent?.() ?? []),
+              ];
+            },
+          });
+        });
       },
-    }) : StarterKit).configure({
+    }).configure({
       undoRedo: false,
       // Links open in the browser on ⌘-click, through LinkEditor.
       link: { openOnClick: false },

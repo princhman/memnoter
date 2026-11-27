@@ -4,6 +4,8 @@ import { Decoration, DecorationSet, type NodeViewConstructor } from "@tiptap/pm/
 import type { Node } from "@tiptap/pm/model";
 import { commitViewportLayout } from "../reader-scroll";
 import { createViewportRenderer } from "../viewport-renderer";
+import { codeBlockView } from "./code-block-view";
+import { codeHighlighting } from "./code-highlighting";
 
 const isMermaid = (node: Node) =>
   node.type.name === "codeBlock" && node.attrs.language === "mermaid";
@@ -51,7 +53,7 @@ export const MermaidView = Extension.create({
   },
 
   addProseMirrorPlugins() {
-    return [new Plugin({
+    return [codeHighlighting(), new Plugin({
       key: new PluginKey("mermaidView"),
       props: {
         nodeViews: mermaidNodeViews(this.editor),
@@ -73,16 +75,13 @@ export const MermaidView = Extension.create({
 function mermaidNodeViews(editor: Editor): Record<string, NodeViewConstructor> {
   const defer = createViewportRenderer();
   return {
-    codeBlock: (node, _view, getPos, decorations) => {
+    codeBlock: (node, view, getPos, decorations) => {
       const mermaid = isMermaid(node);
       const pre = document.createElement("pre");
       const contentDOM = document.createElement("code");
       if (node.attrs.language) contentDOM.className = `language-${node.attrs.language}`;
       pre.append(contentDOM);
-      if (!mermaid) return {
-        dom: pre, contentDOM,
-        update: next => next.type === node.type && next.attrs.language === node.attrs.language,
-      };
+      if (!mermaid) return codeBlockView(view, node, getPos, pre, contentDOM);
 
       const dom = document.createElement("div");
       dom.className = "mermaid-block";
