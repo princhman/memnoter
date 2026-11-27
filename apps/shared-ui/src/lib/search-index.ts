@@ -5,7 +5,7 @@ import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import type { Doc } from "yjs";
 import { desktopNoteSnapshot } from "./content";
 import { noteSaveCheckpoint } from "./saves";
-import { isStaleNote } from "./card-sync";
+import { isStaleNote } from "./stale-note";
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/core";
 import { call as invoke } from "./backend.ts";
