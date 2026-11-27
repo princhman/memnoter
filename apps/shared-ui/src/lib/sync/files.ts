@@ -34,9 +34,8 @@ export function createFileSync({ generation, signal, server, token, key, onStore
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
   let running = true;
-  let busy = false;
-  let drained: Promise<void> = Promise.resolve();
-  let finish: (() => void) | undefined;
+  let stoppedError: string | null = null;
+  let draining: Promise<string | null> | null = null;
   let again = false;
   let kickTimer: number | undefined;
   let retryTimer: number | undefined;
@@ -76,39 +75,42 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     onStored(file.moduleId, stored);
   }
 
-  async function pass() {
+  async function pass(): Promise<string | null> {
     let failed = false;
     const attempt = async (fileId: string, task: () => Promise<void>) => {
       try {
         await task();
+        return null;
       } catch (error) {
-        if (!running || controller.signal.aborted) return;
+        if (!running || controller.signal.aborted) return null;
         if (error instanceof SyncApiError && error.status === 410) {
           await invoke("sync_file_gone", { fileId, generation });
           wanted.delete(fileId);
           notYet.delete(fileId);
-          return;
+          return null;
         }
         if (error instanceof SyncApiError && error.status === 426) {
+          stoppedError = error.message;
           running = false;
-          return;
-        }
-        if (error instanceof SyncApiError && error.status === 401) {
+        } else if (error instanceof SyncApiError && error.status === 401) {
           running = false;
           onUnauthorized();
-          return;
+        } else {
+          console.error("Image sync failed:", error);
+          failed = true;
         }
-        console.error("Image sync failed:", error);
-        failed = true;
+        return error instanceof Error ? error.message : String(error);
       }
     };
 
+    let uploadError: string | null = null;
     for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
-      if (!running) return;
-      await attempt(fileId, () => upload(fileId));
+      if (!running) return uploadError;
+      const error = await attempt(fileId, () => upload(fileId));
+      if (error !== null) uploadError ??= `Image upload failed: ${error}`;
     }
     for (const fileId of await invoke<string[]>("sync_pending_deletes", { generation })) {
-      if (!running) return;
+      if (!running) return uploadError;
       await attempt(fileId, async () => {
         await deleteObject(server, token, fileId, controller.signal);
         if (!running) return;
@@ -121,7 +123,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     for (const id of notYetAttempts.keys()) if (!pending.has(id)) notYetAttempts.delete(id);
     missing.sort((a, b) => Number(wanted.has(b.fileId)) - Number(wanted.has(a.fileId)));
     for (const file of missing) {
-      if (!running) return;
+      if (!running) return uploadError;
       await attempt(file.fileId, () => download(file));
     }
     if (running && (failed || notYet.size > 0)) {
@@ -131,27 +133,34 @@ export function createFileSync({ generation, signal, server, token, key, onStore
         : RETRY_MS;
       retryTimer = window.setTimeout(() => void run(), delay);
     }
+    return uploadError;
   }
 
-  async function run() {
-    if (!running) return;
-    if (busy) {
-      again = true;
-      return;
-    }
-    busy = true;
-    drained = new Promise<void>((resolve) => { finish = resolve; });
+  async function drain() {
+    let uploadError: string | null = null;
     try {
       do {
         again = false;
-        await pass();
+        const error = await pass();
+        uploadError ??= error;
       } while (again && running);
+      return uploadError;
     } catch (error) {
       console.error("Image sync failed:", error);
+      return uploadError ?? `Image sync failed: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
-      busy = false;
-      finish?.();
+      draining = null;
     }
+  }
+
+  function run() {
+    if (!running) return Promise.resolve(null);
+    if (draining) {
+      again = true;
+      return draining;
+    }
+    draining = drain();
+    return draining;
   }
 
   return {
@@ -159,6 +168,10 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     kick() {
       window.clearTimeout(kickTimer);
       kickTimer = window.setTimeout(() => void run(), KICK_DELAY_MS);
+    },
+    flushUploads() {
+      window.clearTimeout(kickTimer);
+      return stoppedError ? Promise.resolve(stoppedError) : run();
     },
     // An image on screen is missing: fetch it before the others.
     request(fileId: string) {
@@ -172,7 +185,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
       signal?.removeEventListener("abort", abort);
       window.clearTimeout(kickTimer);
       window.clearTimeout(retryTimer);
-      return drained;
+      return draining;
     },
   };
 }

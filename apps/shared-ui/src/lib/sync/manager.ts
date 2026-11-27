@@ -324,12 +324,9 @@ export function syncNow() {
       syncStatusStore.setState((state) => ({ ...state, error: "Could not save pending edits. Try syncing again." }));
       return;
     }
-    if (!engine) {
-      await loadAndRun();
-      return;
-    }
-    engine.syncNow();
-    fileSync?.kick();
+    if (!engine) await loadAndRun();
+    const files = fileSync;
+    engine?.syncNow(files ? () => files.flushUploads() : undefined);
   });
 }
 

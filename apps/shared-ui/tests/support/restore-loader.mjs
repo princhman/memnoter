@@ -10,7 +10,7 @@ export function resolve(specifier, context, next) {
       './crypto': `import { importKey as real } from '${root}lib/sync/crypto.ts'; export const importKey = (...args) => globalThis.syncFixture.engine ? Promise.resolve({}) : real(...args);`,
       '@/lib/backend': 'export const call = (...a) => globalThis.syncFixture.call(...a); export const listen = async () => () => {};',
       '@/lib/write-lifecycle': 'export const exclusiveWrite = async fn => fn(); export const assertWritable = () => {};',
-      '@/lib/saves': 'export const saveQueue = { clear() {}, isSuspended: () => false };',
+      '@/lib/saves': 'export const saveQueue = { clear() {}, flush: async () => true, isSuspended: () => false };',
       '@/lib/content': 'export const acknowledgeContent = () => {}; export const appendSavedUpdate = () => {}; export const contentKey = id => ["content",id]; export const patchContent = () => {};',
       '@/lib/note-index': 'export const refreshDerived = async () => {};',
       '@/lib/modules': 'export const modulesCache = { invalidate() {}, remove() {} };',
