@@ -754,6 +754,8 @@ fn file_order_survives_restart_and_syncs_in_both_directions() {
 
     source.call("sync_enable", json!({"account":"{}"}));
     target.call("sync_enable", json!({"account":"{}"}));
+    let generation = source.call("sync_status", json!({}))["generation"].clone();
+    source.call("sync_outbox", json!({"limitBytes":1048576,"generation":generation}));
     transfer_vault(&source, &target, 1);
     assert_eq!(list(&target), [&third, &first, &second].map(Clone::clone));
     assert_eq!(
@@ -768,6 +770,83 @@ fn file_order_survives_restart_and_syncs_in_both_directions() {
     source.call("delete_document", json!({"id":third}));
     transfer_vault(&source, &target, 3);
     assert_eq!(list(&target), [&second, &first, &new].map(Clone::clone));
+}
+
+#[test]
+fn enabling_sync_keeps_the_vaults_newer_file_order() {
+    use yrs::{updates::decoder::Decode, Doc, Map, Transact, Update};
+
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"PDFs"}));
+    let add = |name: &str| {
+        a.call("add_document_bytes", json!({
+            "moduleId":module, "name":name, "bytes":b"%PDF-"
+        }))["id"].clone()
+    };
+    let first = add("First.pdf");
+    let second = add("Second.pdf");
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    transfer_vault(&a, &b, 1);
+    b.call("sync_disable", json!({}));
+    b.call("move_document", json!({"id":second,"targetId":first,"after":false}));
+    a.call("move_document", json!({"id":first,"targetId":second,"after":false}));
+
+    b.call("sync_enable", json!({"account":"{}"}));
+    transfer_vault(&a, &b, 2);
+    let generation = b.call("sync_status", json!({}))["generation"].clone();
+    let entries = b.call("sync_outbox", json!({"limitBytes":1048576,"generation":generation}));
+    let upload = Doc::new();
+    let order = upload.get_or_insert_map("document-order");
+    for entry in entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["doc"] == "vault")
+    {
+        let bytes: Vec<u8> = serde_json::from_value(entry["bytes"].clone()).unwrap();
+        upload
+            .transact_mut()
+            .apply_update(Update::decode_v1(&bytes).unwrap())
+            .unwrap();
+    }
+    assert!(
+        order.get(&upload.transact(), "ids").is_none(),
+        "seed must not publish the stale order"
+    );
+    transfer_vault(&b, &a, 3);
+    for device in [&a, &b] {
+        let documents = device.call("list_documents", json!({}));
+        assert_eq!([&documents[0]["id"], &documents[1]["id"]], [&first, &second]);
+    }
+}
+
+#[test]
+fn deleted_pdf_is_removed_from_arrival_order_on_both_devices() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"PDFs"}));
+    let id = a.call("add_document_bytes", json!({
+        "moduleId":module, "name":"First.pdf", "bytes":b"%PDF-"
+    }))["id"].clone();
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    transfer_vault(&a, &b, 1);
+    let arrivals = |device: &Fixture| -> Value {
+        let data: String = rusqlite::Connection::open(device.dir.join("main.db"))
+            .unwrap()
+            .query_row("select arrivals from document_order where id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        serde_json::from_str(&data).unwrap()
+    };
+    assert_eq!([arrivals(&a), arrivals(&b)], [json!([id]), json!([id])]);
+
+    a.call("delete_document", json!({"id":id}));
+    transfer_vault(&a, &b, 2);
+    assert_eq!([arrivals(&a), arrivals(&b)], [json!([]), json!([])]);
 }
 
 #[test]

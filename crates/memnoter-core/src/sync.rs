@@ -770,6 +770,7 @@ pub(crate) fn record_sidebar(
 // Keep it separate from document records that older builds replace on rename.
 const DOCUMENT_ORDER_MAP: &str = "document-order";
 const DOCUMENT_ORDER_KEY: &str = "ids";
+const SEED_DOCUMENT_ORDER: &str = "seed_document_order";
 
 pub(crate) fn record_document_order(conn: &Connection, order: &[String]) -> CommandResult<()> {
     if !is_enabled(conn)? {
@@ -933,14 +934,8 @@ fn seed(conn: &Connection) -> CommandResult<()> {
             );
         }
     }
-    let order = crate::documents::read_order(conn)?;
-    if !order.is_empty() {
-        let map = doc.get_or_insert_map(DOCUMENT_ORDER_MAP);
-        map.insert(
-            &mut doc.transact_mut(),
-            DOCUMENT_ORDER_KEY,
-            serde_json::to_string(&order).map_err(db_err)?,
-        );
+    if !crate::documents::read_order(conn)?.is_empty() {
+        set_value(conn, SEED_DOCUMENT_ORDER, true)?;
     }
     let files: Vec<(String, String, String)> = {
         // PDFs are announced through the documents map only; see record_document.
@@ -1586,6 +1581,21 @@ pub fn sync_outbox(
 ) -> CommandResult<Vec<OutboxEntry>> {
     let conn = db.lock()?;
     check_generation(&conn, &generation)?;
+    // Both clients start draining the outbox after catching up on remote changes.
+    if get_value::<bool>(&conn, SEED_DOCUMENT_ORDER)?.unwrap_or(false) {
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let doc = load_vault(&tx)?;
+        let map = doc.get_or_insert_map(DOCUMENT_ORDER_MAP);
+        if map.get(&doc.transact(), DOCUMENT_ORDER_KEY).is_none() {
+            let order = crate::documents::read_order(&tx)?;
+            if !order.is_empty() {
+                record_document_order(&tx, &order)?;
+            }
+        }
+        tx.execute("delete from sync_state where key = ?1", [SEED_DOCUMENT_ORDER])
+            .map_err(db_err)?;
+        tx.commit().map_err(db_err)?;
+    }
     outbox(&conn, limit_bytes)
 }
 

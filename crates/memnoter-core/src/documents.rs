@@ -353,8 +353,13 @@ pub(crate) fn remove_local(data_dir: &Path, conn: &Connection, id: &str) -> Comm
     }
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     crate::pdf_annotations::retire(&tx, id)?;
-    tx.execute("delete from documents where id=?1", [id])
-        .map_err(db_err)?;
+    if tx
+        .execute("delete from documents where id=?1", [id])
+        .map_err(db_err)?
+        != 0
+    {
+        remember_arrivals(&tx)?;
+    }
     tx.execute("delete from files where id=?1", [id])
         .map_err(db_err)?;
     tx.execute("delete from sync_file_uploads where file_id=?1", [id])
