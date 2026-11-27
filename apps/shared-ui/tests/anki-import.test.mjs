@@ -178,3 +178,26 @@ test("a cloze blank holding only an image does not shift the other blanks' histo
   const module = prepareAnkiImport(source, defaultSelection(source.decks)).modules[0];
   assert.deepEqual(module.histories.map(h => h.anki.ord), [1]);
 });
+
+test("large modules split at card boundaries and keep their headings and review histories", () => {
+  const decks = [{ id: 1, name: "Course", cardCount: 1999 }, { id: 2, name: "Course::Chapter", cardCount: 3 }];
+  const schedule = ord => ({ ord, kind: "new", due: null, intervalDays: 0, ease: 2.5, reps: 0, lapses: 0, suspended: false, reviews: [] });
+  const item = (noteId, deckId, reversed = false) => ({
+    noteId, deckId, kind: "basic", notetype: "Basic", front: `Question ${noteId}`, back: "Answer", extra: "", reversed,
+    cards: reversed ? [schedule(0), schedule(1)] : [schedule(0)],
+  });
+  const source = { decks, media: [], warnings: [], items: [
+    ...Array.from({ length: 1999 }, (_, index) => item(index, 1)), item(1999, 2, true), item(2000, 2),
+  ] };
+  const selection = defaultSelection(decks);
+  const split = prepareAnkiImport(source, selection);
+  assert.deepEqual(split.modules.map(module => [module.cards, module.histories.length]), [[1999, 1999], [3, 3]]);
+  const second = split.modules[1];
+  assert.equal(second.document.content[0].content[0].text, "Chapter");
+  const reversed = second.document.content[1].attrs.cardId;
+  assert.deepEqual(second.histories.slice(0, 2).map(history => history.cardId), [reversed, `${reversed}:reverse`]);
+  assert.equal(new Set(split.modules.flatMap(module => module.histories.map(history => history.cardId))).size, 2002);
+
+  const single = prepareAnkiImport(source, { ...selection, splitLargeDecks: false });
+  assert.deepEqual(single.modules.map(module => [module.cards, module.histories.length]), [[2002, 2002]]);
+});

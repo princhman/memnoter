@@ -115,7 +115,7 @@ test("canvas preserves text labels, leaves unlabelled bytes untouched and warns 
       const ctx = canvas.getContext("2d");
       ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, 200, 100);
       const blob = await new Promise(resolve => canvas.toBlob(resolve));
-      const bytes = [...new Uint8Array(await blob.arrayBuffer())];
+      const bytes = new Uint8Array(await blob.arrayBuffer());
       const warnings = [];
       const labels = [{ text: "LABEL", x: .1, y: .5, size: .3, color: "#ff0000" }];
       const plain = await bakeAnkiLabels(bytes, "image/png", [], w => warnings.push(w));

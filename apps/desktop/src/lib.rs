@@ -138,6 +138,7 @@ pub fn run() {
             import_folder::pick_import_image_folder,
             import_anki::pick_anki_package,
             import_anki::read_anki_media,
+            import_anki::import_anki_module,
             import_anki::close_anki_package,
             pdf_picker::pick_pdfs,
             spelling::check_spelling,

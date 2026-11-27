@@ -105,58 +105,64 @@ export function cardInfo(
   const stateName = (state: number) => state === CardState.New ? "New" : state === CardState.Learning ? "Learning" : state === CardState.Relearning ? "Relearning" : "Review";
   info.dataset.state = next ? stateName(next.state).toLowerCase() : "unsaved";
 
-  const popup = document.createElement("span");
-  popup.className = "card-info-popup";
-  popup.setAttribute("role", action ? "dialog" : "tooltip");
-  if (action) popup.setAttribute("aria-label", "Card details");
-  for (const { answer, parts, schedule } of entries) {
-    const row = document.createElement("span");
-    row.className = "card-info-row";
-    const heading = document.createElement("span");
-    heading.className = "card-info-heading";
-    if (answer) {
-      const name = document.createElement("span");
-      name.className = "card-info-answer";
-      if (parts) name.append(...parts.map(answerNode));
-      else name.textContent = answer;
-      name.title = answer;
-      heading.append(name);
+  const showDetails = () => {
+    info.removeEventListener("pointerenter", showDetails);
+    info.removeEventListener("focusin", showDetails);
+    const popup = document.createElement("span");
+    popup.className = "card-info-popup";
+    popup.setAttribute("role", action ? "dialog" : "tooltip");
+    if (action) popup.setAttribute("aria-label", "Card details");
+    for (const { answer, parts, schedule } of entries) {
+      const row = document.createElement("span");
+      row.className = "card-info-row";
+      const heading = document.createElement("span");
+      heading.className = "card-info-heading";
+      if (answer) {
+        const name = document.createElement("span");
+        name.className = "card-info-answer";
+        if (parts) name.append(...parts.map(answerNode));
+        else name.textContent = answer;
+        name.title = answer;
+        heading.append(name);
+      }
+      if (!schedule || schedule.state !== 0) {
+        const badge = document.createElement("span");
+        badge.className = "card-info-state";
+        badge.dataset.state = schedule ? stateName(schedule.state).toLowerCase() : "unsaved";
+        badge.textContent = schedule ? stateName(schedule.state) : "Unsaved";
+        heading.append(badge);
+      }
+      if (heading.childElementCount) row.append(heading);
+      const dueText = document.createElement("span");
+      dueText.className = "card-info-due";
+      dueText.textContent = !schedule ? "Not saved yet" : schedule.dueAt <= now
+        ? "Due now" : `Due in ${formatInterval(schedule.dueAt - now)}`;
+      row.append(dueText);
+      if (schedule) {
+        const reviewed = document.createElement("span");
+        reviewed.className = "card-info-reviewed";
+        reviewed.textContent = schedule.lastReviewAt === null ? "Never reviewed"
+          : `Last reviewed ${formatInterval(now - schedule.lastReviewAt)} ago`;
+        row.append(reviewed);
+      }
+      popup.append(row);
     }
-    if (!schedule || schedule.state !== 0) {
-      const badge = document.createElement("span");
-      badge.className = "card-info-state";
-      badge.dataset.state = schedule ? stateName(schedule.state).toLowerCase() : "unsaved";
-      badge.textContent = schedule ? stateName(schedule.state) : "Unsaved";
-      heading.append(badge);
+    if (action) {
+      const join = document.createElement("button");
+      join.type = "button";
+      join.className = "card-info-join";
+      join.textContent = action.label;
+      join.addEventListener("mousedown", (event) => event.preventDefault());
+      join.addEventListener("click", action.run);
+      const footer = document.createElement("span");
+      footer.className = "card-info-footer";
+      footer.append(join);
+      popup.append(footer);
     }
-    if (heading.childElementCount) row.append(heading);
-    const dueText = document.createElement("span");
-    dueText.className = "card-info-due";
-    dueText.textContent = !schedule ? "Not saved yet" : schedule.dueAt <= now
-      ? "Due now" : `Due in ${formatInterval(schedule.dueAt - now)}`;
-    row.append(dueText);
-    if (schedule) {
-      const reviewed = document.createElement("span");
-      reviewed.className = "card-info-reviewed";
-      reviewed.textContent = schedule.lastReviewAt === null ? "Never reviewed"
-        : `Last reviewed ${formatInterval(now - schedule.lastReviewAt)} ago`;
-      row.append(reviewed);
-    }
-    popup.append(row);
-  }
-  if (action) {
-    const join = document.createElement("button");
-    join.type = "button";
-    join.className = "card-info-join";
-    join.textContent = action.label;
-    join.addEventListener("mousedown", (event) => event.preventDefault());
-    join.addEventListener("click", action.run);
-    const footer = document.createElement("span");
-    footer.className = "card-info-footer";
-    footer.append(join);
-    popup.append(footer);
-  }
-  info.append(popup);
+    info.append(popup);
+  };
+  info.addEventListener("pointerenter", showDetails);
+  info.addEventListener("focusin", showDetails);
   return info;
 }
 
