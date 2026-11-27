@@ -8,10 +8,14 @@ import { dueCountsKey, flushCardSyncs } from './card-sync';
 import { queryClient } from './query-client';
 import { getScheduler, nextInQueue, reviewDueAt, separateSibling, previewDue, scheduleReview, type Grade, type StoredCard, type Scheduler } from './fsrs';
 
-type GradeStep = { before: StoredCard; result: ReturnType<typeof scheduleReview>; queueBefore: StoredCard[]; queueAfter: StoredCard[] };
+type GradeStep = { before: StoredCard; result: ReturnType<typeof scheduleReview> };
 function reviewedFields(card: StoredCard) {
   const { dueAt, stability, stabilityFast, difficulty, scheduledDays, learningStep, state, scheduleStatus, lastReviewAt, reps, lapses } = card;
   return { dueAt, stability, stabilityFast, difficulty, scheduledDays, learningStep, state, scheduleStatus, lastReviewAt, reps, lapses };
+}
+function normalizeCard(card: StoredCard): StoredCard {
+  return card.kind === "basic" && Array.isArray(card.back) && card.back.length > 0 && card.back.every(segment => segment.type === "block" && segment.revealStep === true)
+    ? { ...card, kind: "list" } : card;
 }
 function countByState(queue: StoredCard[], now: number) {
   const counts = { new: 0, learning: 0, review: 0, laterToday: { new: 0, learning: 0, review: 0 } };
@@ -93,7 +97,6 @@ export class ReviewSession {
       this.generation++; this.scope = moduleId; this.retained = undefined;
       this.error = null; this.reviewed = 0; this.earlyUntil = null; this.undoSteps = []; this.redoSteps = [];
     }
-    const sameCutoff = this.cutoff === createdAtCutoff;
     this.cutoff = createdAtCutoff;
     const token = ++this.loadGeneration;
     this.loading = true; this.emit();
@@ -116,24 +119,21 @@ export class ReviewSession {
         active = unfiltered.find(card => card.id === previous.id);
         if (active) loadedCards.push(active);
       }
-      const cards = loadedCards.map(card => card.kind === "basic" && Array.isArray(card.back) && card.back.length > 0 && card.back.every(segment => segment.type === "block" && segment.revealStep === true)
-        ? { ...card, kind: "list" as const } : card);
+      // A history target can still exist after it leaves the due queue.
+      const liveIds = new Set(loadedCards.map(card => card.id));
+      const historyModules = new Set([...this.undoSteps, ...this.redoSteps]
+        .filter(step => !liveIds.has(step.before.id)).map(step => step.before.moduleId));
+      const schedules = await Promise.all([...historyModules].map(moduleId => call<{ id: string }[]>('card_schedules', { moduleId })));
+      if (token !== this.loadGeneration) return;
+      for (const cards of schedules) for (const card of cards) liveIds.add(card.id);
+      this.undoSteps = this.undoSteps.filter(step => liveIds.has(step.before.id));
+      this.redoSteps = this.redoSteps.filter(step => liveIds.has(step.before.id));
+      const cards = loadedCards.map(normalizeCard);
       this.retained = active && cards.find(card => card.id === active.id && card.reps === previous?.reps);
       this.now = Date.now();
       if (!this.retained) this.earlyUntil = null;
       const next = this.retained ?? nextInQueue(cards, this.now, this.learnAhead);
       if (next?.id !== previous?.id || next?.reps !== previous?.reps) { this.revealed = false; this.revealedSteps = 0; }
-      // An undo or redo must not put a card dropped by refresh back in the queue.
-      if (same && sameCutoff && this.queue && (this.undoSteps.length || this.redoSteps.length)) {
-        const live = new Set(cards.map(card => card.id));
-        const absent = new Set(this.queue.filter(card => !live.has(card.id)).map(card => card.id));
-        const prune = (steps: GradeStep[]) => steps.filter(step => !absent.has(step.before.id)).map(step => ({
-          ...step,
-          queueBefore: step.queueBefore.filter(card => !absent.has(card.id)),
-          queueAfter: step.queueAfter.filter(card => !absent.has(card.id)),
-        }));
-        if (absent.size) { this.undoSteps = prune(this.undoSteps); this.redoSteps = prune(this.redoSteps); }
-      }
       this.scheduler = scheduler; this.queue = cards; this.loadedGeneration = this.generation;
       this.unindexed = unindexed.filter(note => !moduleId || note.id === moduleId);
     } catch (error) { if (token === this.loadGeneration) this.error = String(error); }
@@ -177,8 +177,7 @@ export class ReviewSession {
       const result = scheduleReview(scheduler, card, rating, reviewTime, reviewTime - this.shownAt);
       await writeCards('review_card', { cardId: card.id, expectedReps: card.reps, card: result.card, log: result.log });
       if (mine !== this.generation) return;
-      const queueBefore = this.queue ?? [];
-      const remaining = queueBefore.filter(queued => queued.id !== card.id);
+      const remaining = (this.queue ?? []).filter(queued => queued.id !== card.id);
       const hasSibling = card.kind === 'basic' && remaining.some(queued => queued.kind === 'basic' && queued.moduleId === card.moduleId && queued.id === siblingOf(card.id));
       const coreCards = !hasSibling ? [] : await call<StoredCard[]>('due_cards', { moduleId: card.moduleId, now: Number.MAX_SAFE_INTEGER, createdAtCutoff: null }).catch(() => null);
       if (mine !== this.generation) return;
@@ -186,16 +185,30 @@ export class ReviewSession {
       const rated = { ...card, ...result.card };
       const queueAfter = reviewDueAt(rated) <= endOfDay(reviewTime) ? [...rest, rated] : rest;
       this.error = null; this.reviewed++; this.queue = queueAfter; this.retained = undefined;
-      this.undoSteps.push({ before: card, result, queueBefore, queueAfter }); this.redoSteps = [];
+      this.undoSteps.push({ before: card, result }); this.redoSteps = [];
     });
   };
+  private async reloadAfterHistoryWrite(mine: number, restored?: StoredCard) {
+    const moduleId = this.scope ?? null;
+    const now = endOfDay(Date.now());
+    const createdAtCutoff = this.cutoff;
+    const cards = await call<StoredCard[]>('due_cards', { moduleId, now, createdAtCutoff });
+    // Undo can restore a new card hidden by a cutoff enabled after it was graded.
+    if (restored && createdAtCutoff !== null && !cards.some(card => card.id === restored.id)) {
+      const unfiltered = await call<StoredCard[]>('due_cards', { moduleId: restored.moduleId, now, createdAtCutoff: null });
+      const target = unfiltered.find(card => card.id === restored.id);
+      if (target) cards.push(target);
+    }
+    if (mine === this.generation) this.queue = cards.map(normalizeCard);
+  }
   undo = async () => {
     const step = this.undoSteps[this.undoSteps.length - 1];
     if (!step) return;
     await this.action(async mine => {
       await writeCards('undo_review', { cardId: step.before.id, expectedReps: step.result.card.reps, previous: reviewedFields(step.before), previousFsrsModel: step.before.fsrsModel, reviewTime: step.result.log.reviewTime });
       if (mine !== this.generation) return;
-      this.error = null; this.undoSteps.pop(); this.redoSteps.push(step); this.queue = step.queueBefore; this.retained = undefined; this.reviewed--;
+      this.error = null; this.undoSteps.pop(); this.redoSteps.push(step); this.retained = undefined; this.reviewed--;
+      await this.reloadAfterHistoryWrite(mine, step.before);
     });
   };
   redo = async () => {
@@ -204,7 +217,8 @@ export class ReviewSession {
     await this.action(async mine => {
       await writeCards('review_card', { cardId: step.before.id, expectedReps: step.before.reps, card: step.result.card, log: step.result.log });
       if (mine !== this.generation) return;
-      this.error = null; this.redoSteps.pop(); this.undoSteps.push(step); this.queue = step.queueAfter; this.retained = undefined; this.reviewed++;
+      this.error = null; this.redoSteps.pop(); this.undoSteps.push(step); this.retained = undefined; this.reviewed++;
+      await this.reloadAfterHistoryWrite(mine);
     });
   };
 }

@@ -103,9 +103,10 @@ test("cutoff reloads preserve the current answer, reviewed count and undo/redo",
           return structuredClone(cards.filter((c) => c.dueAt <= args.now &&
             (args.createdAtCutoff == null || c.reps > 0)));
         }
+        if (command === "card_schedules") return structuredClone(cards);
         if (command === "review_card") Object.assign(cards.find((c) => c.id === args.cardId), args.card);
         if (command === "undo_review") Object.assign(cards.find((c) => c.id === args.cardId), args.previous);
-        if (["list_documents", "due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes", "card_schedules"].includes(command)) return [];
+        if (["list_documents", "due_counts", "unindexed_card_modules", "unindexed_modules", "search_notes"].includes(command)) return [];
         return null;
       } } });
 
@@ -312,3 +313,70 @@ test('a list reveals each step before one grade, and undo restores one review', 
     assert.equal(await page.getByText('Prophase',{exact:true}).count(),0);
   } finally { await page.close(); }
 });
+
+for (const scenario of ['deletion', 'schedule refresh']) {
+  test(`review history follows ${scenario} outside the grade operation`, async () => {
+    const page = await browser.newPage();
+    try {
+      await page.addInitScript(() => {
+        const card = (id, offset) => ({
+          id, moduleId: 'a', moduleName: 'Alpha', section: [], kind: 'basic',
+          front: [{ type: 'text', text: id }], back: [{ type: 'text', text: 'answer' }],
+          dueAt: Date.now() + offset, stability: 0, stabilityFast: 0, difficulty: 0,
+          scheduledDays: 0, learningStep: 0, state: 0, scheduleStatus: 'new',
+          lastReviewAt: null, reps: 0, lapses: 0, fsrsModel: null,
+        });
+        const cards = [card('graded', -120_000), card('updated', -60_000)];
+        window.changeCards = (scenario) => {
+          if (scenario === 'deletion') cards.shift();
+          else {
+            cards[1].dueAt += 30_000;
+            cards.push(card('added', -10_000));
+          }
+          return cards[1]?.dueAt;
+        };
+        window.installTestBridge({ tauri: { invoke: async (command, args) => {
+          if (command === 'due_cards') return structuredClone(cards.filter(card => card.dueAt <= args.now));
+          if (command === 'card_schedules') return structuredClone(cards);
+          if (command === 'review_card' || command === 'undo_review') {
+            const target = cards.find(card => card.id === args.cardId);
+            if (!target) throw new Error('Card was deleted');
+            Object.assign(target, args.card ?? args.previous);
+          }
+          return [];
+        } } });
+      });
+      await page.goto(`${url}/review`);
+      const result = await page.evaluate(async scenario => {
+        const { ReviewSession } = await import('/src/lib/review-session.ts');
+        const session = new ReviewSession();
+        await session.load();
+        session.reveal();
+        await session.rate(4);
+        const graded = session.getSnapshot();
+        const updatedDue = window.changeCards(scenario);
+        await session.load();
+        const refreshed = session.getSnapshot();
+        await session.undo();
+        const undone = session.getSnapshot();
+        await session.redo();
+        return { graded, refreshed, undone, redone: session.getSnapshot(), updatedDue };
+      }, scenario);
+      assert.equal(result.graded.canUndo, true);
+      assert.deepEqual(result.graded.queue.map(card => card.id), ['updated']);
+      if (scenario === 'deletion') {
+        assert.equal(result.refreshed.canUndo, false);
+        assert.equal(result.undone.error, null);
+      } else {
+        for (const snapshot of [result.undone, result.redone]) {
+          assert.ok(snapshot.queue.some(card => card.id === 'added'), 'card added by refresh stays queued');
+          assert.equal(snapshot.queue.find(card => card.id === 'updated').dueAt, result.updatedDue);
+        }
+        assert.equal(result.undone.queue.find(card => card.id === 'graded').reps, 0);
+        assert.equal(result.redone.queue.some(card => card.id === 'graded'), false);
+      }
+    } finally {
+      await page.close();
+    }
+  });
+}
