@@ -32,7 +32,7 @@ test("the desktop note creates, indents, highlights, copies and reloads code blo
 
     const editor = page.locator(".tiptap[contenteditable=true]");
     const language = page.getByRole("combobox", { name: "Code language" });
-    const copy = page.getByRole("button", { name: "Copy code block" });
+    const copy = page.getByRole("button", { name: "Copy code" });
     const code = editor.locator("pre code");
     const settle = async () => {
       if (process.env.PROOF_DIR) await page.waitForTimeout(1150);

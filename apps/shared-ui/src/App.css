@@ -462,33 +462,59 @@ body {
     font-size: 0.75rem;
 }
 
-.note-code-toolbar :is(select, button) {
+.note-code-language {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+    max-width: 9rem;
     height: 1.5rem;
     padding: 0 0.375rem;
     border-radius: 0.25rem;
     color: var(--muted-foreground);
+}
+
+.note-code-language span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.note-code-language::after {
+    content: "";
+    flex: 0 0 0.3125rem;
+    height: 0.3125rem;
+    border: solid currentColor;
+    border-width: 0 1px 1px 0;
+    transform: translateY(-1px) rotate(45deg);
+}
+
+.note-code-language select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
     cursor: pointer;
 }
 
-.note-code-toolbar select {
-    min-width: 0;
-    max-width: 9rem;
-}
-
-.note-code-toolbar button {
-    width: 4.75rem;
-}
-
-.note-code-toolbar :is(select, button):hover {
+.note-code-language:has(select:hover) {
     background: var(--accent);
     color: var(--accent-foreground);
 }
 
-.note-code-toolbar :is(select, button):focus-visible {
+.note-code-language:has(select:focus-visible) {
     outline: 2px solid var(--ring);
 }
 
-.note-code-toolbar select:disabled {
+.dark .note-code-language select {
+    color-scheme: dark;
+    background: var(--background);
+    color: var(--foreground);
+}
+
+.note-code-language select:disabled {
     cursor: default;
 }
 

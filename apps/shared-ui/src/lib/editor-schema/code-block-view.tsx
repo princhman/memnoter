@@ -1,3 +1,8 @@
+import { Button } from "@/components/ui/button";
+import { IconTooltip } from "@/components/ui/icon-tooltip";
+import { Check, Copy } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
 import type { Editor } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
 import type { NodeView } from "@tiptap/pm/view";
@@ -28,6 +33,44 @@ async function copyText(text: string) {
   }
 }
 
+function CopyCodeButton({ getText }: { getText: () => string }) {
+  const [status, setStatus] = useState("");
+  const feedback = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      clearTimeout(feedback.current);
+    };
+  }, []);
+
+  async function copy() {
+    let message = "Copied";
+    try {
+      await copyText(getText());
+    } catch {
+      message = "Copy failed";
+    }
+    if (!mounted.current) return;
+    clearTimeout(feedback.current);
+    setStatus(message);
+    feedback.current = setTimeout(() => setStatus(""), 1800);
+  }
+
+  return (
+    <>
+      <IconTooltip label="Copy code">
+        <Button type="button" size="icon-xs" variant="ghost" className="text-muted-foreground"
+          aria-label="Copy code" onMouseDown={event => event.preventDefault()} onClick={copy}>
+          {status === "Copied" ? <Check /> : <Copy />}
+        </Button>
+      </IconTooltip>
+      <span className="sr-only" role="status">{status}</span>
+    </>
+  );
+}
+
 export function codeBlockView(
   editor: Editor, node: Node, getPos: () => number | undefined, pre: HTMLElement, code: HTMLElement,
 ): NodeView {
@@ -36,14 +79,16 @@ export function codeBlockView(
   const toolbar = document.createElement("div");
   toolbar.className = "note-code-toolbar";
   toolbar.contentEditable = "false";
+  const languageControl = document.createElement("div");
+  languageControl.className = "note-code-language";
+  const label = document.createElement("span");
+  label.setAttribute("aria-hidden", "true");
   const picker = document.createElement("select");
   picker.setAttribute("aria-label", "Code language");
   picker.add(new Option("Plain text", ""));
   for (const [value, label] of Object.entries(codeLanguages)) picker.add(new Option(label, value));
   let current = node;
   let imported: HTMLOptionElement | undefined;
-  let feedback: ReturnType<typeof setTimeout> | undefined;
-  let destroyed = false;
 
   const displayLanguage = () => {
     const saved: unknown = current.attrs.language;
@@ -56,6 +101,7 @@ export function codeBlockView(
       picker.add(imported);
     }
     picker.value = language ?? imported?.value ?? "";
+    label.textContent = picker.selectedOptions[0]?.text ?? "";
     picker.disabled = !editor.isEditable;
   };
   picker.addEventListener("change", () => {
@@ -66,31 +112,12 @@ export function codeBlockView(
     view.dispatch(state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, language: picker.value || null }));
   });
 
-  const copy = document.createElement("button");
-  copy.type = "button";
-  copy.textContent = "Copy";
-  copy.setAttribute("aria-label", "Copy code block");
-  const status = document.createElement("span");
-  status.className = "sr-only";
-  status.setAttribute("role", "status");
-  copy.addEventListener("mousedown", event => event.preventDefault());
-  copy.addEventListener("click", async () => {
-    let label = "Copied";
-    try {
-      await copyText(current.textContent);
-    } catch {
-      label = "Copy failed";
-    }
-    if (destroyed) return;
-    clearTimeout(feedback);
-    copy.textContent = label;
-    status.textContent = label;
-    feedback = setTimeout(() => {
-      copy.textContent = "Copy";
-      status.textContent = "";
-    }, 1800);
-  });
-  toolbar.append(picker, copy, status);
+  const copy = document.createElement("div");
+  copy.className = "flex";
+  const copyRoot = createRoot(copy);
+  copyRoot.render(<CopyCodeButton getText={() => current.textContent} />);
+  languageControl.append(label, picker);
+  toolbar.append(languageControl, copy);
   dom.append(toolbar, pre);
   displayLanguage();
 
@@ -106,6 +133,6 @@ export function codeBlockView(
     stopEvent: event => event.target instanceof window.Node && toolbar.contains(event.target),
     ignoreMutation: mutation => mutation.type !== "selection" &&
       (toolbar.contains(mutation.target) || (mutation.type === "attributes" && mutation.target === code)),
-    destroy() { destroyed = true; clearTimeout(feedback); },
+    destroy() { queueMicrotask(() => copyRoot.unmount()); },
   };
 }
