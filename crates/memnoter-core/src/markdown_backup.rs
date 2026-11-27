@@ -70,6 +70,13 @@ fn regular_file(path: &Path) -> CommandResult<bool> {
 }
 
 pub fn write_if_changed(path: &Path, bytes: &[u8]) -> CommandResult<()> {
+    write_unless_changed_since(path, bytes, None)
+}
+
+// `seen` is the destination's hash when it was checked (Some(None): absent).
+// It is checked again just before the rename, so a save made in another app
+// while the export was being staged is kept rather than replaced.
+fn write_unless_changed_since(path: &Path, bytes: &[u8], seen: Option<Option<&str>>) -> CommandResult<()> {
     if regular_file(path)? && fs::read(path).map_err(db_err)? == bytes {
         return Ok(());
     }
@@ -81,6 +88,16 @@ pub fn write_if_changed(path: &Path, bytes: &[u8]) -> CommandResult<()> {
             .open(&temp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
+        if let Some(seen) = seen {
+            let now = match fs::read(path) {
+                Ok(current) => Some(content_hash(&current)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            if now.as_deref() != seen {
+                return Err(io::Error::other(format!("{} changed during the backup", path.display())));
+            }
+        }
         fs::rename(&temp, path)
     })();
     if result.is_err() {
@@ -332,10 +349,13 @@ fn reconcile(
                 directory(&attachments)?;
             }
             // Check every destination before changing a module's export.
+            let mut seen = BTreeMap::new();
             for (path, bytes) in &files {
                 let Some(existing) = existing_bytes(&root.join(path))? else {
+                    seen.insert(path.clone(), None);
                     continue;
                 };
+                seen.insert(path.clone(), Some(content_hash(&existing)));
                 if existing == *bytes {
                     continue;
                 }
@@ -353,7 +373,8 @@ fn reconcile(
                 }
             }
             for (path, bytes) in files {
-                write_if_changed(&root.join(&path), &bytes)?;
+                let checked = seen.get(&path).map(|hash: &Option<String>| hash.as_deref());
+                write_unless_changed_since(&root.join(&path), &bytes, checked)?;
                 let file = current.entry(path).or_default();
                 file.hash = Some(content_hash(&bytes));
                 file.modules.insert(id.clone());
@@ -394,6 +415,24 @@ fn reconcile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_made_while_the_export_was_staged_is_kept() {
+        let dir = std::env::temp_dir().join(format!("memnoter-race-{}", Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("Note.md");
+        fs::write(&path, b"old export").unwrap();
+        let checked = content_hash(b"old export");
+        fs::write(&path, b"saved in Obsidian").unwrap();
+        assert!(write_unless_changed_since(&path, b"new export", Some(Some(&checked))).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"saved in Obsidian");
+        let absent = dir.join("New.md");
+        fs::write(&absent, b"created meanwhile").unwrap();
+        assert!(write_unless_changed_since(&absent, b"new export", Some(None)).is_err());
+        assert_eq!(fs::read(&absent).unwrap(), b"created meanwhile");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 2, "no staged file is left behind");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn with_modules<const N: usize>(modules: [(&str, Module); N]) -> Snapshot {
         Snapshot {
