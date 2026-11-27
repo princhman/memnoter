@@ -1208,7 +1208,10 @@ for (const sections of [true, false]) {
       await focused.waitFor();
       const saved = await leaveAndReadSaved(page, moduleId);
       assert.match(saved[3], /^<image .*fileId=/);
-      assert.deepEqual(saved.filter((_, i) => i !== 3), beforeImage);
+      // Nothing follows the image inside the focused chapter, so the paste adds
+      // an empty line after it (PRI-381).
+      assert.equal(saved[4], "<paragraph></paragraph>");
+      assert.deepEqual(saved.filter((_, i) => i !== 3 && i !== 4), beforeImage);
     } finally {
       release.resolve();
       await page.close();
