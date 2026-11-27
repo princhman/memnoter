@@ -97,4 +97,10 @@
   min-width: 0;
   color: var(--foreground);
   background: transparent;
+  outline: none;
+}
+
+/* A quiet field outline instead of the browser's focus ring. */
+.note-image-caption-edit:focus-within {
+  box-shadow: 0 0 0 1px var(--border);
 }
