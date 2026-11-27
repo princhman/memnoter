@@ -7,6 +7,7 @@ globalThis.window = { setTimeout, clearTimeout, addEventListener() {} };
 globalThis.localStorage = { getItem: () => null };
 const { indexStoredNote, flushSearchIndexing } = await import('../src/lib/search-index.ts');
 const { acknowledgeContent, acknowledgeCompaction } = await import('../src/lib/content.ts');
+const { flushAll } = await import('../src/lib/write-lifecycle.ts');
 const { saveQueue } = await import('../src/lib/saves.ts');
 const { queryClient } = await import('../src/lib/query-client.ts');
 
@@ -100,7 +101,7 @@ test('failed stored indexing reports failure and a later request writes the stor
   }
 });
 
-test('Review loads due cards before search-only backfill finishes', async () => {
+test('Review and navigation saves finish while search-only backfill is pending', async () => {
   const { startBackfill } = await import('../src/lib/note-index.ts');
   const { ReviewSession } = await import('../src/lib/review-session.ts');
   const { getScheduler } = await import('../src/lib/fsrs.ts');
@@ -108,6 +109,10 @@ test('Review loads due cards before search-only backfill finishes', async () => 
 
   const outdated = Array.from({ length: 100 }, (_, i) => `search-only-${i}`);
   const indexed = [];
+  const disk = new Y.Doc();
+  const edit = new Y.Doc();
+  const indexingStarted = Promise.withResolvers();
+  const finishIndex = Promise.withResolvers();
   const unexpected = [];
   const card = { id: 'due', moduleId: outdated[0], kind: 'basic', state: 0, dueAt: Date.now() - 1000 };
   const idle = Promise.withResolvers();
@@ -119,7 +124,16 @@ test('Review loads due cards before search-only backfill finishes', async () => 
       case 'unindexed_modules': return outdated;
       case 'due_cards': return [card];
       case 'get_content': return { state: [], updates: [], files: [] };
-      case 'index_note': indexed.push(args.moduleId); return;
+      case 'index_note':
+        indexed.push(args.moduleId);
+        if (args.moduleId === outdated[0]) {
+          indexingStarted.resolve();
+          return finishIndex.promise;
+        }
+        return;
+      case 'add_update':
+        Y.applyUpdate(disk, Uint8Array.from(args.bytes));
+        return { id: 1, bytes: args.bytes };
       default: unexpected.push(command); throw new Error(`Unexpected command: ${command}`);
     }
   });
@@ -128,6 +142,7 @@ test('Review loads due cards before search-only backfill finishes', async () => 
   let rebuilt = false;
   const backfill = startBackfill().then(() => { rebuilt = true; });
   const load = review.load();
+  let navigation;
   try {
     const loaded = await Promise.race([load.then(() => true), new Promise(resolve => setImmediate(() => resolve(false)))]);
     assert.equal(loaded, true, 'Review is still waiting on search-only backfill');
@@ -135,16 +150,29 @@ test('Review loads due cards before search-only backfill finishes', async () => 
     assert.equal(rebuilt, false);
 
     idle.resolve();
+    await indexingStarted.promise;
+    edit.getText('note').insert(0, 'Save before leaving');
+    saveQueue.enqueue('open-note', Array.from(Y.encodeStateAsUpdate(edit)));
+    navigation = flushAll({ navigation: true });
+    const flushed = await Promise.race([navigation.then(() => true), new Promise(resolve => setImmediate(() => resolve(false)))]);
+    assert.equal(flushed, true, 'navigation is waiting on search-only backfill');
+    assert.equal(disk.getText('note').toString(), 'Save before leaving');
+
+    finishIndex.resolve();
     await backfill;
     assert.deepEqual(indexed, outdated);
     assert.deepEqual(unexpected, [], 'search-only notes must not issue card commands');
   } finally {
-    await saveQueue.suspend();
     idle.resolve();
+    finishIndex.resolve();
+    await Promise.allSettled([navigation]);
+    await saveQueue.suspend();
     await Promise.all([backfill, load]);
     saveQueue.resume();
     queryClient.clear();
     clearMocks();
     delete window.requestIdleCallback;
+    edit.destroy();
+    disk.destroy();
   }
 });

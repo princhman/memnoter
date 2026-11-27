@@ -26,7 +26,7 @@ registerFlusher("stored-notes", async () => {
 
 async function refreshStoredNote(
   moduleId: string,
-  permit: WritePermit,
+  permit: WritePermit | undefined,
   kind: "search" | "cards-and-search",
 ) {
   for (let attempt = 0; ; attempt++) {
@@ -38,7 +38,7 @@ async function refreshStoredNote(
           const { indexStoredCards } = await import("@/lib/card-backfill");
           await indexStoredCards(moduleId, doc, permit);
         }
-        await indexStoredNote(moduleId, doc, permit);
+        await indexStoredNote(moduleId, doc, permit, kind === "search" ? "background" : undefined);
       } finally { doc.destroy(); }
       return;
     } catch (error) {
@@ -87,7 +87,7 @@ function createBackfill() {
   const cards = cardIds.then(ids => backfillNotes(ids, refreshDerived));
   const search = Promise.all([cardIds, searchIds]).then(([cards, search]) =>
     backfillNotes(search.filter(id => !cards.has(id)), id =>
-      writeOperation(permit => refreshStoredNote(id, permit, "search"))));
+      refreshStoredNote(id, undefined, "search")));
   return { cards, all: Promise.all([cards, search]).then(() => {}) };
 }
 
