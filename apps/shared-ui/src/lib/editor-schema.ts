@@ -41,7 +41,7 @@ type NoteExtensionOptions = {
   document: Y.Doc;
   fragment?: Y.XmlFragment;
   ui?: { mention?: typeof Mention; pdfTextQuote?: typeof PdfTextQuote; mermaidView?: AnyExtension; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
-  insertImages?: (editor: Editor, files: File[], position: number) => void;
+  insertImages?: (editor: Editor, files: File[], position: number, pasted?: boolean) => void;
   scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;
   onFirstRender?: () => void;
@@ -134,7 +134,7 @@ export function noteExtensions({
       onPaste: (currentEditor, files) => {
         const { state } = currentEditor;
         const position = sectionFocusKey.getState(state) == null ? state.selection.anchor : state.selection.from;
-        insertImages(currentEditor, files, position);
+        insertImages(currentEditor, files, position, true);
       },
       onDrop: (currentEditor, files, position) => {
         insertImages(currentEditor, files, position);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { CommandManager, type Editor } from "@tiptap/core";
+import { addLineAfterPastedImage } from "./editor-schema/image-plugins";
 import { changesOutsideSection, getFocusedSectionRange, sectionContainsRange } from "./section-focus";
 import * as Y from "yjs";
 import { absolutePositionToRelativePosition, ProsemirrorBinding, relativePositionToAbsolutePosition, ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
@@ -161,6 +162,7 @@ export function useNoteDocument(moduleId: string) {
     currentEditor: Editor,
     files: File[],
     position: number,
+    pasted = false,
   ) {
     if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
     const { state } = currentEditor;
@@ -176,6 +178,7 @@ export function useNoteDocument(moduleId: string) {
       ? Y.createRelativePositionFromTypeIndex(binding.type, $heading.index() + 1, -1)
       : absolutePositionToRelativePosition(position, binding.type, binding.mapping);
 
+    let insertedCount = 0;
     const prepareInsertion = (file: File, fileId?: string) => {
       const { state } = currentEditor;
       const range = getFocusedSectionRange(state);
@@ -191,10 +194,12 @@ export function useNoteDocument(moduleId: string) {
         .insertContentAt(position, { type: "image", attrs: { fileId, alt: file.name } })
         .run();
       if (!inserted || !tr.docChanged) throw new Error("Could not insert the uploaded image.");
+      const nextPosition = tr.mapping.map(position);
+      if (pasted && insertedCount === files.length - 1) addLineAfterPastedImage(tr, range?.to);
       if (range && changesOutsideSection(tr, range)) {
         throw new Error("The image destination is outside the focused section.");
       }
-      return { tr, nextPosition: tr.mapping.map(position) };
+      return { tr, nextPosition };
     };
     return imageFilesOperation(files, {
       checkTarget: permit => {
@@ -211,6 +216,7 @@ export function useNoteDocument(moduleId: string) {
         const { tr, nextPosition } = prepareInsertion(file, saved.id);
         currentEditor.view.dispatch(tr);
         if (currentEditor.state.doc === tr.before) throw new Error("Could not insert the uploaded image.");
+        insertedCount++;
         destination = absolutePositionToRelativePosition(nextPosition, binding.type, binding.mapping);
       },
     })
