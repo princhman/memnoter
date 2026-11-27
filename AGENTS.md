@@ -133,10 +133,11 @@ Other agents often have uncommitted work in the same checkout.
   size and zoom, so text is readable.
 - Watch it back once at normal speed before posting. Each pickup, drop target
   and result must be readable; re-record anything that goes by too fast.
-- Post videos in a format the Linear iPhone app plays: `.mp4` (H.264) or an
-  animated GIF, never `.webm`. A `PROOF_DIR` recording is `.webm`; turn it into
-  a GIF (frames from Playwright's ffmpeg in `~/.cache/ms-playwright`, then
-  Pillow) before uploading.
+- Post videos as `.mp4` (H.264), the format the Linear iPhone app plays; never
+  `.webm` or GIF. A `PROOF_DIR` recording is `.webm`; on minipc convert it with
+  `~/.cache/ffmpeg-h264/ffmpeg -i in.webm -c:v libx264 -pix_fmt yuv420p
+  -movflags +faststart -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -an out.mp4`
+  (Playwright's bundled ffmpeg can't encode H.264).
 
 ## Data safety
 
