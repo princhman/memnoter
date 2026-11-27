@@ -267,6 +267,7 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+      <span aria-hidden="true" className="h-4 w-px bg-border" />
       <div role="group" aria-label="Text style" className="flex items-center gap-0.5">
         <MarkButton
           label="Bold"
@@ -301,6 +302,7 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
           <Strikethrough />
         </MarkButton>
       </div>
+      <span aria-hidden="true" className="h-4 w-px bg-border" />
       <div role="group" aria-label="Code and math" className="flex items-center gap-0.5">
         <MarkButton
           label="Inline code"
@@ -328,6 +330,7 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
           <Sigma />
         </MarkButton>
       </div>
+      <span aria-hidden="true" className="h-4 w-px bg-border" />
       <div role="group" aria-label="Highlight and link" className="flex items-center gap-0.5">
         <div className="flex items-center">
           <MarkButton
@@ -362,6 +365,7 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
           <Link />
         </MarkButton>
       </div>
+      {flashcards && <span aria-hidden="true" className="h-4 w-px bg-border" />}
       {flashcards && <div role="group" aria-label="Flashcards" className="flex items-center gap-0.5">
         {clozeButton}
         {groupCardActions.filter(item => active.groupActions.includes(item.title)).map(item => <button key={item.title} type="button" className="rounded-md px-2 py-1 text-xs hover:bg-accent" title={item.hint} onClick={() => item.run(editor, editor.state.selection, { insertImages: () => {} })}>{item.title}</button>)}
