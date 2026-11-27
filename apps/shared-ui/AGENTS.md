@@ -61,6 +61,11 @@ This code ships to desktop, iPad and iPhone at once.
 - **Editor host on iOS** (`src/editor-host/`): scroll, keyboard and caret changes
   always need `tests/editor-host.test.mjs` coverage, even in "don't test" mode.
   Untested fixes here keep bringing old bugs back.
+- **Browser tests wait for state, not time.** Before each key press, wait for
+  the editor state the step needs (e.g. the caret's position after a click or
+  End). Start test servers with `port: 0, strictPort: false`; Vite treats 0 as
+  its strict default 5173. Use keys that act the same on macOS and Linux, or
+  place the caret with an editor command.
 - **Question bank and worksheets.** The approved behaviour is in the Decisions
   section of Linear PRI-324. Read it before changing those screens, and add
   new decisions there, not here.

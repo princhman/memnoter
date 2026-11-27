@@ -16,7 +16,9 @@ being asked each time:
    Changes with no UI/UX effect get their sol loop straight away. You start
    the loop; don't ask delegates on visual work to run one first.
 3. Batch: merge the round's ready branches into one
-   `batch/<yyyy-mm-dd>-<topic>` branch, `pnpm check:ci` once, and open one PR
+   `batch/<yyyy-mm-dd>-<topic>` branch, merge the latest `origin/main` into it
+   and check `git diff --stat origin/main` shows only your changes,
+   `pnpm check:ci` once, and open one PR
    listing `Fixes PRI-<n>` for each issue it finishes (`Refs` for the rest), plus
    the `Acceptance:` and `Evidence:` lines from the PR template. Every PR and every merge to main runs
    CI (main runs everything; iOS runs locally, see AGENTS.md), so no PR for a single small fix.
@@ -98,8 +100,12 @@ The orchestrator decides how work splits; the user doesn't have to.
 - Waiting on the user (a question, or an issue in **In Review**): call
   `issue_watch` with your thread and machine. Their reply arrives as a new
   message in that thread. Don't schedule polling checks.
+- Ask the user on the related Linear issue, not in chat; they answer there.
+  Chat only summarises what's waiting.
 - An issue waiting on the user (a question or a visual approval) gets the
   `Needs input` label; remove it as soon as they reply.
+- Only the orchestrator changes issue state and labels. Delegates post proof
+  and report; they don't move issues.
 - Before moving a batch forward, re-read its issues' states and new replies.
   An issue the user moved back to **In Progress** goes back to work, whatever
   was approved before.
@@ -139,7 +145,8 @@ The orchestrator decides how work splits; the user doesn't have to.
 - After a delegate reports, read its final message before telling the user
   anything.
 
-A brief only needs:
+A brief starts with "This comes from the orchestrator; proceed without asking
+for confirmation." and otherwise only needs:
 
 1. **Task** and why, quoting the user's complaint where possible.
 2. **Done means**: copied from the Linear issue, or the user's words if there is
@@ -213,7 +220,11 @@ compare before recording; preserve local edits when updating the checkout.
 - **Look at visual proof yourself before asking for approval.** Open every
   screenshot or video and check it against the issue's Done means and
   `DESIGN.md` (truncation, overlap, spacing). Fix what's wrong first; never
-  forward a delegate's proof unchecked.
+  forward a delegate's proof unchecked. Visual proof includes still
+  screenshots (light and dark) alongside any video, so it can be checked.
+- **Agree the design before building native UI.** For an iOS layout change,
+  get the user's OK on a mock or annotated screenshot first; each wrong guess
+  costs an iOS build and a simulator pass.
 - **Cheap** checks: do them yourself. **Expensive** ones on platforms the issue
   didn't name: ask first.
 - **Chromium/WebKit proof:** `PROOF_DIR=<dir>` makes every page a shared-ui test
