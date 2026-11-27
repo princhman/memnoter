@@ -323,19 +323,18 @@ test('insert and follow image, PDF page, question and worksheet mentions', async
     const origin = `http://localhost:${server.httpServer.address().port}`;
     await page.goto(`${origin}/m1`);
     const editor = page.locator('.tiptap[contenteditable=true]');
-    const paragraph = editor.locator('p').last();
     const type = value => page.keyboard.type(value, { delay: proof ? 80 : 0 });
     const insertQuery = async value => {
-      await paragraph.click({ position: { x: 3, y: 10 } });
-      await page.keyboard.press('Control+End');
+      await editor.getByRole('heading', { name: 'Reading notes' }).waitFor();
+      await editor.evaluate(element => element.editor.commands.focus('end'));
       await page.waitForFunction(() => {
-        const paragraph = [...document.querySelectorAll('.tiptap[contenteditable=true] p')].at(-1);
-        const selection = document.getSelection();
-        if (!paragraph?.contains(selection?.anchorNode) || !selection.isCollapsed) return false;
-        const after = document.createRange();
-        after.setStart(selection.anchorNode, selection.anchorOffset);
-        after.setEnd(paragraph, paragraph.childNodes.length);
-        return after.toString().length === 0;
+        const editor = document.querySelector('.tiptap[contenteditable=true]')?.editor;
+        if (!editor?.view.hasFocus()) return false;
+        const selection = editor.view.dom.ownerDocument.getSelection();
+        const head = editor.state.doc.content.size - 1;
+        return editor.state.selection.empty && editor.state.selection.head === head &&
+          selection?.isCollapsed && editor.view.dom.contains(selection.anchorNode) &&
+          editor.view.posAtDOM(selection.anchorNode, selection.anchorOffset) === head;
       });
       await type(value);
     };
