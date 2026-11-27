@@ -9,6 +9,8 @@ import { queryClient } from './query-client';
 import { getScheduler, nextInQueue, reviewDueAt, separateSibling, previewDue, scheduleReview, type Grade, type StoredCard, type Scheduler } from './fsrs';
 
 type GradeStep = { before: StoredCard; result: ReturnType<typeof scheduleReview> };
+const HISTORY_READ_RETRY_DELAYS = [100, 250];
+const HISTORY_QUEUE_ERROR = 'Could not reload the review queue. Retry to continue.';
 function reviewedFields(card: StoredCard) {
   const { dueAt, stability, stabilityFast, difficulty, scheduledDays, learningStep, state, scheduleStatus, lastReviewAt, reps, lapses } = card;
   return { dueAt, stability, stabilityFast, difficulty, scheduledDays, learningStep, state, scheduleStatus, lastReviewAt, reps, lapses };
@@ -52,6 +54,7 @@ export class ReviewSession {
   private learnAhead = false;
   private earlyUntil: number | null = null;
   private retained: StoredCard | undefined;
+  private historyReload: { restored?: StoredCard } | null = null;
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private derive() {
@@ -66,7 +69,7 @@ export class ReviewSession {
       error: this.error, unindexed: this.unindexed, loading: this.loading, busy: this.pending,
       counts: this.queue ? countByState(this.queue, this.now) : null,
       currentKind: card ? cardCountKind(card.state) : null,
-      canUndo: this.undoSteps.length > 0, canRedo: this.redoSteps.length > 0,
+      canUndo: this.queue !== null && this.undoSteps.length > 0, canRedo: this.queue !== null && this.redoSteps.length > 0,
       preview: this.scheduler && card && this.revealed ? previewDue(this.scheduler, card, this.now) : null,
       nextDueAt, canShowNow: this.queue !== null && nextDueAt !== null && nextInQueue(this.queue, nextDueAt, false, this.now) !== undefined,
     };
@@ -95,11 +98,14 @@ export class ReviewSession {
     const same = this.loadedGeneration === this.generation && this.scope === moduleId;
     if (this.scope !== moduleId || this.generation === 0) {
       this.generation++; this.scope = moduleId; this.retained = undefined;
+      this.historyReload = null;
       this.error = null; this.reviewed = 0; this.earlyUntil = null; this.undoSteps = []; this.redoSteps = [];
     }
     this.cutoff = createdAtCutoff;
     const token = ++this.loadGeneration;
-    this.loading = true; this.emit();
+    this.loading = true;
+    if (this.queue === null) this.error = null;
+    this.emit();
     try {
       await this.writing;
       const [scheduler, [unindexed, loadedCards]] = await Promise.all([
@@ -109,7 +115,7 @@ export class ReviewSession {
         ])),
       ]);
       if (token !== this.loadGeneration) return;
-      const previous = this.snapshot.card;
+      const previous = this.snapshot.card ?? this.historyReload?.restored;
       let active = same && previous ? loadedCards.find(card => card.id === previous.id) : undefined;
       if (same && previous && !active && createdAtCutoff !== null) {
         // Changing the preference can hide the current new card. Verify that
@@ -135,8 +141,9 @@ export class ReviewSession {
       const next = this.retained ?? nextInQueue(cards, this.now, this.learnAhead);
       if (next?.id !== previous?.id || next?.reps !== previous?.reps) { this.revealed = false; this.revealedSteps = 0; }
       this.scheduler = scheduler; this.queue = cards; this.loadedGeneration = this.generation;
+      if (this.historyReload) { this.historyReload = null; this.error = null; }
       this.unindexed = unindexed.filter(note => !moduleId || note.id === moduleId);
-    } catch (error) { if (token === this.loadGeneration) this.error = String(error); }
+    } catch (error) { if (token === this.loadGeneration) this.error = this.historyReload ? HISTORY_QUEUE_ERROR : String(error); }
     finally { if (token === this.loadGeneration) { this.loading = false; this.emit(); } }
   }
   reveal = () => {
@@ -149,7 +156,7 @@ export class ReviewSession {
   };
   showNow = () => { this.earlyUntil = this.snapshot.nextDueAt; this.emit(); };
   private async action(run: (mine: number) => Promise<void>) {
-    if (this.pending || this.loading) return;
+    if (this.pending || this.loading || this.queue === null) return;
     this.pending = true;
     const mine = this.generation;
     // Track the entire operation, including sibling availability, before any
@@ -189,6 +196,29 @@ export class ReviewSession {
     });
   };
   private async reloadAfterHistoryWrite(mine: number, restored?: StoredCard) {
+    for (let attempt = 0; mine === this.generation; attempt++) {
+      try {
+        const cards = await this.readHistoryQueue(restored);
+        if (mine === this.generation) {
+          this.queue = cards;
+          this.historyReload = null;
+        }
+        return;
+      } catch {
+        if (mine !== this.generation) return;
+        this.queue = null;
+        this.historyReload = { restored };
+        const delay = HISTORY_READ_RETRY_DELAYS[attempt];
+        if (delay === undefined) {
+          this.error = HISTORY_QUEUE_ERROR;
+          return;
+        }
+        this.emit();
+        await new Promise<void>(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  private async readHistoryQueue(restored?: StoredCard) {
     const moduleId = this.scope ?? null;
     const now = endOfDay(Date.now());
     const createdAtCutoff = this.cutoff;
@@ -199,7 +229,7 @@ export class ReviewSession {
       const target = unfiltered.find(card => card.id === restored.id);
       if (target) cards.push(target);
     }
-    if (mine === this.generation) this.queue = cards.map(normalizeCard);
+    return cards.map(normalizeCard);
   }
   undo = async () => {
     const step = this.undoSteps[this.undoSteps.length - 1];
