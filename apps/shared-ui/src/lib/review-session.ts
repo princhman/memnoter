@@ -31,6 +31,7 @@ export class ReviewSession {
   private undoSteps: GradeStep[] = [];
   private redoSteps: GradeStep[] = [];
   private scope: string | undefined;
+  private cutoff: number | null = null;
   private generation = 0;
   private loadGeneration = 0;
   private loadedGeneration = -1;
@@ -85,12 +86,15 @@ export class ReviewSession {
     }
   }
   setLearnAhead(value: boolean) { this.learnAhead = value; this.emit(); }
+  refresh = () => { if (this.generation > 0) void this.load(this.scope, this.cutoff); };
   async load(moduleId?: string, createdAtCutoff: number | null = null) {
     const same = this.loadedGeneration === this.generation && this.scope === moduleId;
     if (this.scope !== moduleId || this.generation === 0) {
       this.generation++; this.scope = moduleId; this.retained = undefined;
       this.error = null; this.reviewed = 0; this.earlyUntil = null; this.undoSteps = []; this.redoSteps = [];
     }
+    const sameCutoff = this.cutoff === createdAtCutoff;
+    this.cutoff = createdAtCutoff;
     const token = ++this.loadGeneration;
     this.loading = true; this.emit();
     try {
@@ -103,12 +107,33 @@ export class ReviewSession {
       ]);
       if (token !== this.loadGeneration) return;
       const previous = this.snapshot.card;
-      const compatibleCards = loadedCards.map(card => card.kind === "basic" && Array.isArray(card.back) && card.back.length > 0 && card.back.every(segment => segment.type === "block" && segment.revealStep === true)
+      let active = same && previous ? loadedCards.find(card => card.id === previous.id) : undefined;
+      if (same && previous && !active && createdAtCutoff !== null) {
+        // Changing the preference can hide the current new card. Verify that
+        // it still exists before letting the user finish reviewing it.
+        const unfiltered = await call<StoredCard[]>('due_cards', { moduleId: moduleId ?? null, now: endOfDay(Date.now()), createdAtCutoff: null });
+        if (token !== this.loadGeneration) return;
+        active = unfiltered.find(card => card.id === previous.id);
+        if (active) loadedCards.push(active);
+      }
+      const cards = loadedCards.map(card => card.kind === "basic" && Array.isArray(card.back) && card.back.length > 0 && card.back.every(segment => segment.type === "block" && segment.revealStep === true)
         ? { ...card, kind: "list" as const } : card);
-      const cards = same && previous ? [previous, ...compatibleCards.filter(card => card.id !== previous.id)] : compatibleCards;
-      this.retained = same ? previous : undefined;
-      const next = same ? previous : nextInQueue(cards, Date.now(), this.learnAhead);
-      if (next?.id !== previous?.id || next?.reps !== previous?.reps) { this.revealed = false; this.revealedSteps = 0; this.now = Date.now(); }
+      this.retained = active && cards.find(card => card.id === active.id && card.reps === previous?.reps);
+      this.now = Date.now();
+      if (!this.retained) this.earlyUntil = null;
+      const next = this.retained ?? nextInQueue(cards, this.now, this.learnAhead);
+      if (next?.id !== previous?.id || next?.reps !== previous?.reps) { this.revealed = false; this.revealedSteps = 0; }
+      // An undo or redo must not put a card dropped by refresh back in the queue.
+      if (same && sameCutoff && this.queue && (this.undoSteps.length || this.redoSteps.length)) {
+        const live = new Set(cards.map(card => card.id));
+        const absent = new Set(this.queue.filter(card => !live.has(card.id)).map(card => card.id));
+        const prune = (steps: GradeStep[]) => steps.filter(step => !absent.has(step.before.id)).map(step => ({
+          ...step,
+          queueBefore: step.queueBefore.filter(card => !absent.has(card.id)),
+          queueAfter: step.queueAfter.filter(card => !absent.has(card.id)),
+        }));
+        if (absent.size) { this.undoSteps = prune(this.undoSteps); this.redoSteps = prune(this.redoSteps); }
+      }
       this.scheduler = scheduler; this.queue = cards; this.loadedGeneration = this.generation;
       this.unindexed = unindexed.filter(note => !moduleId || note.id === moduleId);
     } catch (error) { if (token === this.loadGeneration) this.error = String(error); }

@@ -11,5 +11,5 @@ export function writeCards<T>(command: string, args: Record<string, unknown>, pe
     mutationKey: [MUTATIONS.cardWrite],
     gcTime: 0,
     mutationFn: () => invoke<T>(command, args),
-  }).execute(undefined).then(result => { cardsChanged(); return result; });
+  }).execute(undefined).then(result => { cardsChanged(command); return result; });
 }

@@ -1261,7 +1261,10 @@ struct RootView: View {
             await store.perform {
                 try await session?.flush()
                 if selected == module.id { selected = "home" }
-                try await store.client?.write("delete_module", ModuleArgs(moduleId: module.id))
+                if let client = store.client {
+                    try await client.write("delete_module", ModuleArgs(moduleId: module.id))
+                    NotificationCenter.default.post(name: .cardsDidChange, object: client)
+                }
             }
             deleting = nil
         }

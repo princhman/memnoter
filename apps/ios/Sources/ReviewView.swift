@@ -73,6 +73,10 @@ struct ReviewView: View {
         }
         .onChange(of: skipCardsCreatedToday) { _, _ in Task { await session?.updateCardPreference() } }
         .onChange(of: moduleId) { _, _ in command(.load, ["scope": moduleId as Any? ?? NSNull()], parameters: ["scope"]) }
+        .onReceive(NotificationCenter.default.publisher(for: .cardsDidChange)) { notification in
+            guard let changedClient = notification.object as? CoreClient, changedClient === client else { return }
+            command(.load, ["scope": moduleId as Any? ?? NSNull()], parameters: ["scope"])
+        }
         .onDisappear {
             session?.web.stopLoading()
             session?.dispose()
