@@ -522,7 +522,20 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     const host = root.current;
     if (!reader || !viewport || !host) return;
     let frame = 0;
+    let dragging = false;
+    let dragPosition: { left: number; top: number } | null = null;
+    const startDrag = (event: PointerEvent) => {
+      if (event.button !== 0 || event.pointerType === "touch") return;
+      dragging = true;
+      dragPosition = null;
+    };
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      update();
+    };
     const clear = () => {
+      dragPosition = null;
       setTextAction(null);
       savedTextSelection.current = null;
       const selection = window.getSelection();
@@ -532,18 +545,33 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const selected = !selecting && !cropping && !pinching && !pendingPdfQuote.state && readPdfTextSelection(reader, doc);
-        if (!selected) { setTextAction(null); return; }
+        if (!selected) {
+          if (!dragging) dragPosition = null;
+          setTextAction(null);
+          return;
+        }
         savedTextSelection.current = selected;
         const bounds = host.getBoundingClientRect(), view = viewport.getBoundingClientRect();
         if (selected.anchor.bottom < view.top || selected.anchor.top > view.bottom) { setTextAction(null); return; }
-        setTextAction({ left: Math.max(8, Math.min(bounds.width - 240, selected.anchor.left - bounds.left)),
-          top: Math.max(40, Math.min(bounds.height - 36, selected.anchor.top - bounds.top - 32)) });
+        // Keep the anchor in reader coordinates so native scrolling still moves it.
+        const live = { left: selected.anchor.left - bounds.left + viewport.scrollLeft,
+          top: selected.anchor.top - bounds.top + viewport.scrollTop };
+        if (dragging) dragPosition ??= live;
+        const position = dragPosition ?? live;
+        setTextAction({ left: Math.max(8, Math.min(bounds.width - 240, position.left - viewport.scrollLeft)),
+          top: Math.max(40, Math.min(bounds.height - 36, position.top - viewport.scrollTop - 32)) });
       });
     };
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") clear(); };
     document.addEventListener("selectionchange", update);
     window.addEventListener("keydown", key);
     viewport.addEventListener("scroll", update);
+    if (!nativeSelectionMenu) {
+      reader.addEventListener("pointerdown", startDrag);
+      window.addEventListener("pointerup", endDrag, true);
+      window.addEventListener("pointercancel", endDrag, true);
+      window.addEventListener("blur", endDrag);
+    }
     viewport.addEventListener("pointercancel", clear);
     let width = viewport.clientWidth, height = viewport.clientHeight;
     const resize = new ResizeObserver(() => {
@@ -558,9 +586,13 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       document.removeEventListener("selectionchange", update);
       window.removeEventListener("keydown", key);
       viewport.removeEventListener("scroll", update);
+      reader.removeEventListener("pointerdown", startDrag);
+      window.removeEventListener("pointerup", endDrag, true);
+      window.removeEventListener("pointercancel", endDrag, true);
+      window.removeEventListener("blur", endDrag);
       viewport.removeEventListener("pointercancel", clear);
     };
-  }, [doc.id, doc.name, doc.available, selecting, cropping, pinching, pending?.id, zoom, error]);
+  }, [doc.id, doc.name, doc.available, selecting, cropping, pinching, pending?.id, zoom, error, nativeSelectionMenu]);
   useLayoutEffect(() => {
     if (!annotationEditor) return;
     const editor = annotationEditor;
