@@ -38,7 +38,7 @@ export function useNoteDocument(moduleId: string) {
   const isSaving = useRef(false);
   const loadChanges = useRef<number[][]>([]);
 
-  const { isSuccess, data } = useQuery({
+  const { isSuccess, data, error: loadError } = useQuery({
     ...contentQueryOptions(moduleId),
     queryFn: async () => {
       // Taken before reading, so an edit saved meanwhile is in one or the other.
@@ -396,5 +396,5 @@ export function useNoteDocument(moduleId: string) {
     [filesById, moduleId, uploadFileMutation.mutateAsync],
   );
 
-  return { yDoc, editorRef, isSuccess, filesContext, withCardTransfers, insertImages, insertQuote, insertTextQuote };
+  return { yDoc, editorRef, isSuccess, loadError, filesContext, withCardTransfers, insertImages, insertQuote, insertTextQuote };
 }

@@ -60,6 +60,7 @@ async fn core(
             "local_backup_settings"
             | "local_backup_image_types"
             | "set_local_backup_enabled"
+            | "read_local_backup_edits"
             | "write_local_backup" => {
                 return local_backup::dispatch(&core, &backup_gate, &command, args)
                     .map_err(CoreError::Storage);

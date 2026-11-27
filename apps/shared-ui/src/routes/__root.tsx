@@ -7,6 +7,7 @@ import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/components/card-navigation-guard";
+import { BackupEditsDialog } from "@/components/settings/backup-edits-dialog";
 import { useLocalBackup } from "@/lib/local-backup";
 import { bootstrapNotes } from "@/lib/bootstrap";
 import { createRootRoute, Outlet, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
@@ -151,6 +152,7 @@ const RootLayout = () => {
             </div>
           </div>
           <CommandPalette />
+          <BackupEditsDialog />
         </SidebarProvider>
       </MentionProvider></ActiveEditorProvider>
 

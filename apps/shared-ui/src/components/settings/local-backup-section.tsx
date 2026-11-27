@@ -1,4 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { backupReview } from "./backup-edits-dialog";
+import { readBackupReview } from "@/lib/backup-edit-review";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { call } from "@/lib/backend";
@@ -15,7 +17,11 @@ export default function LocalBackupSection() {
         : call<LocalBackupSettings>("set_local_backup_enabled", { enabled: action.enabled }),
     onSuccess: settings => queryClient.setQueryData(localBackupSettings.queryKey, settings),
   });
-  const error = loadError?.message ?? save.error?.message ?? backupError;
+  const check = useMutation({
+    mutationFn: async (folder: string) => ({ folder, files: await readBackupReview(folder) }),
+    onSuccess: review => backupReview.setState(() => review),
+  });
+  const error = loadError?.message ?? save.error?.message ?? check.error?.message ?? backupError;
 
   return (
     <section aria-labelledby="local-backup-heading" className="flex flex-col gap-3">
@@ -27,17 +33,23 @@ export default function LocalBackupSection() {
       </div>
       <div className="flex items-center justify-between gap-4 text-sm">
         <span className="min-w-0 break-all">{data?.folder ?? "Backup folder"}</span>
-        <Button variant="outline" size="sm" className="shrink-0" disabled={isPending || save.isPending}
+        <Button variant="outline" size="sm" className="shrink-0" disabled={isPending || save.isPending || check.isPending}
           onClick={() => save.mutate({ kind: "pick" })}>
           {data?.folder ? "Change folder" : "Choose folder"}
         </Button>
       </div>
       <label className="flex items-center justify-between gap-4 text-sm">
         <span>Automatic backup</span>
-        <Switch checked={data?.enabled ?? false} disabled={!data?.folder || save.isPending}
+        <Switch checked={data?.enabled ?? false} disabled={!data?.folder || save.isPending || check.isPending}
           onCheckedChange={enabled => save.mutate({ kind: "toggle", enabled })} />
       </label>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      <div>
+        <Button variant="outline" size="sm" disabled={!data?.folder || check.isPending || save.isPending}
+          onClick={() => { if (data?.folder) check.mutate(data.folder); }}>
+          {check.isPending ? "Checking backup…" : "Check backup for edits"}
+        </Button>
+      </div>
     </section>
   );
 }

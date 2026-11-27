@@ -115,7 +115,7 @@ for (const [name, route] of [
 
 let harnessBuilt = false;
 
-async function withCore(run, invoke = (command, args, call) => call(command, args)) {
+async function withCore(run, invoke = (command, args, call) => call(command, args), { mac = false } = {}) {
   const workspace = fileURLToPath(new URL("../../..", import.meta.url));
   if (!harnessBuilt) execFileSync("cargo", ["build", "-p", "memnoter-core", "--example", "command-harness"], {
     cwd: workspace, env: { ...process.env, CARGO_BUILD_JOBS: "4" }, stdio: "pipe",
@@ -145,7 +145,13 @@ async function withCore(run, invoke = (command, args, call) => call(command, arg
       if (command.startsWith("plugin:") || command === "set_editor_history") return 1;
       return invoke(command, args, call);
     });
-    await page.addInitScript(() => window.installTestBridge({ tauri: { invoke: (command, args) => window.rustCall(command, args) } }));
+    await page.addInitScript(mac => {
+      if (mac) {
+        Object.defineProperty(navigator, "platform", { value: "MacIntel" });
+        Object.defineProperty(navigator, "maxTouchPoints", { value: 0 });
+      }
+      window.installTestBridge({ tauri: { invoke: (command, args) => window.rustCall(command, args) } });
+    }, mac);
     const editor = page.locator('.tiptap[contenteditable="true"]');
     const mod = process.platform === "darwin" ? "Meta" : "Control";
     const schedules = async (moduleId, count) => {
@@ -374,4 +380,91 @@ test("a successful save retry retires a cut card without another editor update",
     if (command === "add_update" && failed) retried = true;
     return result;
   });
+});
+
+test("selective backup edits persist, undo, and keep an untouched card's review history", async () => {
+  const original = ["Read chapter one.", "What is the capital of France? :: Paris", "Review again on Friday."];
+  const edited = ["Read chapters one and two.", original[1], "Review again on Monday."];
+  const name = "Geography";
+  let file;
+  await withCore(async ({ page, editor, source, call, schedules, log, grade, open }) => {
+    file = { path: `geography - ${source}.md`, moduleId: source, noteName: name,
+      markdown: edited.join("\n\n") + "\n", hash: "outside-edit" };
+    const doc = new Y.Doc();
+    const paragraphs = original.map(value => {
+      const block = new Y.XmlElement("paragraph");
+      const text = new Y.XmlText();
+      text.insert(0, value);
+      block.insert(0, [text]);
+      return block;
+    });
+    doc.getXmlFragment("default").insert(0, paragraphs);
+    await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc)) });
+    doc.destroy();
+    await open(source);
+
+    const [card] = await call("due_cards", { moduleId: source, now: Number.MAX_SAFE_INTEGER })
+      .then(async cards => {
+        if (cards.length) return cards;
+        await schedules(source, 1);
+        return call("due_cards", { moduleId: source, now: Number.MAX_SAFE_INTEGER });
+      });
+    await grade(card);
+    const [reviewed] = await schedules(source, 1);
+    const history = log.all(card.id);
+    assert.equal(history.length, 1);
+
+    const pace = () => process.env.PROOF_DIR ? delay(850) : Promise.resolve();
+    const theme = process.env.BACKUP_PROOF_THEME === "dark" ? "dark" : "light";
+    if (process.env.PROOF_DIR) await page.emulateMedia({ colorScheme: theme });
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    const check = page.getByRole("button", { name: "Check backup for edits", exact: true });
+    await check.scrollIntoViewIfNeeded();
+    await pace();
+    await check.click();
+    const dialog = page.getByRole("dialog", { name: "Backup edits" });
+    await dialog.getByText(edited[0], { exact: true }).waitFor();
+    await dialog.getByText(edited[2], { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("checkbox").count(), 2);
+    await pace();
+    await dialog.getByRole("button", { name: "Apply all", exact: true }).click();
+    await pace();
+    await dialog.getByRole("checkbox").nth(1).uncheck();
+    await pace();
+
+    if (process.env.PROOF_DIR) {
+      await dialog.screenshot({ path: join(process.env.PROOF_DIR, `backup-edits-${theme}.png`) });
+    }
+
+    await dialog.getByRole("button", { name: "Apply selected changes", exact: true }).click();
+    await editor.getByText(edited[0], { exact: true }).waitFor();
+    assert.equal(await editor.getByText(original[2], { exact: true }).count(), 1);
+    await pace();
+
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await editor.getByText(original[0], { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await editor.getByText(edited[0], { exact: true }).waitFor();
+    await page.waitForFunction(async () => {
+      const { saveQueue } = await import("/src/lib/saves.ts");
+      return saveQueue.isIdle();
+    });
+    const persisted = await call("get_content", { moduleId: source });
+    const saved = new Y.Doc();
+    for (const bytes of [persisted.state, ...persisted.updates.map(update => update.bytes)]) {
+      if (bytes.length) Y.applyUpdate(saved, Uint8Array.from(bytes));
+    }
+    const blocks = saved.getXmlFragment("default").toArray();
+    assert.equal(blocks[0].get(0).toString(), edited[0]);
+    assert.equal(blocks[1].getAttribute("cardId"), card.id);
+    assert.equal(blocks[2].get(0).toString(), original[2]);
+    assert.deepEqual((await schedules(source, 1))[0], reviewed);
+    assert.deepEqual(log.all(card.id), history);
+    saved.destroy();
+  }, (command, args, call) => {
+    if (command === "local_backup_settings") return { enabled: false, folder: "/Documents/Notes" };
+    if (command === "local_backup_image_types") return {};
+    if (command === "read_local_backup_edits") return [file];
+    return call(command, args);
+  }, { mac: true });
 });

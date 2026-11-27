@@ -25,10 +25,20 @@ export const localBackupError = queryOptions({
   enabled: false,
 });
 
-function noteFilename(module: Module) {
+export function noteFilename(module: Module) {
   const title = [...module.name.normalize("NFC").toLowerCase().replace(/[\u0000-\u001f/\\:*?"<>|#[\]]/g, " ")
     .trim().replace(/^\.+/, "")].slice(0, 45).join("").trim();
   return `${title || "Untitled"} - ${module.id}.md`;
+}
+
+export function backupImageExtension(mime: string) {
+  return /^image\/([a-z0-9]+)(?:\+xml)?$/.exec(mime)?.[1] ?? "bin";
+}
+
+export function backupPdfAppendix(pdfs: Awaited<ReturnType<typeof listDocuments>>, moduleId: string) {
+  const links = pdfs.filter(pdf => pdf.moduleId === moduleId)
+    .map(pdf => `- [${markdownLabel(pdf.name)}](attachments/${pdf.id}.pdf)`);
+  return links.length ? ["## PDFs", ...links].join("\n") : "";
 }
 
 async function buildSnapshot(shouldContinue: () => boolean) {
@@ -62,20 +72,21 @@ async function buildSnapshot(shouldContinue: () => boolean) {
           missingImage = true;
           return "";
         }
-        const extension = /^image\/([a-z0-9]+)(?:\+xml)?$/.exec(mime)?.[1] ?? "bin";
+        const extension = backupImageExtension(mime);
         return attachmentLink(id, extension);
       });
       if (missingImage) {
         snapshot[module.id] = { kind: "skipped", reason: `An image in “${module.name}” is unavailable.` };
         continue;
       }
-      const links = pdfs.filter(pdf => pdf.moduleId === module.id)
-        .map(pdf => `- [${markdownLabel(pdf.name)}](${attachmentLink(pdf.id, "pdf")})`);
+      for (const pdf of pdfs) {
+        if (pdf.moduleId === module.id) attachmentLink(pdf.id, "pdf");
+      }
       snapshot[module.id] = {
         kind: "ready",
         name: module.name,
         filename: noteFilename(module),
-        markdown: [markdown, links.length && ["## PDFs", ...links].join("\n")].filter(Boolean).join("\n\n") + "\n",
+        markdown: [markdown, backupPdfAppendix(pdfs, module.id)].filter(Boolean).join("\n\n") + "\n",
         attachments,
       };
     } finally {

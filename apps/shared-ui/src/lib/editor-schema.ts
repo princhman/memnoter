@@ -160,11 +160,15 @@ export function noteExtensions({
 
 // Hidden consumers need the same persisted schema without mounting an editor.
 let persistedSchema: ReturnType<typeof getSchema> | undefined;
-export function isNoteFromNewerVersion(doc: Y.Doc) {
+export function noteSchema() {
   if (!persistedSchema) {
     const empty = new Y.Doc();
     try { persistedSchema = getSchema(noteExtensions({ document: empty })); }
     finally { empty.destroy(); }
   }
-  return hasUnknownContent(doc.getXmlFragment("default"), persistedSchema);
+  return persistedSchema;
+}
+
+export function isNoteFromNewerVersion(doc: Y.Doc) {
+  return hasUnknownContent(doc.getXmlFragment("default"), noteSchema());
 }

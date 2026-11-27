@@ -80,3 +80,23 @@ test("preserves trailing hashes in heading text through Markdown parsing", () =>
   const markdown = jsonToMarkdown({ type: "doc", content: [heading] }, () => "");
   assert.deepEqual(markdownToJSON(markdown).content, [heading]);
 });
+
+test("backup diff separates adjacent changes and leaves rich blocks read-only", async () => {
+  const { diffBackupNote } = await import("../src/lib/backup-edit-diff.ts");
+  const current = {
+    type: "doc",
+    content: [paragraph(text("First")), paragraph(text("Second")),
+      { type: "image", attrs: { fileId: "graph", alt: "Graph", masks: [{ id: "mask" }] } }],
+  };
+  const hunks = diffBackupNote({
+    current,
+    edited: "First update\n\nSecond update\n\n![Other](attachments/graph.png)\n",
+    imagePath: id => `attachments/${id}.png`,
+    pdfAppendix: "",
+  });
+  assert.deepEqual(hunks.map(hunk => [hunk.from, hunk.to, hunk.before, hunk.after, Boolean(hunk.reason)]), [
+    [0, 1, "First", "First update", false],
+    [1, 2, "Second", "Second update", false],
+    [2, 3, "![Graph](attachments/graph.png)", "![Other](attachments/graph.png)", true],
+  ]);
+});

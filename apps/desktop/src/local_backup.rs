@@ -84,6 +84,18 @@ pub(crate) fn dispatch(
                 settings.enabled = enabled && settings.folder.is_some()
             })?)
         }
+        "read_local_backup_edits" => {
+            let _guard = gate.0.lock().map_err(|error| error.to_string())?;
+            let settings = read(core)?;
+            let Some(folder) = settings.folder else {
+                return Ok(serde_json::json!([]));
+            };
+            if args["folder"].as_str().map(PathBuf::from).as_ref() != Some(&folder) {
+                return Err("The backup folder changed. Check for edits again.".into());
+            }
+            serde_json::to_value(markdown_backup::edited_files(core.data_dir(), &folder)?)
+                .map_err(|error| error.to_string())
+        }
         "write_local_backup" => {
             let request: WriteRequest =
                 serde_json::from_value(args).map_err(|error| error.to_string())?;

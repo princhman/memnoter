@@ -36,6 +36,10 @@ enum Module {
 struct OwnedFile {
     hash: Option<String>,
     modules: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    external: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -201,8 +205,8 @@ fn preserve_module(
             current
                 .entry(path.clone())
                 .or_insert_with(|| OwnedFile {
-                    hash: file.hash.clone(),
                     modules: BTreeSet::new(),
+                    ..file.clone()
                 })
                 .modules
                 .insert(id.into());
@@ -289,23 +293,88 @@ fn note_filenames(
     filenames
 }
 
-pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandResult<Vec<String>> {
-    let root = selected.join(FOLDER);
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditedFile {
+    path: String,
+    module_id: Option<String>,
+    note_name: Option<String>,
+    markdown: Option<String>,
+    hash: String,
+}
+
+pub fn edited_files(data_dir: &Path, selected: &Path) -> CommandResult<Vec<EditedFile>> {
+    let root = backup_root(data_dir, selected)?;
+    match fs::symlink_metadata(&root) {
+        Ok(info) if info.is_dir() => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        _ => return Err("Expected a directory at Memnoter Backup".into()),
+    }
+    let manifest = load_manifest(&root)?;
+    check_attachments(&root, &manifest)?;
+
+    let mut edits = Vec::new();
+    for (path, file) in manifest {
+        if file.hash.is_none() && !file.external {
+            continue;
+        }
+        let target = root.join(&path);
+        if !regular_file(&target)? {
+            continue;
+        }
+        let is_note = note_path(&path);
+        let (hash, markdown) = if is_note {
+            let bytes = fs::read(&target).map_err(db_err)?;
+            (content_hash(&bytes), String::from_utf8(bytes).ok())
+        } else {
+            let mut hasher = Sha256::new();
+            io::copy(&mut fs::File::open(&target).map_err(db_err)?, &mut hasher).map_err(db_err)?;
+            (format!("{:x}", hasher.finalize()), None)
+        };
+        if !file.external && file.hash.as_ref() == Some(&hash) {
+            continue;
+        }
+        let module_id = if is_note && file.modules.len() == 1 {
+            file.modules.into_iter().next()
+        } else {
+            None
+        };
+        edits.push(EditedFile {
+            path,
+            module_id,
+            note_name: file.note_name,
+            markdown,
+            hash,
+        });
+    }
+    Ok(edits)
+}
+
+fn backup_root(data_dir: &Path, selected: &Path) -> CommandResult<std::path::PathBuf> {
     if selected.canonicalize().map_err(db_err)? != selected
         || selected.starts_with(data_dir.canonicalize().map_err(db_err)?)
     {
         return Err("Choose a folder outside Memnoter's app data".into());
     }
-    directory(&root)?;
-    let previous = load_manifest(&root)?;
-    let attachments = root.join("attachments");
-    if previous.keys().any(|path| path.starts_with("attachments/")) {
-        match fs::symlink_metadata(&attachments) {
+    Ok(selected.join(FOLDER))
+}
+
+fn check_attachments(root: &Path, manifest: &BTreeMap<String, OwnedFile>) -> CommandResult<()> {
+    if manifest.keys().any(|path| path.starts_with("attachments/")) {
+        match fs::symlink_metadata(root.join("attachments")) {
             Ok(info) if info.is_dir() => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             _ => return Err("Expected a directory at attachments".into()),
         }
     }
+    Ok(())
+}
+
+pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandResult<Vec<String>> {
+    let root = backup_root(data_dir, selected)?;
+    directory(&root)?;
+    let previous = load_manifest(&root)?;
+    check_attachments(&root, &previous)?;
     if !regular_file(&root.join(MANIFEST))? {
         save_manifest(&root, &previous)?;
     }
@@ -350,6 +419,7 @@ fn reconcile(
             }
             // Check every destination before changing a module's export.
             let mut seen = BTreeMap::new();
+            let mut blocked = None;
             for (path, bytes) in &files {
                 let Some(existing) = existing_bytes(&root.join(path))? else {
                     seen.insert(path.clone(), None);
@@ -357,6 +427,15 @@ fn reconcile(
                 };
                 seen.insert(path.clone(), Some(content_hash(&existing)));
                 if existing == *bytes {
+                    // A matching note can be adopted even if a separate
+                    // attachment changed and still blocks writes.
+                    let file = current.entry(path.clone()).or_default();
+                    file.hash = Some(content_hash(bytes));
+                    file.external = false;
+                    file.modules.insert(id.clone());
+                    if note_path(path) {
+                        file.note_name = Some(name.clone());
+                    }
                     continue;
                 }
                 let key = path.to_lowercase();
@@ -365,18 +444,26 @@ fn reconcile(
                     .or_else(|| previous.get(path))
                     .or_else(|| previous_by_path.get(&key).copied());
                 let matches = owned
+                    .filter(|file| !file.external)
                     .and_then(|file| file.hash.as_ref())
                     .is_some_and(|hash| *hash == content_hash(&existing));
                 if !matches {
                     conflicts.insert(key);
-                    return Err(format!("Backup would overwrite {path}"));
+                    blocked.get_or_insert(path);
                 }
+            }
+            if let Some(path) = blocked {
+                return Err(format!("Backup would overwrite {path}"));
             }
             for (path, bytes) in files {
                 let checked = seen.get(&path).map(|hash: &Option<String>| hash.as_deref());
                 write_unless_changed_since(&root.join(&path), &bytes, checked)?;
-                let file = current.entry(path).or_default();
+                let file = current.entry(path.clone()).or_default();
                 file.hash = Some(content_hash(&bytes));
+                file.external = false;
+                if note_path(&path) {
+                    file.note_name = Some(name.clone());
+                }
                 file.modules.insert(id.clone());
             }
             Ok(())
@@ -387,26 +474,41 @@ fn reconcile(
         }
     }
 
-    current.retain(|path, _| !conflicts.contains(&path.to_lowercase()));
-    save_manifest(root, &current)?;
-
     let current_paths: BTreeSet<_> = current.keys().map(|path| path.to_lowercase()).collect();
-    for (path, file) in previous {
+    let mut obsolete = Vec::new();
+    for (path, mut file) in previous {
         let key = path.to_lowercase();
-        if current_paths.contains(&key) || conflicts.contains(&key) {
+        if conflicts.contains(&key) {
+            file.external = true;
+            current.insert(path, file);
             continue;
         }
-        let Some(hash) = file.hash else { continue };
-        let target = root.join(path);
+        if current_paths.contains(&key) {
+            continue;
+        }
+        if file.hash.is_none() && !file.external {
+            continue;
+        }
+        let target = root.join(&path);
         match fs::symlink_metadata(&target) {
             Ok(info) if info.is_file() => {
-                if content_hash(&fs::read(&target).map_err(db_err)?) == hash {
-                    fs::remove_file(target).map_err(db_err)?;
+                let current_hash = content_hash(&fs::read(&target).map_err(db_err)?);
+                if !file.external && file.hash.as_ref() == Some(&current_hash) {
+                    obsolete.push((target, current_hash));
+                } else {
+                    file.external = true;
+                    current.insert(path, file);
                 }
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(db_err(error)),
+        }
+    }
+    save_manifest(root, &current)?;
+    for (target, hash) in obsolete {
+        if existing_bytes(&target)?.is_some_and(|bytes| content_hash(&bytes) == hash) {
+            fs::remove_file(target).map_err(db_err)?;
         }
     }
     Ok(warnings)
@@ -694,7 +796,8 @@ mod tests {
         assert!(warnings[0].contains("Original"));
         assert_eq!(fs::read_to_string(&original).unwrap(), "Obsidian edit");
 
-        // Restoring the old bytes before a rename leaves the old file unowned.
+        // Once flagged for review, restoring the old bytes still protects
+        // the file when its note is renamed.
         fs::write(&original, "From Memnoter").unwrap();
         let mut renamed = snapshot("Renamed");
         fs::write(&deleted, "User replacement").unwrap();
@@ -702,10 +805,44 @@ mod tests {
         assert!(backup.run(renamed).is_empty());
         assert_eq!(fs::read_to_string(&original).unwrap(), "From Memnoter");
         assert_eq!(fs::read_to_string(&deleted).unwrap(), "User replacement");
+        let edits = edited_files(&backup.source, &backup.destination).unwrap();
+        assert_eq!(
+            edits.iter().map(|file| (file.path.as_str(), file.note_name.as_deref())).collect::<Vec<_>>(),
+            vec![("Delete.md", Some("Delete")), ("Original.md", Some("Original"))],
+        );
         assert_eq!(
             fs::read_to_string(backup.root.join("Renamed.md")).unwrap(),
             "From Memnoter"
         );
+    }
+
+    #[test]
+    fn review_keeps_conflicted_files_visible_until_the_note_matches() {
+        let backup = Backup::new();
+        let image_id = Uuid::new_v4().to_string();
+        let image_name = format!("{image_id}.png");
+        let snapshot = |markdown| {
+            with_modules([("owner", ready("Course", markdown, BTreeMap::from([
+                (image_name.clone(), image_id.clone()),
+            ])))])
+        };
+        fs::write(backup.source.join("files").join(&image_id), "original image").unwrap();
+        assert!(backup.run(snapshot("Original")).is_empty());
+        fs::write(backup.root.join("Course.md"), "Outside edit").unwrap();
+        let image_path = format!("attachments/{image_name}");
+        fs::write(backup.root.join(&image_path), "outside image edit").unwrap();
+        assert_eq!(backup.run(snapshot("Original")).len(), 1);
+        let edits = edited_files(&backup.source, &backup.destination).unwrap();
+        assert_eq!(edits.len(), 2);
+        assert_eq!(edits[0].module_id.as_deref(), Some("owner"));
+        assert_eq!(edits[0].markdown.as_deref(), Some("Outside edit"));
+        assert_eq!(edits[1].path, image_path);
+        assert!(edits[1].markdown.is_none());
+
+        assert_eq!(backup.run(snapshot("Outside edit")).len(), 1);
+        let edits = edited_files(&backup.source, &backup.destination).unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].path, image_path);
     }
 
     #[test]
