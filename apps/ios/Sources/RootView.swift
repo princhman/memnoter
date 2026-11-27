@@ -877,7 +877,7 @@ struct RootView: View {
         TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: "review",
                          item: nil, questionsEnabled: session != nil, maximumWidth: width,
                          changeScope: changeSectionScope, changeSection: selectSection,
-                         compact: true, combinesMenus: true)
+                         compact: true, combinesMenus: true, showsCombinedSection: false)
             .disabled(busy)
     }
     private var sectionNavigation: some View {
