@@ -168,13 +168,14 @@ test("the Notes breadcrumb returns from section focus to the whole note", async 
 
     const trigger = page.getByRole("button", { name: "Select module section" });
     const menu = page.getByRole("menu");
+    const menuRows = menu.locator('[role="menuitem"], [role="menuitemradio"], [role="separator"]');
+    const sectionLabels = ["Notes", "Files", "Questions", "Review"];
     const wholeNote = menu.getByRole("menuitem", { name: "Whole Note", exact: true });
     const headings = page.locator(".tiptap > h1:visible");
     await headings.getByText("Searching", { exact: true }).waitFor();
     await trigger.click();
     await menu.getByRole("menuitemradio", { name: "Questions", exact: true }).waitFor();
-    assert.deepEqual(await menu.getByRole("menuitemradio").allTextContents(), ["Notes", "Files", "Questions", "Review"]);
-    assert.equal(await wholeNote.count(), 0);
+    assert.deepEqual(await menuRows.allTextContents(), sectionLabels);
     await page.keyboard.press("Escape");
 
     for (const keyboard of [false, true]) {
@@ -188,8 +189,14 @@ test("the Notes breadcrumb returns from section focus to the whole note", async 
       if (keyboard) await trigger.press("ArrowDown");
       else await trigger.click();
       await wholeNote.waitFor();
-      assert.equal(await menu.locator('[role="menuitem"], [role="menuitemradio"]').first().textContent(), "Whole Note");
+      assert.deepEqual(await menuRows.allTextContents(), [...sectionLabels, "", "Whole Note"]);
+      assert.equal(await menuRows.nth(sectionLabels.length).getAttribute("role"), "separator");
       if (keyboard) {
+        for (const label of sectionLabels) {
+          const item = menu.getByRole("menuitemradio", { name: label, exact: true });
+          assert.equal(await item.evaluate(node => node === document.activeElement), true, `focuses ${label}`);
+          await page.keyboard.press("ArrowDown");
+        }
         assert.equal(await wholeNote.evaluate(node => node === document.activeElement), true);
         await page.keyboard.press("Enter");
       } else {
