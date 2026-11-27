@@ -136,8 +136,9 @@ The orchestrator decides how work splits; the user doesn't have to.
   fixes in a live pair session included (split as in "Testing sessions"), in
   the checkout the demo runs from. Keep briefs, merging, demo restarts and
   reporting for yourself.
-  If a delegate fails a task once, do it yourself; this matters most for hangs,
-  freezes and native-only bugs.
+  The orchestrator never implements, fixes, records proof or converts files
+  itself, even small things: if a delegate fails or refuses, send a new brief
+  (clearer, or split smaller) to another sol delegate. Code review is sol too.
 - At most **3 heavy delegates** (cargo, `pnpm build`, browser suites, xcodebuild)
   per machine. 9–12 at once pushed the Mac to load 330. Queue the rest or send
   TS/Rust-only work to minipc.
