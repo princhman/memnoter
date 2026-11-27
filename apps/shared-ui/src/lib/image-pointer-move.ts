@@ -1,4 +1,5 @@
 import { editorHost } from "@/lib/editor-host";
+import { getFoldedRanges } from "@/lib/heading-fold";
 import { getFocusedSectionRange, sectionContainsRange } from "@/lib/section-focus";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
@@ -19,6 +20,8 @@ function imageDropPosition(state: EditorState, from: number, target: number) {
   const insert = dropPoint(state.doc, target, new Slice(Fragment.from(node), 0, 0));
   // Dropping on or right next to itself leaves it where it is.
   if (insert === null || (insert >= from && insert <= from + node.nodeSize)) return null;
+  // Inserting at the end still puts the image before the next heading.
+  if (getFoldedRanges(state).some(({ from, to }) => insert >= from && insert <= to)) return null;
   const section = getFocusedSectionRange(state);
   // At the start the block would land before the heading, in the prior chapter.
   if (section && (insert <= section.from || insert > section.to ||
@@ -68,10 +71,12 @@ function indicatorRect(view: EditorView, insert: number, inline: boolean) {
     const { left, top, bottom } = view.coordsAtPos(insert);
     return { left: left - 1.5, top, width: 3, height: bottom - top };
   }
-  const editor = view.dom.getBoundingClientRect();
-  const style = getComputedStyle(view.dom);
-  const left = editor.left + parseFloat(style.paddingLeft);
-  const right = editor.right - parseFloat(style.paddingRight);
+  const parentDOM = $pos.depth ? view.nodeDOM($pos.before()) : view.dom;
+  const container = parentDOM instanceof Element ? parentDOM : view.dom;
+  const bounds = container.getBoundingClientRect();
+  const style = getComputedStyle(container);
+  const left = bounds.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+  const right = bounds.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
   const after = $pos.nodeAfter && blockRect(view, insert);
   const before = $pos.nodeBefore && blockRect(view, insert - $pos.nodeBefore.nodeSize);
   const y = before && after && before.bottom <= after.top

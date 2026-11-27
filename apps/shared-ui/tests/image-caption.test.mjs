@@ -6,7 +6,7 @@ import { browserHarness } from "./support/browser.mjs";
 
 const { createServer, webkit } = browserHarness(import.meta.url);
 
-function noteState() {
+function noteState({ table = false } = {}) {
   const doc = new Y.Doc();
   const block = (name, value, attrs = {}) => {
     const node = new Y.XmlElement(name);
@@ -19,19 +19,31 @@ function noteState() {
     return node;
   };
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="104"><rect width="320" height="104" rx="8" fill="#ebe7ff"/><path d="M34 78h252M34 78V20m0 48 50-18 40 7 50-28 55 11 57-18" stroke="#5842aa" stroke-width="3" fill="none"/></svg>';
-  doc.getXmlFragment("default").insert(0, [
+  const blocks = [
     block("heading", "Baseline", { level: 1 }),
     block("image", null, { src: "data:image/svg+xml," + encodeURIComponent(svg), width: 320, height: 104 }),
     block("paragraph", "Initial measurements"),
     block("heading", "Results", { level: 1 }),
     block("paragraph", "The next set of measurements"),
-  ]);
+  ];
+  if (table) {
+    const row = block("tableRow");
+    row.insert(0, ["Left cell text", "Right cell text"].map(label => {
+      const cell = block("tableCell");
+      cell.insert(0, [block("paragraph", label)]);
+      return cell;
+    }));
+    const grid = block("table");
+    grid.insert(0, [row]);
+    blocks.push(grid);
+  }
+  doc.getXmlFragment("default").insert(0, blocks);
   const state = Array.from(Y.encodeStateAsUpdate(doc));
   doc.destroy();
   return state;
 }
 
-async function openNote(t, options = {}) {
+async function openNote(t, options = {}, content = {}) {
   const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   t.after(() => server.close());
   await server.listen();
@@ -51,7 +63,7 @@ async function openNote(t, options = {}) {
       if (command.startsWith("plugin:")) return false;
       return [];
     } } });
-  }, noteState());
+  }, noteState(content));
   const url = `http://localhost:${server.httpServer.address().port}/lab`;
   await page.goto(url);
   const editor = page.locator(".tiptap[contenteditable=true]");
@@ -145,4 +157,45 @@ test("an unselected image can be dragged from a corner to the marked block bound
     await page.close();
     await video.saveAs(join(proof, "image-drop.webm"));
   }
+});
+
+async function dragImageTo(page, image, x, y) {
+  const picture = await image.boundingBox();
+  await page.mouse.move(picture.x + 20, picture.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(x, y, { steps: 12 });
+}
+
+test("a block image drop line fits the destination table cell", async t => {
+  const { page, editor, image } = await openNote(t, {}, { table: true });
+  const cell = editor.getByRole("cell", { name: "Right cell text" });
+  const bounds = await cell.boundingBox();
+  const paragraph = await cell.locator("p").boundingBox();
+  await dragImageTo(page, image, paragraph.x + 12, paragraph.y + paragraph.height / 2);
+  const line = await page.locator(".note-image-drop-indicator").boundingBox();
+  await page.mouse.up();
+
+  assert.ok(line && line.x >= bounds.x - 1 &&
+    line.x + line.width <= bounds.x + bounds.width + 1, "line stays inside the destination cell");
+  await cell.locator(".note-image").waitFor();
+  assert.equal(await editor.locator(".note-image").count(), 1);
+});
+
+test("dropping just below a folded heading leaves its section folded", async t => {
+  const { page, editor, image } = await openNote(t);
+  const results = editor.getByRole("heading", { name: /Results/ });
+  await results.hover();
+  await results.getByRole("button", { name: "Fold section", exact: true }).click();
+  const hidden = editor.getByText("The next set of measurements", { exact: true });
+  assert.equal(await hidden.isVisible(), false);
+
+  const heading = await results.boundingBox();
+  await dragImageTo(page, image, heading.x + 30, heading.y + heading.height - 2);
+  const markerVisible = await page.locator(".note-image-drop-indicator").isVisible();
+  await page.mouse.up();
+
+  assert.equal(markerVisible, false, "the folded section accepts no drop at its lower edge");
+  assert.equal(await results.getByRole("button", { name: "Unfold section", exact: true }).count(), 1);
+  assert.equal(await hidden.isVisible(), false);
+  assert.equal(await editor.locator(".node-image + p").textContent(), "Initial measurements");
 });
