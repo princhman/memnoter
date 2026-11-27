@@ -170,7 +170,7 @@ test('desktop PDF pinch keeps the pointer anchored without growing the scroll ar
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch();
+    browser = await browserHarness(import.meta.url).webkit.launch();
     const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
     await page.addInitScript(`(${installTestBridge.toString()})({ tauri: { invoke: async command => {
       if (command === 'list_documents') return [{ id: 'pinch', moduleId: 'note', name: 'Reading.pdf', size: 1000, pageCount: 3, available: true }];
@@ -228,9 +228,12 @@ test('desktop PDF pinch keeps the pointer anchored without growing the scroll ar
     });
     samePoint(await geometry(moved));
     assert.equal((await geometry(moved)).layoutWidth, committed.layoutWidth);
-    assert.ok(await gesture('gestureend', 1.1, moved));
+    const endPoint = { x: x + 40, y: y - 20 };
+    assert.ok(await gesture('gestureend', 1.06, endPoint));
     await page.waitForFunction(width => document.querySelector('[data-pdf-page="1"]').offsetWidth > width, committed.layoutWidth);
-    samePoint(await geometry(moved));
+    const final = await geometry(endPoint);
+    assert.ok(Math.abs(final.width / committed.width - 1.06) < .005, JSON.stringify(final));
+    samePoint(final);
     await page.close();
   } finally { await browser?.close(); await server.close(); }
 });

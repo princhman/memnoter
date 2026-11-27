@@ -443,15 +443,18 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
         nativeBase = anchor ? preview : zoomValue.current;
       }
       if (!native) return;
-      if (event.type === "gestureend") { finish(); return; }
-      const { scale = 1, clientX, clientY } = event as Event & Partial<Pick<MouseEvent, "clientX" | "clientY">> & { scale?: number };
-      if (!Number.isFinite(scale) || scale <= 0) return;
-      if (anchor && typeof clientX === "number" && typeof clientY === "number") {
+      const ending = event.type === "gestureend";
+      const { scale = ending ? undefined : 1, clientX, clientY } = event as Event & Partial<Pick<MouseEvent, "clientX" | "clientY">> & { scale?: number };
+      const validScale = typeof scale === "number" && Number.isFinite(scale) && scale > 0;
+      if (!validScale && !ending) return;
+      const hasPoint = typeof clientX === "number" && Number.isFinite(clientX) && typeof clientY === "number" && Number.isFinite(clientY);
+      if (anchor && hasPoint) {
         panX += clientX - anchor.clientX;
         panY += clientY - anchor.clientY;
         anchor = { ...anchor, clientX, clientY };
       }
-      show(nativeBase * scale, { clientX, clientY });
+      if (validScale) show(nativeBase * scale, hasPoint ? { clientX, clientY } : {});
+      if (ending) finish();
     }
     const ownTouch = (contact: Touch) => contact.target instanceof Node && element.contains(contact.target);
     const beginTouch = (event: TouchEvent) => {
