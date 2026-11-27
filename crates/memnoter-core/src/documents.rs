@@ -1,5 +1,5 @@
 use crate::*;
-use std::io::Read;
+use std::{collections::HashMap, io::Read};
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +93,7 @@ pub fn add_document_bytes(
         )
         .map_err(db_err)?;
         tx.execute(
-            "insert into documents(id,module_id,name,size,created_at) values (?1,?2,?3,?4,?5)",
+            "insert into documents(id,module_id,name,size,created_at) values (?1,?2,?3,?4,max(?5, (select coalesce(max(created_at), 0) + 1 from documents)))",
             params![
                 id,
                 module_id,
@@ -152,7 +152,7 @@ fn records(
 ) -> CommandResult<Vec<DocumentRecord>> {
     conn.prepare(&format!(
         "{SELECT_DOCUMENT} where ?1 is null or d.module_id=?1
-        order by d.created_at desc,d.id desc"
+        order by d.created_at,d.id"
     ))
     .map_err(db_err)?
     .query_map([module_id], from_row)
@@ -175,7 +175,82 @@ pub fn list_documents(
     db: &Db,
     module_id: Option<String>,
 ) -> CommandResult<Vec<DocumentRecord>> {
-    records(data_dir, &*db.lock()?, module_id.as_deref())
+    let conn = db.lock()?;
+    let mut documents = records(data_dir, &conn, module_id.as_deref())?;
+    let ranks = order_ranks(&conn)?;
+    documents.sort_by_key(|document| rank(&ranks, &document.id));
+    Ok(documents)
+}
+
+pub(crate) fn migrate_order(conn: &Connection) -> CommandResult<()> {
+    conn.execute_batch(
+        "create table if not exists document_order (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL)",
+    )
+    .map_err(db_err)
+}
+
+pub(crate) fn read_order(conn: &Connection) -> CommandResult<Vec<String>> {
+    let data: Option<String> = conn
+        .query_row("select data from document_order where id = 1", [], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(db_err)?;
+    data.map(|value| serde_json::from_str(&value).map_err(db_err))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+fn order_ranks(conn: &Connection) -> CommandResult<HashMap<String, usize>> {
+    Ok(read_order(conn)?
+        .into_iter()
+        .enumerate()
+        .map(|(rank, id)| (id, rank))
+        .collect())
+}
+
+fn rank(ranks: &HashMap<String, usize>, id: &str) -> usize {
+    ranks.get(id).copied().unwrap_or(usize::MAX)
+}
+
+pub(crate) fn store_order(conn: &Connection, order: &[String]) -> CommandResult<()> {
+    conn.execute(
+        "insert into document_order (id, data) values (1, ?1)
+         on conflict(id) do update set data = excluded.data where data != excluded.data",
+        [serde_json::to_string(order).map_err(db_err)?],
+    )
+    .map(|_| ())
+    .map_err(db_err)
+}
+
+pub fn move_document(db: &Db, id: String, target_id: String, after: bool) -> CommandResult<()> {
+    if id == target_id {
+        return Ok(());
+    }
+    let mut conn = db.lock()?;
+    let tx = conn.transaction().map_err(db_err)?;
+    let mut ids: Vec<String> = {
+        let mut stmt = tx
+            .prepare("select id from documents order by created_at,id")
+            .map_err(db_err)?;
+        let rows = stmt.query_map([], |row| row.get(0)).map_err(db_err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(db_err)?
+    };
+    let ranks = order_ranks(&tx)?;
+    ids.sort_by_key(|id| rank(&ranks, id));
+    let source = ids
+        .iter()
+        .position(|entry| entry == &id)
+        .ok_or("Document not found")?;
+    ids.remove(source);
+    let target = ids
+        .iter()
+        .position(|entry| entry == &target_id)
+        .ok_or("Drop target no longer exists")?;
+    ids.insert(target + usize::from(after), id);
+    store_order(&tx, &ids)?;
+    sync::record_document_order(&tx, &ids)?;
+    tx.commit().map_err(db_err)
 }
 
 pub fn rename_document(db: &Db, id: String, name: String) -> CommandResult<()> {

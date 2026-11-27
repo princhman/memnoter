@@ -712,3 +712,59 @@ fn document_commands_keep_typed_frontend_payloads_and_local_availability() {
     assert_eq!(f.call("delete_document", json!({"id":id})), Value::Null);
     assert_eq!(f.call("list_documents", json!({})), json!([]));
 }
+
+#[test]
+fn file_order_survives_restart_and_syncs_in_both_directions() {
+    let source = Fixture::new();
+    let target = Fixture::new();
+    let module = source.call("create_module", json!({"name":"Algebra"}));
+    let other = source.call("create_module", json!({"name":"Geometry"}));
+    let add = |module: &Value, name: &str| {
+        source.call("add_document_bytes", json!({
+            "moduleId":module, "name":name, "bytes":b"%PDF-"
+        }))["id"].clone()
+    };
+    let first = add(&module, "First.pdf");
+    let second = add(&other, "Second.pdf");
+    let third = add(&module, "Third.pdf");
+    let move_file = |fixture: &Fixture, id: &Value, target_id: &Value, after: bool| {
+        fixture.call("move_document", json!({"id":id,"targetId":target_id,"after":after}));
+    };
+    let ids = |documents: Value| -> Vec<Value> {
+        documents.as_array().unwrap().iter().map(|doc| doc["id"].clone()).collect()
+    };
+    move_file(&source, &third, &first, false);
+    let reopened = Core::open(&source.dir).unwrap();
+    let list = |fixture: &Fixture| ids(fixture.call("list_documents", json!({})));
+    assert_eq!(
+        ids(serde_json::from_str(&dispatch(&reopened, "list_documents", "{}").unwrap()).unwrap()),
+        [&third, &first, &second].map(Clone::clone)
+    );
+    drop(reopened);
+
+    let transfer = |sender: &Fixture, receiver: &Fixture, seq: i32| {
+        let sender_gen = sender.call("sync_status", json!({}))["generation"].clone();
+        let receiver_gen = receiver.call("sync_status", json!({}))["generation"].clone();
+        let vault = sender.call("sync_snapshot", json!({"doc":"vault","generation":sender_gen}));
+        receiver.call("sync_apply", json!({
+            "entries":[{"doc":"vault","bytes":vault,"seq":seq}],
+            "cursor":seq,"generation":receiver_gen
+        }));
+    };
+    source.call("sync_enable", json!({"account":"{}"}));
+    target.call("sync_enable", json!({"account":"{}"}));
+    transfer(&source, &target, 1);
+    assert_eq!(list(&target), [&third, &first, &second].map(Clone::clone));
+    assert_eq!(
+        ids(target.call("list_documents", json!({"moduleId":module}))),
+        [&third, &first].map(Clone::clone)
+    );
+
+    move_file(&target, &first, &second, true);
+    transfer(&target, &source, 2);
+    assert_eq!(list(&source), [&third, &second, &first].map(Clone::clone));
+    let new = add(&module, "New.pdf");
+    source.call("delete_document", json!({"id":third}));
+    transfer(&source, &target, 3);
+    assert_eq!(list(&target), [&second, &first, &new].map(Clone::clone));
+}

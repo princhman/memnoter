@@ -766,6 +766,30 @@ pub(crate) fn record_sidebar(
     Ok(())
 }
 
+// The full order is one value so concurrent moves converge without mixed ranks.
+// Keep it separate from document records that older builds replace on rename.
+const DOCUMENT_ORDER_MAP: &str = "document-order";
+const DOCUMENT_ORDER_KEY: &str = "ids";
+
+pub(crate) fn record_document_order(conn: &Connection, order: &[String]) -> CommandResult<()> {
+    if !is_enabled(conn)? {
+        return Ok(());
+    }
+    let doc = load_vault(conn)?;
+    let update = {
+        let map = doc.get_or_insert_map(DOCUMENT_ORDER_MAP);
+        let mut txn = doc.transact_mut();
+        map.insert(
+            &mut txn,
+            DOCUMENT_ORDER_KEY,
+            serde_json::to_string(order).map_err(db_err)?,
+        );
+        txn.encode_update_v1()
+    };
+    save_vault(conn, &doc)?;
+    push_outbox(conn, VAULT_DOC, &update)
+}
+
 pub(crate) fn load_vault(conn: &Connection) -> CommandResult<Doc> {
     let doc = Doc::new();
     if let Some(state) = get_value::<Vec<u8>>(conn, "vault")? {
@@ -861,6 +885,13 @@ fn reconcile(tx: &Transaction, doc: &Doc) -> CommandResult<(bool, Vec<String>)> 
             }
         }
     }
+    let order = doc.get_or_insert_map(DOCUMENT_ORDER_MAP);
+    if let Some(Out::Any(Any::String(data))) = order.get(&doc.transact(), DOCUMENT_ORDER_KEY) {
+        match serde_json::from_str::<Vec<String>>(&data) {
+            Ok(ids) => crate::documents::store_order(tx, &ids)?,
+            Err(error) => eprintln!("Invalid synced document order: {error}"),
+        }
+    }
     reconcile_documents(tx, doc)?;
     Ok((changed, deleted))
 }
@@ -901,6 +932,15 @@ fn seed(conn: &Connection) -> CommandResult<()> {
                 serde_json::to_string(&item).map_err(db_err)?,
             );
         }
+    }
+    let order = crate::documents::read_order(conn)?;
+    if !order.is_empty() {
+        let map = doc.get_or_insert_map(DOCUMENT_ORDER_MAP);
+        map.insert(
+            &mut doc.transact_mut(),
+            DOCUMENT_ORDER_KEY,
+            serde_json::to_string(&order).map_err(db_err)?,
+        );
     }
     let files: Vec<(String, String, String)> = {
         // PDFs are announced through the documents map only; see record_document.
