@@ -529,7 +529,10 @@ struct RootView: View {
     private var detail: AnyView {
         VStack(spacing: 0) {
             if selected == "review", let client = store.client {
-                ReviewView(client: client, directory: store.directory, moduleId: reviewModule, preferences: store.preferences, editCard: editReviewCard)
+                ReviewView(client: client, directory: store.directory, moduleId: reviewModule,
+                           preferences: store.preferences,
+                           compactBreadcrumb: usesCompactReviewToolbar ? { width in AnyView(compactReviewBreadcrumb(width)) } : nil,
+                           editCard: editReviewCard)
                     .id(reviewModule ?? "all")
             } else if selected == "files", let client = store.client {
                 FilesView(client: client, modules: store.modules, moduleFilter: $filesModuleFilter, busy: busy, open: openLibraryDocument, addPdf: beginPdfImport)
@@ -674,7 +677,7 @@ struct RootView: View {
 
                 }
             }
-            if isPhone && (selected != "questions" || session?.worksheetChrome == nil) {
+            if isPhone && !usesCompactReviewToolbar && (selected != "questions" || session?.worksheetChrome == nil) {
                 ToolbarItem(placement: phoneSplitLayout || session?.pdfReader == nil ? .topBarLeading : .principal) {
                     if isPhone, module != nil, let reader = session?.pdfReader {
                         Text(reader.title).lineLimit(1).truncationMode(.middle)
@@ -850,7 +853,7 @@ struct RootView: View {
     }
     /// Room the trailing bar item needs, so the breadcrumb truncates instead of evicting it.
     private var phoneBarTrailingWidth: CGFloat {
-        if selected == "review" { return phoneSplitLayout ? 230 : 96 }
+        if selected == "review" { return 230 }
         return module != nil && selected != "questions" ? 165 : 120
     }
     private var showWholeNoteFromBreadcrumb: (() -> Void)? {
@@ -863,8 +866,18 @@ struct RootView: View {
                          questionsEnabled: session != nil,
                          maximumWidth: max(120, detailWidth - phoneBarTrailingWidth),
                          changeScope: changeSectionScope, changeSection: selectSection, compact: true,
-                         combinesMenus: selected != "review" && !phoneSplitLayout && detailWidth < 400,
+                         combinesMenus: !phoneSplitLayout && detailWidth < 400,
                          showWholeNote: showWholeNoteFromBreadcrumb)
+            .disabled(busy)
+    }
+    private var usesCompactReviewToolbar: Bool {
+        isPhone && horizontalSizeClass == .compact && selected == "review"
+    }
+    private func compactReviewBreadcrumb(_ width: CGFloat) -> some View {
+        TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: "review",
+                         item: nil, questionsEnabled: session != nil, maximumWidth: width,
+                         changeScope: changeSectionScope, changeSection: selectSection,
+                         compact: true, combinesMenus: true)
             .disabled(busy)
     }
     private var sectionNavigation: some View {

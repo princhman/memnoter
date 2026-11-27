@@ -5,10 +5,12 @@ struct ReviewView: View {
     let directory: URL
     let moduleId: String?
     let preferences: UserDefaults
+    let compactBreadcrumb: ((CGFloat) -> AnyView)?
     let editCard: (String, String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var toolbarWidth: CGFloat = 0
+    @State private var compactActionsWidth: CGFloat = 0
     @State private var controlsWidth: CGFloat = 0
     @AppStorage("skipCardsCreatedToday") private var skipCardsCreatedToday = false
     @State private var session: WebSession?
@@ -18,20 +20,6 @@ struct ReviewView: View {
     private var intervals: [String] { state.intervals }
     var body: some View {
         VStack {
-            if horizontalSizeClass == .compact {
-                HStack {
-                    countsLabel
-                    Spacer()
-                    Menu {
-                        historyActions
-                        cardActions
-                    } label: {
-                        Image(systemName: "ellipsis").frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("Review actions")
-                }
-                .padding(.horizontal)
-            }
             if let error = session?.error { Text(error).foregroundStyle(.red).padding() }
             if let session {
                 WebSurface(session: session)
@@ -54,7 +42,17 @@ struct ReviewView: View {
             if #available(iOS 26.0, *), horizontalSizeClass != .compact {
                 ToolbarSpacer(.fixed, placement: .topBarLeading)
             }
-            if horizontalSizeClass != .compact {
+            if let compactBreadcrumb {
+                // The principal item stays in the bar instead of participating
+                // in SwiftUI's automatic overflow for leading and trailing items.
+                ToolbarItem(placement: .principal) { compactToolbar(compactBreadcrumb) }
+            } else if horizontalSizeClass == .compact {
+                countsToolbar
+                if #available(iOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                }
+                ToolbarItem(placement: .topBarTrailing) { reviewActions }
+            } else {
                 ToolbarItemGroup(placement: .topBarLeading) {
                     historyActions
                     if toolbarWidth < 700 {
@@ -80,6 +78,32 @@ struct ReviewView: View {
             session?.dispose()
             session = nil
         }
+    }
+    private func compactToolbar(_ breadcrumb: (CGFloat) -> AnyView) -> some View {
+        // Leave room for native Back and the navigation bar margins. Only the
+        // breadcrumb gives up width as the queue counts grow.
+        let breadcrumbWidth = max(112, toolbarWidth - 88 - 8 - max(92, compactActionsWidth))
+        return TabletGlassRow {
+            breadcrumb(breadcrumbWidth).modifier(TabletGlassPill())
+            HStack(spacing: 8) {
+                countsLabel
+                reviewActions
+                    .buttonStyle(.plain)
+                    .frame(width: 44, height: 44)
+                    .modifier(TabletGlassPill())
+            }
+            .fixedSize()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { compactActionsWidth = $0 }
+        }
+    }
+    private var reviewActions: some View {
+        Menu {
+            historyActions
+            cardActions
+        } label: {
+            Image(systemName: "ellipsis")
+        }
+        .accessibilityLabel("Review actions")
     }
     @ToolbarContentBuilder private var countsToolbar: some ToolbarContent {
         if #available(iOS 26.0, *) {
