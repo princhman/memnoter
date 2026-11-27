@@ -452,8 +452,11 @@ pub(crate) fn load(conn: &Connection, module: &str) -> CommandResult<Doc> {
 }
 
 pub(crate) fn load_through(conn: &Connection, module: &str, update_id: i64) -> CommandResult<Doc> {
-    let doc = Doc::new();
-    let state: Vec<u8> = conn
+    replay(load_bytes(conn, module, update_id)?)
+}
+
+fn load_bytes(conn: &Connection, module: &str, update_id: i64) -> CommandResult<Vec<Vec<u8>>> {
+    let state = conn
         .query_row(
             "select coalesce(contents.state, X'') from modules
              left join contents on contents.module_id = modules.id where modules.id=?1",
@@ -467,8 +470,25 @@ pub(crate) fn load_through(conn: &Connection, module: &str, update_id: i64) -> C
     let updates = stmt
         .query_map(rusqlite::params![module, update_id], |r| r.get::<_, Vec<u8>>(0))
         .map_err(db_err)?;
-    for bytes in std::iter::once(Ok(state)).chain(updates) {
-        let bytes = bytes.map_err(db_err)?;
+    std::iter::once(Ok(state))
+        .chain(updates)
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db_err)
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_REPLAY: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+}
+
+fn replay(updates: Vec<Vec<u8>>) -> CommandResult<Doc> {
+    #[cfg(test)]
+    if let Some(check) = BEFORE_REPLAY.with(|hook| hook.take()) {
+        check();
+    }
+
+    let doc = Doc::new();
+    for bytes in updates {
         if !bytes.is_empty() {
             doc.transact_mut()
                 .apply_update(Update::decode_v1(&bytes).map_err(db_err)?)

@@ -647,6 +647,33 @@ fn future_survivor_retains_assets_when_the_uploader_module_is_deleted() {
 }
 
 #[test]
+fn question_bank_index_releases_database_before_replay() {
+    let (_dir, core, module) = core();
+    let core = std::rc::Rc::new(core);
+    let value = json!({"schemaVersion": 1, "questions": {}, "attempts": {}, "answers": {}});
+    core.db
+        .lock()
+        .unwrap()
+        .execute(
+            "insert into contents_updates(module_id, bytes, created_at) values (?1, ?2, 0)",
+            rusqlite::params![module, bytes(&document(&value))],
+        )
+        .unwrap();
+
+    let database_owner = core.clone();
+    BEFORE_REPLAY.with(|hook| {
+        hook.replace(Some(Box::new(move || {
+            assert!(
+                database_owner.db.conn.try_lock().is_ok(),
+                "index replay holds the database lock"
+            );
+        })));
+    });
+    assert!(bank::index(&core, module).unwrap().is_some());
+    assert!(BEFORE_REPLAY.with(|hook| hook.take().is_none()), "index did not reach replay");
+}
+
+#[test]
 fn finish_retains_answers_and_pins_and_rejects_further_writes() {
     let _lock = super::DEV_TEST_LOCK.lock().unwrap();
     let (dir, core, module) = core();

@@ -31,10 +31,11 @@ struct IndexedQuestion {
 /// Read browse labels directly from the shared maps without materializing the
 /// revision graph, worksheet pins, or answer documents.
 pub fn index(core: &Core, module: String) -> CommandResult<Option<BankIndex>> {
-    let doc = {
+    let updates = {
         let conn = core.db.lock()?;
-        load(&conn, &module)?
+        load_bytes(&conn, &module, i64::MAX)?
     };
+    let doc = replay(updates)?;
     let txn = doc.transact();
     if txn
         .root_refs()
