@@ -36,13 +36,9 @@ async function buildSnapshot(shouldContinue: () => boolean) {
   const pdfs = await listDocuments();
   const files = await call<Record<string, string>>("local_backup_image_types");
 
-  const notes: Record<string, string> = {};
-  const attachments: Record<string, string> = {};
-  function attachmentLink(id: string, extension: string) {
-    const name = `${id}.${extension}`;
-    attachments[name] = id;
-    return `attachments/${name}`;
-  }
+  const snapshot: Record<string,
+    | { kind: "ready"; name: string; filename: string; markdown: string; attachments: Record<string, string> }
+    | { kind: "skipped"; reason: string }> = {};
 
   for (const module of modules) {
     if (!shouldContinue()) return;
@@ -53,21 +49,40 @@ async function buildSnapshot(shouldContinue: () => boolean) {
       if (doc.store.pendingStructs || doc.store.pendingDs || isNoteFromNewerVersion(doc)) {
         throw new Error(`Cannot back up “${module.name}” until its content is supported and fully synced.`);
       }
+      const attachments: Record<string, string> = {};
+      function attachmentLink(id: string, extension: string) {
+        const name = `${id}.${extension}`;
+        attachments[name] = id;
+        return `attachments/${name}`;
+      }
+      let missingImage = false;
       const markdown = jsonToMarkdown(yDocToProsemirrorJSON(doc, "default"), id => {
         const mime = Object.prototype.hasOwnProperty.call(files, id) ? files[id] : undefined;
-        if (!mime) throw new Error(`An image in “${module.name}” is unavailable.`);
+        if (!mime) {
+          missingImage = true;
+          return "";
+        }
         const extension = /^image\/([a-z0-9]+)(?:\+xml)?$/.exec(mime)?.[1] ?? "bin";
         return attachmentLink(id, extension);
       });
+      if (missingImage) {
+        snapshot[module.id] = { kind: "skipped", reason: `An image in “${module.name}” is unavailable.` };
+        continue;
+      }
       const links = pdfs.filter(pdf => pdf.moduleId === module.id)
         .map(pdf => `- [${markdownLabel(pdf.name)}](${attachmentLink(pdf.id, "pdf")})`);
-      notes[noteFilename(module)] = [markdown, links.length && ["## PDFs", ...links].join("\n")]
-        .filter(Boolean).join("\n\n") + "\n";
+      snapshot[module.id] = {
+        kind: "ready",
+        name: module.name,
+        filename: noteFilename(module),
+        markdown: [markdown, links.length && ["## PDFs", ...links].join("\n")].filter(Boolean).join("\n\n") + "\n",
+        attachments,
+      };
     } finally {
       doc.destroy();
     }
   }
-  return { notes, attachments };
+  return { modules: snapshot };
 }
 
 export function useLocalBackup() {
@@ -85,8 +100,9 @@ export function useLocalBackup() {
       try {
         const snapshot = await buildSnapshot(() => active);
         if (!active || !snapshot) return;
-        await call("write_local_backup", { folder, snapshot });
-        if (active) queryClient.setQueryData(localBackupError.queryKey, null);
+        const warnings = await call<string[]>("write_local_backup", { folder, snapshot });
+        for (const warning of warnings) console.warn(warning);
+        if (active) queryClient.setQueryData(localBackupError.queryKey, warnings.join("\n") || null);
       } catch (error) {
         if (active) queryClient.setQueryData(localBackupError.queryKey,
           error instanceof Error ? error.message : String(error));

@@ -62,3 +62,21 @@ What is required? ::list
   assert.deepEqual(imported.content[4], doc.content[4]);
   assert.equal(imported.content.at(-1).attrs.fileId, "image-id");
 });
+
+test("keeps a multiline cloze answer in a display math block", () => {
+  const formula = String.raw`a = \frac{v}{t}
+b = a + 1`;
+  const markdown = jsonToMarkdown({ type: "doc", content: [
+    { type: "mathBlock", attrs: { cloze: true }, content: [text(formula)] },
+  ] }, () => "");
+  assert.equal(markdown, `**Cloze answer**\n\n$$\n${formula}\n$$`);
+  assert.deepEqual(markdownToJSON(markdown).content.at(-1), {
+    type: "mathBlock", content: [text(formula)],
+  });
+});
+
+test("preserves trailing hashes in heading text through Markdown parsing", () => {
+  const heading = { type: "heading", attrs: { level: 2 }, content: [text("Version ###")] };
+  const markdown = jsonToMarkdown({ type: "doc", content: [heading] }, () => "");
+  assert.deepEqual(markdownToJSON(markdown).content, [heading]);
+});

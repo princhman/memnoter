@@ -50,7 +50,7 @@ export function jsonToMarkdown(doc: JSONContent, imagePath: (id: string) => stri
         return value;
       }
       case "heading":
-        return "#".repeat(Math.min(6, Math.max(1, Number(node.attrs?.level) || 1))) + " " + inline(node);
+        return "#".repeat(Math.min(6, Math.max(1, Number(node.attrs?.level) || 1))) + " " + inline(node).replace(/#+(?=[ \t]*$)/, hashes => hashes.replace(/#/g, "\\#"));
       case "paragraph":
       case "detailsSummary":
         return inline(node);
@@ -61,7 +61,7 @@ export function jsonToMarkdown(doc: JSONContent, imagePath: (id: string) => stri
       case "inlineMath":
         return `$${plain(node)}$`;
       case "mathBlock":
-        return node.attrs?.cloze ? `{{$${plain(node).replace(/\n/g, " ")}$}}` : `$$\n${plain(node)}\n$$`;
+        return `${node.attrs?.cloze ? "**Cloze answer**\n\n" : ""}$$\n${plain(node)}\n$$`;
       case "horizontalRule":
         return "---";
       case "codeBlock":

@@ -90,9 +90,14 @@ pub(crate) fn dispatch(
             let _guard = gate.0.lock().map_err(|error| error.to_string())?;
             let settings = read(core)?;
             if settings.enabled && settings.folder.as_ref() == Some(&request.folder) {
-                markdown_backup::write(core.data_dir(), &request.folder, request.snapshot)?;
+                return serde_json::to_value(markdown_backup::write(
+                    core.data_dir(),
+                    &request.folder,
+                    request.snapshot,
+                )?)
+                .map_err(|error| error.to_string());
             }
-            Ok(serde_json::Value::Null)
+            Ok(serde_json::json!([]))
         }
         _ => Err("Unknown local backup command".into()),
     }
