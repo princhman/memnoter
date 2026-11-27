@@ -18,7 +18,8 @@ import { cn } from "@/lib/utils";
 import { useSidebar } from "./ui/sidebar";
 import { useMatchRoute, useSearch } from "@tanstack/react-router";
 import { useEditorState } from "@tiptap/react";
-import { getFocusedSectionPath } from "@/lib/section-focus";
+import { getFocusedSectionPath, showWholeNote } from "@/lib/section-focus";
+import { isTauri } from "@/lib/backend";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { Fragment } from "react";
 import { ReviewScopeMenu } from "./review-scope-menu";
@@ -78,6 +79,12 @@ export function FileBreadcrumb() {
       },
     }) ?? [];
 
+  const focusedSection = sectionPath[sectionPath.length - 1];
+  const onWholeNote = isTauri() && editor && focusedSection ? () => {
+    const heading = editor.view.nodeDOM(focusedSection.pos);
+    if (heading instanceof HTMLElement) showWholeNote(editor, heading);
+  } : undefined;
+
   return (
     <>
       <div
@@ -103,7 +110,12 @@ export function FileBreadcrumb() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator>/</BreadcrumbSeparator>
                 <BreadcrumbItem className="shrink-0 overflow-visible!">
-                  <ModuleSectionMenu page={page} moduleId={scopedModuleId} onNotes={() => editor?.commands.showDocument()} />
+                  <ModuleSectionMenu
+                    page={page}
+                    moduleId={scopedModuleId}
+                    onNotes={() => editor?.commands.showDocument()}
+                    onWholeNote={onWholeNote}
+                  />
                 </BreadcrumbItem>
                 {pdf && <>
                   <BreadcrumbSeparator>›</BreadcrumbSeparator>

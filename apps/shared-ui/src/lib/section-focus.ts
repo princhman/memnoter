@@ -8,6 +8,7 @@ import type { Editor } from "@tiptap/core";
 import { ProsemirrorBinding, ySyncPluginKey } from "@tiptap/y-tiptap";
 import { XmlElement, type Transaction as YTransaction } from "yjs";
 import { backspaceHeading } from "./heading-hierarchy";
+import { beginHostNavigation, editorHost } from "./editor-host";
 
 export const sectionFocusKey = new PluginKey<number | null>("section-focus");
 
@@ -48,6 +49,14 @@ export function getFocusedSectionPath(editor: Editor): SectionCrumb[] {
 
   const heading = outline(editor.state.doc).find(item => item.pos === focusedPos);
   return heading ? [...heading.ancestors, heading] : [];
+}
+
+export function showWholeNote(editor: Editor, heading: HTMLElement) {
+  const container = editorHost.scrollContainer(editor.view.dom);
+  if (container) beginHostNavigation(container);
+  const top = heading.getBoundingClientRect().top;
+  editor.commands.showDocument();
+  if (container) container.scrollTop += heading.getBoundingClientRect().top - top;
 }
 
 // The focused heading and everything up to the next heading at its level or higher.

@@ -24,7 +24,7 @@ import { createStore, useSelector } from "@tanstack/react-store";
 import katex from "katex";
 import { groupMathScripts } from "@/lib/latex-render";
 import { ChevronRight, Maximize2, Scan } from "lucide-react";
-import { getFocusedSectionRange } from "@/lib/section-focus";
+import { getFocusedSectionRange, showWholeNote } from "@/lib/section-focus";
 import { getFoldedRanges } from "@/lib/heading-fold";
 import { appStore } from "@/lib/store";
 
@@ -272,14 +272,12 @@ function DesktopTableOfContents({
     if (!editor) return;
     const heading = editor.view.nodeDOM(item.pos);
     if (!(heading instanceof HTMLElement)) return;
-    const container = editorHost.scrollContainer(editor.view.dom);
     const returnFocus = popupRef.current?.contains(document.activeElement);
-    if (container) beginHostNavigation(container);
     if (getFocusedSectionRange(editor.state)?.from === item.pos) {
-      const top = heading.getBoundingClientRect().top;
-      editor.commands.showDocument();
-      if (container) container.scrollTop += heading.getBoundingClientRect().top - top;
+      showWholeNote(editor, heading);
     } else {
+      const container = editorHost.scrollContainer(editor.view.dom);
+      if (container) beginHostNavigation(container);
       editor.chain().setTextSelection(item.pos + 1).showSection(item.pos).run();
       heading.scrollIntoView({ behavior: "instant", block: "start" });
     }

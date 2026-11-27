@@ -1,6 +1,6 @@
 import { useCallback, type ReactElement } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { ChevronDown, FileText, Files, CircleHelp, Layers } from "lucide-react";
+import { ChevronDown, FileText, Files, CircleHelp, Layers, MoveDiagonal2 } from "lucide-react";
 import { openReview } from "./card-navigation-guard";
 import { useBankGate } from "@/lib/question-bank";
 import { appStore, setModulePage } from "@/lib/store";
@@ -10,7 +10,7 @@ import { useDocuments } from "@/lib/use-documents";
 import { action, formatKeys } from "@/lib/shortcuts";
 import { IconTooltip } from "./ui/icon-tooltip";
 import { Button } from "./ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
 export type ModuleSection = "notes" | "files" | "questions" | "review";
 
@@ -66,7 +66,12 @@ export function SectionTooltip({ section, children, allModules = false }: { sect
   return <IconTooltip label={label} hint={formatKeys(keys)} side="right">{children}</IconTooltip>;
 }
 
-export function ModuleSectionMenu({ page, moduleId, onNotes }: { page: ModuleSection; moduleId?: string; onNotes?: () => void }) {
+export function ModuleSectionMenu({ page, moduleId, onNotes, onWholeNote }: {
+  page: ModuleSection;
+  moduleId?: string;
+  onNotes?: () => void;
+  onWholeNote?: () => void;
+}) {
   const bankEnabled = useBankGate();
   const navigateSection = useModuleSectionNavigation();
   return <DropdownMenu>
@@ -74,6 +79,9 @@ export function ModuleSectionMenu({ page, moduleId, onNotes }: { page: ModuleSec
       {{ notes: "Notes", files: "Files", questions: "Questions", review: "Review" }[page]}<ChevronDown className="size-3 shrink-0" />
     </DropdownMenuTrigger>
     <DropdownMenuContent align="start" className="min-w-56">
+      {onWholeNote && <DropdownMenuItem className="m-0.5" onClick={onWholeNote}>
+        <MoveDiagonal2 aria-hidden="true" />Whole Note
+      </DropdownMenuItem>}
       <DropdownMenuRadioGroup className="space-y-1 p-0.5" value={page} onValueChange={value => { void navigateSection(value as ModuleSection, moduleId); }}>
         <SectionTooltip section="notes"><DropdownMenuRadioItem value="notes" showIndicator={false} closeOnClick onClick={() => { if (page === "notes") onNotes?.(); }}><FileText aria-hidden="true" />Notes</DropdownMenuRadioItem></SectionTooltip>
         <SectionTooltip section="files"><DropdownMenuRadioItem value="files" showIndicator={false} closeOnClick onClick={() => { if (page === "files") void navigateSection("files", moduleId); }}><Files aria-hidden="true" />Files</DropdownMenuRadioItem></SectionTooltip>
