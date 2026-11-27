@@ -584,6 +584,7 @@ mod tests {
             "".into(),
             1,
             false,
+            None,
         )
         .unwrap();
         let conn = db.lock().unwrap();
@@ -596,6 +597,7 @@ mod tests {
             "".into(),
             1,
             false,
+            None,
         )
         .unwrap();
         let mut conn = db.lock().unwrap();

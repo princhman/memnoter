@@ -23,6 +23,7 @@ export const SHORTCUTS: readonly ShortcutAction[] = [
   { id: "module.import", title: "Import Folder…", keys: "", menuId: "import-folder" },
   { id: "find.open", title: "Find in note", keys: "Mod-f", menuId: "find" },
   { id: "sidebar.toggle", title: "Toggle sidebar", keys: "Mod-d", menuId: "toggle-sidebar" },
+  { id: "window.new", title: "New window", keys: "Mod-Shift-n", menuId: "new-window" },
   { id: "window.fullscreen", title: "Full screen", keys: "F11" },
   { id: "history.undo", title: "Undo", keys: "Mod-z", menuId: "editor-undo" },
   { id: "history.redo", title: "Redo", keys: "Mod-Shift-z", menuId: "editor-redo" },

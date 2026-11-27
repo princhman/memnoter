@@ -357,3 +357,17 @@ pub fn save_compaction(
     asset_refs::retain_module(&tx, &module_id)?;
     tx.commit().map_err(db_err)
 }
+
+// An index generated in one window may reach disk after another window's
+// saved edit. Deletes must count even when the state vector did not change.
+pub(crate) fn matches_note_snapshot(
+    conn: &rusqlite::Connection,
+    module_id: &str,
+    snapshot: &[u8],
+) -> CommandResult<bool> {
+    use yrs::{updates::decoder::Decode, ReadTxn, Snapshot, Transact};
+    let expected = Snapshot::decode_v1(snapshot).map_err(db_err)?;
+    let doc = crate::worksheets::load(conn, module_id)?;
+    let actual = doc.transact().snapshot();
+    Ok(expected == actual)
+}

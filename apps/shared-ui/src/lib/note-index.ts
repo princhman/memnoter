@@ -1,6 +1,6 @@
 import { settled } from "@/lib/async-work";
 import * as Y from "yjs";
-import { call } from "@/lib/backend";
+import { call, isSecondaryWindow } from "@/lib/backend";
 import { applySavedContent, reconcileContent, type GetContentResponse } from "@/lib/content";
 import { applyPendingSaves, saveQueue } from "@/lib/saves";
 import { indexStoredNote } from "@/lib/search-index";
@@ -55,6 +55,7 @@ export function refreshDerived(moduleId: string, admittedPermit?: WritePermit): 
 
 let backfill: Promise<void> | undefined;
 export function startBackfill() {
+  if (isSecondaryWindow()) return Promise.resolve();
   backfill ??= (async () => {
     const [cards, search] = await Promise.allSettled([
       call<{ id: string }[]>("unindexed_card_modules"),

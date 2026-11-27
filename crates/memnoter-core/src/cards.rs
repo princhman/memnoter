@@ -199,6 +199,7 @@ fn sync_module_cards(
     cards: &[CardContent],
     update_id: Option<i64>,
     now: i64,
+    snapshot: Option<&[u8]>,
 ) -> CommandResult<Vec<String>> {
     let tx = conn.transaction().map_err(db_err)?;
     // A final editor sync may arrive after the module was deleted.
@@ -211,6 +212,11 @@ fn sync_module_cards(
         .map_err(db_err)?
     {
         return Ok(Vec::new());
+    }
+    if let Some(snapshot) = snapshot {
+        if !crate::content::matches_note_snapshot(&tx, module_id, snapshot)? {
+            return Ok(Vec::new());
+        }
     }
     let mut conflicts = Vec::new();
     let mut unavailable = Vec::new();
@@ -635,14 +641,25 @@ pub fn undo_review(
     tx.commit().map_err(db_err)
 }
 
+#[cfg(test)]
 pub fn sync_cards(
     db: &Db,
     module_id: String,
     cards: Vec<CardContent>,
     update_id: Option<i64>,
 ) -> CommandResult<Vec<String>> {
+    sync_cards_at_snapshot(db, module_id, cards, update_id, None)
+}
+
+pub fn sync_cards_at_snapshot(
+    db: &Db,
+    module_id: String,
+    cards: Vec<CardContent>,
+    update_id: Option<i64>,
+    snapshot: Option<Vec<u8>>,
+) -> CommandResult<Vec<String>> {
     let mut conn = db.lock()?;
-    sync_module_cards(&mut conn, &module_id, &cards, update_id, Utc::now().timestamp_millis())
+    sync_module_cards(&mut conn, &module_id, &cards, update_id, Utc::now().timestamp_millis(), snapshot.as_deref())
 }
 
 #[derive(serde::Serialize)]
@@ -717,7 +734,7 @@ mod tests {
         }
 
         fn sync(&self, module: &str, cards: &[CardContent], now: i64) -> Vec<String> {
-            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, None, now).unwrap()
+            sync_module_cards(&mut self.db.conn.lock().unwrap(), module, cards, None, now, None).unwrap()
         }
 
         fn due(&self, module: Option<&str>, now: i64) -> Vec<Card> {
@@ -738,6 +755,42 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+
+
+    #[test]
+    fn an_older_window_cannot_restore_a_card_after_a_saved_deletion() {
+        use yrs::{
+            updates::encoder::Encode, Doc, ReadTxn, StateVector, Text, Transact, XmlElementPrelim,
+            XmlFragment, XmlTextPrelim,
+        };
+
+        let f = Fixture::new();
+        let doc = Doc::new();
+        let root = doc.get_or_insert_xml_fragment("default");
+        let text = {
+            let mut txn = doc.transact_mut();
+            let paragraph = root.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            paragraph.push_back(&mut txn, XmlTextPrelim::new("card"))
+        };
+        let before = doc.transact().snapshot();
+        let update = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        crate::add_update(&f.db, "a".into(), update).unwrap();
+        let card = || basic("card", "Question", "Answer");
+        sync_cards_at_snapshot(&f.db, "a".into(), vec![card()], None, Some(before.encode_v1())).unwrap();
+        assert_eq!(f.due(Some("a"), i64::MAX).len(), 1);
+
+        let mut deletion = doc.transact_mut();
+        text.remove_range(&mut deletion, 0, 4);
+        let update = deletion.encode_update_v1();
+        drop(deletion);
+        let after = doc.transact().snapshot();
+        assert_eq!(before.state_map, after.state_map);
+        crate::add_update(&f.db, "a".into(), update).unwrap();
+        sync_cards_at_snapshot(&f.db, "a".into(), vec![], None, Some(after.encode_v1())).unwrap();
+
+        sync_cards_at_snapshot(&f.db, "a".into(), vec![card()], None, Some(before.encode_v1())).unwrap();
+        assert!(f.due(Some("a"), i64::MAX).is_empty());
     }
 
     #[test]

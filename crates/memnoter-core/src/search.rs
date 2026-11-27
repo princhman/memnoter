@@ -41,6 +41,7 @@ pub fn index_note(
     math: String,
     version: i64,
     backfill: bool,
+    snapshot: Option<Vec<u8>>,
 ) -> CommandResult<()> {
     let mut conn = db.lock()?;
     let module_id = module_id.as_str();
@@ -65,6 +66,11 @@ pub fn index_note(
     else {
         return Ok(());
     };
+    if let Some(snapshot) = snapshot {
+        if !crate::content::matches_note_snapshot(&tx, module_id, &snapshot)? {
+            return Ok(());
+        }
+    }
     tx.execute("delete from search_index where module_id = ?1", [module_id])
         .map_err(db_err)?;
     tx.execute(

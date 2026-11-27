@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { checkForUpdates } from "./lib/updater";
 import { listenToMenu } from "./lib/app-events";
+import { startWindowEvents } from "./lib/desktop-windows";
 import { queryClient } from "./lib/query-client";
 import { fitToVisibleViewport } from "./lib/platform";
 import "./App.css";
@@ -17,18 +18,23 @@ fitToVisibleViewport();
 void checkForUpdates();
 listenToMenu();
 
-const router = createRouter({ routeTree });
+function createAppRouter() { return createRouter({ routeTree }); }
 declare module "@tanstack/react-router" {
   interface Register {
-    router: typeof router;
+    router: ReturnType<typeof createAppRouter>;
   }
 }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <Toaster />
-      <RouterProvider router={router} />
-    </QueryClientProvider>
-  </React.StrictMode>,
-);
+void startWindowEvents()
+  .catch(error => console.error("Could not start desktop window events:", error))
+  .then(() => {
+    const router = createAppRouter();
+    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+      <React.StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <Toaster />
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </React.StrictMode>,
+    );
+  });

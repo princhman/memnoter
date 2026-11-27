@@ -1,6 +1,6 @@
 {
   "identifier": "windows-fullscreen",
   "platforms": ["windows"],
-  "windows": ["main"],
+  "windows": ["main", "note-*"],
   "permissions": ["core:window:allow-set-fullscreen"]
 }

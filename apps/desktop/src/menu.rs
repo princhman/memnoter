@@ -2,12 +2,13 @@
 // carrying the item's id; src/lib/app-events.ts acts on them.
 
 use tauri::menu::{Menu, MenuEvent, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, Runtime};
 
 pub const MENU_EVENT: &str = "menu";
 
 const SETTINGS: (&str, &str, &str) = ("settings", "Settings…", "CmdOrCtrl+,");
 const NEW_MODULE: (&str, &str, &str) = ("new-module", "New Module…", "CmdOrCtrl+N");
+const NEW_WINDOW: (&str, &str, &str) = ("new-window", "New Window", "CmdOrCtrl+Shift+N");
 const FIND: (&str, &str, &str) = ("find", "Find…", "CmdOrCtrl+F");
 const TOGGLE_SIDEBAR: (&str, &str, &str) = ("toggle-sidebar", "Toggle Sidebar", "CmdOrCtrl+D");
 
@@ -16,9 +17,10 @@ const IMPORT_FOLDER: &str = "import-folder";
 const EDITOR_UNDO: (&str, &str, &str) = ("editor-undo", "Undo", "CmdOrCtrl+Z");
 const EDITOR_REDO: (&str, &str, &str) = ("editor-redo", "Redo", "CmdOrCtrl+Shift+Z");
 
-const CUSTOM_ITEMS: [&str; 8] = [
+const CUSTOM_ITEMS: [&str; 9] = [
     SETTINGS.0,
     NEW_MODULE.0,
+    NEW_WINDOW.0,
     IMPORT_FOLDER,
     IMPORT_ANKI,
     FIND.0,
@@ -53,6 +55,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&item(app, NEW_MODULE)?)
+        .item(&item(app, NEW_WINDOW)?)
         .item(&MenuItemBuilder::with_id(IMPORT_FOLDER, "Import Folder…").build(app)?)
         .item(&MenuItemBuilder::with_id(IMPORT_ANKI, "Import Anki Deck…").build(app)?)
         .separator()
@@ -93,10 +96,11 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 pub fn handle_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     let id = event.id().as_ref();
     if CUSTOM_ITEMS.contains(&id) {
-        if crate::drawing::handle_menu(app, id) {
+        let Some(window) = app.get_focused_window() else { return; };
+        if crate::drawing::handle_menu(app, window.label(), id) {
             return;
         }
-        if let Err(error) = app.emit(MENU_EVENT, id) {
+        if let Err(error) = app.emit_to(EventTarget::webview_window(window.label()), MENU_EVENT, id) {
             eprintln!("Failed to send menu event {id}: {error}");
         }
     }
