@@ -590,6 +590,10 @@ body {
     touch-action: none;
 }
 
+@media (pointer: fine) {
+    .tiptap[contenteditable="true"] .note-image { cursor: grab; }
+}
+
 .note-image-block[data-range-selected] .note-image {
     outline: 2px solid color-mix(in srgb, var(--primary) 35%, transparent);
     outline-offset: 1px;
@@ -806,11 +810,13 @@ body {
     border-radius: 3px;
     background: var(--control-accent);
     opacity: 0;
+    pointer-events: none;
     touch-action: none;
 }
 .note-image-block[data-selected="true"] [data-resize-handle],
 .note-image-host [data-resize-state="true"] [data-resize-handle] {
     opacity: 1;
+    pointer-events: auto;
 }
 /* A finger needs more than the drawn 12px square. */
 @media (pointer: coarse) {
@@ -1801,8 +1807,17 @@ body {
   position: fixed;
   z-index: var(--z-drag);
   pointer-events: none;
-  border-radius: 1px;
+  border-radius: 2px;
   background: var(--control-accent);
+}
+.note-image-drag-preview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-drag);
+  pointer-events: none;
+  border-radius: 0.4rem;
+  box-shadow: var(--floating-shadow);
 }
 
 /* Preserve selection feedback over syntax backgrounds without replacing their
