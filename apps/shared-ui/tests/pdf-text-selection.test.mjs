@@ -94,3 +94,40 @@ test('native PDF text selections quote only on demand, with per-page sources and
     assert.deepEqual(errors, []);
   } finally { await browser?.close(); await server.close(); }
 });
+
+test('PDF text menu holds its position during a backward selection drag', async () => {
+  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0 }, logLevel: 'error' });
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+    await page.addInitScript(`(${installTestBridge.toString()})({ tauri: { invoke: async command => {
+      if (command === 'list_documents') return [{ id: 'drag', moduleId: 'note', name: 'Reading.pdf', size: 1000, pageCount: 3, available: true }];
+      if (command === 'document_path') return '/reading.pdf';
+      if (command === 'load_annotations') return { state: null, revision: 0, generation: 'reading-test' };
+      return [];
+    } } });`);
+    await page.route('**/reading.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes() }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/files/drag`);
+    const first = page.locator('[data-pdf-page="1"] .textLayer span').filter({ hasText: 'Page 1 first line' });
+    await first.waitFor();
+    const box = await first.boundingBox();
+    const y = box.y + box.height / 2;
+    const menu = page.getByRole('button', { name: 'Quote text', exact: true });
+    const pause = process.env.PROOF_DIR ? 850 : 70;
+    await page.mouse.move(box.x + box.width - 1, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * .65, y, { steps: 12 });
+    await menu.waitFor();
+    const position = await menu.boundingBox();
+    await page.waitForTimeout(pause);
+    await page.mouse.move(box.x + 1, y, { steps: 25 });
+    await page.waitForTimeout(pause);
+    assert.deepEqual(await menu.boundingBox(), position);
+    await page.mouse.up();
+    assert.match(await page.evaluate(() => window.getSelection().toString()), /Page 1 first line/);
+    if (process.env.PROOF_DIR) await page.waitForTimeout(900);
+    await page.close();
+  } finally { await browser?.close(); await server.close(); }
+});
