@@ -117,7 +117,7 @@ test("pasting an image at the end of a note or quote leaves a typing line only w
   const state = Array.from(Y.encodeStateAsUpdate(doc));
   doc.destroy();
 
-  const server = await createServer({ server: { port: 0 }, logLevel: "error" });
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   try {
     await server.listen();
     const browser = await webkit.launch();
