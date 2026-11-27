@@ -16,6 +16,9 @@ import { CardState, formatInterval } from "./fsrs.ts";
 
 import { sectionFocusBackground } from "./section-focus.ts";
 
+// Builds a card dot's details popup, which is otherwise made on first hover or focus.
+export const CARD_INFO_PREPARE = "card-info-prepare";
+
 const flashcardIdsKey = new PluginKey<boolean>("flashcardIds");
 
 declare module "@tiptap/core" {
@@ -108,6 +111,7 @@ export function cardInfo(
   const showDetails = () => {
     info.removeEventListener("pointerenter", showDetails);
     info.removeEventListener("focusin", showDetails);
+    info.removeEventListener(CARD_INFO_PREPARE, showDetails);
     const popup = document.createElement("span");
     popup.className = "card-info-popup";
     popup.setAttribute("role", action ? "dialog" : "tooltip");
@@ -163,6 +167,8 @@ export function cardInfo(
   };
   info.addEventListener("pointerenter", showDetails);
   info.addEventListener("focusin", showDetails);
+  // An activation with neither (a synthesized or assistive click) asks for it.
+  info.addEventListener(CARD_INFO_PREPARE, showDetails);
   return info;
 }
 

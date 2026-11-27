@@ -35,6 +35,33 @@ test("card popup omits empty headings and new badges while retaining answers and
   }
 });
 
+test("an assistive click opens a card dot's details in the embedded editor before any hover or focus", async () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const server = await createServer({ root, configFile: `${root}/vite.config.ts`, server: { port: 0, strictPort: false }, logLevel: "error" });
+  let browser;
+  try {
+    await server.listen();
+    browser = await webkit.launch();
+    const page = await browser.newPage();
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/editor.html`);
+    const shown = await page.evaluate(async () => {
+      const { cardInfo } = await import("/src/lib/flashcards.ts");
+      const { observeCardInfo } = await import("/src/editor-host/card-info.ts");
+      const container = document.createElement("div");
+      const schedule = { id: "card", state: 2, dueAt: 10, createdAt: 0, lastReviewAt: null };
+      container.append(cardInfo([{ answer: "Paris", schedule }], true, 20, null));
+      document.body.replaceChildren(container);
+      observeCardInfo(container);
+      container.querySelector(".card-info").click();
+      return container.querySelector(".card-info-popup")?.matches(":popover-open") ?? false;
+    });
+    assert.equal(shown, true);
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});
+
 test("a foldable block becomes one cloze note and stays one when folded, and a formula becomes a cloze", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const server = await createServer({ root, configFile: `${root}/vite.config.ts`, server: { port: 0, strictPort: false }, logLevel: "error" });

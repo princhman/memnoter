@@ -1,3 +1,4 @@
+import { CARD_INFO_PREPARE } from "../lib/flashcards.ts";
 // Native card menus must never borrow focus from the text responder. Keep this
 // policy in editor.html; desktop retains the shared hover/focus interaction.
 export function observeCardInfo(container: HTMLElement) {
@@ -41,6 +42,7 @@ export function observeCardInfo(container: HTMLElement) {
     if (next === dot) { close(); return; }
     close();
     dot = next;
+    dot.dispatchEvent(new Event(CARD_INFO_PREPARE));
     popup = dot.querySelector<HTMLElement>('.card-info-popup');
     if (!popup) { close(); return; }
     dot.dataset.infoOpen = '';
