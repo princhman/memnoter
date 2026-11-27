@@ -27,7 +27,7 @@ import { appStore } from "@/lib/store";
 import { SidebarSectionRow } from "./sidebar-section-row";
 import { pickPdfs } from "./add-pdf";
 import { openDesktopWindow } from "@/lib/desktop-windows";
-import { isTauri } from "@/lib/backend";
+import { isSecondaryWindow, isTauri } from "@/lib/backend";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -241,7 +241,8 @@ const AppSidebar = () => {
       <SidebarFooter>
         <UpdateStatus>
           <BetaBadge />
-          {isTauri() && <SyncNowButton />}
+          {/* Sync runs only in the main window; another window would start a second engine. */}
+          {isTauri() && !isSecondaryWindow() && <SyncNowButton />}
           <IconTooltip label="Settings" hint={formatKeys(action("settings.open").keys)} side="top">
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
           </IconTooltip>
