@@ -5,11 +5,12 @@ import { action, formatKeys } from "@/lib/shortcuts";
 import { isImageNode } from "../lib/cards.ts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
-import { posToDOMRect } from "@tiptap/core";
+import { posToDOMRect, type Command } from "@tiptap/core";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { CellSelection } from "@tiptap/pm/tables";
 import { TableControls } from "@/components/table-controls";
 import { TableBubbleActions } from "@/components/table-bubble-actions";
+import type { Node } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import {
   Bold,
@@ -42,8 +43,40 @@ const BLOCK_TYPES = [
   })),
 ];
 
+function setSelectedBlockType(type: string, attrs: Record<string, unknown> = {}): Command {
+  return ({ tr, dispatch }) => {
+    const { doc, selection } = tr;
+    const target = doc.type.schema.nodes[type];
+    if (!target || !(selection instanceof TextSelection)) return false;
+
+    const blocks: { pos: number; node: Node }[] = [];
+    let canConvert = true;
+    doc.nodesBetween(selection.from, selection.to, (node, pos, parent, index) => {
+      if (!node.isTextblock) return true;
+      if (RAW_TEXT_NODES.has(node.type.name) || !parent?.canReplaceWith(index, index + 1, target, node.marks)
+        || !target.validContent(node.content)) {
+        canConvert = false;
+        return false;
+      }
+
+      blocks.push({ pos, node });
+      return false;
+    });
+
+    if (!canConvert || blocks.length === 0) return false;
+    if (dispatch) {
+      for (const { pos, node } of blocks) {
+        // NodeType.create keeps the attributes declared by the target schema.
+        const markup = target.create({ ...node.attrs, ...attrs }, null, node.marks);
+        if (!node.sameMarkup(markup)) tr.setNodeMarkup(pos, target, markup.attrs);
+      }
+    }
+    return true;
+  };
+}
+
 const IDLE_STATE = {
-  blockType: "",
+  blockType: "", availableBlockTypes: [] as string[],
   groupActions: [] as string[], cells: false, inTable: false, inlineMath: false, highlight: false,
   highlightColor: undefined as ReturnType<typeof highlightColor> | undefined,
   bold: false, italic: false, underline: false, strike: false, code: false, link: false,
@@ -126,6 +159,7 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
       return {
         groupActions: (flashcards ? groupCardActions : []).filter(item => item.when?.(editor)).map(item => item.title),
         blockType: BLOCK_TYPES.find(({ type, attrs }) => editor.isActive(type, attrs))?.label ?? "",
+        availableBlockTypes: ["paragraph", "heading"].filter(type => editor.can().command(setSelectedBlockType(type))),
         cells: editor.state.selection instanceof CellSelection,
         inTable: editor.isActive("table"),
         inlineMath,
@@ -253,15 +287,13 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
         <DropdownMenuContent className="w-max" onMouseDown={event => event.preventDefault()}
           finalFocus={() => { editor.commands.focus(); return false; }}>
           <DropdownMenuRadioGroup value={active.blockType}>
-            {BLOCK_TYPES.map(({ label, type, attrs }) => (
-              <DropdownMenuRadioItem key={label} value={label} showIndicator={false} closeOnClick
-                disabled={label !== active.blockType && !editor.can().setNode(type, attrs)}
+            {BLOCK_TYPES.map(choice => (
+              <DropdownMenuRadioItem key={choice.label} value={choice.label} showIndicator={false} closeOnClick
+                disabled={!active.availableBlockTypes.includes(choice.type)}
                 onClick={() => {
-                  const chain = editor.chain().focus();
-                  if (label !== active.blockType) chain.setNode(type, attrs);
-                  chain.run();
+                  if (choice.label !== active.blockType) editor.commands.command(setSelectedBlockType(choice.type, choice.attrs));
                 }}>
-                {label}
+                {choice.label}
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
