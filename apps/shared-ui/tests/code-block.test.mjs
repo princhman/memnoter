@@ -92,7 +92,13 @@ test("the desktop note creates, indents, highlights, copies and reloads code blo
     assert.equal(await code.textContent(), source);
 
     await code.getByText('"Hello, world!"', { exact: true }).click();
+    // Wait for each caret move: after a reload the click and End can land late.
+    await page.waitForFunction(() => document.querySelector(".tiptap").editor.state.selection.$from.parent.type.name === "codeBlock");
     await page.keyboard.press("End");
+    await page.waitForFunction(() => {
+      const { $from, empty } = document.querySelector(".tiptap").editor.state.selection;
+      return empty && $from.parentOffset === $from.parent.textContent.length;
+    });
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");
     assert.equal(await code.textContent(), source);
