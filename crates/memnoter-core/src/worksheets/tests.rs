@@ -647,6 +647,72 @@ fn future_survivor_retains_assets_when_the_uploader_module_is_deleted() {
 }
 
 #[test]
+fn question_bank_index_keeps_questions_during_compaction() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+
+    let (dir, core, module) = core();
+    let value = fixture();
+    let expected: Bank = serde_json::from_value(value.clone()).unwrap();
+    assets(&core, &module, &expected);
+    let update_id = content::add_update(&core.db, module.clone(), bytes(&document(&value)))
+        .unwrap()
+        .id;
+    let writer = Core::open(&dir.0).unwrap();
+    let mut compaction = Some((writer, module.clone()));
+
+    // Run compaction before SQLite starts executing the statement that reads updates.
+    core.db
+        .lock()
+        .unwrap()
+        .authorizer(Some(move |context: AuthContext<'_>| {
+            if matches!(
+                context.action,
+                AuthAction::Read {
+                    table_name: "contents_updates",
+                    ..
+                }
+            ) {
+                if let Some((writer, module)) = compaction.take() {
+                    content::save_compaction(&writer.db, module, Vec::new(), update_id).unwrap();
+                }
+            }
+            Authorization::Allow
+        }))
+        .unwrap();
+
+    let index = bank::index(&core, module.clone()).unwrap();
+    let conn = core.db.lock().unwrap();
+    conn.authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        .unwrap();
+    let remaining: i64 = conn
+        .query_row(
+            "select count(*) from contents_updates where module_id=?1",
+            [&module],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "the second connection did not compact the update"
+    );
+    let index = serde_json::to_value(index).unwrap();
+    for (id, question) in expected
+        .questions
+        .iter()
+        .filter(|(_, question)| !question.deleted)
+    {
+        assert!(
+            index["questions"]
+                .as_array()
+                .is_some_and(|questions| questions.contains(
+                    &json!({"id": id, "title": question.title, "order": question.order})
+                )),
+            "question {id} disappeared during compaction: {index}"
+        );
+    }
+}
+
+#[test]
 fn question_bank_index_releases_database_before_replay() {
     let (_dir, core, module) = core();
     let core = std::rc::Rc::new(core);

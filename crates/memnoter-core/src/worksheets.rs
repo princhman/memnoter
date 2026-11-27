@@ -456,24 +456,27 @@ pub(crate) fn load_through(conn: &Connection, module: &str, update_id: i64) -> C
 }
 
 fn load_bytes(conn: &Connection, module: &str, update_id: i64) -> CommandResult<Vec<Vec<u8>>> {
-    let state = conn
-        .query_row(
-            "select coalesce(contents.state, X'') from modules
-             left join contents on contents.module_id = modules.id where modules.id=?1",
-            [module],
-            |r| r.get(0),
+    // A single statement keeps the base state and updates in the same snapshot.
+    let mut stmt = conn
+        .prepare(
+            "select null as update_id, coalesce(contents.state, X'') as bytes
+             from modules left join contents on contents.module_id = modules.id
+             where modules.id = ?1
+             union all
+             select id, bytes from contents_updates
+             where module_id = ?1 and id <= ?2
+               and exists (select 1 from modules where id = ?1)
+             order by update_id",
         )
         .map_err(db_err)?;
-    let mut stmt = conn
-        .prepare("select bytes from contents_updates where module_id=?1 and id<=?2 order by id")
+    let rows = stmt
+        .query_map(rusqlite::params![module, update_id], |row| row.get(1))
         .map_err(db_err)?;
-    let updates = stmt
-        .query_map(rusqlite::params![module, update_id], |r| r.get::<_, Vec<u8>>(0))
-        .map_err(db_err)?;
-    std::iter::once(Ok(state))
-        .chain(updates)
-        .collect::<rusqlite::Result<_>>()
-        .map_err(db_err)
+    let updates = rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)?;
+    if updates.is_empty() {
+        return Err(db_err(rusqlite::Error::QueryReturnedNoRows));
+    }
+    Ok(updates)
 }
 
 #[cfg(test)]
