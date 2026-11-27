@@ -102,6 +102,10 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
   });
   const labelsKey = questionLabels.join("\n");
   const currentIndex = Math.min(index, Math.max(0, questionCount - 1));
+  const describeQuestion = (questionId: string, position: number) => {
+    const title = bank.questions[questionId]?.title?.trim();
+    return title ? `Question ${position + 1}: ${title}` : `Question ${position + 1}`;
+  };
   const page = useRef<HTMLElement>(null);
   const questionScroll = useRef(new Map<number, number>());
   const pendingScroll = useRef<number | null>(null);
@@ -205,12 +209,12 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
       {answers.error && <IconTooltip label="Save failed. Retry"><Button size="icon-sm" variant="ghost" className="text-destructive" aria-label="Save failed. Retry" onClick={() => void answers.flush()}><AlertTriangle /></Button></IconTooltip>}
       {questionCount > 0 && <nav aria-label="Worksheet questions" className="flex items-center gap-0.5">
         <IconTooltip label="Previous question"><Button size="icon-xs" variant="ghost" aria-label="Previous question" disabled={currentIndex === 0} onClick={() => goToQuestion(currentIndex - 1)}><ChevronLeft /></Button></IconTooltip>
-        {questionCount <= 3 ? attempt.questions.map((question, number) => <Button key={`${question.revisionId}:${number}`} size="xs" className="min-w-6 px-1.5 tabular-nums" variant={number === currentIndex ? "default" : "ghost"} aria-label={`Question ${questionLabels[number]}`} aria-current={number === currentIndex ? "step" : undefined} onClick={() => goToQuestion(number)}>{questionLabels[number]}</Button>)
+        {questionCount <= 3 ? attempt.questions.map((question, number) => <Button key={`${question.revisionId}:${number}`} size="xs" className="min-w-6 px-1.5 tabular-nums" variant={number === currentIndex ? "default" : "ghost"} aria-label={describeQuestion(question.questionId, number)} aria-current={number === currentIndex ? "step" : undefined} onClick={() => goToQuestion(number)}>{number + 1}</Button>)
           : <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="xs" variant="ghost" className="gap-1 tabular-nums" aria-label="Choose question"><span className="font-semibold">{questionLabels[currentIndex]}</span><span className="text-muted-foreground">{currentIndex + 1}/{questionCount}</span><ChevronDown className="size-3" /></Button>} />
+            <DropdownMenuTrigger render={<Button size="xs" variant="ghost" className="gap-1 tabular-nums" aria-label={`Choose question, ${currentIndex + 1} of ${questionCount}`}>{currentIndex + 1}/{questionCount}<ChevronDown className="size-3" /></Button>} />
             <DropdownMenuContent align="end" className="max-h-80 min-w-36">
               <DropdownMenuRadioGroup value={String(currentIndex)} onValueChange={value => goToQuestion(Number(value))}>
-                {attempt.questions.map((question, number) => <DropdownMenuRadioItem key={`${question.revisionId}:${number}`} value={String(number)} showIndicator={false} closeOnClick>Question {questionLabels[number]}</DropdownMenuRadioItem>)}
+                {attempt.questions.map((question, number) => <DropdownMenuRadioItem key={`${question.revisionId}:${number}`} value={String(number)} showIndicator={false} closeOnClick>{describeQuestion(question.questionId, number)}</DropdownMenuRadioItem>)}
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>}

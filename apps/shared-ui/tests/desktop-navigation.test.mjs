@@ -153,7 +153,9 @@ test("the desktop header hides Review while a worksheet is open and restores it 
     await review.waitFor();
     await page.getByRole("button", { name: /Algebra practice/ }).click();
     await header.getByRole("button", { name: "Finish", exact: true }).waitFor();
-    await header.getByRole("navigation", { name: "Worksheet questions" }).waitFor();
+    const scroller = header.getByRole("navigation", { name: "Worksheet questions" });
+    const question = scroller.getByRole("button", { name: "Question 1: Linear equations", exact: true });
+    assert.equal(await question.innerText(), "1");
     await review.waitFor({ state: "hidden" });
     await header.getByRole("button", { name: "Back to questions" }).click();
     await review.waitFor();
