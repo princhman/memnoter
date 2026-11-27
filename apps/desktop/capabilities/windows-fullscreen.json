@@ -1,0 +1,6 @@
+{
+  "identifier": "windows-fullscreen",
+  "platforms": ["windows"],
+  "windows": ["main"],
+  "permissions": ["core:window:allow-set-fullscreen"]
+}

@@ -13,7 +13,9 @@ import {
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { appStore, setModulePage } from "@/lib/store";
-import { call as invoke } from "../lib/backend.ts";
+import { capabilities, call as invoke } from "../lib/backend.ts";
+import { IS_WINDOWS } from "@/lib/platform";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FileText, Search, SquareChevronRight } from "lucide-react";
 import { headingNumbers } from "@/lib/heading-numbering";
 import { headingTitleHtml } from "@/components/table-of-contents";
@@ -106,6 +108,34 @@ function useBuiltinCommands() {
     ...action("sidebar.toggle"),
     run: toggleSidebar,
   });
+
+  useEffect(() => {
+    if (!IS_WINDOWS || !capabilities.windowControls) return;
+    const entry = action("window.fullscreen");
+    const appWindow = getCurrentWindow();
+    let toggling = false;
+    const run = async () => {
+      if (toggling) return;
+      toggling = true;
+      try {
+        await appWindow.setFullscreen(!(await appWindow.isFullscreen()));
+      } finally {
+        toggling = false;
+      }
+    };
+    const unregister = registerCommand({ ...entry, keywords: ["fullscreen"], run });
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!matchesShortcut(event, entry.keys)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) void run().catch(error => console.error("Failed to toggle full screen", error));
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      unregister();
+    };
+  }, []);
 
   // Only offered while a note is open; the request would otherwise wait.
   useEffect(() => {
