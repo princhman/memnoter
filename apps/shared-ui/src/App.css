@@ -428,6 +428,78 @@ body {
     padding: 0;
 }
 
+.tiptap .note-code-block {
+    margin: 1.25rem 0;
+    border-radius: 0.75rem;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    --code-keyword: #7b267b;
+    --code-literal: #226140;
+    --code-number: #8d3a17;
+    --code-name: #1f558b;
+    --code-comment: #53636f;
+}
+
+.tiptap .note-code-block pre {
+    margin: 0;
+    background: transparent;
+    padding-top: 0.25rem;
+}
+
+.note-code-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    padding: 0.375rem 0.5rem 0.125rem;
+    font-size: 0.75rem;
+}
+
+.note-code-toolbar :is(select, button) {
+    height: 1.5rem;
+    padding: 0 0.375rem;
+    border-radius: 0.25rem;
+    color: var(--muted-foreground);
+    cursor: pointer;
+}
+
+.note-code-toolbar select {
+    min-width: 0;
+    max-width: 65%;
+}
+
+.note-code-toolbar button {
+    width: 4.75rem;
+}
+
+.note-code-toolbar :is(select, button):hover {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+.note-code-toolbar :is(select, button):focus-visible {
+    outline: 2px solid var(--ring);
+}
+
+.note-code-toolbar select:disabled {
+    cursor: default;
+}
+
+.dark .tiptap .note-code-block {
+    background: oklch(0.25 0 0);
+    --code-keyword: #e5a1e7;
+    --code-literal: #9ed4a9;
+    --code-number: #edb294;
+    --code-name: #9cc9f5;
+    --code-comment: #a6b3be;
+}
+
+.note-code-block :is(.hljs-keyword, .hljs-selector-tag, .hljs-meta) { color: var(--code-keyword); }
+.note-code-block :is(.hljs-string, .hljs-regexp, .hljs-selector-attr) { color: var(--code-literal); }
+.note-code-block :is(.hljs-number, .hljs-literal, .hljs-symbol) { color: var(--code-number); }
+.note-code-block :is(.hljs-title, .hljs-built_in, .hljs-type, .hljs-name, .hljs-attr) { color: var(--code-name); }
+.note-code-block :is(.hljs-comment, .hljs-quote) { color: var(--code-comment); }
+
 /* Quote block */
 .tiptap blockquote {
     /* Keep wrapped images inside the quote and its bar. Text after the quote

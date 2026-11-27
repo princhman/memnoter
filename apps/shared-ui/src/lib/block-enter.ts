@@ -3,6 +3,8 @@ import { canSplit } from "@tiptap/pm/transform";
 import { keydownHandler } from "@tiptap/pm/keymap";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 
+export const codeFence = /^```(?:[ \t]*([a-zA-Z][\w+.-]*))?[ \n]$/;
+
 const blocks = new Set(["codeBlock", "mathBlock", "blockquote", "details", "bulletList", "orderedList"]);
 
 export const BlockEnter = Extension.create({
@@ -126,6 +128,15 @@ export const BlockEnter = Extension.create({
                 "active" in suggestion && suggestion.active === true &&
                 "decorationId" in suggestion && typeof suggestion.decorationId === "string" &&
                 plugin.props.handleKeyDown?.call(plugin, view, event)) return true;
+            }
+            const { selection, plugins } = view.state;
+            const { $head } = selection;
+            if (selection.empty && $head.parent.type.name === "paragraph" &&
+                $head.parentOffset === $head.parent.content.size &&
+                codeFence.test($head.parent.textContent + "\n")) {
+              // Nested blocks own Enter before TipTap's input rules.
+              if (plugins.some(plugin => plugin.spec.isInputRules &&
+                  plugin.props.handleKeyDown?.call(plugin, view, event))) return true;
             }
           }
           return handleKeyDown(view, event);
