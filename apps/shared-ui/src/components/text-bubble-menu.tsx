@@ -27,7 +27,7 @@ import {
   Underline,
 } from "lucide-react";
 import { HIGHLIGHT_COLORS, highlightColor } from "@/lib/highlight";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
 
@@ -35,7 +35,15 @@ import { isLinkEditorOpen, TEXT_BUBBLE_MENU_KEY } from "@/lib/link-editor";
 // math has its own actions on its preview.
 const RAW_TEXT_NODES = new Set(["codeBlock", "mathBlock", "inlineMath"]);
 
+const BLOCK_TYPES = [
+  { label: "Text", type: "paragraph", attrs: {} },
+  ...[1, 2, 3, 4, 5, 6].map(level => ({
+    label: `Heading ${level}`, type: "heading", attrs: { level },
+  })),
+];
+
 const IDLE_STATE = {
+  blockType: "",
   groupActions: [] as string[], cells: false, inTable: false, inlineMath: false, highlight: false,
   highlightColor: undefined as ReturnType<typeof highlightColor> | undefined,
   bold: false, italic: false, underline: false, strike: false, code: false, link: false,
@@ -45,6 +53,21 @@ const IDLE_STATE = {
 export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor | null; flashcards?: boolean }) {
   const pickerOpen = useRef(false);
   const menu = useRef<HTMLDivElement>(null);
+  const blockTypeTrigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const focusToolbar = (event: KeyboardEvent) => {
+      const trigger = blockTypeTrigger.current;
+      // Tab is reserved for indentation inside the editor.
+      if (event.altKey && event.key === "F10" && trigger?.checkVisibility({ visibilityProperty: true })) {
+        event.preventDefault();
+        trigger.focus({ preventScroll: true });
+      }
+    };
+    dom.addEventListener("keydown", focusToolbar);
+    return () => dom.removeEventListener("keydown", focusToolbar);
+  }, [editor]);
   const [menuContainer] = useState(() => document.createElement("div"));
   useEffect(() => {
     // TipTap uses the menu parent's containment to decide whether focus left it.
@@ -102,6 +125,7 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
       });
       return {
         groupActions: (flashcards ? groupCardActions : []).filter(item => item.when?.(editor)).map(item => item.title),
+        blockType: BLOCK_TYPES.find(({ type, attrs }) => editor.isActive(type, attrs))?.label ?? "",
         cells: editor.state.selection instanceof CellSelection,
         inTable: editor.isActive("table"),
         inlineMath,
@@ -214,122 +238,154 @@ export function TextBubbleMenu({ editor, flashcards = true }: { editor: Editor |
         }
         return true;
       }}
-      className={`${surfaceClass} z-40 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-0.5 p-1`}
+      className={`${surfaceClass} z-40 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-x-2 gap-y-0.5 p-1`}
       // Keep the editor selection while clicking menu buttons.
       onMouseDown={(event) => event.preventDefault()}
     >
       {active.cells ? <TableBubbleActions editor={editor} /> : active.inMathBlock ? clozeButton : <>
-      <MarkButton
-        label="Bold"
-        hint={formatKeys(action("text.bold").keys)}
-        pressed={active.bold}
-        onToggle={() => editor.chain().focus().toggleBold().run()}
-      >
-        <Bold />
-      </MarkButton>
-      <MarkButton
-        label="Italic"
-        hint={formatKeys(action("text.italic").keys)}
-        pressed={active.italic}
-        onToggle={() => editor.chain().focus().toggleItalic().run()}
-      >
-        <Italic />
-      </MarkButton>
-      <MarkButton
-        label="Underline"
-        hint={formatKeys(action("text.underline").keys)}
-        pressed={active.underline}
-        onToggle={() => editor.chain().focus().toggleUnderline().run()}
-      >
-        <Underline />
-      </MarkButton>
-      <MarkButton
-        label="Strikethrough"
-        hint={formatKeys(action("text.strike").keys)}
-        pressed={active.strike}
-        onToggle={() => editor.chain().focus().toggleStrike().run()}
-      >
-        <Strikethrough />
-      </MarkButton>
-      <MarkButton
-        label="Inline code"
-        hint={formatKeys(action("text.code").keys)}
-        pressed={active.code}
-        onToggle={() => editor.chain().focus().toggleCode().run()}
-      >
-        <Code />
-      </MarkButton>
-      <div className="flex items-center">
+      <DropdownMenu onOpenChange={open => { pickerOpen.current = open; }}>
+        <DropdownMenuTrigger render={<Button size="sm" variant="ghost" className="w-[5.75rem] justify-between" />}
+          ref={blockTypeTrigger} aria-keyshortcuts="Alt+F10" title="Block type (Alt+F10)"
+          aria-label={`Block type: ${active.blockType || "Mixed"}`}>
+          {active.blockType || "Mixed"}
+          <ChevronDown />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-max" onMouseDown={event => event.preventDefault()}
+          finalFocus={() => { editor.commands.focus(); return false; }}>
+          <DropdownMenuRadioGroup value={active.blockType}>
+            {BLOCK_TYPES.map(({ label, type, attrs }) => (
+              <DropdownMenuRadioItem key={label} value={label} showIndicator={false} closeOnClick
+                disabled={label !== active.blockType && !editor.can().setNode(type, attrs)}
+                onClick={() => {
+                  const chain = editor.chain().focus();
+                  if (label !== active.blockType) chain.setNode(type, attrs);
+                  chain.run();
+                }}>
+                {label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <div role="group" aria-label="Text style" className="flex items-center gap-0.5">
         <MarkButton
-          label="Highlight"
-          hint={formatKeys(action("text.highlight").keys)}
-          pressed={active.highlight}
-          onToggle={() => editor.chain().focus().toggleHighlight().run()}
+          label="Bold"
+          hint={formatKeys(action("text.bold").keys)}
+          pressed={active.bold}
+          onToggle={() => editor.chain().focus().toggleBold().run()}
         >
-          <Highlighter />
+          <Bold />
         </MarkButton>
-        <DropdownMenu onOpenChange={open => { pickerOpen.current = open; }}>
-          <DropdownMenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Highlight colours" />}>
-            <ChevronDown />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-40" onMouseDown={event => event.preventDefault()}
-            finalFocus={() => { editor.commands.focus(); return false; }}>
-            {HIGHLIGHT_COLORS.map(color => <DropdownMenuItem key={color}
-              onClick={() => editor.chain().focus().setHighlight({ color }).run()}>
-              <span className="note-highlight size-4 rounded-sm" data-color={color} />
-              {color[0].toUpperCase() + color.slice(1)}{active.highlight && active.highlightColor === color ? " ✓" : ""}
-            </DropdownMenuItem>)}
-            <DropdownMenuItem onClick={() => editor.chain().focus().unsetHighlight().run()}>Remove highlight</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <MarkButton
+          label="Italic"
+          hint={formatKeys(action("text.italic").keys)}
+          pressed={active.italic}
+          onToggle={() => editor.chain().focus().toggleItalic().run()}
+        >
+          <Italic />
+        </MarkButton>
+        <MarkButton
+          label="Underline"
+          hint={formatKeys(action("text.underline").keys)}
+          pressed={active.underline}
+          onToggle={() => editor.chain().focus().toggleUnderline().run()}
+        >
+          <Underline />
+        </MarkButton>
+        <MarkButton
+          label="Strikethrough"
+          hint={formatKeys(action("text.strike").keys)}
+          pressed={active.strike}
+          onToggle={() => editor.chain().focus().toggleStrike().run()}
+        >
+          <Strikethrough />
+        </MarkButton>
       </div>
-      <MarkButton
-        label="Link"
-        hint={formatKeys(action("link.edit").keys)}
-        pressed={active.link}
-        onToggle={() => editor.commands.openLinkEditor()}
-      >
-        <Link />
-      </MarkButton>
-      <MarkButton
-        label="Inline math"
-        hint={formatKeys(action("math.inline").keys)}
-        pressed={active.inlineMath}
-        onToggle={() => editor.chain().focus().toggleInlineMath().run()}
-      >
-        <Radical />
-      </MarkButton>
-      <MarkButton
-        label="Math block"
-        hint={formatKeys(action("math.block").keys)}
-        pressed={false}
-        disabled={!active.canMathBlock}
-        onToggle={() => editor.chain().focus().toggleMathBlock().run()}
-      >
-        <Sigma />
-      </MarkButton>
-      {flashcards && clozeButton}
-      {groupCardActions.filter(item => active.groupActions.includes(item.title)).map(item => <button key={item.title} type="button" className="rounded-md px-2 py-1 text-xs hover:bg-accent" title={item.hint} onClick={() => item.run(editor, editor.state.selection, { insertImages: () => {} })}>{item.title}</button>)}
-      {flashcards && active.canJoinClozes && (
+      <div role="group" aria-label="Code and math" className="flex items-center gap-0.5">
         <MarkButton
-          label="Join clozes"
-          hint="Hide selected answers together on one card"
-          pressed={false}
-          onToggle={() => editor.chain().focus().joinClozes().run()}
+          label="Inline code"
+          hint={formatKeys(action("text.code").keys)}
+          pressed={active.code}
+          onToggle={() => editor.chain().focus().toggleCode().run()}
         >
-          <Combine />
+          <Code />
         </MarkButton>
-      )}
-      {flashcards && active.canMakeClozeNote && (
         <MarkButton
-          label="Make one note"
-          hint="Show these blocks together on each of their cloze cards"
-          pressed={false}
-          onToggle={() => editor.chain().focus().makeClozeNote().run()}
+          label="Inline math"
+          hint={formatKeys(action("math.inline").keys)}
+          pressed={active.inlineMath}
+          onToggle={() => editor.chain().focus().toggleInlineMath().run()}
         >
-          <Group />
+          <Radical />
         </MarkButton>
-      )}
+        <MarkButton
+          label="Math block"
+          hint={formatKeys(action("math.block").keys)}
+          pressed={false}
+          disabled={!active.canMathBlock}
+          onToggle={() => editor.chain().focus().toggleMathBlock().run()}
+        >
+          <Sigma />
+        </MarkButton>
+      </div>
+      <div role="group" aria-label="Highlight and link" className="flex items-center gap-0.5">
+        <div className="flex items-center">
+          <MarkButton
+            label="Highlight"
+            hint={formatKeys(action("text.highlight").keys)}
+            pressed={active.highlight}
+            onToggle={() => editor.chain().focus().toggleHighlight().run()}
+          >
+            <Highlighter />
+          </MarkButton>
+          <DropdownMenu onOpenChange={open => { pickerOpen.current = open; }}>
+            <DropdownMenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Highlight colours" />}>
+              <ChevronDown />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-40" onMouseDown={event => event.preventDefault()}
+              finalFocus={() => { editor.commands.focus(); return false; }}>
+              {HIGHLIGHT_COLORS.map(color => <DropdownMenuItem key={color}
+                onClick={() => editor.chain().focus().setHighlight({ color }).run()}>
+                <span className="note-highlight size-4 rounded-sm" data-color={color} />
+                {color[0].toUpperCase() + color.slice(1)}{active.highlight && active.highlightColor === color ? " ✓" : ""}
+              </DropdownMenuItem>)}
+              <DropdownMenuItem onClick={() => editor.chain().focus().unsetHighlight().run()}>Remove highlight</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        <MarkButton
+          label="Link"
+          hint={formatKeys(action("link.edit").keys)}
+          pressed={active.link}
+          onToggle={() => editor.commands.openLinkEditor()}
+        >
+          <Link />
+        </MarkButton>
+      </div>
+      {flashcards && <div role="group" aria-label="Flashcards" className="flex items-center gap-0.5">
+        {clozeButton}
+        {groupCardActions.filter(item => active.groupActions.includes(item.title)).map(item => <button key={item.title} type="button" className="rounded-md px-2 py-1 text-xs hover:bg-accent" title={item.hint} onClick={() => item.run(editor, editor.state.selection, { insertImages: () => {} })}>{item.title}</button>)}
+        {flashcards && active.canJoinClozes && (
+          <MarkButton
+            label="Join clozes"
+            hint="Hide selected answers together on one card"
+            pressed={false}
+            onToggle={() => editor.chain().focus().joinClozes().run()}
+          >
+            <Combine />
+          </MarkButton>
+        )}
+        {flashcards && active.canMakeClozeNote && (
+          <MarkButton
+            label="Make one note"
+            hint="Show these blocks together on each of their cloze cards"
+            pressed={false}
+            onToggle={() => editor.chain().focus().makeClozeNote().run()}
+          >
+            <Group />
+          </MarkButton>
+        )}
+      </div>}
       {active.inTable && <TableBubbleActions editor={editor} />}
       </>}
     </BubbleMenu>
