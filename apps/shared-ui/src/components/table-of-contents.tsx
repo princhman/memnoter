@@ -43,19 +43,23 @@ export function headingTitleHtml(node: PMNode) {
   const parts: string[] = [];
   node.forEach((child) => {
     if (child.type.name === "inlineMath") {
-      parts.push(
-        katex.renderToString(groupMathScripts(child.textContent.replace(/\u200b/g, "")), {
-          throwOnError: false,
-          displayMode: false,
-        }),
-      );
+      const source = child.textContent.replace(/\u200b/g, "");
+      try {
+        parts.push(katex.renderToString(groupMathScripts(source), { throwOnError: false, displayMode: false }));
+      } catch {
+        // KaTeX still throws on some input, e.g. very deep nesting.
+        parts.push(escapeText(source));
+      }
     } else if (child.isText) {
-      const span = document.createElement("span");
-      span.textContent = child.text ?? "";
-      parts.push(span.innerHTML);
+      parts.push(escapeText(child.text ?? ""));
     }
   });
   return parts.join("");
+}
+function escapeText(text: string) {
+  const span = document.createElement("span");
+  span.textContent = text;
+  return span.innerHTML;
 }
 export function HeadingTitle({ node }: { node: PMNode }) {
   const html = useMemo(() => headingTitleHtml(node), [node]);

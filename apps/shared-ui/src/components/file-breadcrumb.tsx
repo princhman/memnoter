@@ -39,7 +39,7 @@ const TOOLBAR_OFFSET = "w-[calc(var(--toolbar-width,10.75rem)+0.75rem)]";
 
 function SectionTitle({ title, node }: { title: string; node: PMNode | null }) {
   if (node?.children.some(child => child.type.name === "inlineMath")) {
-    return <span className="block truncate"><HeadingTitle node={node} /></span>;
+    return <span className="block truncate" title={title}><HeadingTitle node={node} /></span>;
   }
   return <MiddleTruncate text={title} />;
 }
