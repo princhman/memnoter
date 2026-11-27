@@ -439,6 +439,8 @@ test("Chromium: dragging selected text inside a focused section does not throw",
     const target = await paragraph.boundingBox();
     await page.mouse.move(source.x, source.y);
     await page.mouse.down();
+    // macOS distinguishes a click from a drag of selected text with a short hold.
+    if (process.platform === "darwin") await page.waitForTimeout(200);
     await page.mouse.move(target.x + 25, target.y + target.height / 2, { steps: 18 });
     await page.mouse.up();
     assert.equal(await editor.getAttribute("data-trusted-drag"), "true");
