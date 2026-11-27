@@ -44,6 +44,7 @@ import {
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
+import { SyncNowButton } from "./sync-now-button";
 import { BetaBadge } from "./beta-notice";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
@@ -238,6 +239,7 @@ const AppSidebar = () => {
       <SidebarFooter>
         <UpdateStatus>
           <BetaBadge />
+          {isTauri() && <SyncNowButton />}
           <IconTooltip label="Settings" hint={formatKeys(action("settings.open").keys)} side="top">
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
           </IconTooltip>

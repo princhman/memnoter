@@ -317,6 +317,22 @@ export function retrySync() {
   return serially(loadAndRun);
 }
 
+export function syncNow() {
+  return serially(async () => {
+    if (!syncStatusStore.state.account) return;
+    if (!await saveQueue.flush()) {
+      syncStatusStore.setState((state) => ({ ...state, error: "Could not save pending edits. Try syncing again." }));
+      return;
+    }
+    if (!engine) {
+      await loadAndRun();
+      return;
+    }
+    engine.syncNow();
+    fileSync?.kick();
+  });
+}
+
 // Serialize the entire restore with account transitions. Stop producers before
 // exclusiveWrite suspends saves, then drain already-started work before swapping.
 export function restoreBackup(id: string) {

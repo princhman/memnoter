@@ -128,6 +128,11 @@ export function createSyncEngine({
     onStatus?.(status);
   }
 
+  async function hello() {
+    const cursor = await store.cursor();
+    send({ t: "hello", cursor, v: PROTOCOL_VERSION });
+  }
+
   function open() {
     if (!running) return;
     setStatus({ state: "connecting" });
@@ -140,10 +145,7 @@ export function createSyncEngine({
       if (socket !== current) return;
       attempts = 0;
       setStatus({ state: "syncing", error: null });
-      enqueue(async () => {
-        const cursor = await store.cursor();
-        send({ t: "hello", cursor, v: PROTOCOL_VERSION });
-      });
+      enqueue(hello);
       startPing(current);
     };
     current.onmessage = (data) => {
@@ -179,7 +181,7 @@ export function createSyncEngine({
         setStatus({ state: "error", error: reason || "The sync server refused this device" });
         return;
       }
-      setStatus({ state: "offline" });
+      setStatus({ state: "offline", error: reason || "Could not connect to sync." });
       scheduleReconnect();
     };
   }
@@ -219,9 +221,7 @@ export function createSyncEngine({
         const cursor = await store.cursor();
         if (message.head > cursor) await store.setCursor(message.head);
         ready = true;
-        setStatus({ state: "synced", lastSyncedAt: now() });
-        schedulePush(0);
-        return;
+        return push();
       }
       case "ack": {
         if (!inflight || inflight.id !== message.id) return;
@@ -232,9 +232,7 @@ export function createSyncEngine({
         const cursor = await store.cursor();
         if (message.seq > cursor) await store.setCursor(message.seq);
         inflight = null;
-        setStatus({ state: "synced", lastSyncedAt: now() });
-        schedulePush(0);
-        return;
+        return push();
       }
       case "compact-hint":
         return compact(message.doc, message.upTo);
@@ -266,7 +264,7 @@ export function createSyncEngine({
     const cursor = Math.max(await store.cursor(), ...entries.map((entry) => entry.seq));
     await store.applyRemote(entries, cursor);
     onApplied?.(new Set(entries.map((entry) => entry.doc)));
-    if (ready) setStatus({ state: "synced", lastSyncedAt: now() });
+    if (ready && status.state === "synced") setStatus({ lastSyncedAt: now() });
   }
 
   async function compact(doc: string, upTo: number) {
@@ -306,7 +304,10 @@ export function createSyncEngine({
   async function push() {
     if (!ready || inflight || !socket) return;
     const outbox = await store.outbox(PUSH_BATCH_BYTES);
-    if (outbox.length === 0) return;
+    if (outbox.length === 0) {
+      if (status.state === "syncing") setStatus({ state: "synced", error: null, lastSyncedAt: now() });
+      return;
+    }
 
     // One blob per document, in the order documents first appear, so a new
     // module's vault entry still precedes its content. A deleted document
@@ -404,6 +405,24 @@ export function createSyncEngine({
     // Local changes were written to the outbox.
     nudge() {
       schedulePush();
+    },
+    syncNow() {
+      if (!running) {
+        this.start();
+        return;
+      }
+      if (!socket) {
+        this.reconnectNow();
+        return;
+      }
+      if (!ready || status.state === "syncing") return;
+      setStatus({ state: "syncing", error: null });
+      enqueue(async () => {
+        // The live socket accepts another hello to catch up from disk.
+        if (inflight) return;
+        ready = false;
+        await hello();
+      });
     },
     // The network came back or the app returned to the foreground.
     reconnectNow() {
