@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chromium } from "playwright";
+import * as Y from "yjs";
 import { browserHarness, installTestBridge } from "./support/browser.mjs";
 
 const { createServer, webkit } = browserHarness(import.meta.url);
@@ -117,6 +118,50 @@ test("long breadcrumbs remain within the desktop header", async () => {
     }
   } finally {
     await browser?.close();
+    await server.close();
+  }
+});
+
+test("a focused heading renders inline math in the desktop breadcrumb", async () => {
+  const doc = new Y.Doc();
+  const heading = new Y.XmlElement("heading");
+  heading.setAttribute("level", 1);
+  heading.setAttribute("id", "ratios");
+  heading.setAttribute("data-toc-id", "ratios");
+  const formula = new Y.XmlElement("inlineMath");
+  const tex = new Y.XmlText();
+  tex.insert(0, String.raw`\frac{a}{b}`);
+  formula.insert(0, [tex]);
+  const prefix = new Y.XmlText();
+  prefix.insert(0, "Ratios ");
+  heading.insert(0, [prefix, formula]);
+  doc.getXmlFragment("default").insert(0, [heading, new Y.XmlElement("paragraph")]);
+  const state = Array.from(Y.encodeStateAsUpdate(doc));
+  doc.destroy();
+  const server = await createServer({ server: { port: 0 }, logLevel: "error" });
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 1100, height: 720 } });
+    page.setDefaultTimeout(8000);
+    await page.addInitScript(state => {
+      Object.defineProperty(navigator, "platform", { value: "MacIntel" });
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
+        if (command.startsWith("plugin:")) return 1;
+        if (command === "modules") return [{ id: "m1", name: "Algebra" }];
+        if (command === "get_content") return { state, updates: [], files: [] };
+        if (command === "add_update") return { id: 1, bytes: args.bytes };
+        return [];
+      } } });
+    }, state);
+    await page.goto(`http://localhost:${server.httpServer.address().port}/m1`);
+    await page.locator(".tiptap > h1").hover();
+    await page.getByRole("toolbar", { name: "Heading controls" }).getByRole("button", { name: "Focus on this section" }).click();
+    await page.locator(".tiptap > h1.section-focus-start").waitFor();
+    const breadcrumb = page.locator("header [data-slot=breadcrumb-page]").filter({ hasText: "Ratios" });
+    await breadcrumb.waitFor();
+    await breadcrumb.locator(".katex .mfrac").waitFor();
+  } finally {
     await server.close();
   }
 });

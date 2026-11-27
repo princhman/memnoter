@@ -57,7 +57,7 @@ export function headingTitleHtml(node: PMNode) {
   });
   return parts.join("");
 }
-function HeadingTitle({ node }: { node: PMNode }) {
+export function HeadingTitle({ node }: { node: PMNode }) {
   const html = useMemo(() => headingTitleHtml(node), [node]);
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
