@@ -7,6 +7,7 @@ import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/components/card-navigation-guard";
+import { useLocalBackup } from "@/lib/local-backup";
 import { bootstrapNotes } from "@/lib/bootstrap";
 import { createRootRoute, Outlet, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { startSync } from "@/lib/sync/manager";
@@ -39,6 +40,7 @@ import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/
 
 const RootLayout = () => {
   useSectionNavigationShortcuts();
+  useLocalBackup();
   const isFullscreen = useIsFullscreen();
   const path = useRouterState({ select: state => state.location.pathname });
   const isPdfReader = /^\/files\/[^/]+/.test(path);

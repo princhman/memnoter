@@ -3,6 +3,8 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import AboutSection from "@/components/settings/about-section";
+import { capabilities } from "@/lib/backend";
+import LocalBackupSection from "@/components/settings/local-backup-section";
 import BackupsSection from "@/components/settings/backups-section";
 import NumberingSection from "@/components/settings/numbering-section";
 import OutlineSection from "@/components/settings/outline-section";
@@ -35,6 +37,7 @@ function Settings() {
       <NumberingSection />
       <OutlineSection />
       <SpellingSection />
+      {capabilities.localBackup && <LocalBackupSection />}
       <BackupsSection />
       <AboutSection />
     </div>

@@ -1,0 +1,64 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { jsonToMarkdown } from "../src/lib/markdown-export.ts";
+import { markdownToJSON } from "../src/lib/markdown-paste.ts";
+
+const text = value => ({ type: "text", text: value });
+const paragraph = (...content) => ({ type: "paragraph", content });
+
+test("exports notes as Obsidian Markdown with Memnoter card syntax", () => {
+  const doc = {
+    type: "doc",
+    content: [
+      { type: "heading", attrs: { level: 2 }, content: [text("Motion")] },
+      paragraph(text("Distance :: "), { type: "inlineMath", content: [text("vt")] }),
+      paragraph(text("Acceleration ::: Change in velocity")),
+      paragraph(text("Units are {{meters per second}}.")),
+      { type: "mathBlock", content: [text(String.raw`a = \frac{v}{t}`)] },
+      paragraph(text("What is required? ::list")),
+      { type: "bulletList", content: [{ type: "listItem", content: [
+        paragraph(text("Distance")),
+        { type: "orderedList", attrs: { start: 2 }, content: [
+          { type: "listItem", content: [paragraph(text("Time"))] },
+        ] },
+      ] }] },
+      paragraph(text("::end")),
+      { type: "image", attrs: { fileId: "image-id", alt: "Motion [graph]" } },
+    ],
+  };
+  const makeImage = id => {
+    assert.equal(id, "image-id");
+    return "attachments/Motion (graph).png";
+  };
+  const markdown = jsonToMarkdown(doc, makeImage);
+  assert.equal(markdown, String.raw`## Motion
+
+Distance :: $vt$
+
+Acceleration ::: Change in velocity
+
+Units are {{meters per second}}.
+
+$$
+a = \frac{v}{t}
+$$
+
+What is required? ::list
+
+- Distance
+
+  2. Time
+
+::end
+
+![Motion \[graph\]](attachments/Motion%20%28graph%29.png)`);
+  const imported = markdownToJSON(markdown, (path, alt) => {
+    assert.equal(decodeURIComponent(path), makeImage("image-id"));
+    assert.ok(alt.startsWith("Motion"));
+    return { type: "image", attrs: { fileId: "image-id" } };
+  });
+  assert.deepEqual(imported.content[1], doc.content[1]);
+  assert.deepEqual(imported.content[3], doc.content[3]);
+  assert.deepEqual(imported.content[4], doc.content[4]);
+  assert.equal(imported.content.at(-1).attrs.fileId, "image-id");
+});

@@ -8,6 +8,7 @@ pub mod anki;
 mod asset_refs;
 pub mod worksheets;
 pub mod backups;
+pub mod markdown_backup;
 mod card_moves;
 mod cards;
 pub mod sidebar;
