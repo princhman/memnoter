@@ -19,7 +19,7 @@ export function updatePdfPane(moduleId: string, patch: Partial<PdfPaneState>) {
 export const pdfPageRequest = createStore<{ id: string; page: number; serial: number } | null>(null);
 export function requestPdfPage(id: string, page: number) { pdfPageRequest.setState(old => ({ id, page, serial: (old?.serial ?? 0) + 1 })); }
 export function openPdfPane(moduleId: string, active: string) { updatePdfPane(moduleId, { open: true, active }); }
-// A worksheet takes the whole page: its module's PDF pane stays closed and can't be opened.
+// Track open attempts independently of whether their surface is visible.
 const worksheetModules = createStore<readonly string[]>([]);
 export function setWorksheetOpen(moduleId: string, open: boolean) {
   worksheetModules.setState(list => open ? (list.includes(moduleId) ? list : [...list, moduleId]) : list.filter(id => id !== moduleId));
@@ -29,8 +29,8 @@ export function useAnyWorksheetOpen() { return useSelector(worksheetModules, lis
 export const WORKSHEET_CRUMB_SLOT = "worksheet-crumb-slot";
 export const WORKSHEET_ACTIONS_SLOT = "worksheet-actions-slot";
 export function useWorksheetOpen(moduleId: string) { return useSelector(worksheetModules, list => list.includes(moduleId)); }
-export function usePdfPane(moduleId: string) {
+export function usePdfPane(moduleId: string, { worksheetSurfaceVisible = true } = {}) {
   const pane = useSelector(paneStore(moduleId), state => state);
   const worksheet = useWorksheetOpen(moduleId);
-  return worksheet && pane.open ? { ...pane, open: false } : pane;
+  return worksheetSurfaceVisible && worksheet && pane.open ? { ...pane, open: false } : pane;
 }
