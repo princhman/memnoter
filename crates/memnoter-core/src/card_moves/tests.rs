@@ -1065,8 +1065,7 @@ fn upgrading_reads_the_moves_an_older_app_stored() {
         conn.execute_batch("drop trigger card_stale_on_update; drop table card_moves; drop table card_move_ends; drop table card_stale_modules;").unwrap();
         conn.execute("insert into cards (id, module_id, kind, front, back, due_at, created_at, updated_at) values ('new', 'm2', 'cloze', '1', '1', 0, 0, 0)", []).unwrap();
         conn.execute("update cards set deleted_at = 1 where id = 'old'", []).unwrap();
-        let version: i64 = conn.query_row("pragma user_version", [], |r| r.get(0)).unwrap();
-        conn.pragma_update(None, "user_version", version - 1).unwrap();
+        conn.pragma_update(None, "user_version", 8).unwrap();
         crate::db::migrate(&conn).unwrap();
     }
     assert_eq!((b.reps("new"), b.logs("new").len()), (2, 2));
@@ -1163,8 +1162,7 @@ fn upgrading_does_not_renew_a_card_before_its_notes_are_indexed() {
     b.notes["m1"].get_or_insert_map("removed").insert(&mut b.notes["m1"].transact_mut(), "old", "");
     {
         let conn = b.db.lock().unwrap();
-        let version: i64 = conn.query_row("pragma user_version", [], |r| r.get(0)).unwrap();
-        conn.pragma_update(None, "user_version", version - 1).unwrap();
+        conn.pragma_update(None, "user_version", 8).unwrap();
         crate::db::migrate(&conn).unwrap();
     }
     b.index("m1");

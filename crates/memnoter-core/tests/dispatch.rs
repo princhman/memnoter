@@ -712,3 +712,207 @@ fn document_commands_keep_typed_frontend_payloads_and_local_availability() {
     assert_eq!(f.call("delete_document", json!({"id":id})), Value::Null);
     assert_eq!(f.call("list_documents", json!({})), json!([]));
 }
+
+fn transfer_vault(sender: &Fixture, receiver: &Fixture, seq: i32) {
+    let sender_gen = sender.call("sync_status", json!({}))["generation"].clone();
+    let receiver_gen = receiver.call("sync_status", json!({}))["generation"].clone();
+    let vault = sender.call("sync_snapshot", json!({"doc":"vault","generation":sender_gen}));
+    receiver.call("sync_apply", json!({
+        "entries":[{"doc":"vault","bytes":vault,"seq":seq}],
+        "cursor":seq,"generation":receiver_gen
+    }));
+}
+
+#[test]
+fn file_order_survives_restart_and_syncs_in_both_directions() {
+    let source = Fixture::new();
+    let target = Fixture::new();
+    let module = source.call("create_module", json!({"name":"Algebra"}));
+    let other = source.call("create_module", json!({"name":"Geometry"}));
+    let add = |module: &Value, name: &str| {
+        source.call("add_document_bytes", json!({
+            "moduleId":module, "name":name, "bytes":b"%PDF-"
+        }))["id"].clone()
+    };
+    let first = add(&module, "First.pdf");
+    let second = add(&other, "Second.pdf");
+    let third = add(&module, "Third.pdf");
+    let move_file = |fixture: &Fixture, id: &Value, target_id: &Value, after: bool| {
+        fixture.call("move_document", json!({"id":id,"targetId":target_id,"after":after}));
+    };
+    let ids = |documents: Value| -> Vec<Value> {
+        documents.as_array().unwrap().iter().map(|doc| doc["id"].clone()).collect()
+    };
+    move_file(&source, &third, &first, false);
+    let reopened = Core::open(&source.dir).unwrap();
+    let list = |fixture: &Fixture| ids(fixture.call("list_documents", json!({})));
+    assert_eq!(
+        ids(serde_json::from_str(&dispatch(&reopened, "list_documents", "{}").unwrap()).unwrap()),
+        [&third, &first, &second].map(Clone::clone)
+    );
+    drop(reopened);
+
+    source.call("sync_enable", json!({"account":"{}"}));
+    target.call("sync_enable", json!({"account":"{}"}));
+    let generation = source.call("sync_status", json!({}))["generation"].clone();
+    source.call("sync_outbox", json!({"limitBytes":1048576,"generation":generation}));
+    transfer_vault(&source, &target, 1);
+    assert_eq!(list(&target), [&third, &first, &second].map(Clone::clone));
+    assert_eq!(
+        ids(target.call("list_documents", json!({"moduleId":module}))),
+        [&third, &first].map(Clone::clone)
+    );
+
+    move_file(&target, &first, &second, true);
+    transfer_vault(&target, &source, 2);
+    assert_eq!(list(&source), [&third, &second, &first].map(Clone::clone));
+    let new = add(&module, "New.pdf");
+    source.call("delete_document", json!({"id":third}));
+    transfer_vault(&source, &target, 3);
+    assert_eq!(list(&target), [&second, &first, &new].map(Clone::clone));
+}
+
+#[test]
+fn enabling_sync_keeps_the_vaults_newer_file_order() {
+    use yrs::{updates::decoder::Decode, Doc, Map, Transact, Update};
+
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"PDFs"}));
+    let add = |name: &str| {
+        a.call("add_document_bytes", json!({
+            "moduleId":module, "name":name, "bytes":b"%PDF-"
+        }))["id"].clone()
+    };
+    let first = add("First.pdf");
+    let second = add("Second.pdf");
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    transfer_vault(&a, &b, 1);
+    b.call("sync_disable", json!({}));
+    b.call("move_document", json!({"id":second,"targetId":first,"after":false}));
+    a.call("move_document", json!({"id":first,"targetId":second,"after":false}));
+
+    b.call("sync_enable", json!({"account":"{}"}));
+    transfer_vault(&a, &b, 2);
+    let generation = b.call("sync_status", json!({}))["generation"].clone();
+    let entries = b.call("sync_outbox", json!({"limitBytes":1048576,"generation":generation}));
+    let upload = Doc::new();
+    let order = upload.get_or_insert_map("document-order");
+    for entry in entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["doc"] == "vault")
+    {
+        let bytes: Vec<u8> = serde_json::from_value(entry["bytes"].clone()).unwrap();
+        upload
+            .transact_mut()
+            .apply_update(Update::decode_v1(&bytes).unwrap())
+            .unwrap();
+    }
+    assert!(
+        order.get(&upload.transact(), "ids").is_none(),
+        "seed must not publish the stale order"
+    );
+    transfer_vault(&b, &a, 3);
+    for device in [&a, &b] {
+        let documents = device.call("list_documents", json!({}));
+        assert_eq!([&documents[0]["id"], &documents[1]["id"]], [&first, &second]);
+    }
+}
+
+#[test]
+fn deleted_pdf_is_removed_from_arrival_order_on_both_devices() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"PDFs"}));
+    let id = a.call("add_document_bytes", json!({
+        "moduleId":module, "name":"First.pdf", "bytes":b"%PDF-"
+    }))["id"].clone();
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    transfer_vault(&a, &b, 1);
+    let arrivals = |device: &Fixture| -> Value {
+        let data: String = rusqlite::Connection::open(device.dir.join("main.db"))
+            .unwrap()
+            .query_row("select arrivals from document_order where id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        serde_json::from_str(&data).unwrap()
+    };
+    assert_eq!([arrivals(&a), arrivals(&b)], [json!([id]), json!([id])]);
+
+    a.call("delete_document", json!({"id":id}));
+    transfer_vault(&a, &b, 2);
+    assert_eq!([arrivals(&a), arrivals(&b)], [json!([]), json!([])]);
+}
+
+#[test]
+fn synced_pdf_from_an_earlier_clock_appends_to_local_arrival_order() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"PDFs"}));
+    let add = |fixture: &Fixture, name: &str| {
+        fixture.call("add_document_bytes", json!({
+            "moduleId":module, "name":name, "bytes":b"%PDF-"
+        }))["id"].clone()
+    };
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    transfer_vault(&a, &b, 1);
+
+    let existing = add(&a, "Existing.pdf");
+    // Advance A's import clock without changing the machine clock for both cores.
+    rusqlite::Connection::open(a.dir.join("main.db"))
+        .unwrap()
+        .execute("update documents set created_at = created_at + 86400000", [])
+        .unwrap();
+    a.call("rename_document", json!({"id":existing,"name":"Existing renamed.pdf"}));
+    let new = add(&b, "New.pdf");
+    let list = |fixture: &Fixture| -> Vec<Value> {
+        fixture.call("list_documents", json!({})).as_array().unwrap()
+            .iter().map(|doc| doc["id"].clone()).collect()
+    };
+    transfer_vault(&b, &a, 2);
+    assert_eq!(list(&a), [&existing, &new].map(Clone::clone));
+    transfer_vault(&a, &b, 3);
+    assert_eq!(list(&b), [&new, &existing].map(Clone::clone));
+    transfer_vault(&b, &a, 4);
+    assert_eq!(list(&a), [&existing, &new].map(Clone::clone));
+}
+
+#[test]
+fn receiving_an_import_before_its_reorder_does_not_publish_an_order() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let module = a.call("create_module", json!({"name":"PDFs"}));
+    let add = |name: &str| {
+        a.call("add_document_bytes", json!({
+            "moduleId":module, "name":name, "bytes":b"%PDF-"
+        }))["id"].clone()
+    };
+    let existing = add("Existing.pdf");
+    a.call("sync_enable", json!({"account":"{}"}));
+    b.call("sync_enable", json!({"account":"{}"}));
+    let generation = b.call("sync_status", json!({}))["generation"].clone();
+    transfer_vault(&a, &b, 1);
+    let outbox = || b.call("sync_outbox", json!({"limitBytes":1048576,"generation":generation}));
+    let before_import = outbox();
+
+    let new = add("New.pdf");
+    transfer_vault(&a, &b, 2);
+    let after_import = outbox();
+    a.call("move_document", json!({"id":new,"targetId":existing,"after":false}));
+    transfer_vault(&a, &b, 3);
+    transfer_vault(&b, &a, 4);
+    transfer_vault(&a, &b, 5);
+
+    assert_eq!(after_import.as_array().unwrap().len(), before_import.as_array().unwrap().len(),
+        "receiving a PDF must not queue an order update");
+    for device in [&a, &b] {
+        let documents = device.call("list_documents", json!({}));
+        assert_eq!([&documents[0]["id"], &documents[1]["id"]], [&new, &existing]);
+    }
+}

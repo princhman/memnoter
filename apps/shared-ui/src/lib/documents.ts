@@ -25,3 +25,5 @@ export const deleteDocument = (args: { id: string }) =>
   call<void>("delete_document", args);
 export const documentPath = (args: { id: string }) =>
   call<string>("document_path", args);
+export const moveDocument = (args: { id: string; targetId: string; after: boolean }) =>
+  call<void>("move_document", args);
