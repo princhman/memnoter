@@ -123,7 +123,7 @@ test("long breadcrumbs remain within the desktop header", async () => {
 });
 
 test("the desktop header hides Review while a worksheet is open and restores it on exit", async () => {
-  const server = await createServer({ server: { port: 0 }, logLevel: "error" });
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   try {
     await server.listen();
     const browser = await webkit.launch();
@@ -180,7 +180,7 @@ test("a focused heading renders inline math in the desktop breadcrumb", async ()
   doc.getXmlFragment("default").insert(0, [heading, new Y.XmlElement("paragraph")]);
   const state = Array.from(Y.encodeStateAsUpdate(doc));
   doc.destroy();
-  const server = await createServer({ server: { port: 0 }, logLevel: "error" });
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   try {
     await server.listen();
     const browser = await webkit.launch();
