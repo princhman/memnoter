@@ -197,6 +197,7 @@ fn delete_module_data_inner(
     // Foreign keys cascade to the document snapshot and all pending updates.
     tx.execute("delete from modules where id = ?1", [module_id])
         .map_err(db_err)?;
+    crate::documents::remember_arrivals(&tx)?;
     // A restored card may now be the only one left with a moved history.
     let moved = crate::card_moves::cards_in(&tx, module_id)?;
     crate::card_moves::materialize(&tx, moved)?;

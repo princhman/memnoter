@@ -47,4 +47,4 @@ export async function indexStoredCards(moduleId: string, doc: import("yjs").Doc,
 }
 
 // Review shares the startup service's single backfill run.
-export { startBackfill as backfillCards } from "@/lib/note-index";
+export { backfillCards } from "@/lib/note-index";

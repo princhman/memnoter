@@ -1,5 +1,8 @@
 use crate::*;
-use std::io::Read;
+use std::{
+    collections::{HashMap, HashSet},
+    io::Read,
+};
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +96,7 @@ pub fn add_document_bytes(
         )
         .map_err(db_err)?;
         tx.execute(
-            "insert into documents(id,module_id,name,size,created_at) values (?1,?2,?3,?4,?5)",
+            "insert into documents(id,module_id,name,size,created_at) values (?1,?2,?3,?4,max(?5, (select coalesce(max(created_at), 0) + 1 from documents)))",
             params![
                 id,
                 module_id,
@@ -112,6 +115,7 @@ pub fn add_document_bytes(
             )
             .map_err(db_err)?;
         }
+        remember_arrivals(&tx)?;
         sync::record_document(&tx, &id, false)?;
         tx.commit().map_err(db_err)
     })();
@@ -152,7 +156,7 @@ fn records(
 ) -> CommandResult<Vec<DocumentRecord>> {
     conn.prepare(&format!(
         "{SELECT_DOCUMENT} where ?1 is null or d.module_id=?1
-        order by d.created_at desc,d.id desc"
+        order by d.created_at,d.id"
     ))
     .map_err(db_err)?
     .query_map([module_id], from_row)
@@ -175,7 +179,136 @@ pub fn list_documents(
     db: &Db,
     module_id: Option<String>,
 ) -> CommandResult<Vec<DocumentRecord>> {
-    records(data_dir, &*db.lock()?, module_id.as_deref())
+    let conn = db.lock()?;
+    let mut documents = records(data_dir, &conn, module_id.as_deref())?;
+    let ranks = order_ranks(&conn)?;
+    documents.sort_by_key(|document| ranks.get(&document.id).copied().unwrap_or(usize::MAX));
+    Ok(documents)
+}
+
+pub(crate) fn migrate_order(conn: &Connection) -> CommandResult<()> {
+    conn.execute_batch(
+        "create table if not exists document_order (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL)",
+    )
+    .map_err(db_err)
+}
+
+pub(crate) fn read_order(conn: &Connection) -> CommandResult<Vec<String>> {
+    let data: Option<String> = conn
+        .query_row("select data from document_order where id = 1", [], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(db_err)?;
+    data.map(|value| serde_json::from_str(&value).map_err(db_err))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+pub(crate) fn migrate_arrival_order(conn: &Connection) -> CommandResult<()> {
+    let has_arrivals = conn
+        .query_row(
+            "select exists(select 1 from pragma_table_info('document_order') where name = 'arrivals')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(db_err)?;
+    if !has_arrivals {
+        conn.execute_batch(
+            "alter table document_order add column arrivals TEXT NOT NULL DEFAULT '[]'",
+        )
+        .map_err(db_err)?;
+    }
+    remember_arrivals(conn)
+}
+
+fn read_arrivals(conn: &Connection) -> CommandResult<Vec<String>> {
+    let data: Option<String> = conn
+        .query_row(
+            "select arrivals from document_order where id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_err)?;
+    data.map(|value| serde_json::from_str(&value).map_err(db_err))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+pub(crate) fn remember_arrivals(conn: &Connection) -> CommandResult<()> {
+    let mut arrivals = read_arrivals(conn)?;
+    let ids = document_ids(conn)?;
+    let present: HashSet<_> = ids.iter().collect();
+    arrivals.retain(|id| present.contains(id));
+    let known: HashSet<_> = arrivals.iter().collect();
+    let new: Vec<_> = ids
+        .iter()
+        .filter(|id| !known.contains(id))
+        .cloned()
+        .collect();
+    arrivals.extend(new);
+    conn.execute(
+        "insert into document_order (id, data, arrivals) values (1, '[]', ?1)
+         on conflict(id) do update set arrivals = excluded.arrivals where arrivals != excluded.arrivals",
+        [serde_json::to_string(&arrivals).map_err(db_err)?],
+    )
+    .map(|_| ())
+    .map_err(db_err)
+}
+
+fn order_ranks(conn: &Connection) -> CommandResult<HashMap<String, usize>> {
+    let mut ranks = HashMap::new();
+    for (rank, id) in read_order(conn)?
+        .into_iter()
+        .chain(read_arrivals(conn)?)
+        .enumerate()
+    {
+        ranks.entry(id).or_insert(rank);
+    }
+    Ok(ranks)
+}
+
+pub(crate) fn store_order(conn: &Connection, order: &[String]) -> CommandResult<()> {
+    conn.execute(
+        "insert into document_order (id, data) values (1, ?1)
+         on conflict(id) do update set data = excluded.data where data != excluded.data",
+        [serde_json::to_string(order).map_err(db_err)?],
+    )
+    .map(|_| ())
+    .map_err(db_err)
+}
+
+fn document_ids(conn: &Connection) -> CommandResult<Vec<String>> {
+    let mut stmt = conn
+        .prepare("select id from documents order by created_at,id")
+        .map_err(db_err)?;
+    let rows = stmt.query_map([], |row| row.get(0)).map_err(db_err)?;
+    rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+}
+
+pub fn move_document(db: &Db, id: String, target_id: String, after: bool) -> CommandResult<()> {
+    if id == target_id {
+        return Ok(());
+    }
+    let mut conn = db.lock()?;
+    let tx = conn.transaction().map_err(db_err)?;
+    let mut ids = document_ids(&tx)?;
+    let ranks = order_ranks(&tx)?;
+    ids.sort_by_key(|id| ranks.get(id).copied().unwrap_or(usize::MAX));
+    let source = ids
+        .iter()
+        .position(|entry| entry == &id)
+        .ok_or("Document not found")?;
+    ids.remove(source);
+    let target = ids
+        .iter()
+        .position(|entry| entry == &target_id)
+        .ok_or("Drop target no longer exists")?;
+    ids.insert(target + usize::from(after), id);
+    store_order(&tx, &ids)?;
+    sync::record_document_order(&tx, &ids)?;
+    tx.commit().map_err(db_err)
 }
 
 pub fn rename_document(db: &Db, id: String, name: String) -> CommandResult<()> {
@@ -220,8 +353,13 @@ pub(crate) fn remove_local(data_dir: &Path, conn: &Connection, id: &str) -> Comm
     }
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     crate::pdf_annotations::retire(&tx, id)?;
-    tx.execute("delete from documents where id=?1", [id])
-        .map_err(db_err)?;
+    if tx
+        .execute("delete from documents where id=?1", [id])
+        .map_err(db_err)?
+        != 0
+    {
+        remember_arrivals(&tx)?;
+    }
     tx.execute("delete from files where id=?1", [id])
         .map_err(db_err)?;
     tx.execute("delete from sync_file_uploads where file_id=?1", [id])

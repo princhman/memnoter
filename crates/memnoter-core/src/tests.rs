@@ -1174,7 +1174,8 @@ fn pdf_commands_validate_scope_rename_and_delete() {
     assert_eq!(other.name, "picked.pdf");
     let all = list_documents(&f.dir, &f.db, None).unwrap();
     assert_eq!(all.len(), 2);
-    assert!(all[0].created_at >= all[1].created_at);
+    assert_eq!(all[0].id, doc.id);
+    assert_eq!(all[1].id, other.id);
     assert_eq!(
         list_documents(&f.dir, &f.db, Some("note".into()))
             .unwrap()

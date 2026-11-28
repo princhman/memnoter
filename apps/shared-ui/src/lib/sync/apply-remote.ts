@@ -9,7 +9,7 @@ import { forgetModule } from "@/lib/store";
 import { saveQueue } from "@/lib/saves";
 import { syncedFileArrived } from "./file-requests";
 import { documentsKey } from "@/lib/use-documents";
-import { bankKey } from "@/lib/question-bank";
+import { bankKey, refreshBankIndex } from "@/lib/question-bank";
 // Dispatched on window with the module id when another device deleted it.
 export const MODULE_DELETED_REMOTELY_EVENT = "memnoter:module-deleted-remotely";
 
@@ -64,6 +64,7 @@ export function applyRemoteChanges(result: ApplyResult, reindex: boolean) {
     void queryClient.invalidateQueries({ queryKey: ["mention-note", moduleId] });
     // Questions, worksheets and answers live in the module's content too.
     void queryClient.invalidateQueries({ queryKey: bankKey(moduleId) });
+    void refreshBankIndex(moduleId);
     window.dispatchEvent(new CustomEvent(MODULE_CONTENT_SYNCED_EVENT, { detail: moduleId }));
     if (reindex) scheduleReindex(moduleId);
   }

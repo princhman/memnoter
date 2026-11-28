@@ -466,7 +466,7 @@ fn reconcile_documents(conn: &Connection, doc: &Doc) -> CommandResult<()> {
         )
         .map_err(db_err)?;
     }
-    Ok(())
+    crate::documents::remember_arrivals(conn)
 }
 
 fn file_deleted(record: &str) -> bool {
@@ -766,6 +766,31 @@ pub(crate) fn record_sidebar(
     Ok(())
 }
 
+// The full order is one value so concurrent moves converge without mixed ranks.
+// Keep it separate from document records that older builds replace on rename.
+const DOCUMENT_ORDER_MAP: &str = "document-order";
+const DOCUMENT_ORDER_KEY: &str = "ids";
+const SEED_DOCUMENT_ORDER: &str = "seed_document_order";
+
+pub(crate) fn record_document_order(conn: &Connection, order: &[String]) -> CommandResult<()> {
+    if !is_enabled(conn)? {
+        return Ok(());
+    }
+    let doc = load_vault(conn)?;
+    let update = {
+        let map = doc.get_or_insert_map(DOCUMENT_ORDER_MAP);
+        let mut txn = doc.transact_mut();
+        map.insert(
+            &mut txn,
+            DOCUMENT_ORDER_KEY,
+            serde_json::to_string(order).map_err(db_err)?,
+        );
+        txn.encode_update_v1()
+    };
+    save_vault(conn, &doc)?;
+    push_outbox(conn, VAULT_DOC, &update)
+}
+
 pub(crate) fn load_vault(conn: &Connection) -> CommandResult<Doc> {
     let doc = Doc::new();
     if let Some(state) = get_value::<Vec<u8>>(conn, "vault")? {
@@ -861,6 +886,13 @@ fn reconcile(tx: &Transaction, doc: &Doc) -> CommandResult<(bool, Vec<String>)> 
             }
         }
     }
+    let order = doc.get_or_insert_map(DOCUMENT_ORDER_MAP);
+    if let Some(Out::Any(Any::String(data))) = order.get(&doc.transact(), DOCUMENT_ORDER_KEY) {
+        match serde_json::from_str::<Vec<String>>(&data) {
+            Ok(ids) => crate::documents::store_order(tx, &ids)?,
+            Err(error) => eprintln!("Invalid synced document order: {error}"),
+        }
+    }
     reconcile_documents(tx, doc)?;
     Ok((changed, deleted))
 }
@@ -901,6 +933,9 @@ fn seed(conn: &Connection) -> CommandResult<()> {
                 serde_json::to_string(&item).map_err(db_err)?,
             );
         }
+    }
+    if !crate::documents::read_order(conn)?.is_empty() {
+        set_value(conn, SEED_DOCUMENT_ORDER, true)?;
     }
     let files: Vec<(String, String, String)> = {
         // PDFs are announced through the documents map only; see record_document.
@@ -1546,6 +1581,21 @@ pub fn sync_outbox(
 ) -> CommandResult<Vec<OutboxEntry>> {
     let conn = db.lock()?;
     check_generation(&conn, &generation)?;
+    // Both clients start draining the outbox after catching up on remote changes.
+    if get_value::<bool>(&conn, SEED_DOCUMENT_ORDER)?.unwrap_or(false) {
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let doc = load_vault(&tx)?;
+        let map = doc.get_or_insert_map(DOCUMENT_ORDER_MAP);
+        if map.get(&doc.transact(), DOCUMENT_ORDER_KEY).is_none() {
+            let order = crate::documents::read_order(&tx)?;
+            if !order.is_empty() {
+                record_document_order(&tx, &order)?;
+            }
+        }
+        tx.execute("delete from sync_state where key = ?1", [SEED_DOCUMENT_ORDER])
+            .map_err(db_err)?;
+        tx.commit().map_err(db_err)?;
+    }
     outbox(&conn, limit_bytes)
 }
 

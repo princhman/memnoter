@@ -13,12 +13,14 @@ import { maskCards, validMasks } from "@/lib/occlusion";
 import { cardInfo, cardSchedulesOf } from "@/lib/flashcards";
 import { CropDialog, type Crop as ImageCrop } from "./image-crop-dialog";
 import { copyImageAttrs } from "@/lib/editor-schema/images";
+import { figureNumbers } from "@/lib/figure-numbering";
+import { headingNumberingKey } from "@/lib/heading-numbering";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { NodeViewWrapper, useEditorState, type NodeViewProps } from "@tiptap/react";
 import { ResizableNodeView } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { call as invoke, fileUrl as convertFileSrc, isTauri, postNativeEvent } from "../lib/backend.ts";
-import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Scan, Scaling, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, BetweenHorizontalStart, Captions, ChevronRight, Subtitles, Scan, Scaling, Contrast, Crop, Maximize2, LoaderCircle, Pencil, TextCursorInput, Trash2, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
 import type { FileType } from "@/lib/content";
@@ -65,6 +67,30 @@ export function SavedImageView(props: NodeViewProps) {
       return selection instanceof NodeSelection && selection.from === props.getPos();
     },
   });
+  const caption = typeof node.attrs.caption === "string" ? node.attrs.caption.trim() : "";
+  const captionAlign = node.attrs.captionAlign === "left" || node.attrs.captionAlign === "right" ? node.attrs.captionAlign : undefined;
+  const [editingCaption, setEditingCaption] = useState(false);
+  // The actions menu returns focus to the editor as it closes; when it closes
+  // to start a caption, the caption field keeps focus instead.
+  const captionFromMenu = useRef(false);
+  const figureNumber = useEditorState({
+    editor,
+    selector: ({ editor }) => {
+      const pos = props.getPos();
+      if (pos === undefined || (!caption && !editingCaption)) return null;
+      const { state } = editor;
+      return figureNumbers(state.doc, !!headingNumberingKey.getState(state)).get(pos) ?? null;
+    },
+  });
+  const finishCaption = (value: string) => {
+    setEditingCaption(false);
+    captionFromMenu.current = false;
+    if (!editor.isEditable || editor.isDestroyed || !isWriteAdmitted()) return;
+    const pos = props.getPos();
+    if (pos !== undefined && editor.state.doc.nodeAt(pos) === node && value !== caption) {
+      updateAttributes({ caption: value || null });
+    }
+  };
   const { files, saveImage, readImage, moduleId, editDrawing, unsavedDrawingId, flashcards = true, worksheet = false } = useContext(FilesContext);
   const drawing = drawingReference(node.attrs.drawing);
   const macDrawing = !!drawing && IS_MAC && isTauri();
@@ -533,11 +559,50 @@ export function SavedImageView(props: NodeViewProps) {
         ? <Button variant="outline" onClick={openDrawing}>{canEditDrawing ? "Open drawing" : "Drawing (edit on iPad)"}</Button>
         : <span className="text-sm text-muted-foreground">Image unavailable</span>)}
       {node.attrs.pdfSource && <PdfSourceCaption value={node.attrs.pdfSource} />}
+      {editingCaption && editor.isEditable ? (
+        <span className="note-image-caption" data-align={captionAlign} data-empty={!caption || undefined}>
+          <span className="note-image-caption-edit">
+            <span>Figure {figureNumber}</span>
+            <input
+              aria-label="Image caption"
+              autoFocus
+              defaultValue={caption}
+              key={caption}
+              placeholder="Caption"
+              onBlur={event => finishCaption(event.currentTarget.value.trim())}
+              onKeyDown={event => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === "Escape") event.currentTarget.value = caption;
+                if (event.key === "Enter" || event.key === "Escape") {
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                  editor.view.focus();
+                }
+              }}
+            />
+          </span>
+        </span>
+      ) : caption ? (
+        <span className="note-image-caption" data-align={captionAlign}>
+          {editor.isEditable
+            ? <button type="button" onClick={() => setEditingCaption(true)}>Figure {figureNumber}: {caption}</button>
+            : <>Figure {figureNumber}: {caption}</>}
+        </span>
+      ) : null}
       {selected && editor.isEditable && (
         <ImageControlsLayer anchor={controlsAnchor}>
-          <ImageActionsMenu label="Image actions" className="note-image-actions-menu w-60" sideOffset={isNativeTablet ? 10 : undefined} finalFocus={environment.isNative ? false : () => editor.isDestroyed ? null : editor.view.dom}>
+          <ImageActionsMenu label="Image actions" className="note-image-actions-menu w-60" sideOffset={isNativeTablet ? 10 : undefined} finalFocus={environment.isNative || captionFromMenu.current ? false : () => editor.isDestroyed ? null : editor.view.dom}>
               {isNativeTablet && canEditDrawing && <DropdownMenuItem onClick={openDrawing}><Pencil />Edit drawing</DropdownMenuItem>}
               {(!isNativeTablet || hasImage) && <DropdownMenuItem disabled={!hasImage} onClick={() => setPreviewOpen(true)}><Maximize2 />Open image full screen</DropdownMenuItem>}
+              <DropdownMenuItem onClick={() => { captionFromMenu.current = true; setEditingCaption(true); }}><Subtitles />{caption ? "Edit caption" : "Add caption"}</DropdownMenuItem>
+              {caption && <Menu.SubmenuRoot>
+                <Menu.SubmenuTrigger render={<DropdownMenuItem />}><AlignCenter />Caption alignment<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
+                <DropdownMenuContent side="inline-end" align="start" sideOffset={2} alignOffset={-4} className="note-image-actions-submenu w-48">
+                  <DropdownMenuRadioGroup value={captionAlign ?? "center"}>
+                    {IMAGE_ALIGNMENTS.map(([alignment, label, Icon]) => <DropdownMenuRadioItem closeOnClick key={alignment} value={alignment} onClick={() => updateAttributes({ captionAlign: alignment === "center" ? null : alignment })}><Icon />{label}</DropdownMenuRadioItem>)}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </Menu.SubmenuRoot>}
               {(!isNativeTablet || canEditDrawing || hasImage) && <DropdownMenuSeparator />}
               {(!isNativeTablet || hasImage) && <Menu.SubmenuRoot>
                 <Menu.SubmenuTrigger render={<DropdownMenuItem />} disabled={!hasImage}><Scaling />Size<ChevronRight className="ml-auto" /></Menu.SubmenuTrigger>
@@ -693,6 +758,7 @@ const IMAGE_SIZES = [
 // that drag swallows the click that selects the image and opens its toolbar.
 export function imageStopEvent({ event }: { event: Event }) {
   const { type } = event;
+  if (event.target instanceof HTMLInputElement && event.target.closest(".note-image-caption")) return true;
   // Other content can still be dropped on or beside the image.
   if (type === "dragover" || type === "dragenter" || type === "drop") return false;
   if (type === "dragstart") { event.preventDefault(); return true; }

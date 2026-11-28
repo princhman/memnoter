@@ -3,8 +3,13 @@ import { Node, mergeAttributes } from "@tiptap/core";
 
 // The locator is deliberately opaque here: future page/image/block targets can
 // use the same envelope without changing the persisted node's attributes.
-export type MentionTarget = { kind: string; id: string; nodeId: string | null; locator: string | null };
-export function mentionTarget(value: unknown): MentionTarget | null {
+type MentionEnvelope = { kind: string; id: string; nodeId: string | null; locator: string | null };
+
+export type MentionTarget =
+  | { kind: "module" | "file"; id: string; nodeId: null; locator: null }
+  | { kind: "heading" | "image" | "question" | "worksheet"; id: string; nodeId: string; locator: null }
+  | { kind: "pdf-page"; id: string; nodeId: null; locator: string };
+export function mentionTarget(value: unknown): MentionEnvelope | null {
   if (!value || typeof value !== "object" || !("kind" in value) || !("id" in value)) return null;
   if (typeof value.kind !== "string" || typeof value.id !== "string" || !value.id) return null;
   const nodeId = "nodeId" in value ? value.nodeId : null;
@@ -12,7 +17,12 @@ export function mentionTarget(value: unknown): MentionTarget | null {
   if ((nodeId !== null && typeof nodeId !== "string") || (locator !== null && typeof locator !== "string")) return null;
   return { kind: value.kind, id: value.id, nodeId, locator };
 }
-export const targetKey = (target: MentionTarget) => JSON.stringify([target.kind, target.id, target.nodeId, target.locator]);
+export const targetKey = (target: MentionEnvelope) => JSON.stringify([target.kind, target.id, target.nodeId, target.locator]);
+export function mentionPage(locator: string | null): number | undefined {
+  const page = Number(locator);
+  return locator && /^\d+$/.test(locator) && Number.isSafeInteger(page) && page > 0 ? page : undefined;
+}
+
 export const Mention = Node.create({
   name: "mention", group: "inline", inline: true, atom: true,
   addAttributes() {

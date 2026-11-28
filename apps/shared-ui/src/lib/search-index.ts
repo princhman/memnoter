@@ -19,19 +19,22 @@ const editors = createEditorWriteSync(1_000);
 export const flushSearchIndexing = editors.flush;
 registerFlusher("search", flushSearchIndexing);
 
-async function indexNote(moduleId: string, text: SearchText, backfill = false, permit?: WritePermit, noteSnapshot?: number[]) {
+async function indexNote(moduleId: string, text: SearchText, backfill = false, permit?: WritePermit, noteSnapshot?: number[], priority?: "background") {
   assertWritable(permit);
   await queryClient.getMutationCache().build(queryClient, {
-    mutationKey: [MUTATIONS.searchIndex, moduleId],
+    mutationKey: [priority === "background" ? MUTATIONS.searchBackfill : MUTATIONS.searchIndex, moduleId],
     gcTime: 0,
-    mutationFn: () => invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill, noteSnapshot }),
+    mutationFn: () => {
+      if (priority === "background") assertWritable();
+      return invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill, noteSnapshot });
+    },
   }).execute(undefined);
   void queryClient.invalidateQueries({ queryKey: ["search-notes"] });
 }
 
-export async function indexStoredNote(moduleId: string, doc?: import("yjs").Doc, permit?: WritePermit) {
+export async function indexStoredNote(moduleId: string, doc?: import("yjs").Doc, permit?: WritePermit, priority?: "background") {
   const loaded = doc ?? await loadStoredNote(moduleId);
-  try { if (!isNoteFromNewerVersion(loaded)) await indexNote(moduleId, extractFromYDoc(loaded), true, permit, desktopNoteSnapshot(loaded)); }
+  try { if (!isNoteFromNewerVersion(loaded)) await indexNote(moduleId, extractFromYDoc(loaded), true, permit, desktopNoteSnapshot(loaded), priority); }
   finally { if (!doc) loaded.destroy(); }
 }
 

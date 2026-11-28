@@ -26,6 +26,7 @@ macro_rules! commands {
 commands! { core;
     question_bank_enabled() => crate::worksheets::bank::enabled(core);
     question_bank_get(module_id: String) => crate::worksheets::bank::get(core,module_id);
+    question_bank_index(module_id: String) => crate::worksheets::bank::index(core,module_id);
     question_bank_edit(module_id: String, edit: crate::worksheets::bank::Edit) => crate::worksheets::bank::edit(core,module_id,edit);
     worksheet_attempt_finish(module_id: String, attempt_id: String) => crate::worksheets::attempts::finish(core,module_id,attempt_id);
     worksheet_attempt_create(module_id: String, title: String, question_ids: Vec<String>) => crate::worksheets::attempts::create(core,module_id,title,question_ids);
@@ -48,6 +49,7 @@ commands! { core;
     save_compaction(module_id: String, new_state: Vec<u8>, update_id: i64) => crate::save_compaction(&core.db, module_id, new_state, update_id);
     add_document(module_id: String, path: String) => crate::add_document(core.data_dir(), &core.db, module_id, path);
     add_document_bytes(module_id: String, name: String, bytes: Vec<u8>) => crate::add_document_bytes(core.data_dir(), &core.db, module_id, name, bytes);
+    move_document(id: String, target_id: String, after: bool) => crate::documents::move_document(&core.db, id, target_id, after);
     list_documents(module_id: Option<String>) => crate::list_documents(core.data_dir(), &core.db, module_id);
     rename_document(id: String, name: String) => crate::rename_document(&core.db, id, name);
     set_document_page_count(id: String, page_count: i64) => crate::set_document_page_count(&core.db, id, page_count);
