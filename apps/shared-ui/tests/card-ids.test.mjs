@@ -116,7 +116,7 @@ for (const [name, route] of [
 
 let harnessBuilt = false;
 
-async function withCore(run, invoke = (command, args, call) => call(command, args), { mac = false } = {}) {
+async function withCore(run, invoke = (command, args, call) => call(command, args), { mac = false, windows = false } = {}) {
   const workspace = fileURLToPath(new URL("../../..", import.meta.url));
   if (!harnessBuilt) execFileSync("cargo", ["build", "-p", "memnoter-core", "--example", "command-harness"], {
     cwd: workspace, env: { ...process.env, CARGO_BUILD_JOBS: "4" }, stdio: "pipe",
@@ -146,13 +146,17 @@ async function withCore(run, invoke = (command, args, call) => call(command, arg
       if (command.startsWith("plugin:") || command === "set_editor_history") return 1;
       return invoke(command, args, call);
     });
-    await page.addInitScript(mac => {
+    await page.addInitScript(({ mac, windows }) => {
       if (mac) {
         Object.defineProperty(navigator, "platform", { value: "MacIntel" });
         Object.defineProperty(navigator, "maxTouchPoints", { value: 0 });
       }
+      if (windows) {
+        Object.defineProperty(navigator, "platform", { value: "Win32" });
+        Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+      }
       window.installTestBridge({ tauri: { invoke: (command, args) => window.rustCall(command, args) } });
-    }, mac);
+    }, { mac, windows });
     const editor = page.locator('.tiptap[contenteditable="true"]');
     const mod = process.platform === "darwin" ? "Meta" : "Control";
     const schedules = async (moduleId, count) => {
@@ -498,7 +502,7 @@ test("applying a backup file persists safe edits, supports undo, and keeps card 
   }, { mac: true }).finally(() => rm(folder, { recursive: true, force: true }));
 });
 
-test("scheduled backup notices deduplicate file contents and Review applies an edit", async () => {
+test("Windows scheduled backup notices deduplicate file contents and Review applies an edit", async () => {
   const folder = await mkdtemp(join(await realpath(tmpdir()), "memnoter-backup-"));
   const backupFolder = join(folder, "Memnoter Backup");
   let scans = 0;
@@ -603,7 +607,7 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
       const result = await call(command, args);
       if (command === "read_local_backup_edits") scans++;
       return result;
-    }, { mac: true });
+    }, { windows: true });
   } finally {
     await rm(folder, { recursive: true, force: true });
   }
