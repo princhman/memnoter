@@ -55,7 +55,10 @@ test("desktop windows show each other's saved edits and converge after concurren
     await server.listen();
     const origin = `http://localhost:${server.httpServer.address().port}`;
     const browser = await webkit.launch();
-    const context = await browser.newContext({ viewport: { width: 1000, height: 660 } });
+    const context = await browser.newContext({
+      viewport: { width: 1000, height: 660 },
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    });
     const moduleId = "737989f6-8649-4de5-bc1f-64723df5431c";
     const doc = new Y.Doc();
     const paragraph = new Y.XmlElement("paragraph");
