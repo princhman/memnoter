@@ -59,11 +59,12 @@ impl Sessions {
             .archives
             .get(source_id)
             .ok_or("This Anki session is closed")?;
+        let mut zip = archive.archive.open_zip()?;
         let mut total = 0;
         names
             .iter()
             .map(|name| {
-                let bytes = archive.archive.read_media(name)?;
+                let bytes = archive.archive.read_media_entry(&mut zip, name)?;
                 total += bytes.len();
                 if total > 128 * 1024 * 1024 {
                     return Err("Anki image batch exceeds 128 MiB".into());

@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 9afb866379c2a9f23fa49596af33cb10de933c8d..98f81e7b1669889f61973bcc63ee9b8e518114b3 100644
+index 9afb866379c2a9f23fa49596af33cb10de933c8d..8318f7f2961ccdf9803b3dd3c6ede76ff9a031c1 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -3633,8 +3633,9 @@ handlers.focus = function (view) {
@@ -13,8 +13,65 @@ index 9afb866379c2a9f23fa49596af33cb10de933c8d..98f81e7b1669889f61973bcc63ee9b8e
      }, 20);
    }
  };
+@@ -3739,6 +3740,8 @@ var InlineType = function () {
+   }]);
+   return InlineType;
+ }();
++// Node decorations on wide parents repeatedly validate against the same immutable fragment.
++var decoratedNodeEnds = new WeakMap();
+ var NodeType = function () {
+   function NodeType(attrs, spec) {
+     _classCallCheck(this, NodeType);
+@@ -3757,6 +3760,18 @@ var NodeType = function () {
+   }, {
+     key: "valid",
+     value: function valid(node, span) {
++      if (node.childCount >= 64 && span.from >= 0 && span.from < node.content.size) {
++        var ends = decoratedNodeEnds.get(node.content);
++        if (!ends) {
++          ends = new Map();
++          var childEnds = ends;
++          node.forEach(function (child, offset) {
++            if (!child.isText) childEnds.set(offset, offset + child.nodeSize);
++          });
++          decoratedNodeEnds.set(node.content, ends);
++        }
++        return ends.get(span.from) === span.to;
++      }
+       var _node$content$findInd = node.content.findIndex(span.from),
+         index = _node$content$findInd.index,
+         offset = _node$content$findInd.offset,
+@@ -3946,16 +3961,19 @@ var DecorationSet = function () {
+     value: function forChild(offset, node) {
+       if (this == empty) return this;
+       if (node.isLeaf) return DecorationSet.empty;
+-      var child, local;
+-      for (var i = 0; i < this.children.length; i += 3) if (this.children[i] >= offset) {
+-        if (this.children[i] == offset) child = this.children[i + 2];
+-        break;
++      // Children are sorted triples. Scan only inline decorations that can cross into them.
++      var lo = 0, hi = this.children.length / 3, local;
++      while (lo < hi) {
++        var mid = (lo + hi) >>> 1;
++        if (this.children[mid * 3] < offset) lo = mid + 1;
++        else hi = mid;
+       }
+-      var start = offset + 1,
+-        end = start + node.content.size;
+-      for (var _i8 = 0; _i8 < this.local.length; _i8++) {
+-        var dec = this.local[_i8];
+-        if (dec.from < end && dec.to > start && dec.type instanceof InlineType) {
++      var at = lo * 3, child = this.children[at] === offset ? this.children[at + 2] : undefined;
++      var start = offset + 1, end = start + node.content.size;
++      var inline = this.inlineLocal || (this.inlineLocal = this.local.filter(InlineType.is));
++      for (var _i8 = 0; _i8 < inline.length; _i8++) {
++        var dec = inline[_i8];
++        if (dec.from < end && dec.to > start) {
+           var from = Math.max(start, dec.from) - start,
+             to = Math.min(end, dec.to) - start;
+           if (from < to) (local || (local = [])).push(dec.copy(from, to));
 diff --git a/dist/index.js b/dist/index.js
-index aee1aafefa84d45c473e962f6279246bb46b8224..c897a8d7ff45a8795cb05b728ba55cd2a9dc87ec 100644
+index aee1aafefa84d45c473e962f6279246bb46b8224..f0ffe37eba0e9c195eb62d7fa98797473a4b7a92 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -3862,8 +3862,9 @@ handlers.focus = view => {
@@ -28,6 +85,133 @@ index aee1aafefa84d45c473e962f6279246bb46b8224..c897a8d7ff45a8795cb05b728ba55cd2
                  selectionToDOM(view);
          }, 20);
      }
+@@ -3959,6 +3960,8 @@ class InlineType {
+     static is(span) { return span.type instanceof InlineType; }
+     destroy() { }
+ }
++// Node decorations on wide parents repeatedly validate against the same immutable fragment.
++const decoratedNodeEnds = new WeakMap();
+ class NodeType {
+     constructor(attrs, spec) {
+         this.attrs = attrs;
+@@ -3974,6 +3977,18 @@ class NodeType {
+         return new Decoration(from.pos - offset, to.pos - offset, this);
+     }
+     valid(node, span) {
++        if (node.childCount >= 64 && span.from >= 0 && span.from < node.content.size) {
++            let ends = decoratedNodeEnds.get(node.content);
++            if (!ends) {
++                ends = new Map();
++                const childEnds = ends;
++                node.forEach((child, offset) => {
++                    if (!child.isText) childEnds.set(offset, offset + child.nodeSize);
++                });
++                decoratedNodeEnds.set(node.content, ends);
++            }
++            return ends.get(span.from) === span.to;
++        }
+         let { index, offset } = node.content.findIndex(span.from), child;
+         return offset == span.from && !(child = node.child(index)).isText && offset + child.nodeSize == span.to;
+     }
+@@ -4232,17 +4247,21 @@ class DecorationSet {
+             return this;
+         if (node.isLeaf)
+             return DecorationSet.empty;
+-        let child, local;
+-        for (let i = 0; i < this.children.length; i += 3)
+-            if (this.children[i] >= offset) {
+-                if (this.children[i] == offset)
+-                    child = this.children[i + 2];
+-                break;
+-            }
++        // Children are sorted triples. Scan only inline decorations that can cross into them.
++        let lo = 0, hi = this.children.length / 3, local;
++        while (lo < hi) {
++            let mid = (lo + hi) >>> 1;
++            if (this.children[mid * 3] < offset)
++                lo = mid + 1;
++            else
++                hi = mid;
++        }
++        let at = lo * 3, child = this.children[at] === offset ? this.children[at + 2] : undefined;
+         let start = offset + 1, end = start + node.content.size;
+-        for (let i = 0; i < this.local.length; i++) {
+-            let dec = this.local[i];
+-            if (dec.from < end && dec.to > start && (dec.type instanceof InlineType)) {
++        let inline = this.inlineLocal || (this.inlineLocal = this.local.filter(InlineType.is));
++        for (let i = 0; i < inline.length; i++) {
++            let dec = inline[i];
++            if (dec.from < end && dec.to > start) {
+                 let from = Math.max(start, dec.from) - start, to = Math.min(end, dec.to) - start;
+                 if (from < to)
+                     (local || (local = [])).push(dec.copy(from, to));
+diff --git a/src/decoration.ts b/src/decoration.ts
+index 31ee3700a3da54a83f37c61a5a2e1c874d5e1ece..57337e99b42e4767a5cd36b856615cdf092b2e15 100644
+--- a/src/decoration.ts
++++ b/src/decoration.ts
+@@ -74,6 +74,8 @@ export class InlineType implements DecorationType {
+   destroy() {}
+ }
+ 
++// Node decorations on wide parents repeatedly validate against the same immutable fragment.
++const decoratedNodeEnds = new WeakMap<Node["content"], Map<number, number>>()
+ export class NodeType implements DecorationType {
+   spec: any
+   constructor(readonly attrs: DecorationAttrs, spec: any) {
+@@ -89,6 +91,18 @@ export class NodeType implements DecorationType {
+   }
+ 
+   valid(node: Node, span: Decoration): boolean {
++    if (node.childCount >= 64 && span.from >= 0 && span.from < node.content.size) {
++      let ends = decoratedNodeEnds.get(node.content)
++      if (!ends) {
++        ends = new Map()
++        const childEnds = ends
++        node.forEach((child, offset) => {
++          if (!child.isText) childEnds.set(offset, offset + child.nodeSize)
++        })
++        decoratedNodeEnds.set(node.content, ends)
++      }
++      return ends.get(span.from) === span.to
++    }
+     let {index, offset} = node.content.findIndex(span.from), child
+     return offset == span.from && !(child = node.child(index)).isText && offset + child.nodeSize == span.to
+   }
+@@ -288,6 +302,7 @@ export class DecorationSet implements DecorationSource {
+   local: readonly Decoration[]
+   /// @internal
+   children: readonly (number | DecorationSet)[]
++  private inlineLocal?: readonly Decoration[]
+ 
+   /// @internal
+   constructor(local: readonly Decoration[], children: readonly (number | DecorationSet)[]) {
+@@ -432,15 +447,19 @@ export class DecorationSet implements DecorationSource {
+     if (this == empty) return this
+     if (node.isLeaf) return DecorationSet.empty
+ 
+-    let child, local: Decoration[] | undefined
+-    for (let i = 0; i < this.children.length; i += 3) if ((this.children[i] as number) >= offset) {
+-      if (this.children[i] == offset) child = this.children[i + 2] as DecorationSet
+-      break
++    // Children are sorted triples. Scan only inline decorations that can cross into them.
++    let lo = 0, hi = this.children.length / 3, local: Decoration[] | undefined
++    while (lo < hi) {
++      let mid = (lo + hi) >>> 1
++      if ((this.children[mid * 3] as number) < offset) lo = mid + 1
++      else hi = mid
+     }
++    let at = lo * 3, child = this.children[at] === offset ? this.children[at + 2] as DecorationSet : undefined
+     let start = offset + 1, end = start + node.content.size
+-    for (let i = 0; i < this.local.length; i++) {
+-      let dec = this.local[i]
+-      if (dec.from < end && dec.to > start && (dec.type instanceof InlineType)) {
++    let inline = this.inlineLocal || (this.inlineLocal = this.local.filter(InlineType.is))
++    for (let i = 0; i < inline.length; i++) {
++      let dec = inline[i]
++      if (dec.from < end && dec.to > start) {
+         let from = Math.max(start, dec.from) - start, to = Math.min(end, dec.to) - start
+         if (from < to) (local || (local = [])).push(dec.copy(from, to))
+       }
 diff --git a/src/input.ts b/src/input.ts
 index 3813a3b0d093e135e351062a573c7b563ccbfc9e..c37e4ca38e371ffa5f71b3c0452541c3034632db 100644
 --- a/src/input.ts

@@ -102,6 +102,7 @@ impl Core {
     }
 }
 mod import;
+pub use import::import_binary_module;
 pub(crate) use import::{import_module, ImportImage};
 mod content;
 #[cfg(test)]
