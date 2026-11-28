@@ -1,3 +1,4 @@
+import { IS_IPAD } from "@/lib/platform";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, FileImage, FileText, PanelRight, X } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -145,6 +146,9 @@ export function WorksheetBeside({ toolbar, children }: { toolbar: HTMLElement | 
   const resize = useRef<{ id: number; width: number; height: number; x: number; y: number; stacked: boolean; share: number } | null>(null);
   const title = target?.kind === "pdf" ? documentName(target.doc.name) : target?.title;
 
+  const compactPdfHeader = IS_IPAD && target?.kind === "pdf";
+  const paneTitle = <span className="min-w-0 truncate pl-1 text-sm font-medium" title={title}>{title}</span>;
+
   return <div ref={root} className="worksheet-beside" data-split={open || undefined} style={{ "--beside-share": `${share}%` } as CSSProperties}>
     {toolbar && createPortal(openButton, toolbar)}
     <div ref={main} className={open ? "worksheet-beside-main app-scroll-container" : undefined}>
@@ -175,11 +179,12 @@ export function WorksheetBeside({ toolbar, children }: { toolbar: HTMLElement | 
         onLostPointerCapture={() => { resize.current = null; }}
       />
       <aside aria-label="Worksheet side pane" className="worksheet-beside-content">
-        <div className="flex min-h-9 shrink-0 items-center justify-between gap-2 px-2">
-          <span className="min-w-0 truncate pl-1 text-sm font-medium" title={title}>{title}</span>{closeButton}
-        </div>
+        {!compactPdfHeader && <div className="flex min-h-9 shrink-0 items-center justify-between gap-2 px-2">
+          {paneTitle}{closeButton}
+        </div>}
         {target.kind === "pdf" ? <div className="min-h-0 flex-1">
-          <ActiveEditorProvider><PdfViewer key={target.doc.id} doc={target.doc} worksheetReference /></ActiveEditorProvider>
+          <ActiveEditorProvider><PdfViewer key={target.doc.id} doc={target.doc} worksheetReference
+            leading={compactPdfHeader ? paneTitle : undefined} trailing={compactPdfHeader ? closeButton : undefined} /></ActiveEditorProvider>
         </div> : target.kind === "note" ? <div className="app-scroll-container min-h-0 flex-1 overflow-auto overscroll-contain" aria-label={title}>
           <ActiveEditorProvider><Tiptap key={target.id} moduleId={target.id} beside /></ActiveEditorProvider>
         </div> : <div className="min-h-0 flex-1"><BesideImage key={target.id} id={target.id} title={target.title} /></div>}

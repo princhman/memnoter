@@ -2,7 +2,7 @@ import { useBankGate, type CropDraft } from "@/lib/question-bank";
 import { QuestionCropDialog } from "./question-crop-dialog";
 import { IconTooltip } from "@/components/ui/icon-tooltip";
 import { usePdfFind, PdfFindHighlights } from "./pdf-find";
-import { IS_IOS } from "@/lib/platform";
+import { IS_IOS, IS_IPAD } from "@/lib/platform";
 import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
 import { usePdfAnnotations } from "@/lib/pdf-annotation-store";
 import { parsePdfAnnotationColor, type PdfAnnotationColor, type PdfAnnotation, type PdfAnnotationAnchor } from "@/lib/pdf-annotations";
@@ -786,9 +786,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     goToPage: page => { if (pages.length) jump(Math.max(1, Math.min(pages.length, Math.round(page)))); },
     openBeside,
   };
+  const pageCount = pages.length || doc.pageCount || 0;
   const canSelect = !pending && !cropping && !!pdf;
   const nativeState = nativeTools ? JSON.stringify({
-    page: current, pageCount: pages.length || doc.pageCount || 0, zoom: Math.round(zoom * 100),
+    page: current, pageCount, zoom: Math.round(zoom * 100),
     selecting: selecting && !annotationArea && !questionCropping, annotating: annotationArea,
     questionCropping, canCropQuestion: bankEnabled && canSelect && !questionDraft && !writeBlocked,
     canSelect, canAnnotate: canSelect && annotations.ready && !writeBlocked, canZoomIn: zoom < 3, canZoomOut: zoom > 0.25,
@@ -804,7 +805,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     };
     return pdfReaderControls.set({ documentId: doc.id, state: JSON.parse(nativeState), actions });
   }, [nativeState, doc.id]);
-  return <div ref={root} data-pdf-ios={IS_IOS || undefined} tabIndex={-1} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
+  return <div ref={root} data-pdf-ios={IS_IOS || undefined} data-pdf-ipad={IS_IPAD || undefined} tabIndex={-1} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
     {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={annotationEditor}>
       <div className="flex items-center gap-0.5">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Highlight area" disabled={!annotations.ready || writeBlocked} onClick={() => highlightArea()}><Highlighter aria-hidden="true" />Highlight</Button>
@@ -836,10 +837,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     </div>}
     {bankEnabled && questionDraft && <QuestionCropDialog moduleId={doc.moduleId} draft={questionDraft} onClose={() => setQuestionDraft(null)} onSaved={() => { setQuestionCropping(true); setAnnotationArea(false); setSelecting(true); }} />}
     {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
-      <div className="flex items-center gap-1 text-xs tabular-nums"><IconTooltip label="Go to page" hint={formatKeys(action("pdf.go-to-page").keys)}><input ref={pageInput} aria-label="Page number" disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pages.length || doc.pageCount || 0).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
+      {(!IS_IPAD || pageCount > 1) && <div className="pdf-page-picker flex shrink-0 items-center gap-1 text-xs tabular-nums"><IconTooltip label="Go to page" hint={formatKeys(action("pdf.go-to-page").keys)}><input ref={pageInput} aria-label="Page number" inputMode={IS_IPAD ? "numeric" : undefined} disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pageCount).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
-      }} /></IconTooltip><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
+      }} /></IconTooltip><span className="whitespace-nowrap text-muted-foreground">/ {pageCount || "?"}</span></div>}
       <span aria-hidden="true" className="pdf-tool-divider hidden" />
       <ToolButton label="Zoom out" hint={formatKeys(action("pdf.zoom-out").keys)} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
       <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>

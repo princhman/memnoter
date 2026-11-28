@@ -20,7 +20,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { useIsFullscreen } from "@/hooks/use-fullscreen";
-import { IS_MAC } from "@/lib/platform";
+import { IS_IPAD, IS_MAC } from "@/lib/platform";
 import { useSectionNavigationShortcuts } from "@/hooks/use-section-navigation-shortcuts";
 import { FileBreadcrumb } from "@/components/file-breadcrumb";
 import { useAnyWorksheetOpen, WORKSHEET_ACTIONS_SLOT } from "@/lib/pdf-pane";
@@ -42,6 +42,7 @@ const RootLayout = () => {
   const isFullscreen = useIsFullscreen();
   const path = useRouterState({ select: state => state.location.pathname });
   const isPdfReader = /^\/files\/[^/]+/.test(path);
+  const compactPdfHeader = IS_IPAD && isPdfReader;
   const ownScroll = isPdfReader || !["/", "/files", "/files/", "/review", "/settings"].includes(path);
   const sidebarOpen = useSelector(appStore, (state) => state.sidebarOpen);
   const navigate = useNavigate();
@@ -120,11 +121,11 @@ const RootLayout = () => {
           <SidebarInset className="min-h-0 overflow-hidden">
             {/* Tauri's deep region includes noninteractive breadcrumb wrappers,
                 while links, buttons, inputs and menu items block dragging. */}
-            <header data-tauri-drag-region="deep" className="relative z-40 flex h-8 shrink-0 items-center bg-background">
+            <header data-tauri-drag-region="deep" className={`relative z-40 flex shrink-0 items-center bg-background ${compactPdfHeader ? "h-11" : "h-8"}`}>
               <div className="flex min-w-0 items-center">
                 <FileBreadcrumb />
               </div>
-              <div className="ml-auto flex shrink-0 items-center gap-2 pr-3">
+              <div className={`ml-auto flex items-center gap-2 pr-3 ${compactPdfHeader ? "min-w-0" : "shrink-0"}`}>
                 <div id={WORKSHEET_ACTIONS_SLOT} className="contents" />
                 <PdfHeaderActions />
                 {reviewCounts ? <CardCounts className="text-sm" counts={reviewCounts} current={reviewCurrent} /> : !worksheetOpen && <ModuleReviewButton />}
