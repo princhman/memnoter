@@ -4,7 +4,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#fafafa">
+  <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121116" media="(prefers-color-scheme: dark)">
   <title>Memnoter: notes, flashcards and PDF question banks</title>
   <meta name="description" content="Free, open-source study app for students. Write flashcards in your notes, crop questions from PDFs, and review with FSRS. Mac, Windows, Linux, iPad and iPhone.">
   <link rel="canonical" href="https://memnoter.com/">
@@ -23,7 +24,7 @@
   <link rel="icon" href="assets/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="assets/social-icon.png">
   <link rel="preload" href="assets/inter.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="screenshots/hero.png" as="image">
+  <link rel="preload" href="screenshots/hero-light.webp" as="image" type="image/webp">
   <link rel="stylesheet" href="styles.css">
   <script type="application/ld+json">
   {
@@ -93,9 +94,18 @@
           <p class="fine">Memnoter is in beta, so bugs happen. Write to <a href="mailto:hello@memnoter.com">hello@memnoter.com</a>.</p>
         </div>
       </div>
-      <figure class="shot">
-        <img src="screenshots/hero.png" width="2400" height="1500" fetchpriority="high" decoding="async" alt="Placeholder for a screenshot of the Memnoter desktop editor, with a note and a flashcard in the text.">
-        <figcaption>Desktop editor, with a note and the card written in it. Placeholder file <code>screenshots/hero.png</code>, 2400 by 1500.</figcaption>
+      <figure class="stage stage-pan">
+        <div class="stage-frame">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/hero-dark-720.avif 720w, screenshots/hero-dark.avif 1080w" sizes="(min-width: 960px) 520px, calc(100vw - 48px)">
+            <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/hero-dark-720.webp 720w, screenshots/hero-dark.webp 1080w" sizes="(min-width: 960px) 520px, calc(100vw - 48px)">
+            <source type="image/avif" srcset="screenshots/hero-light-720.avif 720w, screenshots/hero-light.avif 1080w" sizes="(min-width: 960px) 520px, calc(100vw - 48px)">
+            <source type="image/webp" srcset="screenshots/hero-light-720.webp 720w, screenshots/hero-light.webp 1080w" sizes="(min-width: 960px) 520px, calc(100vw - 48px)">
+            <img src="screenshots/hero-light.webp" width="1080" height="842" fetchpriority="high" decoding="async" alt="A Memnoter note titled Logic and proof. The line says cards are written inline, anything with a double colon is a flashcard, and an induction proof is set in LaTeX.">
+          </picture>
+          <span class="callout">Inline cards and LaTeX</span>
+        </div>
+        <figcaption>The note moves from the flashcard lines down to the rendered proof.</figcaption>
       </figure>
     </section>
 
@@ -169,9 +179,32 @@
             <li>A dot in the margin shows the card while you read.</li>
           </ul>
         </div>
-        <figure class="shot">
-          <img src="screenshots/cards.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for a note with a basic card, a cloze, and an image occlusion.">
-          <figcaption>A note with a basic card, a cloze, and an image occlusion. Placeholder file <code>screenshots/cards.png</code>, 2000 by 1250.</figcaption>
+        <figure class="stage stage-cards" data-sequence>
+          <div class="stage-frame">
+            <div class="stage-slide is-on">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/cards-dark-720.avif 720w, screenshots/cards-dark.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/cards-dark-720.webp 720w, screenshots/cards-dark.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/avif" srcset="screenshots/cards-light-720.avif 720w, screenshots/cards-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/cards-light-720.webp 720w, screenshots/cards-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/cards-light.webp" width="960" height="600" loading="lazy" decoding="async" alt="Propositional logic written in a note. Modus ponens and its contrapositive are inline cards, with a truth table and the start of an induction proof underneath.">
+              </picture>
+              <span class="ring" style="left:3%;top:12%;width:94%;height:30%" aria-hidden="true"></span>
+              <span class="callout">Written in the note</span>
+            </div>
+            <div class="stage-slide" aria-hidden="true">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/occlusion-dark-720.avif 720w, screenshots/occlusion-dark.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/occlusion-dark-720.webp 720w, screenshots/occlusion-dark.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/avif" srcset="screenshots/occlusion-light-720.avif 720w, screenshots/occlusion-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/occlusion-light-720.webp 720w, screenshots/occlusion-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/occlusion-light.webp" width="960" height="600" loading="lazy" decoding="async" alt="Image occlusion on a graph. Blue masks hide three distances, and each mask is its own card.">
+              </picture>
+              <span class="ring" style="left:8%;top:28%;width:84%;height:58%" aria-hidden="true"></span>
+              <span class="callout">One mask, one card</span>
+            </div>
+          </div>
+          <figcaption>A card written in the paragraph, then masks on a diagram.</figcaption>
         </figure>
       </article>
 
@@ -186,9 +219,28 @@
             <li>The card links back to the heading it was written under.</li>
           </ul>
         </div>
-        <figure class="shot">
-          <img src="screenshots/review.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for the Memnoter review screen, with the answer and the four grades.">
-          <figcaption>Review, with Show answer and the four grades. Placeholder file <code>screenshots/review.png</code>, 2000 by 1250.</figcaption>
+        <figure class="stage stage-review" data-sequence>
+          <div class="stage-frame">
+            <div class="stage-slide is-on">
+              <picture>
+                <source type="image/avif" srcset="screenshots/review-card-light-720.avif 720w, screenshots/review-card-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/review-card-light-720.webp 720w, screenshots/review-card-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/review-card-light.webp" width="960" height="240" loading="lazy" decoding="async" alt="A revealed cloze card: Dijkstra's algorithm finds shortest paths in a graph with non-negative edge weights.">
+              </picture>
+              <span class="ring" style="left:8%;top:22%;width:84%;height:56%" aria-hidden="true"></span>
+              <span class="callout">A cloze, revealed</span>
+            </div>
+            <div class="stage-slide" aria-hidden="true">
+              <picture>
+                <source type="image/avif" srcset="screenshots/review-grades-light-720.avif 720w, screenshots/review-grades-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/review-grades-light-720.webp 720w, screenshots/review-grades-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/review-grades-light.webp" width="960" height="240" loading="lazy" decoding="async" alt="FSRS grade buttons for this card: Again in 1 minute, Hard in 14 hours, Good in 5 days, and Easy in 1.8 months.">
+              </picture>
+              <span class="ring" style="left:3%;top:18%;width:94%;height:64%" aria-hidden="true"></span>
+              <span class="callout callout-top">FSRS-7 chooses the gap</span>
+            </div>
+          </div>
+          <figcaption>The answer, then the four grades. These intervals are this card's, not a sample.</figcaption>
         </figure>
       </article>
 
@@ -198,9 +250,41 @@
           <p class="prose">Add a PDF to a module, then crop the questions you want into that module's bank. Parts nest the way a paper does, with (a), then (i), then (A). Pick questions and open a worksheet. Answer in the page, or draw the answer.</p>
           <p class="prose">Memnoter does not search for past papers or attach them for you. The PDF has to be one you add.</p>
         </div>
-        <figure class="shot">
-          <img src="screenshots/questions.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for a question bank cropped from a PDF, next to a worksheet.">
-          <figcaption>A question cropped from a PDF, in a worksheet. Placeholder file <code>screenshots/questions.png</code>, 2000 by 1250.</figcaption>
+        <figure class="stage stage-questions" data-sequence>
+          <div class="stage-frame">
+            <div class="stage-slide is-on">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/pdf-dark.avif 432w">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/pdf-dark.webp 432w">
+                <source type="image/avif" srcset="screenshots/pdf-light.avif 432w">
+                <source type="image/webp" srcset="screenshots/pdf-light.webp 432w">
+                <img src="screenshots/pdf-light.webp" width="432" height="324" loading="lazy" decoding="async" alt="A problem sheet PDF open beside the note: Discrete Mathematics, Problem Sheet 3, with questions on conditionals and induction.">
+              </picture>
+              <span class="callout">The PDF you add</span>
+            </div>
+            <div class="stage-slide" aria-hidden="true">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/bank-dark-720.avif 720w, screenshots/bank-dark.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/bank-dark-720.webp 720w, screenshots/bank-dark.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/avif" srcset="screenshots/bank-light-720.avif 720w, screenshots/bank-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/bank-light-720.webp 720w, screenshots/bank-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/bank-light.webp" width="960" height="540" loading="lazy" decoding="async" alt="The question bank for that sheet: numbered questions on logic and graphs, with a worksheet ready to resume.">
+              </picture>
+              <span class="ring" style="left:6%;top:16%;width:88%;height:76%" aria-hidden="true"></span>
+              <span class="callout">Cropped into the bank</span>
+            </div>
+            <div class="stage-slide" aria-hidden="true">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/worksheet-dark-720.avif 720w, screenshots/worksheet-dark.avif 1040w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/worksheet-dark-720.webp 720w, screenshots/worksheet-dark.webp 1040w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/avif" srcset="screenshots/worksheet-light-720.avif 720w, screenshots/worksheet-light.avif 1040w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/worksheet-light-720.webp 720w, screenshots/worksheet-light.webp 1040w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/worksheet-light.webp" width="1040" height="284" loading="lazy" decoding="async" alt="A worksheet question on induction, with a typed answer underneath the formula.">
+              </picture>
+              <span class="callout">Then a worksheet</span>
+            </div>
+          </div>
+          <figcaption>From the PDF you add, to the question bank, to a worksheet you answer.</figcaption>
         </figure>
       </article>
 
@@ -209,13 +293,23 @@
           <h3>Maths, code and diagrams</h3>
           <p class="prose">Inline maths and math blocks are rendered with KaTeX. A code block highlights the language you pick, and copies from its corner. Start one by typing three backticks. A Mermaid block renders as a diagram.</p>
         </div>
-        <figure class="shot">
-          <img src="screenshots/maths.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for a note with LaTeX maths and a highlighted code block.">
-          <figcaption>LaTeX in a note, and a highlighted code block. Placeholder file <code>screenshots/maths.png</code>, 2000 by 1250.</figcaption>
+        <figure class="stage stage-maths">
+          <div class="stage-frame">
+            <picture>
+              <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/maths-dark-720.avif 720w, screenshots/maths-dark.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+              <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/maths-dark-720.webp 720w, screenshots/maths-dark.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+              <source type="image/avif" srcset="screenshots/maths-light-720.avif 720w, screenshots/maths-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+              <source type="image/webp" srcset="screenshots/maths-light-720.webp 720w, screenshots/maths-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+              <img src="screenshots/maths-light.webp" width="960" height="190" loading="lazy" decoding="async" alt="An induction proof in a note. The sum of the first n numbers is rendered as a display formula, with the base case and inductive step in the lines around it.">
+            </picture>
+            <span class="ring" style="left:30%;top:4%;width:40%;height:52%" aria-hidden="true"></span>
+            <span class="callout callout-top">Rendered with KaTeX</span>
+          </div>
+          <figcaption>Display maths in the same note as the prose.</figcaption>
         </figure>
       </article>
 
-      <article class="feature" id="ios">
+      <article class="feature solo" id="ios">
         <div class="feature-copy">
           <h3>iPhone and iPad</h3>
           <p class="prose">The same notes, cards, question banks and review. Draw with Apple Pencil on iPad. Drawings stay editable on iPhone, Mac, Windows and Linux. Optional sync carries the library with you, encrypted before it leaves the device.</p>
@@ -224,10 +318,6 @@
             <button type="button" class="button secondary" disabled>Join the iOS TestFlight</button>
           </div>
         </div>
-        <figure class="shot">
-          <img src="screenshots/ios.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for Memnoter on iPhone or iPad.">
-          <figcaption>The iPhone or iPad app. Placeholder file <code>screenshots/ios.png</code>, 2000 by 1250.</figcaption>
-        </figure>
       </article>
     </section>
 

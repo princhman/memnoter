@@ -134,3 +134,26 @@
   if (reduce) pauseBtn.hidden = true;
   show(0);
 })();
+
+// Feature frames step through real screenshots. Reduced motion keeps the first frame.
+(() => {
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  for (const stage of document.querySelectorAll("[data-sequence]")) {
+    const slides = [...stage.querySelectorAll(".stage-slide")];
+    if (slides.length < 2) continue;
+    let index = Math.max(0, slides.findIndex((slide) => slide.classList.contains("is-on")));
+    const show = (next) => {
+      slides[index].classList.remove("is-on");
+      slides[index].setAttribute("aria-hidden", "true");
+      index = next;
+      slides[index].classList.add("is-on");
+      slides[index].removeAttribute("aria-hidden");
+    };
+    if (reduce) continue;
+    let timer = setInterval(() => show((index + 1) % slides.length), 3400);
+    document.addEventListener("visibilitychange", () => {
+      clearInterval(timer);
+      if (!document.hidden) timer = setInterval(() => show((index + 1) % slides.length), 3400);
+    });
+  }
+})();

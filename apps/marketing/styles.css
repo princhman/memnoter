@@ -19,7 +19,7 @@
   --accent-soft: #f3f1fb;
   --paper: #ffffff;
   --bg: #fafafa;
-  color-scheme: light;
+  color-scheme: light dark;
   font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: var(--ink);
   background: var(--bg);
@@ -76,9 +76,26 @@ h1 { margin: 0; font-size: clamp(44px, 5.4vw, 68px); font-weight: 600; line-heig
 .fine { margin: 14px 0 0; max-width: 520px; font-size: 13px; line-height: 1.5; color: var(--muted); }
 .fine a, .prose a, .faq a, .policy a, .draft-banner a, .also a { text-decoration: underline; text-decoration-color: #d4d0db; text-underline-offset: 3px; }
 .fine a:hover, .prose a:hover, .faq a:hover, .policy a:hover { text-decoration-color: currentColor; }
-.shot { margin: 0; }
-.shot img { display: block; width: 100%; height: auto; border-radius: 16px; background: var(--accent-soft); box-shadow: 0 24px 60px rgba(24, 23, 28, .1), 0 2px 8px rgba(24, 23, 28, .04); }
-.shot figcaption { margin-top: 10px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.stage { margin: 0; }
+.stage-frame { position: relative; overflow: hidden; border-radius: 16px; background: #fff; box-shadow: 0 24px 60px rgba(24, 23, 28, .1), 0 2px 8px rgba(24, 23, 28, .04); }
+.stage figcaption { margin-top: 10px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.stage-frame picture { display: block; width: 100%; height: 100%; }
+.stage-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.stage-pan .stage-frame { aspect-ratio: 1080 / 520; }
+.stage-pan picture { height: auto; }
+.stage-pan img { width: 100%; height: auto; object-fit: unset; animation: stage-pan 12s ease-in-out infinite alternate; }
+.stage-cards .stage-frame { aspect-ratio: 8 / 5; }
+.stage-review .stage-frame { aspect-ratio: 960 / 180; }
+.stage-questions .stage-frame { aspect-ratio: 16 / 9; background: #fff; }
+.stage-maths .stage-frame { aspect-ratio: 960 / 190; }
+.stage-slide { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.stage-slide.is-on { opacity: 1; }
+.stage-questions img { object-fit: contain; background: #fff; }
+.callout { position: absolute; z-index: 2; left: 12px; bottom: 12px; max-width: calc(100% - 24px); padding: 6px 10px; border-radius: 999px; background: rgba(255, 255, 255, .94); color: #18171c; font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(24, 23, 28, .14); }
+.callout-top { top: 12px; bottom: auto; }
+.ring { position: absolute; z-index: 1; border-radius: 14px; pointer-events: none; box-shadow: 0 0 0 2px #432fc8, 0 0 0 7px rgba(67, 47, 200, .18); }
+.feature.solo { grid-template-columns: minmax(0, 640px); }
+@keyframes stage-pan { from { transform: translateY(0); } to { transform: translateY(-36%); } }
 
 .section { padding: 28px 0 72px; }
 .section-head { max-width: 640px; margin: 0 auto 28px; text-align: center; }
@@ -209,6 +226,31 @@ kbd { padding: 0 6px; border-radius: 6px; background: rgba(255, 255, 255, .7); c
   .section-head { text-align: left; margin-left: 0; }
   .demo-stage { padding: 20px 12px 16px; }
   .note-line { font-size: 17px; }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f4f2f8;
+    --muted: #b7b3c2;
+    --line: #2e2c36;
+    --accent: #b3a6ff;
+    --accent-hover: #c8beff;
+    --accent-soft: #2a2640;
+    --bg: #121116;
+    --paper: #1c1b22;
+  }
+  body, .header { background: var(--bg); }
+  .header { background: rgba(18, 17, 22, .9); }
+  .secondary, .nav-more nav, .demo, .stage-frame, .demo-tabs button[aria-selected="true"] { background: #23222b; color: var(--ink); }
+  .secondary { box-shadow: 0 0 0 1px #3a3846, 0 1px 2px rgba(0, 0, 0, .2); }
+  .nav-more nav a:hover, .demo-tabs { background: #2c2b34; }
+  .primary, .nav-button { color: #fff; }
+  .primary:hover, .nav-button:hover { color: #fff; }
+  code, kbd { background: #2c2b34; color: var(--ink); }
+  .todo, .draft-banner { background: #2a261c; }
+  .spawned-card, .stage-questions img { background: #16151a; }
+  .callout { background: rgba(28, 27, 34, .94); color: var(--ink); }
+  .blank { background: #322c52; }
+  .skip-link { background: var(--paper); color: var(--ink); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
