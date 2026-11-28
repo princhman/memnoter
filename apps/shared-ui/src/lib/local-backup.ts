@@ -6,7 +6,7 @@ import * as Y from "yjs";
 import { call, capabilities } from "./backend";
 import { applySavedContent, type GetContentResponse } from "./content";
 import { listDocuments } from "./documents";
-import { isNoteFromNewerVersion } from "./editor-schema";
+import { isNoteFromNewerVersion, noteSchema } from "./editor-schema";
 import { jsonToMarkdown, markdownLabel } from "./markdown-export";
 import { TOC_ID_ATTRIBUTE } from "./outline";
 import { queryClient } from "./query-client";
@@ -73,7 +73,7 @@ async function buildSnapshot(splitByHeading: boolean, shouldContinue: () => bool
   const files = await call<Record<string, string>>("local_backup_image_types");
 
   const snapshot: Record<string,
-    | { kind: "ready"; name: string; filename: string; markdown: string; sections?: { filename: string; markdown: string; section?: number; heading_id?: string }[]; attachments: Record<string, string> }
+    | { kind: "ready"; name: string; filename: string; markdown: string; note_snapshot?: string; sections?: { filename: string; markdown: string; section?: number; heading_id?: string }[]; attachments: Record<string, string> }
     | { kind: "skipped"; reason: string }> = {};
 
   for (const module of modules) {
@@ -131,6 +131,7 @@ async function buildSnapshot(splitByHeading: boolean, shouldContinue: () => bool
         name: module.name,
         filename: noteFilename(module),
         markdown: [markdown, pdfAppendix].filter(Boolean).join("\n\n") + "\n",
+        note_snapshot: sections && JSON.stringify(noteSchema().nodeFromJSON(contentJson).toJSON()),
         sections: sections && [
           ...sections,
           ...(pdfAppendix ? [{ filename: "PDFs.md", markdown: pdfAppendix + "\n" }] : []),

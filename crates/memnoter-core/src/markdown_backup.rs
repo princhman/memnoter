@@ -26,6 +26,7 @@ enum Module {
         filename: String,
         markdown: String,
         sections: Option<Vec<Section>>,
+        note_snapshot: Option<String>,
         attachments: BTreeMap<String, String>,
     },
     Skipped {
@@ -53,6 +54,8 @@ struct OwnedFile {
     section: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     heading_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note_snapshot_hash: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -374,6 +377,7 @@ pub struct EditedFile {
     section: Option<usize>,
     baseline_hash: Option<String>,
     heading_id: Option<String>,
+    note_snapshot_hash: Option<String>,
 }
 
 pub fn edited_files(data_dir: &Path, selected: &Path) -> CommandResult<Vec<EditedFile>> {
@@ -421,6 +425,7 @@ pub fn edited_files(data_dir: &Path, selected: &Path) -> CommandResult<Vec<Edite
             section: file.section,
             baseline_hash: file.hash,
             heading_id: file.heading_id,
+            note_snapshot_hash: file.note_snapshot_hash,
         });
     }
     Ok(edits)
@@ -477,20 +482,22 @@ fn reconcile(
     let mut conflicts = BTreeSet::new();
     let mut warnings = Vec::new();
     for (id, module) in snapshot.modules {
-        let (name, filename, markdown, sections, module_attachments) = match module {
+        let (name, filename, markdown, sections, note_snapshot, module_attachments) = match module {
             Module::Ready {
                 name,
                 filename,
                 markdown,
                 sections,
+                note_snapshot,
                 attachments,
-            } => (name, filename, markdown, sections, attachments),
+            } => (name, filename, markdown, sections, note_snapshot, attachments),
             Module::Skipped { reason } => {
                 preserve_module(root, &id, &previous, &mut current);
                 warnings.push(reason);
                 continue;
             }
         };
+        let note_snapshot_hash = note_snapshot.as_deref().map(markdown_hash);
         let result = (|| -> CommandResult<()> {
             let filename = filenames.remove(&id).unwrap_or(filename);
             let files =
@@ -542,6 +549,7 @@ fn reconcile(
                         file.note_name = Some(name.clone());
                         file.section = *section;
                         file.heading_id.clone_from(heading_id);
+                        file.note_snapshot_hash = section.and(note_snapshot_hash.clone());
                     }
                     continue;
                 }
@@ -569,6 +577,7 @@ fn reconcile(
                     file.note_name = Some(name.clone());
                     file.section = section;
                     file.heading_id = heading_id;
+                    file.note_snapshot_hash = section.and(note_snapshot_hash.clone());
                 }
                 file.modules.insert(id.clone());
             }
@@ -614,25 +623,47 @@ fn reconcile(
             Err(error) => return Err(db_err(error)),
         }
     }
-    let mut retained_note_owners: BTreeSet<_> = current
+    let retained_note_owners: BTreeSet<_> = current
         .iter()
         .filter(|(path, file)| markdown_path(path) && file.external)
         .flat_map(|(_, file)| file.modules.iter().cloned())
         .collect();
-    // Another note may still export an attachment used by a retained edit.
-    // Carry that edit's ownership into the next run as well.
-    for (path, file) in &mut current {
+    carry_attachment_owners(&mut current, &previous_by_path, &retained_note_owners);
+    save_manifest(root, &current)?;
+    if !obsolete.is_empty() {
+        clean_obsolete(
+            root,
+            current,
+            obsolete,
+            &previous_by_path,
+            retained_note_owners,
+        )?;
+    }
+    Ok(warnings)
+}
+
+fn carry_attachment_owners(
+    current: &mut BTreeMap<String, OwnedFile>,
+    previous_by_path: &BTreeMap<String, &OwnedFile>,
+    retained_note_owners: &BTreeSet<String>,
+) {
+    for (path, file) in current {
         if path.starts_with("attachments/") {
             if let Some(old) = previous_by_path.get(&path.to_lowercase()) {
                 file.modules
-                    .extend(old.modules.intersection(&retained_note_owners).cloned());
+                    .extend(old.modules.intersection(retained_note_owners).cloned());
             }
         }
     }
-    save_manifest(root, &current)?;
-    if obsolete.is_empty() {
-        return Ok(warnings);
-    }
+}
+
+fn clean_obsolete(
+    root: &Path,
+    mut current: BTreeMap<String, OwnedFile>,
+    mut obsolete: Vec<(String, String)>,
+    previous_by_path: &BTreeMap<String, &OwnedFile>,
+    mut retained_note_owners: BTreeSet<String>,
+) -> CommandResult<()> {
     let mut old_folders = BTreeSet::new();
     // Check obsolete notes before assets in case a new external edit needs their links.
     obsolete.sort_by_key(|(path, _)| path.starts_with("attachments/"));
@@ -657,12 +688,14 @@ fn reconcile(
         }
         current.remove(&path);
     }
+    // A late edit can also link to an attachment freshly exported by another note.
+    carry_attachment_owners(&mut current, previous_by_path, &retained_note_owners);
     save_manifest(root, &current)?;
     for folder in old_folders {
         // A folder may still contain a retained edit or a user-created file.
         let _ = fs::remove_dir(root.join(folder));
     }
-    Ok(warnings)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -702,6 +735,7 @@ mod tests {
             filename: format!("{name}.md"),
             markdown: markdown.into(),
             sections: None,
+            note_snapshot: None,
             attachments,
         }
     }
@@ -755,6 +789,7 @@ mod tests {
             name: "Note".into(),
             filename: "Note.md".into(),
             markdown: String::new(),
+            note_snapshot: None,
             sections: Some(vec![
                 Section {
                     filename: "0001 - Maps.md".into(),
@@ -1117,6 +1152,7 @@ mod tests {
             name: "Edited".into(),
             filename: "Edited.md".into(),
             markdown: String::new(),
+            note_snapshot: None,
             sections: Some(vec![Section {
                 filename: "0001 - Maps.md".into(),
                 markdown: section.clone(),
@@ -1155,6 +1191,53 @@ mod tests {
                 b"shared image"
             );
         }
+    }
+
+    #[test]
+    fn an_edit_during_cleanup_keeps_its_attachment_after_the_other_export_drops_it() {
+        let backup = Backup::new();
+        let image = "00000000-0000-0000-0000-000000000001";
+        let name = format!("{image}.png");
+        let path = format!("attachments/{name}");
+        let markdown = format!("![Image]({path})");
+        let attachments = || BTreeMap::from([(name.clone(), image.into())]);
+        assets::write(&backup.source, image, b"shared image").unwrap();
+        assert!(backup
+            .run(with_modules([
+                ("edited", ready("Edited", &markdown, attachments())),
+                ("other", ready("Other", &markdown, attachments())),
+            ]))
+            .is_empty());
+
+        let previous = load_manifest(&backup.root).unwrap();
+        let previous_by_path = previous
+            .iter()
+            .map(|(path, file)| (path.to_lowercase(), file))
+            .collect();
+        let mut staged = previous.clone();
+        staged.get_mut(&path).unwrap().modules = BTreeSet::from(["other".into()]);
+        let obsolete = vec![("Edited.md".into(), markdown_hash(&markdown))];
+        save_manifest(&backup.root, &staged).unwrap();
+        let edited = format!("{markdown}\n\nExternal edit");
+        let edited_path = backup.root.join("Edited.md");
+        fs::write(&edited_path, &edited).unwrap();
+
+        clean_obsolete(
+            &backup.root,
+            staged,
+            obsolete,
+            &previous_by_path,
+            BTreeSet::new(),
+        )
+        .unwrap();
+        assert!(backup
+            .run(with_modules([("other", ready("Other", "No image", BTreeMap::new()))]))
+            .is_empty());
+        assert_eq!(fs::read_to_string(edited_path).unwrap(), edited);
+        assert_eq!(
+            fs::read(backup.root.join(path)).expect("the late edit still links to the image"),
+            b"shared image"
+        );
     }
 
     #[test]

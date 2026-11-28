@@ -93,6 +93,10 @@ changes with it. Everything stays on your machine.
 - Saves retry in order, and quitting waits for pending saves.
 - A daily backup of notes and images keeps the last 7 days. You can also back
   up and restore from Settings.
+- If an older version cannot read your Markdown backup, keep the existing
+  `Memnoter Backup` folder with any external edits. Choose a new, empty
+  destination in **Settings > Local backup**. To review edits in the original
+  folder, select its parent folder in the newer version.
 - The app updates itself in the background from signed GitHub releases.
 
 > **Before updating to 0.1.4:** update every device before using tables,

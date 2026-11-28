@@ -580,9 +580,11 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
   }
 });
 
-for (const [name, moved] of [
-  ["a split backup edit follows its heading when identical siblings are reordered", true],
-  ["a split backup edit cannot target the identical sibling of a deleted heading", false],
+for (const [name, change] of [
+  ["a split backup edit applies to an unchanged note with a unique heading ID", "unchanged"],
+  ["a split backup edit stays read-only when identical headings are reordered", "move"],
+  ["a split backup edit cannot target the identical sibling of a deleted heading", "delete"],
+  ["a split backup edit cannot target a copy that inherits the original heading ID", "copy"],
 ]) {
   test(name, async () => {
     const folder = await mkdtemp(join(await realpath(tmpdir()), "memnoter-backup-"));
@@ -610,27 +612,37 @@ for (const [name, moved] of [
         await exportFinished;
         await writeFile(file, "# Maps\n\nExternal edit\n");
         enabled = false;
-        const since = Y.encodeStateVector(doc);
-        const original = fragment.get(0).clone();
-        fragment.delete(0, 1);
-        if (moved) fragment.push([original]);
-        await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc, since)) });
+        if (change === "copy") {
+          await editor.evaluate(el => {
+            const { state, view } = el.editor;
+            view.dispatch(state.tr.insert(0, state.doc.firstChild));
+          });
+          const ids = await editor.evaluate(el => el.editor.getJSON().content.map(node => node.attrs?.["data-toc-id"]));
+          assert.equal(ids[0], "original", "the inserted copy inherited the original ID");
+          assert.notEqual(ids[1], "original", "TipTap gave the original heading a different ID");
+          assert.equal(ids[2], "sibling");
+        } else if (change !== "unchanged") {
+          const since = Y.encodeStateVector(doc);
+          const original = fragment.get(0).clone();
+          fragment.delete(0, 1);
+          if (change === "move") fragment.push([original]);
+          await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc, since)) });
+          await page.reload();
+        }
         doc.destroy();
-
-        await page.reload();
         await page.getByRole("link", { name: "Settings", exact: true }).click();
         await page.getByRole("button", { name: "Check backup for edits", exact: true }).click();
         const dialog = page.getByRole("dialog", { name: "Backup edits" });
         await dialog.getByText(relativePath, { exact: true }).waitFor();
         const apply = dialog.getByRole("button", { name: `Apply ${relativePath}`, exact: true });
-        if (moved) {
+        if (change === "unchanged") {
           await apply.click();
           await editor.getByText("External edit", { exact: true }).waitFor();
           assert.deepEqual(await editor.evaluate(el => el.editor.getJSON().content.map(node =>
             node.attrs?.["data-toc-id"] ?? node.content?.[0]?.text
-          ).filter(Boolean)), ["sibling", "original", "External edit"]);
+          ).filter(Boolean)), ["original", "External edit", "sibling"]);
         } else {
-          assert.equal(await apply.count(), 0, "the surviving sibling must not receive the deleted heading's edit");
+          assert.equal(await apply.count(), 0, "the changed note must not receive the split-file edit");
         }
         assert.equal(await readFile(file, "utf8"), "# Maps\n\nExternal edit\n");
       }, async (command, args, call) => {
