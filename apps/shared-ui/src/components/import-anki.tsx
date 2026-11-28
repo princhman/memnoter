@@ -168,7 +168,7 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
           {plan && invalid && step === 1 && <p role="alert">Choose at least one module and give each module a unique, non-empty name.</p>}
           {error && <p role="alert" className="text-destructive">{error}</p>}
         </div>
-        {step === 2 && <p role="status" className="min-h-5 text-sm">{progress}</p>}
+        {step === 2 && <p role="status" className="min-h-5 text-sm">{busy ? progress : ""}</p>}
         <DialogFooter><Button variant="outline" disabled={busy} onClick={close}>Cancel</Button>{step > 0 && <Button variant="outline" disabled={busy || attempted} onClick={() => setStep(step - 1)}>Back</Button>}
           {step < 2 ? <Button disabled={step === 0 ? !plan?.modules.length : invalid} onClick={() => setStep(step + 1)}>Next</Button> : <Button disabled={busy || invalid || attempted} onClick={() => void save()}>Import</Button>}</DialogFooter>
       </DialogContent>
