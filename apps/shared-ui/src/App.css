@@ -2043,8 +2043,45 @@ body {
 
 /* The reader owns pinch scaling; one-finger PDF scrolling remains native. */
 .pdf-viewport { touch-action: pan-x pan-y; }
-/* iOS touch: a title row (back, name, pane actions) above one rounded capsule
-   of reader tools, with 44px round targets and grouped controls. */
+/* iPad keeps the filename, document controls and pane actions on one line. */
+.pdf-viewer[data-pdf-ipad] .pdf-reader-tools {
+    height: 44px;
+    flex-wrap: nowrap;
+    gap: 0;
+    padding-inline: 8px;
+    border-bottom-color: color-mix(in oklch, var(--foreground) 9%, transparent);
+}
+.pdf-viewer[data-pdf-ipad] .pdf-reader-leading:has(> span) { min-width: 64px; }
+.pdf-viewer[data-pdf-ipad] .pdf-reader-leading:has(> button):has(> span) { min-width: 96px; }
+.pdf-viewer[data-pdf-ipad] .pdf-reader-controls, #pdf-toolbar[data-pdf-ipad] {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+}
+.pdf-viewer[data-pdf-ipad] .pdf-reader-trailing { display: flex; flex: none; }
+:is(.pdf-viewer[data-pdf-ipad] .pdf-reader-tools, #pdf-toolbar[data-pdf-ipad]) button {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+}
+:is(.pdf-viewer[data-pdf-ipad], #pdf-toolbar[data-pdf-ipad]) .pdf-page-picker {
+    padding-inline: 4px;
+}
+:is(.pdf-viewer[data-pdf-ipad], #pdf-toolbar[data-pdf-ipad]) .pdf-page-picker input {
+    min-width: 44px;
+    height: 44px;
+    padding-block: 8px;
+    background-color: var(--muted);
+    background-clip: content-box;
+    font-size: 16px;
+}
+:is(.pdf-viewer[data-pdf-ipad], #pdf-toolbar[data-pdf-ipad]) [aria-label="Zoom level"] { min-width: 2.75rem; }
+
+/* iPhone keeps its separate tools row. */
 @media (any-pointer: coarse) {
     .pdf-viewer[data-pdf-ios] button:not(.pdf-page button), #pdf-toolbar[data-pdf-ios] button {
         min-width: 44px;
@@ -2052,7 +2089,7 @@ body {
         border-radius: 999px;
     }
     .pdf-viewer[data-pdf-ios] button:not(.pdf-page button) svg, #pdf-toolbar[data-pdf-ios] button svg { width: 20px; height: 20px; }
-    .pdf-viewer[data-pdf-ios] .pdf-reader-tools {
+    .pdf-viewer[data-pdf-ios]:not([data-pdf-ipad]) .pdf-reader-tools {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas: "lead trail" "tools tools";
@@ -2063,10 +2100,10 @@ body {
         padding: 4px 8px 10px;
         border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
     }
-    .pdf-viewer[data-pdf-ios] .pdf-reader-leading { grid-area: lead; min-height: 44px; gap: 2px; }
-    .pdf-viewer[data-pdf-ios] .pdf-reader-leading > span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-    .pdf-viewer[data-pdf-ios] .pdf-reader-trailing { grid-area: trail; display: flex; align-items: center; gap: 2px; }
-    .pdf-viewer[data-pdf-ios] .pdf-reader-controls, #pdf-toolbar[data-pdf-ios] {
+    .pdf-viewer[data-pdf-ios]:not([data-pdf-ipad]) .pdf-reader-leading { grid-area: lead; min-height: 44px; gap: 2px; }
+    .pdf-viewer[data-pdf-ios]:not([data-pdf-ipad]) .pdf-reader-leading > span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+    .pdf-viewer[data-pdf-ios]:not([data-pdf-ipad]) .pdf-reader-trailing { grid-area: trail; display: flex; align-items: center; gap: 2px; }
+    .pdf-viewer[data-pdf-ios]:not([data-pdf-ipad]) .pdf-reader-controls, #pdf-toolbar[data-pdf-ios]:not([data-pdf-ipad]) {
         grid-area: tools;
         display: flex;
         align-items: center;
@@ -2081,9 +2118,9 @@ body {
         overscroll-behavior-x: contain;
         scrollbar-width: none;
     }
-    .pdf-viewer[data-pdf-ios] .pdf-reader-controls::-webkit-scrollbar, #pdf-toolbar[data-pdf-ios]::-webkit-scrollbar { display: none; }
-    #pdf-toolbar[data-pdf-ios] { flex-wrap: nowrap; margin: 0 8px 10px; border-bottom: 0; }
-    .pdf-viewer[data-pdf-ios] .pdf-tool-divider, #pdf-toolbar[data-pdf-ios] .pdf-tool-divider {
+    .pdf-viewer[data-pdf-ios]:not([data-pdf-ipad]) .pdf-reader-controls::-webkit-scrollbar, #pdf-toolbar[data-pdf-ios]:not([data-pdf-ipad])::-webkit-scrollbar { display: none; }
+    #pdf-toolbar[data-pdf-ios]:not([data-pdf-ipad]) { flex-wrap: nowrap; margin: 0 8px 10px; border-bottom: 0; }
+    .pdf-viewer[data-pdf-ios]:not([data-pdf-ipad]) .pdf-tool-divider, #pdf-toolbar[data-pdf-ios]:not([data-pdf-ipad]) .pdf-tool-divider {
         display: block;
         flex: none;
         width: 1px;
@@ -2091,7 +2128,7 @@ body {
         margin: 0 4px;
         background: color-mix(in oklch, var(--foreground) 14%, transparent);
     }
-    .pdf-viewer[data-pdf-ios] .pdf-reader-tools input[aria-label="Page number"], #pdf-toolbar[data-pdf-ios] input[aria-label="Page number"] {
+    .pdf-viewer[data-pdf-ios]:not([data-pdf-ipad]) .pdf-reader-tools input[aria-label="Page number"], #pdf-toolbar[data-pdf-ios]:not([data-pdf-ipad]) input[aria-label="Page number"] {
         min-width: 44px;
         min-height: 44px;
         padding: 0 4px 0 10px;
@@ -2229,3 +2266,105 @@ body {
   text-underline-offset: 0.18em;
 }
 .mention-chip button:hover { text-decoration-color: var(--link); }
+
+/* The worksheet and its reference each keep their own scroll position. */
+.app-scroll-container:has(.worksheet-beside[data-split]):not(.worksheet-beside-main, .worksheet-beside-content *) {
+  container-type: size;
+  overflow: hidden;
+}
+
+.questions-all:has(.worksheet-beside[data-split]) {
+  max-width: none;
+  padding-block: 0;
+}
+
+.worksheet-beside[data-split] {
+  display: grid;
+  height: 100cqh;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 12px var(--beside-share);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.worksheet-beside-main {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.worksheet-beside-content {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.worksheet-beside-divider {
+  position: relative;
+  touch-action: none;
+  cursor: col-resize;
+}
+
+.worksheet-beside-divider::after {
+  position: absolute;
+  inset: 0 5px;
+  background: var(--border);
+  content: "";
+}
+
+.worksheet-beside-divider:is(:hover, :active, :focus-visible)::after {
+  background: var(--primary);
+}
+
+@media (pointer: coarse) {
+  .worksheet-beside[data-split] {
+    grid-template-columns: minmax(0, 1fr) 24px var(--beside-share);
+  }
+
+  .worksheet-beside-divider::after {
+    inset-inline: 11px;
+  }
+
+  .worksheet-beside-close {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@container (width < 680px) {
+  .worksheet-beside[data-split] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 24px var(--beside-share);
+  }
+
+  .worksheet-beside-divider {
+    cursor: row-resize;
+  }
+
+  .worksheet-beside-divider::after {
+    inset: 11px 0;
+  }
+}
+
+.worksheet-beside-content .pdf-reader-tools {
+  height: auto;
+  min-height: 36px;
+  flex-wrap: wrap;
+}
+
+/* The header slot is display: contents; the side pane button follows Finish. */
+#worksheet-actions-slot .worksheet-beside-open {
+  order: 1;
+}
+
+@media (pointer: coarse) {
+  .worksheet-beside-open {
+    width: 44px;
+    height: 44px;
+  }
+
+  #worksheet-actions-slot .worksheet-beside-open {
+    height: 32px;
+  }
+}

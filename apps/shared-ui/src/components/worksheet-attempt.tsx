@@ -1,3 +1,4 @@
+import { WorksheetBeside } from "./worksheet-beside";
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
@@ -181,7 +182,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
       refresh={(...args) => answers.refreshDocument(pin!.revisionId, partId, ...args)}
       save={(document, expected, text, hasContent) => answers.setDocument(pin!.revisionId, partId, document, expected, text, hasContent)} flush={() => { void answers.flush(); }} />;
   };
-  return <section ref={page} aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
+  return <WorksheetBeside toolbar={slots.actions}><section ref={page} aria-label={attempt.title || "Worksheet"} className={cn(questionReadingWidth, "question-bank-page space-y-5")}>
     <Dialog open={confirmFinish} onOpenChange={open => { if (!finishing) setConfirmFinish(open); }}>
       <DialogContent><DialogTitle>Finish worksheet?</DialogTitle>
         <p className="text-sm text-muted-foreground">Answers become read-only.</p>
@@ -252,7 +253,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
           ancestorDepth = ancestor.depth;
           if (folded.has(JSON.stringify([moduleId, answerKey(attemptId, pin.revisionId, ancestor.id)]))) hidden = true;
         }
-        return <section key={foldKey} hidden={hidden} className={layout.partClass} style={{ marginLeft: layout.marginLeft, display: hidden ? "none" : undefined }}>
+        return <section key={foldKey} hidden={hidden} className={cn(layout.partClass, root && "worksheet-root-question")} style={{ marginLeft: layout.marginLeft, display: hidden ? "none" : undefined }}>
           <h3 className={cn(questionHeadingClass, "worksheet-question-heading")}>
             <span className="bank-disclosure flex h-7 w-4 shrink-0 items-center justify-center"><button type="button" className="text-muted-foreground hover:text-foreground" aria-expanded={!collapsed} aria-label={`${collapsed ? "Expand" : "Fold"} ${part.label}`} onClick={toggle}><ChevronRight size={14} className={collapsed ? "" : "rotate-90"} /></button></span>
             <button type="button" className={cn(layout.labelClass, "worksheet-question-label")} aria-expanded={!collapsed} onClick={toggle}>{root ? label : ownPartLabel(revision.parts[part.id].label)}</button>
@@ -272,5 +273,5 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
         </section>;
       })}
     </article>}
-  </section>;
+  </section></WorksheetBeside>;
 }

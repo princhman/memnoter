@@ -3,7 +3,7 @@ import { useBankGate, type CropDraft } from "@/lib/question-bank";
 import { QuestionCropDialog } from "./question-crop-dialog";
 import { IconTooltip } from "@/components/ui/icon-tooltip";
 import { usePdfFind, PdfFindHighlights } from "./pdf-find";
-import { IS_IOS } from "@/lib/platform";
+import { IS_IOS, IS_IPAD } from "@/lib/platform";
 import { pdfSelectionControls } from "@/lib/pdf-selection-controls";
 import { usePdfAnnotations } from "@/lib/pdf-annotation-store";
 import { parsePdfAnnotationColor, type PdfAnnotationColor, type PdfAnnotation, type PdfAnnotationAnchor } from "@/lib/pdf-annotations";
@@ -105,8 +105,8 @@ function ReaderTools({ children, fullscreen, leading, trailing }: { children: Re
 const sameList = (a: number[], b: number[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 
 /** With `nativeTools`, the host draws the reader's tools (pdfReaderControls). */
-export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage, nativeTools = false }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number; nativeTools?: boolean }) {
-  const bankEnabled = useBankGate();
+export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialPage, nativeTools = false, worksheetReference = false }: { doc: DocumentRecord; fullscreen?: boolean; leading?: ReactNode; trailing?: ReactNode; initialPage?: number; nativeTools?: boolean; worksheetReference?: boolean }) {
+  const bankEnabled = useBankGate() && !worksheetReference;
   const [questionCropping, setQuestionCropping] = useState(false);
   const [questionDraft, setQuestionDraft] = useState<CropDraft | null>(null);
   useEffect(() => () => { if (questionDraft) URL.revokeObjectURL(questionDraft.url); }, [questionDraft]);
@@ -744,9 +744,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     void navigate({ to: "/$moduleId", params: { moduleId: doc.moduleId } }).catch(error => setQuoteError(String(error)));
   }, [doc.moduleId, navigate]);
   useEffect(() => {
-    if (!pdf || pending || cropping) return;
+    if (worksheetReference || !pdf || pending || cropping) return;
     return registerCommand({ ...action("pdf.select-region"), keywords: ["pdf", "quote"], run: toggleSelection });
-  }, [pdf, pending, cropping, toggleSelection]);
+  }, [worksheetReference, pdf, pending, cropping, toggleSelection]);
   useEffect(() => {
     if (!fullscreen) return;
     return registerCommand({ ...action("pdf.open-beside"), keywords: ["pdf", "note"], run: openBeside });
@@ -772,13 +772,13 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
       } else if (matchesShortcut(event, action("pdf.annotate-area").keys)) {
         if (!pdf || pending || cropping || !annotations.ready || writeBlocked) return;
         event.preventDefault(); event.stopPropagation(); toggleAnnotate();
-      } else if (!fullscreen && matchesShortcut(event, action("pdf.open-fullscreen").keys)) {
+      } else if (!worksheetReference && !fullscreen && matchesShortcut(event, action("pdf.open-fullscreen").keys)) {
         event.preventDefault(); event.stopPropagation(); openFullscreen();
       } else if (matchesShortcut(event, action("text.highlight").keys)) {
         if (annotationEditor || selecting || cropping || pinching || pending || writeBlocked || !annotations.ready || !content.current || !readPdfTextSelection(content.current, doc)) return;
         event.preventDefault(); event.stopPropagation(); annotateText("highlight");
       } else if (matchesShortcut(event, action("pdf.select-region").keys)) {
-        if (!pdf || pending || cropping) return;
+        if (worksheetReference || !pdf || pending || cropping) return;
         event.preventDefault(); event.stopPropagation(); toggleSelection();
       } else if (fullscreen && matchesShortcut(event, action("pdf.open-beside").keys)) {
         event.preventDefault(); event.stopPropagation(); openBeside();
@@ -788,7 +788,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     };
     window.addEventListener("keydown", handle, true);
     return () => window.removeEventListener("keydown", handle, true);
-  }, [fullscreen, pdf, pending, cropping, doc.moduleId, toggleSelection, toggleQuestionCrop, toggleAnnotate, openFullscreen, openBeside, showCursorAction, annotateText, annotationEditor, selecting, pinching, writeBlocked, annotations.ready, bankEnabled, questionDraft, pages.length, changeZoom]);
+  }, [fullscreen, worksheetReference, pdf, pending, cropping, doc.moduleId, toggleSelection, toggleQuestionCrop, toggleAnnotate, openFullscreen, openBeside, showCursorAction, annotateText, annotationEditor, selecting, pinching, writeBlocked, annotations.ready, bankEnabled, questionDraft, pages.length, changeZoom]);
   useEffect(() => {
     if (!fullscreen || pending?.moduleId !== doc.moduleId || pending.status !== "draft") return;
     return registerCommand({ ...action("pdf.quote.insert"), keywords: ["pdf", "quote", "cursor"], run: showCursorAction });
@@ -807,9 +807,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     goToPage: page => { if (pages.length) jump(Math.max(1, Math.min(pages.length, Math.round(page)))); },
     openBeside,
   };
+  const pageCount = pages.length || doc.pageCount || 0;
   const canSelect = !pending && !cropping && !!pdf;
   const nativeState = nativeTools ? JSON.stringify({
-    page: current, pageCount: pages.length || doc.pageCount || 0, zoom: Math.round(zoom * 100),
+    page: current, pageCount, zoom: Math.round(zoom * 100),
     selecting: selecting && !annotationArea && !questionCropping, annotating: annotationArea,
     questionCropping, canCropQuestion: bankEnabled && canSelect && !questionDraft && !writeBlocked,
     canSelect, canAnnotate: canSelect && annotations.ready && !writeBlocked, canZoomIn: zoom < 3, canZoomOut: zoom > 0.25,
@@ -825,7 +826,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     };
     return pdfReaderControls.set({ documentId: doc.id, state: JSON.parse(nativeState), actions });
   }, [nativeState, doc.id]);
-  return <div ref={root} data-pdf-ios={IS_IOS || undefined} tabIndex={-1} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
+  return <div ref={root} data-pdf-ios={IS_IOS || undefined} data-pdf-ipad={IS_IPAD || undefined} tabIndex={-1} onKeyDown={event => { if (event.key === "Escape" && annotationEditor?.kind === "area") setAnnotationEditor(null); }} className="pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-background">
     {annotationEditor?.kind === "area" && <div role="group" aria-label="PDF area actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={annotationEditor}>
       <div className="flex items-center gap-0.5">
         <Button size="xs" variant="ghost" className="px-1.5" aria-label="Highlight area" disabled={!annotations.ready || writeBlocked} onClick={() => highlightArea()}><Highlighter aria-hidden="true" />Highlight</Button>
@@ -857,16 +858,16 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     </div>}
     {bankEnabled && questionDraft && <QuestionCropDialog moduleId={doc.moduleId} draft={questionDraft} onClose={() => setQuestionDraft(null)} onSaved={() => { setQuestionCropping(true); setAnnotationArea(false); setSelecting(true); }} />}
     {!nativeTools && <ReaderTools fullscreen={fullscreen} leading={leading} trailing={trailing}>
-      <div className="flex items-center gap-1 text-xs tabular-nums"><IconTooltip label="Go to page" hint={formatKeys(action("pdf.go-to-page").keys)}><input ref={pageInput} aria-label="Page number" disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pages.length || doc.pageCount || 0).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
+      {(!IS_IPAD || pageCount > 1) && <div className="pdf-page-picker flex shrink-0 items-center gap-1 text-xs tabular-nums"><IconTooltip label="Go to page" hint={formatKeys(action("pdf.go-to-page").keys)}><input ref={pageInput} aria-label="Page number" inputMode={IS_IPAD ? "numeric" : undefined} disabled={!pages.length} className="rounded bg-transparent px-1 text-center focus:bg-accent focus:outline-none" style={{ width: `calc(${Math.max(2, String(pageCount).length)}ch + 0.5rem)` }} value={input} onInput={event => setInput(event.currentTarget.value)} onBlur={() => setInput(String(current))} onKeyDown={event => {
         if (event.key !== "Enter") return;
         const page = parsePage(event.currentTarget.value, pages.length); if (page !== null) jump(page); else setInput(String(current));
-      }} /></IconTooltip><span className="whitespace-nowrap text-muted-foreground">/ {pages.length || doc.pageCount || "?"}</span></div>
+      }} /></IconTooltip><span className="whitespace-nowrap text-muted-foreground">/ {pageCount || "?"}</span></div>}
       <span aria-hidden="true" className="pdf-tool-divider hidden" />
       <ToolButton label="Zoom out" hint={formatKeys(action("pdf.zoom-out").keys)} disabled={zoom <= 0.25} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) - 0.1)}><ZoomOut /></ToolButton>
       <span className="min-w-8 text-center text-[11px] tabular-nums text-muted-foreground" aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
       <ToolButton label="Zoom in" hint={formatKeys(action("pdf.zoom-in").keys)} disabled={zoom >= 3} onClick={() => changeZoom((finishPinch.current?.() ?? zoom) + 0.1)}><ZoomIn /></ToolButton>
       <span aria-hidden="true" className="pdf-tool-divider hidden" />
-      <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Quote region" pressed={selecting && !annotationArea && !questionCropping} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>
+      {!worksheetReference && <ToolButton hint={formatKeys(action("pdf.select-region").keys)} label="Quote region" pressed={selecting && !annotationArea && !questionCropping} disabled={!!pending || cropping || !pdf} onClick={toggleSelection}><SquareDashedMousePointer /></ToolButton>}
       {bankEnabled && <ToolButton label="Crop question" hint={formatKeys(action("pdf.crop-question").keys)} pressed={questionCropping} disabled={!!pending || cropping || !pdf || !!questionDraft} onClick={toggleQuestionCrop}>
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3" />
@@ -893,10 +894,10 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     {!doc.available ? <div className="m-auto grid gap-2 p-6 text-center text-sm text-muted-foreground"><p>Downloading from your other devices</p><p>{(doc.size / 1024 / 1024).toFixed(1)} MB</p></div> : error ? <p role="alert" className="m-auto p-4 text-sm text-destructive">{error}</p> : <div ref={container} className="pdf-viewport min-h-0 flex-1 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }} onScroll={scheduleMeasure}>
       {!pages.length && <p className="p-8 text-center text-sm text-muted-foreground">Loading PDF</p>}
       <div ref={scrollingContent} className="relative">
-        <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage find={find} key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} annotations={annotations.annotations} onAnnotationOpen={openAnnotation} quoteRegions={quoteRegions.get(index + 1)} onQuoteNavigate={navigateToQuote} quoteNavigationDisabled={selecting || cropping || pinching} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
+        <div ref={content} className="grid min-w-full w-max justify-items-center gap-4 pb-4">{sizes.map((size, index) => <PdfPage find={find} key={index} page={pages[index]} pageNumber={index + 1} width={size.width} height={size.height} zoom={zoom} active={activeSet.has(index)} annotations={annotations.annotations} onAnnotationOpen={openAnnotation} quoteRegions={worksheetReference ? undefined : quoteRegions.get(index + 1)} onQuoteNavigate={navigateToQuote} quoteNavigationDisabled={selecting || cropping || pinching} selecting={selecting && !pending && !cropping && !pinching} onCancel={cancelSelection} onSelect={selectRegion} />)}</div>
         {!nativeSelectionMenu && textAction && !annotationEditor && !pending && !selecting && !cropping && !pinching && <div ref={textMenu} role="group" aria-label="PDF text actions" className="pdf-floating-menu absolute z-30 w-max max-w-[calc(100%-1rem)] rounded-lg floating-surface p-1 text-foreground shadow-md" style={textAction}>
           <div className="flex items-center gap-0.5 overflow-x-auto">
-            <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>
+            {!worksheetReference && <Button size="xs" variant="ghost" className="px-1.5" aria-label="Quote text" onPointerDown={event => event.preventDefault()} onClick={quoteText}><Quote aria-hidden="true" />Quote</Button>}
             <IconTooltip label="Highlight" hint={formatKeys(action("text.highlight").keys)}><Button size="xs" variant="ghost" className="px-1.5" aria-keyshortcuts="Meta+Shift+H Control+Shift+H" disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => annotateText("highlight")}><Highlighter aria-hidden="true" />Highlight</Button></IconTooltip>
             <ToolButton size="icon-xs" label="Highlight colour" pressed={showHighlightColors} aria-expanded={showHighlightColors} disabled={!annotations.ready || writeBlocked} onPointerDown={event => event.preventDefault()} onClick={() => setShowHighlightColors(value => !value)}>
               <span className="size-2 rounded-full" style={{ backgroundColor: pdfHighlightColors[highlightColor].value }} /><ChevronDown className="size-3" />

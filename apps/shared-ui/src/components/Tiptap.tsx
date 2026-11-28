@@ -16,6 +16,7 @@ import { headingNumberingKey } from "@/lib/heading-numbering";
 import { watchWriteAdmission } from "@/lib/write-lifecycle";
 import { suppressesTextInput } from "@/lib/editor-input";
 import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
+import { Selection } from "@tiptap/pm/state";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 import { capabilities } from "@/lib/backend";
@@ -45,10 +46,11 @@ import {
 
 type TipTapProps = {
   moduleId: string;
+  beside?: boolean;
   sidebarSectionsEnabled?: () => boolean;
 };
 
-const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sidebarSections }: TipTapProps) => {
+const Tiptap = ({ moduleId, beside = false, sidebarSectionsEnabled = () => appStore.state.sidebarSections }: TipTapProps) => {
   const host = useEditorHost();
   const element = useRef<HTMLDivElement>(null);
   const { data: modules } = useModules();
@@ -88,8 +90,19 @@ const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sideba
         onTocUpdate: (content) => tocStore.setState(() => content),
       }),
       editorProps: {
+        handleClick: (view, pos, event) => {
+          if (!beside || !view.editable || event.target !== view.dom ||
+              event.shiftKey || event.altKey || event.ctrlKey || event.metaKey ||
+              pos !== view.state.doc.content.size) return false;
+
+          // A click in the trailing padding can leave the native caret ahead
+          // of ProseMirror's selection. End at that caret fires no selectionchange.
+          view.dispatch(view.state.tr.setSelection(Selection.atEnd(view.state.doc)).setMeta("pointer", true));
+          view.focus();
+          return true;
+        },
         handleScrollToSelection: (view) => {
-          if (host.isNative) { traceScroll("prosemirror.scrollIntoView.suppressed"); return true; }
+          if (host.isNative && !beside) { traceScroll("prosemirror.scrollIntoView.suppressed"); return true; }
           if (!view.state.selection.empty) return false;
           const container = host.scrollContainer(view.dom);
           if (!container) return false;
@@ -169,7 +182,7 @@ const Tiptap = ({ moduleId, sidebarSectionsEnabled = () => appStore.state.sideba
     redo: () => editor && yRedo(editor.state),
   }, editor);
 
-  usePersistedView(editor, moduleId, isSuccess);
+  usePersistedView(editor, moduleId, isSuccess, beside);
   useSearchIndexing(editor, moduleId, isSuccess && !newerVersion);
 
   useCardSync(editor, moduleId, isSuccess && !newerVersion);
