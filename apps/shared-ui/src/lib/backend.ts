@@ -21,14 +21,15 @@ declare global {
 }
 
 export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-export function isSecondaryWindow() {
-  if (!isTauri()) return false;
+export function desktopWindowLabel(): string | null {
+  if (!isTauri()) return null;
   try {
-    return getCurrentWindow().label.startsWith("note-");
+    return getCurrentWindow().label ?? "main";
   } catch {
-    return false;
+    return "main";
   }
 }
+export const isSecondaryWindow = () => desktopWindowLabel()?.startsWith("note-") ?? false;
 export const windowViewStorage = () => isSecondaryWindow() ? sessionStorage : localStorage;
 export const isNativeHost = () => !isTauri() && !!window.webkit?.messageHandlers?.memnoter;
 let sequence = 0;
@@ -95,7 +96,9 @@ function dispatchCall<T>(command: string, args?: object): Promise<T> {
 }
 
 export async function listen<T>(event: string, handler: (event: { event: string; id: number; payload: T }) => void): Promise<() => void> {
-  if (!isNativeHost()) return isTauri() ? tauriListen<T>(event, handler, { target: { kind: "WebviewWindow", label: getCurrentWindow().label } }) : Promise.resolve(() => {});
+  const label = desktopWindowLabel();
+  if (label !== null) return tauriListen<T>(event, handler, { target: { kind: "WebviewWindow", label } });
+  if (!isNativeHost()) return () => {};
   const handlers = listeners.get(event) ?? new Set<Handler>();
   listeners.set(event, handlers);
   const wrapped: Handler = value => handler({ ...value, payload: value.payload as T });
