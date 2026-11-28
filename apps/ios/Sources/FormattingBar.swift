@@ -61,22 +61,27 @@ struct FormattingBar: View {
     /// One row for iPad and iPhone: direct style buttons, everything else in menus.
     private var buttons: some View {
         HStack(spacing: 0) {
-            if !session.questionsOpen { cardGroup; divider }
+            FormatBlockStyleMenu(session: session)
+            divider
             styleGroup.disabled(!session.state.editable)
             divider
-            FormatBlockStyleMenu(session: session)
-            FormatListMenu(session: session)
+            formatButton("Code", "chevron.left.forwardslash.chevron.right", .code, active: mark("code"))
+                .disabled(!session.state.editable)
+            FormatMathMenu(session: session)
             divider
-            FormatInsertMenu(session: session, busy: busy,
-                             editingLink: $editingLink, pickingImage: $pickingImage)
-                .popover(isPresented: $editingLink) {
-                    linkEditor.padding().presentationCompactAdaptation(.popover)
-                }
+            FormatHighlightMenu(session: session)
+            linkButton
+            if !session.questionsOpen {
+                divider
+                cardGroup
+            }
+            divider
+            FormatListMenu(session: session)
+            FormatInsertMenu(session: session, busy: busy, pickingImage: $pickingImage)
                 .photosPicker(isPresented: $pickingImage, selection: $image, matching: .images)
             if !session.questionsOpen {
                 FormatSectionMenu(session: session)
             }
-            divider
             FormatClipboardMenu(session: session)
         }
         .tint(Color("BrandAccent"))
@@ -129,23 +134,16 @@ struct FormattingBar: View {
         formatButton("Italic", "italic", .italic, active: mark("italic"))
         formatButton("Underline", "underline", .underline, active: mark("underline"))
         formatButton("Strikethrough", "strikethrough", .strike, active: mark("strike"))
-        Menu {
-            ForEach(BridgeProtocol.highlightColors, id: \.self) { color in
-                Button { session.exec(.setHighlight, ["color": color]) } label: {
-                    if session.state.highlightColor == color {
-                        Label(color.capitalized, systemImage: "checkmark")
-                    } else { Text(color.capitalized) }
-                }
+    }
+
+    private var linkButton: some View {
+        Button { editingLink = true } label: { Image(systemName: "link") }
+            .buttonStyle(FormatButtonStyle(active: mark("link")))
+            .accessibilityLabel(mark("link") ? "Edit link" : "Link")
+            .disabled(!session.state.editable)
+            .popover(isPresented: $editingLink) {
+                linkEditor.padding().presentationCompactAdaptation(.popover)
             }
-            Button("Remove highlight") { session.exec(.removeHighlight) }
-        } label: {
-            Image(systemName: "highlighter")
-                .foregroundStyle(highlightTint)
-        } primaryAction: { session.exec(.highlight) }
-        .buttonStyle(FormatButtonStyle(active: mark("highlight")))
-        .accessibilityLabel("Highlight")
-        .accessibilityValue(session.state.highlightColor ?? "Off")
-        formatButton("Code", "chevron.left.forwardslash.chevron.right", .code, active: mark("code"))
     }
 
     private var tableMenu: some View {
@@ -173,17 +171,6 @@ struct FormattingBar: View {
             .buttonStyle(FormatButtonStyle())
             .accessibilityLabel(link.isEmpty ? "Remove link" : "Apply link")
             .disabled(!link.isEmpty && URL(string: link)?.scheme == nil)
-        }
-    }
-
-    private var highlightTint: Color {
-        switch session.state.highlightColor {
-        case "yellow": .yellow
-        case "green": .green
-        case "blue": .blue
-        case "pink": .pink
-        case "purple": .purple
-        default: .primary
         }
     }
 
@@ -235,6 +222,75 @@ private struct FormatBlockStyleMenu: View {
     }
 }
 
+private struct FormatMathMenu: View {
+    @Bindable var session: WebSession
+
+    var body: some View {
+        Menu {
+            FormatMathActions(session: session)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sum")
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+            }
+        }
+        .buttonStyle(FormatButtonStyle(active: session.state.blockType == "inlineMath" || session.state.blockType == "mathBlock"))
+        .disabled(!session.state.editable)
+        .accessibilityLabel("Math")
+    }
+}
+
+private struct FormatMathActions: View {
+    @Bindable var session: WebSession
+
+    var body: some View {
+        Group {
+            Toggle("Inline math", systemImage: "function", isOn: Binding(
+                get: { session.state.blockType == "inlineMath" }, set: { _ in session.exec(.inlineMath) }))
+            Toggle("Math block", systemImage: "x.squareroot", isOn: Binding(
+                get: { session.state.blockType == "mathBlock" }, set: { _ in session.exec(.mathBlock) }))
+        }
+    }
+}
+
+private struct FormatHighlightMenu: View {
+    @Bindable var session: WebSession
+
+    var body: some View {
+        Menu {
+            ForEach(BridgeProtocol.highlightColors, id: \.self) { color in
+                Button { session.exec(.setHighlight, ["color": color]) } label: {
+                    if session.state.highlightColor == color {
+                        Label(color.capitalized, systemImage: "checkmark")
+                    } else { Text(color.capitalized) }
+                }
+            }
+            Button("Remove highlight") { session.exec(.removeHighlight) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "highlighter")
+                    .foregroundStyle(highlightTint)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+            }
+        } primaryAction: { session.exec(.highlight) }
+        .buttonStyle(FormatButtonStyle(active: session.state.marks.contains("highlight")))
+        .accessibilityLabel("Highlight")
+        .accessibilityValue(session.state.highlightColor ?? "Off")
+        .disabled(!session.state.editable)
+    }
+
+    private var highlightTint: Color {
+        switch session.state.highlightColor {
+        case "yellow": .yellow
+        case "green": .green
+        case "blue": .blue
+        case "pink": .pink
+        case "purple": .purple
+        default: .primary
+        }
+    }
+}
+
 private struct FormatListMenu: View {
     @Bindable var session: WebSession
 
@@ -265,19 +321,14 @@ private struct FormatListMenu: View {
 private struct FormatInsertMenu: View {
     @Bindable var session: WebSession
     let busy: Bool
-    @Binding var editingLink: Bool
     @Binding var pickingImage: Bool
 
     var body: some View {
         Menu {
-            Toggle("Inline math", systemImage: "function", isOn: Binding(
-                get: { session.state.blockType == "inlineMath" }, set: { _ in session.exec(.inlineMath) }))
-            Toggle("Math block", systemImage: "x.squareroot", isOn: Binding(
-                get: { session.state.blockType == "mathBlock" }, set: { _ in session.exec(.mathBlock) }))
+            FormatMathActions(session: session)
             Toggle("Code block", systemImage: "chevron.left.forwardslash.chevron.right", isOn: Binding(
                 get: { session.state.blockType == "codeBlock" }, set: { _ in session.exec(.codeBlock) }))
             Divider()
-            Button(session.state.marks.contains("link") ? "Edit link" : "Link", systemImage: "link") { editingLink = true }
             Button("Table", systemImage: "tablecells") { session.exec(.insertTable) }
             Button("Foldable block", systemImage: "rectangle.expand.vertical") { session.exec(.insertFoldableBlock) }
             Button("Photo", systemImage: "photo.badge.plus") { pickingImage = true }

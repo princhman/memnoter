@@ -6,6 +6,8 @@ export const IS_IOS =
   typeof navigator !== "undefined" && (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
 
+export const IS_IPAD = IS_IOS && !/iPhone|iPod/.test(navigator.userAgent);
+
 export const IS_MAC = IS_APPLE && !IS_IOS;
 
 export const IS_WINDOWS = typeof navigator !== "undefined" && /Win/.test(navigator.platform + navigator.userAgent);

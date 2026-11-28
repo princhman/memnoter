@@ -80,13 +80,17 @@ struct RootView: View {
         let leading: CGFloat = tabletShowsSidebarButton ? 100 : 48
         let trailing: CGFloat
         if session?.pdfReader != nil {
-            trailing = detailWidth >= 760 ? 340 : 260
+            trailing = tabletPdfToolsWidth + (primaryFileContent ? 24 : 112)
         } else if selected == "questions" {
             trailing = 180
         } else {
             trailing = module == nil ? 48 : 250
         }
         return max(100, detailWidth - leading - trailing)
+    }
+    private var tabletPdfToolsWidth: CGFloat {
+        // Leave room for the breadcrumb, sidebar and the pane toggle in the navigation bar.
+        min(400, max(88, detailWidth - (primaryFileContent ? 200 : 290)))
     }
     private var currentSection: String {
         if selected == "questions" { return primaryFileContent ? "files" : "questions" }
@@ -644,7 +648,8 @@ struct RootView: View {
                             if chrome.count <= 3 && detailWidth >= 650 {
                                 ForEach(0..<chrome.count, id: \.self) { index in
                                     Button { session?.worksheetQuestion(index) } label: {
-                                        Text(chrome.label(index)).font(.subheadline.weight(.medium)).lineLimit(1).padding(.horizontal, 6).frame(minWidth: 30, minHeight: 30)
+                                        fittedText(chrome.label(index), width: min(160, detailWidth * 0.3 / CGFloat(chrome.count)))
+                                            .font(.subheadline.weight(.medium)).padding(.horizontal, 6).frame(minWidth: 30, minHeight: 30)
                                             .foregroundStyle(index == chrome.index ? Color.white : Color.primary)
                                             .background(index == chrome.index ? DrawingStyle.accent : .clear, in: RoundedRectangle(cornerRadius: 8))
                                     }.buttonStyle(.plain).accessibilityLabel("Question \(chrome.label(index))")
@@ -654,7 +659,9 @@ struct RootView: View {
                                     ForEach(0..<chrome.count, id: \.self) { index in
                                         Button("Question \(chrome.label(index))") { session?.worksheetQuestion(index) }
                                     }
-                                } label: { Text("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))") }
+                                } label: {
+                                    fittedText("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))", width: 100)
+                                }
                             }
                             Button { session?.worksheetQuestion(chrome.index + 1) } label: { Image(systemName: "chevron.right") }
                                 .disabled(chrome.index + 1 >= chrome.count).accessibilityLabel("Next question")
@@ -664,15 +671,23 @@ struct RootView: View {
                         }.padding(.horizontal, 6).fixedSize()
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        if chrome.finished == true {
-                            Button { session?.worksheetAction() } label: { Image(systemName: "xmark") }
-                                .accessibilityLabel("Close worksheet")
-                        } else {
-                            Button("Finish") { session?.worksheetAction("worksheet-finish") }
-                                .buttonStyle(.plain).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-                                .padding(.horizontal, 14).frame(height: 34)
-                                .background(DrawingStyle.accent, in: Capsule())
-                        }
+                        HStack(spacing: 4) {
+                            if chrome.finished == true {
+                                Button { session?.worksheetAction() } label: { Image(systemName: "xmark") }
+                                    .accessibilityLabel("Close worksheet")
+                            } else {
+                                Button("Finish") { session?.worksheetAction("worksheet-finish") }
+                                    .buttonStyle(.plain).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 14).frame(height: 34)
+                                    .background(DrawingStyle.accent, in: Capsule())
+                            }
+                            Button { session?.worksheetAction("worksheet-open-beside") } label: {
+                                Image(systemName: "sidebar.right")
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Open beside")
+                        }.fixedSize()
                     }
 
                 }
@@ -727,7 +742,7 @@ struct RootView: View {
                     }
                 } else if primaryFileContent, let reader = session.pdfReader {
                     ToolbarItem(placement: .primaryAction) {
-                        TabletPdfTools(session: session, reader: reader, expanded: detailWidth >= 760) {
+                        TabletPdfTools(session: session, reader: reader, maximumWidth: tabletPdfToolsWidth) {
                             if let id = module?.id { beginPdfImport(id) }
                         }
                     }
@@ -803,10 +818,10 @@ struct RootView: View {
             }),
             pdfTools: AnyView(Group {
                 if let reader = session.pdfReader {
-                    TabletPdfTools(session: session, reader: reader, expanded: detailWidth >= 760) {
+                    TabletPdfTools(session: session, reader: reader, maximumWidth: tabletPdfToolsWidth) {
                         if let id = module?.id { beginPdfImport(id) }
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 4)
                 }
             }))
     }
@@ -823,7 +838,7 @@ struct RootView: View {
     /// Questions scroll under the glass bar, except beside a PDF: the pane starts below the bar,
     /// so the list does too and no column edge shows behind the buttons.
     private var questionsUnderBar: Bool {
-        !isPhone && selected == "questions" && !(session?.filesOpen == true && session?.worksheetChrome == nil)
+        !isPhone && selected == "questions" && session?.pdfReader == nil && !(session?.filesOpen == true && session?.worksheetChrome == nil)
     }
     private var tabletShowsSidebarButton: Bool {
         canToggleSidebar && (columnVisibility == .detailOnly || !sidebarOnScreen)
@@ -839,14 +854,14 @@ struct RootView: View {
             let leading: CGFloat = tabletShowsSidebarButton ? 130 : 80
             let history: CGFloat = session?.worksheetAnswerFocused == true && session?.worksheetDrawing.request == nil ? 88 : 0
             let navigation: CGFloat = worksheet.count <= 3 && detailWidth >= 650 ? 92 + CGFloat(worksheet.count) * 46 : 174
-            let finish: CGFloat = worksheet.status == "Save failed" ? 132 : 92
+            let finishAndOpenBeside: CGFloat = worksheet.status == "Save failed" ? 180 : 140
             TabletWorksheetTitle(title: worksheet.title ?? "Worksheet",
-                                 maximumWidth: max(100, detailWidth - leading - history - navigation - finish))
+                                 maximumWidth: max(100, detailWidth - leading - history - navigation - finishAndOpenBeside))
         } else {
             TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
                              item: breadcrumbItem,
                              questionsEnabled: session != nil,
-                             maximumWidth: tabletBreadcrumbWidth, wrapsTitles: true,
+                             maximumWidth: tabletBreadcrumbWidth, wrapsTitles: session?.pdfReader == nil,
                              changeScope: changeSectionScope, changeSection: selectSection)
                 .disabled(busy)
         }
@@ -1573,8 +1588,6 @@ private struct PdfQuestionCropToggle: View {
 private struct PdfViewMenu: View {
     let session: WebSession
     let reader: PdfReaderState
-    var compactTools = false
-    var addPdf: () -> Void = {}
 
     var body: some View {
         Menu {
@@ -1584,17 +1597,6 @@ private struct PdfViewMenu: View {
         }
     }
     @ViewBuilder var actions: some View {
-            if compactTools {
-                // Only the tools a narrow bar drops; everything else stays visible.
-                Section("Tools") {
-                    Button { session.pdfCommand(.toggleAnnotate) } label: {
-                        Label("Annotate area", image: "Pdf-highlighter")
-                    }.disabled(!reader.canAnnotate && !reader.annotating)
-                    Button { session.pdfCommand(.toggleFind) } label: {
-                        Label("Find in PDF", image: "Pdf-search")
-                    }
-                }
-            }
             Section("Zoom \(reader.zoom)%") {
                 Button { session.pdfCommand(.zoomIn) } label: { Label("Zoom in", image: "Pdf-zoom-in") }
                     .disabled(!reader.canZoomIn)
@@ -1652,36 +1654,50 @@ private struct SidebarPresenceProbe: View {
 }
 
 
-/// The reader tools people reach for most stay in the bar; zoom and full screen live in the menu.
-/// A narrow bar moves only annotate and find into the menu.
+/// One native row for the workspace, Files and full-screen readers.
 private struct TabletPdfTools: View {
     let session: WebSession
     let reader: PdfReaderState
-    let expanded: Bool
+    let maximumWidth: CGFloat
     let addPdf: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 0) {
+            ViewThatFits(in: .horizontal) {
+                controls.fixedSize(horizontal: true, vertical: false)
+                ScrollView(.horizontal) { controls }
+                    .scrollIndicators(.hidden)
+            }
+            if reader.activeId != nil && reader.fullscreen {
+                PdfModeButton(title: "Exit full screen", image: "Pdf-open-beside", active: false, enabled: true) {
+                    session.pdfCommand(.openBeside)
+                }
+                .frame(minWidth: 36)
+            }
+        }
+        .frame(maxWidth: maximumWidth)
+        .frame(height: 44)
+        .labelStyle(.iconOnly)
+        .buttonStyle(.plain)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 4) {
             PdfFileMenu(session: session, reader: reader, iconOnly: true, addPdf: addPdf)
             if reader.activeId != nil {
-                PdfPageButton(session: session, reader: reader)
+                if reader.pageCount > 1 {
+                    PdfPageButton(session: session, reader: reader)
+                }
                 PdfModeButton(title: "Quote region", image: "Pdf-square-dashed-mouse-pointer", active: reader.selecting,
                               enabled: reader.canSelect || reader.selecting) { session.pdfCommand(.toggleSelect) }
                 PdfQuestionCropToggle(session: session, reader: reader)
-                if expanded {
-                    PdfModeButton(title: "Annotate area", image: "Pdf-highlighter", active: reader.annotating,
-                                  enabled: reader.canAnnotate || reader.annotating) { session.pdfCommand(.toggleAnnotate) }
-                    PdfModeButton(title: "Find in PDF", image: "Pdf-search", active: false, enabled: true) { session.pdfCommand(.toggleFind) }
-                }
-                PdfViewMenu(session: session, reader: reader, compactTools: !expanded, addPdf: addPdf)
-                if reader.fullscreen {
-                    PdfModeButton(title: "Exit full screen", image: "Pdf-open-beside", active: false, enabled: true) { session.pdfCommand(.openBeside) }
-                }
+                PdfModeButton(title: "Annotate area", image: "Pdf-highlighter", active: reader.annotating,
+                              enabled: reader.canAnnotate || reader.annotating) { session.pdfCommand(.toggleAnnotate) }
+                PdfModeButton(title: "Find in PDF", image: "Pdf-search", active: false, enabled: true) { session.pdfCommand(.toggleFind) }
+                PdfViewMenu(session: session, reader: reader)
             }
         }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.plain)
-        .fixedSize()
+        .padding(.horizontal, 6)
     }
 }
 

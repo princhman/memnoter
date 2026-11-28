@@ -210,10 +210,11 @@ export function usePersistedView(
   editor: Editor | null,
   moduleId: string,
   isReady: boolean,
+  beside = false,
 ) {
   useEffect(() => {
-    setOpenedModule(moduleId);
-  }, [moduleId]);
+    if (!beside) setOpenedModule(moduleId);
+  }, [moduleId, beside]);
 
   // A layout effect, so the note is never painted at the wrong position.
   useLayoutEffect(() => {
