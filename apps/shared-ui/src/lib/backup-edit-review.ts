@@ -29,9 +29,9 @@ type SectionRef = { index: number; headingId: string | null };
 
 type DiffInput = Pick<Parameters<typeof diffBackupNote>[0], "imagePath" | "pdfAppendix"> & { edited: string; section?: SectionRef & { original: string; baselineHash: string; revision: string; revisionHash: string } };
 
-export type BackupReviewFile = { path: string; title: string } & (
+export type BackupReviewFile = { path: string; title: string; hash: string } & (
   | { kind: "read-only"; reason: string }
-  | { kind: "note"; moduleId: string; hash: string; hunks: BackupHunk[]; input: DiffInput }
+  | { kind: "note"; moduleId: string; hunks: BackupHunk[]; input: DiffInput }
 );
 
 function ownsNote(file: EditedFile, module: Module) {
@@ -80,8 +80,8 @@ export async function buildBackupReview(edited: EditedFile[]): Promise<BackupRev
   return Promise.all(edited.map(async (file): Promise<BackupReviewFile> => {
     const module = modules.find(module => module.id === file.moduleId);
     const title = file.noteName ?? module?.name ?? file.path;
-    const readOnly = (reason: string): BackupReviewFile => ({ kind: "read-only", path: file.path, title, reason });
-    if (file.path.startsWith("attachments/")) return readOnly("Attachment edits must be handled separately.");
+    const readOnly = (reason: string): BackupReviewFile => ({ kind: "read-only", path: file.path, hash: file.hash, title, reason });
+    if (file.path.startsWith("attachments/")) return readOnly("Attachment edits can only be reset.");
     if (!module) return readOnly("The original note was deleted or could not be identified.");
     if (!ownsNote(file, module)) return readOnly("The original note was renamed.");
     if (file.path.includes("/") && file.section == null) return readOnly("PDF links are managed in Memnoter.");

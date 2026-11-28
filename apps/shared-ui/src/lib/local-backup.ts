@@ -10,6 +10,7 @@ import { isNoteFromNewerVersion } from "./editor-schema";
 import { jsonToMarkdown, markdownLabel } from "./markdown-export";
 import { TOC_ID_ATTRIBUTE } from "./outline";
 import { queryClient } from "./query-client";
+import { flushSaves } from "./saves";
 import type { Module } from "./types";
 
 export type LocalBackupSettings = { folder: string | null; enabled: boolean; splitByHeading?: boolean };
@@ -84,9 +85,9 @@ async function buildSnapshot(splitByHeading: boolean, shouldContinue: () => bool
 
   for (const module of modules) {
     if (!shouldContinue()) return;
-    const content = await call<GetContentResponse>("get_content", { moduleId: module.id });
     const doc = new Y.Doc();
     try {
+      const content = await call<GetContentResponse>("get_content", { moduleId: module.id });
       applySavedContent(doc, content);
       if (doc.store.pendingStructs || doc.store.pendingDs || isNoteFromNewerVersion(doc)) {
         throw new Error(`Cannot back up “${module.name}” until its content is supported and fully synced.`);
@@ -144,11 +145,38 @@ async function buildSnapshot(splitByHeading: boolean, shouldContinue: () => bool
         ],
         attachments,
       };
+    } catch (error) {
+      snapshot[module.id] = { kind: "skipped", reason: error instanceof Error ? error.message : String(error) };
     } finally {
       doc.destroy();
     }
   }
   return { modules: snapshot };
+}
+
+let backupTask: Promise<unknown> = Promise.resolve();
+
+function runBackupTask<T>(task: () => Promise<T>) {
+  const result = backupTask.then(task, task);
+  backupTask = result;
+  return result;
+}
+
+type ReviewedBackupFile = { path: string; hash: string };
+type BackupWarning = { message: string; reviewable: boolean };
+type BackupResolution = { path: string; error: string | null };
+
+export function resolveBackupFiles(folder: string, files: readonly ReviewedBackupFile[]) {
+  return runBackupTask(async () => {
+    if (!await flushSaves()) throw new Error("Could not save your notes. Try updating the backup again.");
+    const settings = queryClient.getQueryData(localBackupSettings.queryKey);
+    if (settings?.folder !== folder) throw new Error("The backup folder changed. Check for edits again.");
+    const splitByHeading = settings.splitByHeading ?? false;
+    const snapshot = await buildSnapshot(splitByHeading, () => true);
+    return call<BackupResolution[]>("resolve_local_backup_edits", {
+      folder, snapshot, splitByHeading, reviewed: files.map(({ path, hash }) => ({ path, hash })),
+    });
+  });
 }
 
 export function useLocalBackup(checkForEdits: (folder: string, isActive: () => boolean) => Promise<void>) {
@@ -165,20 +193,26 @@ export function useLocalBackup(checkForEdits: (folder: string, isActive: () => b
       if (running) return;
       running = true;
       try {
-        const snapshot = await buildSnapshot(splitByHeading, () => active);
-        if (active && snapshot) {
-          const warnings = await call<string[]>("write_local_backup", { folder, snapshot, splitByHeading });
-          for (const warning of warnings) console.warn(warning);
-          if (active) queryClient.setQueryData(localBackupError.queryKey, warnings.join("\n") || null);
-        }
-      } catch (error) {
-        if (active) queryClient.setQueryData(localBackupError.queryKey,
-          error instanceof Error ? error.message : String(error));
-      }
-      try {
-        if (active) await checkForEdits(folder, () => active);
-      } catch (error) {
-        if (active) console.warn("Could not check the local backup for edits.", error);
+        await runBackupTask(async () => {
+          if (!active) return;
+          try {
+            const snapshot = await buildSnapshot(splitByHeading, () => active);
+            if (active && snapshot) {
+              const warnings = await call<BackupWarning[]>("write_local_backup", { folder, snapshot, splitByHeading });
+              const errors = warnings.filter(warning => !warning.reviewable).map(warning => warning.message);
+              for (const error of errors) console.warn(error);
+              if (active) queryClient.setQueryData(localBackupError.queryKey, errors.join("\n") || null);
+            }
+          } catch (error) {
+            if (active) queryClient.setQueryData(localBackupError.queryKey,
+              error instanceof Error ? error.message : String(error));
+          }
+          try {
+            if (active) await checkForEdits(folder, () => active);
+          } catch (error) {
+            if (active) console.warn("Could not check the local backup for edits.", error);
+          }
+        });
       } finally {
         running = false;
       }

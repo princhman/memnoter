@@ -30,6 +30,14 @@ fn main() {
                     .map(|warnings| serde_json::json!(warnings))
                     .map_err(serde_json::Value::String)
             }
+            "resolve_local_backup_edits" => {
+                let folder = std::path::Path::new(args["folder"].as_str().unwrap());
+                let snapshot = serde_json::from_value(args["snapshot"].clone()).unwrap();
+                let reviewed = serde_json::from_value(args["reviewed"].clone()).unwrap();
+                memnoter_core::markdown_backup::resolve(&dir, folder, snapshot, reviewed)
+                    .map(|results| serde_json::json!(results))
+                    .map_err(serde_json::Value::String)
+            }
             "read_local_backup_edits" => {
                 let folder = std::path::Path::new(args["folder"].as_str().unwrap());
                 memnoter_core::markdown_backup::edited_files(&dir, folder)

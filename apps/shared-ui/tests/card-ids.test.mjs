@@ -387,10 +387,20 @@ test("applying a backup file persists safe edits, supports undo, and keeps card 
   const original = ["Read chapter one.", "What is the capital of France? :: Paris", "Review again on Friday."];
   const edited = ["Read chapters one and two.", "What is the capital of France? :: Lyon", original[2]];
   const name = "Geography";
-  let file;
-  await withCore(async ({ page, editor, source, call, schedules, log, grade, open }) => {
-    file = { path: `geography - ${source}.md`, moduleId: source, noteName: name,
-      markdown: edited.join("\n\n") + "\n", hash: "outside-edit" };
+  const folder = await mkdtemp(join(await realpath(tmpdir()), "memnoter-backup-"));
+  let failApplyUpdate = true;
+  await withCore(async ({ page, editor, source, destination, call, schedules, log, grade, open }) => {
+    const filename = `geography - ${source}.md`;
+    const obsolete = `travel - ${destination}.md`;
+    const backup = join(folder, "Memnoter Backup");
+    const markdown = lines => lines.join("\n\n") + "\n";
+    await call("write_local_backup", { folder, snapshot: { modules: {
+      [source]: { kind: "ready", name, filename, markdown: markdown(original), attachments: {} },
+      [destination]: { kind: "ready", name: "Travel", filename: obsolete, markdown: "\n", attachments: {} },
+    } } });
+    await call("delete_module", { moduleId: destination });
+    await writeFile(join(backup, filename), markdown(edited));
+    await writeFile(join(backup, obsolete), "External text");
     const doc = new Y.Doc();
     const paragraphs = original.map(value => {
       const block = new Y.XmlElement("paragraph");
@@ -424,20 +434,34 @@ test("applying a backup file persists safe edits, supports undo, and keeps card 
     await pace();
     await check.click();
     const dialog = page.getByRole("dialog", { name: "Backup edits" });
-    await dialog.getByText(file.path, { exact: true }).waitFor();
+    await dialog.getByText(filename, { exact: true }).waitFor();
     assert.equal(await dialog.getByText(edited[0], { exact: true }).count(), 0);
-    await dialog.getByText("Only safe edits will be applied.").waitFor();
-    await dialog.getByText("attachments/map.pdf", { exact: true }).waitFor();
+    await dialog.getByText(/Other edits in this file will be discarded/).waitFor();
+    await dialog.getByText(obsolete, { exact: true }).waitFor();
     await pace();
 
     if (process.env.PROOF_DIR) {
       await dialog.screenshot({ path: join(process.env.PROOF_DIR, `backup-edits-${theme}.png`) });
     }
 
-    await dialog.getByRole("button", { name: "Keep attachments/map.pdf", exact: true }).click();
+    const reset = dialog.getByRole("button", { name: `Reset backup ${obsolete}`, exact: true });
+    await reset.click();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.equal(await readFile(join(backup, obsolete), "utf8"), "External text");
+    await reset.click();
+    await dialog.getByRole("button", { name: "Confirm reset", exact: true }).click();
+    await reset.waitFor({ state: "hidden" });
+    await assert.rejects(readFile(join(backup, obsolete)), { code: "ENOENT" });
     await pace();
-    await dialog.getByRole("button", { name: `Apply ${file.path}`, exact: true }).click();
+    await dialog.getByRole("button", { name: `Apply ${filename}`, exact: true }).click();
+    await dialog.getByRole("alert").filter({ hasText: "Backup temporarily unavailable" }).waitFor();
+    assert.equal(await readFile(join(backup, filename), "utf8"), markdown(edited));
+    await dialog.getByRole("button", { name: "Retry backup update", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
     await editor.getByText(edited[0], { exact: true }).waitFor();
+    assert.deepEqual(await call("read_local_backup_edits", { folder }), []);
+    const exported = await readFile(join(backup, filename), "utf8");
+    assert.ok(exported.includes(edited[0]) && exported.includes("Paris") && !exported.includes("Lyon"));
     assert.equal(await editor.getByText(original[2], { exact: true }).count(), 1);
     await pace();
 
@@ -463,13 +487,15 @@ test("applying a backup file persists safe edits, supports undo, and keeps card 
     assert.deepEqual(log.all(card.id), history);
     saved.destroy();
   }, (command, args, call) => {
-    if (command === "local_backup_settings") return { enabled: false, folder: "/Documents/Notes" };
+    if (command === "local_backup_settings") return { enabled: false, folder };
     if (command === "local_backup_image_types") return {};
-    if (command === "read_local_backup_edits") return [
-      file, { path: "attachments/map.pdf", moduleId: null, noteName: null, markdown: null, hash: "pdf-edit" },
-    ];
+    if (command === "resolve_local_backup_edits" && failApplyUpdate &&
+        args.reviewed.some(file => file.path.startsWith("geography - "))) {
+      failApplyUpdate = false;
+      throw new Error("Backup temporarily unavailable");
+    }
     return call(command, args);
-  }, { mac: true });
+  }, { mac: true }).finally(() => rm(folder, { recursive: true, force: true }));
 });
 
 test("scheduled backup notices deduplicate file contents and Review applies an edit", async () => {
@@ -564,6 +590,9 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
       await dialog.getByRole("button", { name: `Apply ${relativePath}`, exact: true }).click();
       await editor.getByText(secondEdit, { exact: true }).waitFor();
       assert.equal(await editor.getByText("Keep the first section.", { exact: true }).count(), 1);
+      await dialog.waitFor({ state: "hidden" });
+      assert.deepEqual(await call("read_local_backup_edits", { folder }), []);
+
       await pace();
     }, async (command, args, call) => {
       if (command === "set_local_backup_layout") splitByHeading = args.splitByHeading;
@@ -687,10 +716,11 @@ for (const [name, change] of [
           ).filter(Boolean)), ["original", "External edit", "sibling"]);
         } else if (change === "batch") {
           await dialog.getByText(secondPath, { exact: true }).waitFor();
-          await dialog.getByRole("button", { name: `Keep ${secondPath}`, exact: true }).waitFor();
+          await dialog.getByRole("button", { name: `Reset backup ${secondPath}`, exact: true }).waitFor();
           await dialog.getByRole("button", { name: "Apply all 2 files for Geography", exact: true }).click();
           const first = editor.getByText("First edit", { exact: true });
           const second = editor.getByText("Second edit", { exact: true });
+          await dialog.waitFor({ state: "hidden" });
           await first.waitFor();
           await second.waitFor();
           const cardId = () => editor.evaluate(el => el.editor.getJSON().content.find(node => node.attrs?.cardId)?.attrs.cardId);
@@ -707,7 +737,7 @@ for (const [name, change] of [
           assert.equal(await readFile(secondFile, "utf8"), secondEdit);
         } else {
           assert.equal(await apply.count(), 0, "the unverified note must not receive the split-file edit");
-          await dialog.getByRole("button", { name: `Keep ${relativePath}`, exact: true }).click();
+          await dialog.getByRole("button", { name: `Reset backup ${relativePath}`, exact: true }).waitFor();
         }
         assert.equal(await readFile(file, "utf8"), firstEdit);
       }, async (command, args, call) => {

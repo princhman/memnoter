@@ -76,6 +76,14 @@ pub(crate) fn dispatch(
         #[serde(default)]
         split_by_heading: bool,
     }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ResolveRequest {
+        folder: PathBuf,
+        snapshot: markdown_backup::Snapshot,
+        split_by_heading: bool,
+        reviewed: Vec<markdown_backup::ReviewedFile>,
+    }
     let format = |settings| serde_json::to_value(settings).map_err(|error| error.to_string());
     match command {
         "local_backup_image_types" => serde_json::to_value(markdown_backup::image_types(&core.db)?)
@@ -111,6 +119,24 @@ pub(crate) fn dispatch(
             }
             serde_json::to_value(markdown_backup::edited_files(core.data_dir(), &folder)?)
                 .map_err(|error| error.to_string())
+        }
+        "resolve_local_backup_edits" => {
+            let request: ResolveRequest =
+                serde_json::from_value(args).map_err(|error| error.to_string())?;
+            let _guard = gate.0.lock().map_err(|error| error.to_string())?;
+            let settings = read(core)?;
+            if settings.folder.as_ref() != Some(&request.folder)
+                || settings.split_by_heading != request.split_by_heading
+            {
+                return Err("The backup folder or layout changed. Check for edits again.".into());
+            }
+            serde_json::to_value(markdown_backup::resolve(
+                core.data_dir(),
+                &request.folder,
+                request.snapshot,
+                request.reviewed,
+            )?)
+            .map_err(|error| error.to_string())
         }
         "write_local_backup" => {
             let request: WriteRequest =

@@ -100,7 +100,11 @@ pub fn write_if_changed(path: &Path, bytes: &[u8]) -> CommandResult<()> {
 // `seen` is the destination's hash when it was checked (Some(None): absent).
 // It is checked again just before the rename, so a save made in another app
 // while the export was being staged is kept rather than replaced.
-fn write_unless_changed_since(path: &Path, bytes: &[u8], seen: Option<Option<&str>>) -> CommandResult<()> {
+fn write_unless_changed_since(
+    path: &Path,
+    bytes: &[u8],
+    seen: Option<Option<&str>>,
+) -> CommandResult<()> {
     if regular_file(path)? && fs::read(path).map_err(db_err)? == bytes {
         return Ok(());
     }
@@ -113,13 +117,15 @@ fn write_unless_changed_since(path: &Path, bytes: &[u8], seen: Option<Option<&st
         file.write_all(bytes)?;
         file.sync_all()?;
         if let Some(seen) = seen {
-            let now = match fs::read(path) {
-                Ok(current) => Some(content_hash(&current)),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error),
-            };
+            let now = existing_bytes(path)
+                .map_err(io::Error::other)?
+                .as_deref()
+                .map(content_hash);
             if now.as_deref() != seen {
-                return Err(io::Error::other(format!("{} changed during the backup", path.display())));
+                return Err(io::Error::other(format!(
+                    "{} changed during the backup",
+                    path.display()
+                )));
             }
         }
         fs::rename(&temp, path)
@@ -268,16 +274,29 @@ fn read_module_files(
         {
             return Err("Invalid attachment filename".into());
         }
-        let bytes = existing_bytes(&assets::path(data_dir, &id)?)
-            .map_err(|error| format!("Attachment {name} is unavailable ({error})"))?
-            .ok_or_else(|| format!("Attachment {name} is unavailable"))?;
         files.push(ExportFile {
+            bytes: attachment_bytes(data_dir, &name, &id)?,
             path: format!("attachments/{name}"),
-            bytes,
             section: None,
             heading_id: None,
         });
     }
+    files.extend(note_exports(&filename, &markdown, sections.as_deref())?);
+    Ok(files)
+}
+
+fn attachment_bytes(data_dir: &Path, name: &str, id: &str) -> CommandResult<Vec<u8>> {
+    existing_bytes(&assets::path(data_dir, id)?)
+        .map_err(|error| format!("Attachment {name} is unavailable ({error})"))?
+        .ok_or_else(|| format!("Attachment {name} is unavailable"))
+}
+
+fn note_exports(
+    filename: &str,
+    markdown: &str,
+    sections: Option<&[Section]>,
+) -> CommandResult<Vec<ExportFile>> {
+    let mut files = Vec::new();
     if let Some(sections) = sections {
         let folder = filename.strip_suffix(".md").unwrap();
         let mut claimed = BTreeSet::new();
@@ -288,15 +307,15 @@ fn read_module_files(
             }
             files.push(ExportFile {
                 path,
-                bytes: section.markdown.into_bytes(),
+                bytes: section.markdown.as_bytes().to_vec(),
                 section: section.section,
-                heading_id: section.heading_id,
+                heading_id: section.heading_id.clone(),
             });
         }
     } else {
         files.push(ExportFile {
-            path: filename,
-            bytes: markdown.into_bytes(),
+            path: filename.into(),
+            bytes: markdown.as_bytes().to_vec(),
             section: None,
             heading_id: None,
         });
@@ -446,16 +465,22 @@ fn check_subfolders(root: &Path, manifest: &BTreeMap<String, OwnedFile>) -> Comm
         .filter_map(|path| path.split_once('/').map(|(folder, _)| folder))
         .collect();
     for folder in folders {
-        match fs::symlink_metadata(root.join(folder)) {
-            Ok(info) if info.is_dir() => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            _ => return Err(format!("Expected a directory at {folder}")),
-        }
+        check_export_folder(root, Some(folder))?;
     }
     Ok(())
 }
 
-pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandResult<Vec<String>> {
+#[derive(Debug, Serialize)]
+pub struct BackupWarning {
+    message: String,
+    reviewable: bool,
+}
+
+pub fn write(
+    data_dir: &Path,
+    selected: &Path,
+    snapshot: Snapshot,
+) -> CommandResult<Vec<BackupWarning>> {
     let root = backup_root(data_dir, selected)?;
     directory(&root)?;
     let previous = load_manifest(&root)?;
@@ -467,12 +492,229 @@ pub fn write(data_dir: &Path, selected: &Path, snapshot: Snapshot) -> CommandRes
     reconcile(data_dir, &root, snapshot, previous)
 }
 
+#[derive(Deserialize)]
+pub struct ReviewedFile {
+    path: String,
+    hash: String,
+}
+
+#[derive(Serialize)]
+pub struct Resolution {
+    path: String,
+    error: Option<String>,
+}
+
+pub fn resolve(
+    data_dir: &Path,
+    selected: &Path,
+    snapshot: Snapshot,
+    reviewed: Vec<ReviewedFile>,
+) -> CommandResult<Vec<Resolution>> {
+    let root = backup_root(data_dir, selected)?;
+    if !fs::symlink_metadata(&root).map_err(db_err)?.is_dir() {
+        return Err("Expected a directory at Memnoter Backup".into());
+    }
+    let mut manifest = load_manifest(&root)?;
+    let filenames = note_filenames(&snapshot.modules, &manifest);
+    Ok(reviewed
+        .into_iter()
+        .map(|ReviewedFile { path, hash }| {
+            let error = resolve_file(
+                data_dir,
+                &root,
+                &snapshot,
+                &filenames,
+                &mut manifest,
+                &path,
+                &hash,
+            )
+            .err();
+            Resolution { path, error }
+        })
+        .collect())
+}
+
+fn resolve_file(
+    data_dir: &Path,
+    root: &Path,
+    snapshot: &Snapshot,
+    filenames: &BTreeMap<String, String>,
+    manifest: &mut BTreeMap<String, OwnedFile>,
+    path: &str,
+    reviewed_hash: &str,
+) -> CommandResult<()> {
+    let old = manifest
+        .get(path)
+        .cloned()
+        .ok_or("The file is no longer managed by Memnoter.")?;
+    if old.hash.is_none() && !old.external {
+        return Err("The file has no reviewed backup revision.".into());
+    }
+    let folder = path.split_once('/').map(|(folder, _)| folder);
+    check_export_folder(root, folder)?;
+    let target = root.join(path);
+    let existing = existing_bytes(&target)?;
+    let observed = existing.as_deref().map(content_hash);
+    let changed = || "The backup file changed after review. Check for edits again.".to_owned();
+
+    let mut exports = BTreeMap::new();
+    if let Some(name) = path.strip_prefix("attachments/") {
+        let mut owners: BTreeSet<_> = snapshot
+            .modules
+            .iter()
+            .filter_map(|(id, module)| match module {
+                Module::Ready { attachments, .. } if attachments.contains_key(name) => {
+                    Some(id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        if !owners.is_empty() {
+            // The normal cleanup also uses prior owners to protect links in edited notes.
+            owners.extend(old.modules.iter().cloned());
+            let (asset_id, _) = name.split_once('.').unwrap();
+            let bytes = attachment_bytes(data_dir, name, asset_id)?;
+            exports.insert(
+                path.to_owned(),
+                (
+                    bytes,
+                    OwnedFile {
+                        modules: owners,
+                        ..OwnedFile::default()
+                    },
+                ),
+            );
+        }
+    } else {
+        let path_key = path.to_lowercase();
+        for id in &old.modules {
+            let Some(Module::Ready {
+                name,
+                markdown,
+                sections,
+                note_revision,
+                ..
+            }) = snapshot.modules.get(id)
+            else {
+                continue;
+            };
+            let filename = filenames
+                .get(id)
+                .ok_or("The current note has an invalid backup filename.")?;
+            for export in note_exports(filename, markdown, sections.as_deref())? {
+                let same_heading = match (&old.heading_id, &export.heading_id) {
+                    (Some(old_id), Some(new_id)) => old_id == new_id,
+                    _ => {
+                        old.section == Some(0) && export.section == Some(0)
+                            || old.section.is_none() && export.section.is_none()
+                    }
+                };
+                let same_layout =
+                    split_note_path(path).is_some() == split_note_path(&export.path).is_some();
+                let same_path = export.path.to_lowercase() == path_key;
+                if !same_path && same_layout && !same_heading {
+                    continue;
+                }
+                // Sectionless files in the split layout are the generated PDF appendix.
+                let file = OwnedFile {
+                    modules: BTreeSet::from([id.clone()]),
+                    note_name: Some(name.clone()),
+                    section: export.section,
+                    heading_id: export.heading_id,
+                    note_revision_hash: export
+                        .section
+                        .and_then(|_| note_revision.as_deref().map(markdown_hash)),
+                    ..OwnedFile::default()
+                };
+                let destination = if same_path {
+                    path.to_owned()
+                } else {
+                    export.path
+                };
+                exports.insert(destination, (export.bytes, file));
+            }
+        }
+    }
+
+    let mut next = manifest.clone();
+    if let Some((bytes, mut file)) = exports.remove(path) {
+        // If the generated bytes already landed, a retry only has to repair the manifest.
+        if existing.as_deref() != Some(&bytes) {
+            if observed.as_deref() != Some(reviewed_hash) || (!old.external && old.hash == observed)
+            {
+                return Err(changed());
+            }
+            write_unless_changed_since(&target, &bytes, Some(Some(reviewed_hash)))?;
+        }
+        file.hash = Some(content_hash(&bytes));
+        next.insert(path.to_owned(), file);
+    } else {
+        if old
+            .modules
+            .iter()
+            .any(|id| matches!(snapshot.modules.get(id), Some(Module::Skipped { .. })))
+        {
+            return Err("Memnoter could not export the current version of this file.".into());
+        }
+        if observed.is_some()
+            && (observed.as_deref() != Some(reviewed_hash)
+                || (!old.external && old.hash == observed))
+        {
+            return Err(changed());
+        }
+        // A renamed note or heading may need a new path. Create missing files
+        // first. An occupied destination, including another edit, is preserved.
+        for (destination, (bytes, mut file)) in exports {
+            let folder = destination.split_once('/').map(|(folder, _)| folder);
+            check_export_folder(root, folder)?;
+            let target = root.join(&destination);
+            if let Some(current) = existing_bytes(&target)? {
+                if manifest.contains_key(&destination) {
+                    continue;
+                }
+                if current != bytes {
+                    return Err(format!("Backup would overwrite {destination}"));
+                }
+            } else {
+                if let Some(folder) = folder {
+                    directory(&root.join(folder))?;
+                }
+                write_unless_changed_since(&target, &bytes, Some(None))?;
+            }
+            file.hash = Some(content_hash(&bytes));
+            next.insert(destination, file);
+        }
+        check_export_folder(root, folder)?;
+        if let Some(bytes) = existing_bytes(&target)? {
+            if content_hash(&bytes) != reviewed_hash || observed.is_none() {
+                return Err(changed());
+            }
+            fs::remove_file(target).map_err(db_err)?;
+        }
+        next.remove(path);
+    }
+    save_manifest(root, &next)?;
+    *manifest = next;
+    Ok(())
+}
+
+fn check_export_folder(root: &Path, folder: Option<&str>) -> CommandResult<()> {
+    if let Some(folder) = folder {
+        match fs::symlink_metadata(root.join(folder)) {
+            Ok(info) if info.is_dir() => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            _ => return Err(format!("Expected a directory at {folder}")),
+        }
+    }
+    Ok(())
+}
+
 fn reconcile(
     data_dir: &Path,
     root: &Path,
     snapshot: Snapshot,
     previous: BTreeMap<String, OwnedFile>,
-) -> CommandResult<Vec<String>> {
+) -> CommandResult<Vec<BackupWarning>> {
     let mut filenames = note_filenames(&snapshot.modules, &previous);
     let previous_by_path: BTreeMap<_, _> = previous
         .iter()
@@ -493,11 +735,15 @@ fn reconcile(
             } => (name, filename, markdown, sections, note_revision, attachments),
             Module::Skipped { reason } => {
                 preserve_module(root, &id, &previous, &mut current);
-                warnings.push(reason);
+                warnings.push(BackupWarning {
+                    message: reason,
+                    reviewable: false,
+                });
                 continue;
             }
         };
         let note_revision_hash = note_revision.as_deref().map(markdown_hash);
+        let mut reviewable = false;
         let result = (|| -> CommandResult<()> {
             let filename = filenames.remove(&id).unwrap_or(filename);
             let files =
@@ -555,7 +801,11 @@ fn reconcile(
                 }
                 if !matches {
                     conflicts.insert(key);
-                    blocked.get_or_insert(path);
+                    let can_review = owned.is_some_and(|file| file.external || file.hash.is_some());
+                    if blocked.is_none() || !can_review {
+                        blocked = Some(path);
+                        reviewable = can_review;
+                    }
                 }
             }
             if let Some(path) = blocked {
@@ -585,7 +835,10 @@ fn reconcile(
         })();
         if let Err(error) = result {
             preserve_module(root, &id, &previous, &mut current);
-            warnings.push(format!("Skipped backup of “{name}”: {error}"));
+            warnings.push(BackupWarning {
+                message: format!("Skipped backup of “{name}”: {error}"),
+                reviewable,
+            });
         }
     }
 
@@ -788,7 +1041,11 @@ mod tests {
         }
 
         fn run(&self, snapshot: Snapshot) -> Vec<String> {
-            write(&self.source, &self.destination, snapshot).unwrap()
+            write(&self.source, &self.destination, snapshot)
+                .unwrap()
+                .into_iter()
+                .map(|warning| warning.message)
+                .collect()
         }
     }
 
@@ -796,6 +1053,134 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.base).unwrap();
         }
+    }
+
+    #[test]
+    fn reset_restores_an_attachment_and_removes_a_deleted_note_but_preserves_later_edits() {
+        let backup = Backup::new();
+        let image = "00000000-0000-0000-0000-000000000001";
+        assets::write(&backup.source, image, b"original image").unwrap();
+        let attachment = format!("{image}.png");
+        let current = || {
+            ready(
+                "Live",
+                "Current note",
+                [(attachment.clone(), image.into())].into(),
+            )
+        };
+        let asset_path = format!("attachments/{attachment}");
+        backup.run(with_modules([
+            ("live", current()),
+            (
+                "deleted",
+                ready("Deleted", "Before deletion", BTreeMap::new()),
+            ),
+            ("changed", ready("Changed", "Old text", BTreeMap::new())),
+        ]));
+        for path in [&asset_path, "Deleted.md", "Changed.md", "Live.md"] {
+            fs::write(backup.root.join(path), "Outside edit").unwrap();
+        }
+        let reviewed = edited_files(&backup.source, &backup.destination)
+            .unwrap()
+            .into_iter()
+            .filter(|file| file.path != "Live.md")
+            .map(|file| ReviewedFile {
+                path: file.path,
+                hash: file.hash,
+            })
+            .collect();
+        fs::write(backup.root.join("Changed.md"), "A later edit").unwrap();
+        fs::write(backup.root.join("My file.md"), "Unmanaged").unwrap();
+
+        let results = resolve(
+            &backup.source,
+            &backup.destination,
+            with_modules([
+                ("live", current()),
+                ("changed", ready("Changed", "Current text", BTreeMap::new())),
+            ]),
+            reviewed,
+        )
+        .unwrap();
+        let failures: Vec<_> = results
+            .iter()
+            .filter(|result| result.error.is_some())
+            .collect();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].path, "Changed.md");
+        assert!(!backup.root.join("Deleted.md").exists());
+        assert_eq!(
+            fs::read(backup.root.join(asset_path)).unwrap(),
+            b"original image"
+        );
+        assert_eq!(
+            fs::read(backup.root.join("Changed.md")).unwrap(),
+            b"A later edit"
+        );
+        assert_eq!(
+            fs::read(backup.root.join("Live.md")).unwrap(),
+            b"Outside edit"
+        );
+        assert_eq!(
+            fs::read(backup.root.join("My file.md")).unwrap(),
+            b"Unmanaged"
+        );
+        let edits = edited_files(&backup.source, &backup.destination).unwrap();
+        assert_eq!(
+            edits.into_iter().map(|file| file.path).collect::<Vec<_>>(),
+            ["Changed.md", "Live.md"]
+        );
+    }
+
+    #[test]
+    fn reset_finishes_a_split_heading_rename_after_the_new_file_has_landed() {
+        let backup = Backup::new();
+        let snapshot = |title: &str| {
+            with_modules([(
+                "note",
+                Module::Ready {
+                    name: "Note".into(),
+                    filename: "Note.md".into(),
+                    markdown: String::new(),
+                    note_revision: Some(title.into()),
+                    sections: Some(vec![Section {
+                        filename: format!("0001 - {title}.md"),
+                        markdown: format!("# {title}\n"),
+                        section: Some(1),
+                        heading_id: Some("heading".into()),
+                    }]),
+                    attachments: BTreeMap::new(),
+                },
+            )])
+        };
+        backup.run(snapshot("Before"));
+        let old = "Note/0001 - Before.md";
+        let new = "Note/0001 - After.md";
+        fs::write(backup.root.join(old), "Edited backup").unwrap();
+        let [edit]: [EditedFile; 1] = edited_files(&backup.source, &backup.destination)
+            .unwrap()
+            .try_into()
+            .ok()
+            .unwrap();
+        // A previous attempt wrote the new file before closing the old entry.
+        fs::write(backup.root.join(new), "# After\n").unwrap();
+        let results = resolve(
+            &backup.source,
+            &backup.destination,
+            snapshot("After"),
+            vec![ReviewedFile {
+                path: edit.path,
+                hash: edit.hash,
+            }],
+        )
+        .unwrap();
+        assert_eq!(results[0].error, None);
+        assert!(!backup.root.join(old).exists());
+        assert_eq!(fs::read(backup.root.join(new)).unwrap(), b"# After\n");
+        assert!(edited_files(&backup.source, &backup.destination)
+            .unwrap()
+            .is_empty());
+        assert!(load_manifest(&backup.root).unwrap().contains_key(new));
     }
 
     #[test]
