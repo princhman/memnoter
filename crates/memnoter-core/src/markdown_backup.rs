@@ -38,6 +38,7 @@ struct Section {
     filename: String,
     markdown: String,
     section: Option<usize>,
+    heading_id: Option<String>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -50,6 +51,8 @@ struct OwnedFile {
     note_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     section: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    heading_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -238,7 +241,12 @@ fn preserve_module(
     }
 }
 
-type ExportFile = (String, Vec<u8>, Option<usize>);
+struct ExportFile {
+    path: String,
+    bytes: Vec<u8>,
+    section: Option<usize>,
+    heading_id: Option<String>,
+}
 
 fn read_module_files(
     data_dir: &Path,
@@ -260,7 +268,12 @@ fn read_module_files(
         let bytes = existing_bytes(&assets::path(data_dir, &id)?)
             .map_err(|error| format!("Attachment {name} is unavailable ({error})"))?
             .ok_or_else(|| format!("Attachment {name} is unavailable"))?;
-        files.push((format!("attachments/{name}"), bytes, None));
+        files.push(ExportFile {
+            path: format!("attachments/{name}"),
+            bytes,
+            section: None,
+            heading_id: None,
+        });
     }
     if let Some(sections) = sections {
         let folder = filename.strip_suffix(".md").unwrap();
@@ -270,10 +283,20 @@ fn read_module_files(
             if split_note_path(&path).is_none() || !claimed.insert(path.to_lowercase()) {
                 return Err("Invalid Markdown section filename".into());
             }
-            files.push((path, section.markdown.into_bytes(), section.section));
+            files.push(ExportFile {
+                path,
+                bytes: section.markdown.into_bytes(),
+                section: section.section,
+                heading_id: section.heading_id,
+            });
         }
     } else {
-        files.push((filename, markdown.into_bytes(), None));
+        files.push(ExportFile {
+            path: filename,
+            bytes: markdown.into_bytes(),
+            section: None,
+            heading_id: None,
+        });
     }
     Ok(files)
 }
@@ -350,6 +373,7 @@ pub struct EditedFile {
     hash: String,
     section: Option<usize>,
     baseline_hash: Option<String>,
+    heading_id: Option<String>,
 }
 
 pub fn edited_files(data_dir: &Path, selected: &Path) -> CommandResult<Vec<EditedFile>> {
@@ -396,6 +420,7 @@ pub fn edited_files(data_dir: &Path, selected: &Path) -> CommandResult<Vec<Edite
             hash,
             section: file.section,
             baseline_hash: file.hash,
+            heading_id: file.heading_id,
         });
     }
     Ok(edits)
@@ -472,7 +497,7 @@ fn reconcile(
                 read_module_files(data_dir, filename, markdown, sections, module_attachments)?;
             let folders: BTreeSet<_> = files
                 .iter()
-                .filter_map(|(path, _, _)| path.split_once('/').map(|(folder, _)| folder))
+                .filter_map(|file| file.path.split_once('/').map(|(folder, _)| folder))
                 .collect();
             for folder in folders {
                 directory(&root.join(folder))?;
@@ -480,25 +505,19 @@ fn reconcile(
             // Check every destination before changing a module's export.
             let mut seen = BTreeMap::new();
             let mut blocked = None;
-            for (path, bytes, section) in &files {
+            for ExportFile {
+                path,
+                bytes,
+                section,
+                heading_id,
+            } in &files
+            {
                 let Some(existing) = existing_bytes(&root.join(path))? else {
                     seen.insert(path.clone(), None);
                     continue;
                 };
-                seen.insert(path.clone(), Some(content_hash(&existing)));
-                if existing == *bytes {
-                    // A matching note can be adopted even if a separate
-                    // attachment changed and still blocks writes.
-                    let file = current.entry(path.clone()).or_default();
-                    file.hash = Some(content_hash(bytes));
-                    file.external = false;
-                    file.modules.insert(id.clone());
-                    if markdown_path(path) {
-                        file.note_name = Some(name.clone());
-                        file.section = *section;
-                    }
-                    continue;
-                }
+                let hash = content_hash(&existing);
+                seen.insert(path.clone(), Some(hash.clone()));
                 let key = path.to_lowercase();
                 let owned = current
                     .get(path)
@@ -507,7 +526,25 @@ fn reconcile(
                 let matches = owned
                     .filter(|file| !file.external)
                     .and_then(|file| file.hash.as_ref())
-                    .is_some_and(|hash| *hash == content_hash(&existing));
+                    .is_some_and(|baseline| *baseline == hash);
+                // A different heading can now occupy this path after a move.
+                // An edited file still belongs to its original heading.
+                let different_heading =
+                    owned.is_some_and(|file| file.heading_id != *heading_id);
+                if existing == *bytes && (matches || !different_heading) {
+                    // A matching note can be adopted even if a separate
+                    // attachment changed and still blocks writes.
+                    let file = current.entry(path.clone()).or_default();
+                    file.hash = Some(hash);
+                    file.external = false;
+                    file.modules.insert(id.clone());
+                    if markdown_path(path) {
+                        file.note_name = Some(name.clone());
+                        file.section = *section;
+                        file.heading_id.clone_from(heading_id);
+                    }
+                    continue;
+                }
                 if !matches {
                     conflicts.insert(key);
                     blocked.get_or_insert(path);
@@ -516,7 +553,13 @@ fn reconcile(
             if let Some(path) = blocked {
                 return Err(format!("Backup would overwrite {path}"));
             }
-            for (path, bytes, section) in files {
+            for ExportFile {
+                path,
+                bytes,
+                section,
+                heading_id,
+            } in files
+            {
                 let checked = seen.get(&path).map(|hash: &Option<String>| hash.as_deref());
                 write_unless_changed_since(&root.join(&path), &bytes, checked)?;
                 let file = current.entry(path.clone()).or_default();
@@ -525,6 +568,7 @@ fn reconcile(
                 if markdown_path(&path) {
                     file.note_name = Some(name.clone());
                     file.section = section;
+                    file.heading_id = heading_id;
                 }
                 file.modules.insert(id.clone());
             }
@@ -538,11 +582,12 @@ fn reconcile(
 
     let current_paths: BTreeSet<_> = current.keys().map(|path| path.to_lowercase()).collect();
     let mut obsolete = Vec::new();
-    for (path, mut file) in previous {
+    for (path, file) in &previous {
         let key = path.to_lowercase();
         if conflicts.contains(&key) {
+            let mut file = file.clone();
             file.external = true;
-            current.insert(path, file);
+            current.insert(path.clone(), file);
             continue;
         }
         if current_paths.contains(&key) {
@@ -551,16 +596,17 @@ fn reconcile(
         if file.hash.is_none() && !file.external {
             continue;
         }
-        let target = root.join(&path);
+        let target = root.join(path);
         match fs::symlink_metadata(&target) {
             Ok(info) if info.is_file() => {
                 let current_hash = content_hash(&fs::read(&target).map_err(db_err)?);
                 if !file.external && file.hash.as_ref() == Some(&current_hash) {
                     obsolete.push((path.clone(), current_hash));
-                    current.insert(path, file);
+                    current.insert(path.clone(), file.clone());
                 } else {
+                    let mut file = file.clone();
                     file.external = true;
-                    current.insert(path, file);
+                    current.insert(path.clone(), file);
                 }
             }
             Ok(_) => {}
@@ -568,15 +614,25 @@ fn reconcile(
             Err(error) => return Err(db_err(error)),
         }
     }
-    save_manifest(root, &current)?;
-    if obsolete.is_empty() {
-        return Ok(warnings);
-    }
     let mut retained_note_owners: BTreeSet<_> = current
         .iter()
         .filter(|(path, file)| markdown_path(path) && file.external)
         .flat_map(|(_, file)| file.modules.iter().cloned())
         .collect();
+    // Another note may still export an attachment used by a retained edit.
+    // Carry that edit's ownership into the next run as well.
+    for (path, file) in &mut current {
+        if path.starts_with("attachments/") {
+            if let Some(old) = previous_by_path.get(&path.to_lowercase()) {
+                file.modules
+                    .extend(old.modules.intersection(&retained_note_owners).cloned());
+            }
+        }
+    }
+    save_manifest(root, &current)?;
+    if obsolete.is_empty() {
+        return Ok(warnings);
+    }
     let mut old_folders = BTreeSet::new();
     // Check obsolete notes before assets in case a new external edit needs their links.
     obsolete.sort_by_key(|(path, _)| path.starts_with("attachments/"));
@@ -704,11 +760,13 @@ mod tests {
                     filename: "0001 - Maps.md".into(),
                     markdown: section.clone(),
                     section: Some(1),
+                    heading_id: None,
                 },
                 Section {
                     filename: "0002 - Maps.md".into(),
                     markdown: "## Maps\n".into(),
                     section: Some(2),
+                    heading_id: None,
                 },
             ]),
             attachments: BTreeMap::from([(attachment.clone(), image.into())]),
@@ -1042,6 +1100,61 @@ mod tests {
         let edits = edited_files(&backup.source, &backup.destination).unwrap();
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].path, image_path);
+    }
+
+    #[test]
+    fn shared_attachment_survives_retries_after_its_other_owner_stops_exporting_it() {
+        let backup = Backup::new();
+        let image = "00000000-0000-0000-0000-000000000001";
+        let name = format!("{image}.png");
+        let path = format!("attachments/{name}");
+        let markdown = format!("![Image]({path})");
+        assets::write(&backup.source, image, b"shared image").unwrap();
+        let attachments = || BTreeMap::from([(name.clone(), image.into())]);
+        let linked = ready("Other", &markdown, attachments());
+        let section = format!("# Maps\n\n![Image](../{path})\n");
+        let initial = Module::Ready {
+            name: "Edited".into(),
+            filename: "Edited.md".into(),
+            markdown: String::new(),
+            sections: Some(vec![Section {
+                filename: "0001 - Maps.md".into(),
+                markdown: section.clone(),
+                section: Some(1),
+                heading_id: None,
+            }]),
+            attachments: attachments(),
+        };
+        assert!(backup
+            .run(with_modules([("edited", initial), ("other", linked)]))
+            .is_empty());
+
+        let edited = format!("{section}\nExternal edit");
+        let edited_path = backup.root.join("Edited/0001 - Maps.md");
+        fs::write(&edited_path, &edited).unwrap();
+        let snapshot = |other| {
+            with_modules([
+                (
+                    "edited",
+                    ready("Edited", "New export without an image", BTreeMap::new()),
+                ),
+                ("other", other),
+            ])
+        };
+        assert!(backup
+            .run(snapshot(ready("Other", &markdown, attachments())))
+            .is_empty());
+        for _ in 0..2 {
+            assert!(backup
+                .run(snapshot(ready("Other", "No image", BTreeMap::new())))
+                .is_empty());
+            assert_eq!(fs::read_to_string(&edited_path).unwrap(), edited);
+            assert_eq!(
+                fs::read(backup.root.join(&path))
+                    .expect("edited export still links to the shared attachment"),
+                b"shared image"
+            );
+        }
     }
 
     #[test]

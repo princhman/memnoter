@@ -20,10 +20,13 @@ type EditedFile = {
   markdown: string | null;
   hash: string;
   section?: number | null;
+  headingId?: string | null;
   baselineHash?: string | null;
 };
 
-type DiffInput = Pick<Parameters<typeof diffBackupNote>[0], "imagePath" | "pdfAppendix"> & { edited: string; section?: { index: number; original: string; baselineHash: string } };
+type SectionRef = { index: number; headingId: string | null };
+
+type DiffInput = Pick<Parameters<typeof diffBackupNote>[0], "imagePath" | "pdfAppendix"> & { edited: string; section?: SectionRef & { original: string; baselineHash: string } };
 
 export type BackupReviewFile = { path: string; title: string } & (
   | { kind: "read-only"; reason: string }
@@ -37,15 +40,19 @@ function ownsNote(file: EditedFile, module: Module) {
   return path === filename || path.startsWith(filename.slice(0, -3) + " - ");
 }
 
-function sectionAt(doc: ProseMirrorNode, index: number) {
-  return backupSections(doc.toJSON())[index];
+function findSection(doc: ProseMirrorNode, { index, headingId }: SectionRef) {
+  const sections = backupSections(doc.toJSON());
+  if (index === 0) return sections[0];
+  if (!headingId) return;
+  const matches = sections.filter(section => section.headingId === headingId);
+  if (matches.length === 1) return matches[0];
 }
 
 function reviewedHunks(doc: ProseMirrorNode, input: DiffInput) {
   if (!input.section) {
     return { offset: 0, hunks: protectBackupHunks(doc, diffBackupNote({ ...input, current: doc.toJSON() })) };
   }
-  const section = sectionAt(doc, input.section.index);
+  const section = findSection(doc, input.section);
   if (!section || backupSectionMarkdown(section.content, input.imagePath) !== input.section.original) {
     throw new Error("The note section changed. Check for edits again.");
   }
@@ -96,13 +103,15 @@ export async function buildBackupReview(edited: EditedFile[]): Promise<BackupRev
         pdfAppendix: file.section == null ? backupPdfAppendix(pdfs, module.id) : "",
       };
       if (file.section != null) {
-        const section = sectionAt(doc, file.section);
-        const original = section && backupSectionMarkdown(section.content, input.imagePath);
-        if (original === undefined || !file.baselineHash ||
+        const ref = { index: file.section, headingId: file.headingId ?? null };
+        const section = findSection(doc, ref);
+        if (!section) return readOnly("The original heading could not be identified. The edit is still in the backup file.");
+        const original = backupSectionMarkdown(section.content, input.imagePath);
+        if (!file.baselineHash ||
           (original !== file.markdown && await call<string>("local_backup_markdown_hash", { markdown: original }) !== file.baselineHash)) {
           return readOnly("This section has changed in Memnoter since it was backed up.");
         }
-        input.section = { index: file.section, original, baselineHash: file.baselineHash };
+        input.section = { ...ref, original, baselineHash: file.baselineHash };
       }
       const { hunks } = reviewedHunks(doc, input);
       return { kind: "note", path: file.path, title, moduleId: module.id, hash: file.hash, hunks, input };
@@ -122,7 +131,8 @@ export async function recheckBackupFile(folder: string, note: Extract<BackupRevi
   const module = modules.find(module => module.id === note.moduleId);
   if (!file || !module || !ownsNote(file, module) ||
     (note.input.section
-      ? file.section !== note.input.section.index || file.baselineHash !== note.input.section.baselineHash
+      ? file.section !== note.input.section.index || (file.headingId ?? null) !== note.input.section.headingId ||
+        file.baselineHash !== note.input.section.baselineHash
       : backupPdfAppendix(pdfs, note.moduleId) !== note.input.pdfAppendix)) {
     throw new Error("The backup file or note changed. Check for edits again.");
   }

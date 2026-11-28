@@ -8,6 +8,7 @@ import { applySavedContent, type GetContentResponse } from "./content";
 import { listDocuments } from "./documents";
 import { isNoteFromNewerVersion } from "./editor-schema";
 import { jsonToMarkdown, markdownLabel } from "./markdown-export";
+import { TOC_ID_ATTRIBUTE } from "./outline";
 import { queryClient } from "./query-client";
 import type { Module } from "./types";
 
@@ -43,9 +44,14 @@ export function backupPdfAppendix(pdfs: Awaited<ReturnType<typeof listDocuments>
 }
 
 export function backupSections(doc: JSONContent) {
-  const sections: { offset: number; content: JSONContent[] }[] = [{ offset: 0, content: [] }];
+  const sections: { offset: number; content: JSONContent[]; headingId: string | null }[] = [
+    { offset: 0, content: [], headingId: null },
+  ];
   for (const [offset, block] of (doc.content ?? []).entries()) {
-    if (block.type === "heading") sections.push({ offset, content: [] });
+    if (block.type === "heading") {
+      const id = block.attrs?.[TOC_ID_ATTRIBUTE];
+      sections.push({ offset, content: [], headingId: typeof id === "string" && id ? id : null });
+    }
     sections[sections.length - 1].content.push(block);
   }
   return sections;
@@ -67,7 +73,7 @@ async function buildSnapshot(splitByHeading: boolean, shouldContinue: () => bool
   const files = await call<Record<string, string>>("local_backup_image_types");
 
   const snapshot: Record<string,
-    | { kind: "ready"; name: string; filename: string; markdown: string; sections?: { filename: string; markdown: string; section?: number }[]; attachments: Record<string, string> }
+    | { kind: "ready"; name: string; filename: string; markdown: string; sections?: { filename: string; markdown: string; section?: number; heading_id?: string }[]; attachments: Record<string, string> }
     | { kind: "skipped"; reason: string }> = {};
 
   for (const module of modules) {
@@ -96,13 +102,21 @@ async function buildSnapshot(splitByHeading: boolean, shouldContinue: () => bool
         const extension = backupImageExtension(mime);
         return attachmentLink(id, extension);
       };
-      const sections = splitByHeading ? backupSections(contentJson).flatMap(({ content }, section, all) => {
+      const noteSections = splitByHeading ? backupSections(contentJson) : undefined;
+      const headingCounts = new Map<string, number>();
+      for (const { headingId } of noteSections ?? []) {
+        if (headingId) headingCounts.set(headingId, (headingCounts.get(headingId) ?? 0) + 1);
+      }
+      const sections = noteSections?.flatMap(({ content, headingId }, section, all) => {
         const markdown = backupSectionMarkdown(content, imagePath);
         if (section === 0 && markdown === "\n" && all.length > 1) return [];
         const title = section === 0 ? "Preamble" : headingFilename(content[0]);
         const number = String(section).padStart(Math.max(4, String(all.length).length), "0");
-        return [{ filename: `${number} - ${title}.md`, markdown, section }];
-      }) : undefined;
+        return [{
+          filename: `${number} - ${title}.md`, markdown, section,
+          heading_id: headingId && headingCounts.get(headingId) === 1 ? headingId : undefined,
+        }];
+      });
       const markdown = sections ? "" : jsonToMarkdown(contentJson, imagePath);
       if (missingImage) {
         snapshot[module.id] = { kind: "skipped", reason: `An image in “${module.name}” is unavailable.` };

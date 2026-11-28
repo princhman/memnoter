@@ -485,7 +485,10 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
       const doc = new Y.Doc();
       const block = (value, level) => {
         const node = new Y.XmlElement(level ? "heading" : "paragraph");
-        if (level) node.setAttribute("level", level);
+        if (level) {
+          node.setAttribute("level", level);
+          node.setAttribute("data-toc-id", `maps-${level}`);
+        }
         const text = new Y.XmlText();
         text.insert(0, value);
         node.insert(0, [text]);
@@ -576,3 +579,69 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+for (const [name, moved] of [
+  ["a split backup edit follows its heading when identical siblings are reordered", true],
+  ["a split backup edit cannot target the identical sibling of a deleted heading", false],
+]) {
+  test(name, async () => {
+    const folder = await mkdtemp(join(await realpath(tmpdir()), "memnoter-backup-"));
+    let enabled = true;
+    let finishExport;
+    const exportFinished = new Promise(resolve => { finishExport = resolve; });
+    try {
+      await withCore(async ({ page, source, call, open, editor }) => {
+        const doc = new Y.Doc();
+        const fragment = doc.getXmlFragment("default");
+        for (const id of ["original", "sibling"]) {
+          const heading = new Y.XmlElement("heading");
+          heading.setAttribute("level", 1);
+          heading.setAttribute("data-toc-id", id);
+          const text = new Y.XmlText();
+          text.insert(0, "Maps");
+          heading.insert(0, [text]);
+          fragment.push([heading]);
+        }
+        await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc)) });
+        await open(source);
+
+        const relativePath = `geography - ${source}/0001 - Maps.md`;
+        const file = join(folder, "Memnoter Backup", relativePath);
+        await exportFinished;
+        await writeFile(file, "# Maps\n\nExternal edit\n");
+        enabled = false;
+        const since = Y.encodeStateVector(doc);
+        const original = fragment.get(0).clone();
+        fragment.delete(0, 1);
+        if (moved) fragment.push([original]);
+        await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc, since)) });
+        doc.destroy();
+
+        await page.reload();
+        await page.getByRole("link", { name: "Settings", exact: true }).click();
+        await page.getByRole("button", { name: "Check backup for edits", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "Backup edits" });
+        await dialog.getByText(relativePath, { exact: true }).waitFor();
+        const apply = dialog.getByRole("button", { name: `Apply ${relativePath}`, exact: true });
+        if (moved) {
+          await apply.click();
+          await editor.getByText("External edit", { exact: true }).waitFor();
+          assert.deepEqual(await editor.evaluate(el => el.editor.getJSON().content.map(node =>
+            node.attrs?.["data-toc-id"] ?? node.content?.[0]?.text
+          ).filter(Boolean)), ["sibling", "original", "External edit"]);
+        } else {
+          assert.equal(await apply.count(), 0, "the surviving sibling must not receive the deleted heading's edit");
+        }
+        assert.equal(await readFile(file, "utf8"), "# Maps\n\nExternal edit\n");
+      }, async (command, args, call) => {
+        if (command === "local_backup_settings") return { folder, enabled, splitByHeading: true };
+        if (command === "local_backup_image_types") return {};
+        const result = await call(command, args);
+        if (command === "write_local_backup") finishExport();
+        return result;
+      }, { mac: true });
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+}
