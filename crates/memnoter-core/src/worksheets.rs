@@ -452,23 +452,46 @@ pub(crate) fn load(conn: &Connection, module: &str) -> CommandResult<Doc> {
 }
 
 pub(crate) fn load_through(conn: &Connection, module: &str, update_id: i64) -> CommandResult<Doc> {
-    let doc = Doc::new();
-    let state: Vec<u8> = conn
-        .query_row(
-            "select coalesce(contents.state, X'') from modules
-             left join contents on contents.module_id = modules.id where modules.id=?1",
-            [module],
-            |r| r.get(0),
+    replay(load_bytes(conn, module, update_id)?)
+}
+
+fn load_bytes(conn: &Connection, module: &str, update_id: i64) -> CommandResult<Vec<Vec<u8>>> {
+    // A single statement keeps the base state and updates in the same snapshot.
+    let mut stmt = conn
+        .prepare(
+            "select null as update_id, coalesce(contents.state, X'') as bytes
+             from modules left join contents on contents.module_id = modules.id
+             where modules.id = ?1
+             union all
+             select id, bytes from contents_updates
+             where module_id = ?1 and id <= ?2
+               and exists (select 1 from modules where id = ?1)
+             order by update_id",
         )
         .map_err(db_err)?;
-    let mut stmt = conn
-        .prepare("select bytes from contents_updates where module_id=?1 and id<=?2 order by id")
+    let rows = stmt
+        .query_map(rusqlite::params![module, update_id], |row| row.get(1))
         .map_err(db_err)?;
-    let updates = stmt
-        .query_map(rusqlite::params![module, update_id], |r| r.get::<_, Vec<u8>>(0))
-        .map_err(db_err)?;
-    for bytes in std::iter::once(Ok(state)).chain(updates) {
-        let bytes = bytes.map_err(db_err)?;
+    let updates = rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)?;
+    if updates.is_empty() {
+        return Err(db_err(rusqlite::Error::QueryReturnedNoRows));
+    }
+    Ok(updates)
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_REPLAY: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+}
+
+fn replay(updates: Vec<Vec<u8>>) -> CommandResult<Doc> {
+    #[cfg(test)]
+    if let Some(check) = BEFORE_REPLAY.with(|hook| hook.take()) {
+        check();
+    }
+
+    let doc = Doc::new();
+    for bytes in updates {
         if !bytes.is_empty() {
             doc.transact_mut()
                 .apply_update(Update::decode_v1(&bytes).map_err(db_err)?)

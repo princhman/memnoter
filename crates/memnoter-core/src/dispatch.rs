@@ -26,6 +26,7 @@ macro_rules! commands {
 commands! { core;
     question_bank_enabled() => crate::worksheets::bank::enabled(core);
     question_bank_get(module_id: String) => crate::worksheets::bank::get(core,module_id);
+    question_bank_index(module_id: String) => crate::worksheets::bank::index(core,module_id);
     question_bank_edit(module_id: String, edit: crate::worksheets::bank::Edit) => crate::worksheets::bank::edit(core,module_id,edit);
     worksheet_attempt_finish(module_id: String, attempt_id: String) => crate::worksheets::attempts::finish(core,module_id,attempt_id);
     worksheet_attempt_create(module_id: String, title: String, question_ids: Vec<String>) => crate::worksheets::attempts::create(core,module_id,title,question_ids);

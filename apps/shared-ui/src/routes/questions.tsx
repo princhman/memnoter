@@ -6,13 +6,17 @@ import { useBankGate } from "@/lib/question-bank";
 import { useModules } from "@/lib/modules";
 
 export const Route = createFileRoute("/questions")({
-  validateSearch: (search: Record<string, unknown>): { module?: string } =>
-    typeof search.module === "string" ? { module: search.module } : {},
+  validateSearch: (search: Record<string, unknown>): { module?: string; question?: string; worksheet?: string } => {
+    if (typeof search.module !== "string") return {};
+    if (typeof search.question === "string") return { module: search.module, question: search.question };
+    if (typeof search.worksheet === "string") return { module: search.module, worksheet: search.worksheet };
+    return { module: search.module };
+  },
   component: Questions,
 });
 
 function Questions() {
-  const { module: moduleId } = Route.useSearch();
+  const { module: moduleId, question, worksheet } = Route.useSearch();
   const navigate = Route.useNavigate();
   const bankEnabled = useBankGate();
   const { data: modules = [], isPending, error } = useModules();
@@ -20,8 +24,10 @@ function Questions() {
   const worksheetModule = useAnyWorksheetOpen();
   if (!bankEnabled) return <p className="text-center text-sm text-muted-foreground">Questions are not available.</p>;
   const scopedModules = modules.filter(module => moduleId ? module.id === moduleId : !worksheetModule || module.id === worksheetModule);
-  if (moduleId && scopedModules.length) return <NoteWithPdfs moduleId={moduleId}>
-    <QuestionBank moduleId={moduleId} onOpenSource={documentId => updatePdfPane(moduleId, { open: true, active: documentId })} />
+  if (moduleId && scopedModules.length) return <NoteWithPdfs moduleId={moduleId} showModulePage={false}>
+    <QuestionBank key={moduleId} moduleId={moduleId} questionReference={question} worksheetReference={worksheet}
+      onCloseWorksheetReference={() => { if (worksheet) void navigate({ to: "/questions", search: { module: moduleId }, replace: true }); }}
+      onOpenSource={documentId => updatePdfPane(moduleId, { open: true, active: documentId })} />
   </NoteWithPdfs>;
   return <div className="app-scroll-container h-full overflow-y-auto"><div className="questions-all mx-auto w-full max-w-3xl space-y-8 px-4 py-4">
     {error && <p role="alert" className="text-sm text-destructive">{error.message}</p>}

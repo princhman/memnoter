@@ -20,6 +20,24 @@ test('a nested section reference is labelled with its full path', () => {
   assert.equal(mentionLabel(notes, [], heading('h1')), 'Logic › Hello');
   assert.equal(mentionLabel(notes, [], { kind: 'module', id: 'm1', nodeId: null, locator: null }), 'Logic');
 });
+test('image labels use captions or section numbering, and deleted targets lose their labels', () => {
+  const note = extractMentions({ type: 'doc', content: [
+    { type: 'image', attrs: { imageId: 'cover' } },
+    { type: 'heading', content: [{ type: 'text', text: 'Cells' }] },
+    { type: 'image', attrs: { imageId: 'captioned', title: 'Cell diagram' } },
+    { type: 'paragraph', content: [{ type: 'inlineImage', attrs: { imageId: 'inline', alt: 'uploaded.png' } }] },
+  ] });
+  const notes = [{ id: 'm1', name: 'Biology', note }];
+  const image = id => ({ kind: 'image', id: 'm1', nodeId: id, locator: null });
+  assert.equal(mentionLabel(notes, [], image('cover')), 'Biology › Image 1');
+  assert.equal(mentionLabel(notes, [], image('captioned')), 'Biology › Cell diagram');
+  assert.equal(mentionLabel(notes, [], image('inline')), 'Biology › Cells / Image 2');
+  assert.equal(mentionLabel(notes, [], image('deleted')), undefined);
+  assert.equal(mentionLabel(notes, [], { kind: 'pdf-page', id: 'deleted', nodeId: null, locator: '12' }), undefined);
+  for (const kind of ['question', 'worksheet']) {
+    assert.equal(mentionLabel(notes, [], { kind, id: 'm1', nodeId: 'deleted', locator: null }), undefined);
+  }
+});
 function seed(blocks) {
   const doc = new Y.Doc();
   for (const [type, text, attrs = {}] of blocks) {
@@ -65,10 +83,10 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     const header = page.locator('[data-menu-header]');
     const paragraph = page.locator('.tiptap p').last();
     await page.getByRole('option', { name: 'Biology', exact: true }).waitFor();
-    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf']);
+    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf', 'Field guide.pdf pages']);
     assert.equal(await header.count(), 0);
     await page.keyboard.press('Tab');
-    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf'], 'Tab on a module without sections does nothing');
+    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf', 'Field guide.pdf pages'], 'Tab on a module without sections does nothing');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Tab');
     await page.getByRole('option', { name: 'Cells', exact: true }).waitFor();
@@ -87,7 +105,7 @@ test('WebKit: insert, round-trip, navigate, rename and jump back to an exact men
     assert.equal(await paragraph.innerText(), 'See @');
     await page.keyboard.press('Backspace');
     await page.getByRole('option', { name: 'Biology', exact: true }).waitFor();
-    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf']);
+    assert.deepEqual(await names(), ['Research', 'Biology', 'Field guide.pdf', 'Field guide.pdf pages']);
     assert.equal(await paragraph.innerText(), 'See @');
     // Enter must work as soon as the next level appears, as well as after a normal key press.
     for (const immediate of [true, false]) {
@@ -254,4 +272,344 @@ test('remote source changes refresh backlinks', async () => {
     await page.getByRole('dialog').getByText('› Renamed remotely', { exact: true }).waitFor({ timeout: 5000 });
     assert.equal(await page.getByRole('dialog').getByText('› Original source', { exact: true }).count(), 0);
   } finally { await browser?.close(); await server.close(); }
+});
+
+
+test('insert and follow image, PDF page, question and worksheet mentions', async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const proof = process.env.PROOF_DIR;
+  const pause = page => proof ? page.waitForTimeout(1000) : Promise.resolve();
+  const image = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="420" height="180" viewBox="0 0 420 180"><rect width="420" height="180" fill="#e9e4ff"/><ellipse cx="210" cy="90" rx="145" ry="63" fill="#baacec"/><ellipse cx="215" cy="90" rx="47" ry="35" fill="#6954a6"/><ellipse cx="124" cy="85" rx="18" ry="8" fill="#fff"/><ellipse cx="299" cy="110" rx="22" ry="9" fill="#fff"/></svg>');
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 1200, height: 780 } });
+    page.setDefaultTimeout(12000);
+    page.on('pageerror', error => console.error('PAGE:', error.message));
+    await page.addInitScript(({ source, destination }) => {
+      Object.defineProperty(navigator, 'platform', { value: 'MacIntel' });
+      const modules = [{ id: 'm1', name: 'Research' }, { id: 'm2', name: 'Biology' }];
+      const contents = { m1: { state: source, updates: [], files: [] }, m2: { state: destination, updates: [], files: [] } };
+      const bank = { schemaVersion: 1, questions: {}, revisions: {}, attempts: {}, answers: {} };
+      for (let index = 0; index < 24; index++) {
+        const questionId = `q${index}`, revisionId = `r${index}`, rootPartId = `p${index}`;
+        bank.questions[questionId] = { title: index === 23 ? 'Study cell structure' : `Review question ${index + 1}`, order: index, revisionId, deleted: false };
+        bank.revisions[revisionId] = { questionId, rootPartId, parts: { [rootPartId]: { parentId: null, order: 0, label: '', cropIds: [] } }, crops: {} };
+      }
+      bank.attempts.a1 = { title: 'Study practice worksheet', questions: [{ questionId: 'q23', revisionId: 'r23' }], deleted: false };
+      bank.attempts.cell = { title: 'Cell', questions: [], deleted: false };
+      bank.attempts.extra = { title: 'Practice Cell', questions: [], deleted: false };
+      let pageCount = null;
+      window.installTestBridge({ tauri: { invoke: async (command, args) => {
+        if (command.startsWith('plugin:')) return 1;
+        if (command === 'modules') return modules;
+        if (command === 'get_content') return structuredClone(contents[args.moduleId]);
+        if (command === 'add_update') {
+          const update = { id: Date.now(), bytes: args.bytes };
+          contents[args.moduleId].updates.push(update);
+          return update;
+        }
+        if (command === 'document_path') return '/study-guide.pdf';
+        if (command === 'list_documents') return [{ id: 'pdf1', moduleId: 'm2', moduleName: 'Biology', name: 'Study guide.pdf', size: 1, pageCount, available: true }];
+        if (command === 'set_document_page_count') { pageCount = args.pageCount; return; }
+        if (command === 'question_bank_enabled') return true;
+        if (command === 'question_bank_get') return args.moduleId === 'm2' ? bank : null;
+        if (command === 'question_bank_index') return args.moduleId === 'm2' ? {
+          questions: Object.entries(bank.questions).map(([id, { title, order }]) => ({ id, title, order })),
+          worksheets: Object.entries(bank.attempts).map(([id, { title }]) => ({ id, title })),
+        } : null;
+        if (command === 'worksheet_answer_document_load') return { document: [0, 0], expected: 'empty', plainText: null };
+        return [];
+      } } });
+    }, {
+      source: seed([['heading', 'Reading notes'], ['paragraph', 'See ']]),
+      destination: seed([...Array.from({ length: 42 }, (_, i) => ['paragraph', `Background note ${i + 1}`]), ['heading', 'Cell diagrams', { level: 1 }], ['image', '', { imageId: 'cell', title: 'Study cell diagram', src: image, width: 420, height: 180 }], ...Array.from({ length: 110 }, (_, i) => ['heading', `Cell topic ${i + 1}`, { level: 1, 'data-toc-id': `cell-${i}` }])]),
+    });
+    await page.route('**/study-guide.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes(12) }));
+    const origin = `http://localhost:${server.httpServer.address().port}`;
+    await page.goto(`${origin}/m1`);
+    const editor = page.locator('.tiptap[contenteditable=true]');
+    const type = value => page.keyboard.type(value, { delay: proof ? 80 : 0 });
+    const insertQuery = async value => {
+      await editor.getByRole('heading', { name: 'Reading notes' }).waitFor();
+      await editor.evaluate(element => element.editor.commands.focus('end'));
+      await page.waitForFunction(() => {
+        const editor = document.querySelector('.tiptap[contenteditable=true]')?.editor;
+        if (!editor?.view.hasFocus()) return false;
+        const selection = editor.view.dom.ownerDocument.getSelection();
+        const head = editor.state.doc.content.size - 1;
+        return editor.state.selection.empty && editor.state.selection.head === head &&
+          selection?.isCollapsed && editor.view.dom.contains(selection.anchorNode) &&
+          editor.view.posAtDOM(selection.anchorNode, selection.anchorOffset) === head;
+      });
+      await type(value);
+    };
+    const option = name => page.getByRole('option', { name, exact: true });
+    const chip = name => page.getByRole('button', { name, exact: true });
+    await insertQuery('@Cell');
+    await option('Cell Biology').waitFor({ timeout: 5000 });
+    assert.equal(await option('Practice Cell Biology').count(), 1);
+    assert.equal(await page.getByRole('option').first().getAttribute('id'), await option('Cell Biology').getAttribute('id'));
+    assert.equal(await page.getByRole('option').count(), 100);
+    await page.keyboard.press('Escape');
+    for (const _ of '@Cell') await page.keyboard.press('Backspace');
+    await insertQuery('@Study');
+    await option('Study cell diagram Biology').waitFor();
+    await option('Study guide.pdf pages').waitFor();
+    await option('Study cell structure Biology').waitFor();
+    await option('Study practice worksheet Biology').waitFor();
+    await pause(page);
+    if (proof) {
+      await page.screenshot({ path: `${proof}/mentions-light.png` });
+      await page.emulateMedia({ colorScheme: 'dark' });
+      await page.waitForFunction(() => document.documentElement.classList.contains('dark'));
+      await page.screenshot({ path: `${proof}/mentions-dark.png`, animations: 'disabled' });
+      await page.emulateMedia({ colorScheme: 'light' });
+      await page.waitForFunction(() => !document.documentElement.classList.contains('dark'));
+    }
+    await option('Study cell diagram Biology').click();
+    await chip('@Biology › Study cell diagram').waitFor();
+    await pause(page);
+    await chip('@Biology › Study cell diagram').click();
+    await page.waitForURL(`${origin}/m2`);
+    const targetImage = page.locator('.note-image-block[data-selected] img').first();
+    await targetImage.waitFor();
+    assert.ok(await targetImage.evaluate(image => {
+      const viewport = image.closest('.app-scroll-container').getBoundingClientRect();
+      const box = image.getBoundingClientRect();
+      return image.complete && box.top >= viewport.top && box.bottom <= viewport.bottom;
+    }), 'the exact image is selected and visible');
+    await pause(page);
+    const backToNote = async () => {
+      await page.getByRole('link', { name: 'Research', exact: true }).click();
+      await page.waitForURL(`${origin}/m1`);
+    };
+    await backToNote();
+    await insertQuery('@Study guide');
+    await option('Study guide.pdf pages').click();
+    await option('Page 12').waitFor();
+    await type(' 12');
+    await option('Page 12').waitFor();
+    await pause(page);
+    await option('Page 12').click();
+    await chip('@Study guide.pdf p.12').waitFor();
+    await pause(page);
+    await chip('@Study guide.pdf p.12').click();
+    await page.waitForURL(`${origin}/files/pdf1?page=12`);
+    await page.waitForFunction(() => {
+      const viewport = document.querySelector('.pdf-viewport')?.getBoundingClientRect();
+      const line = [...document.querySelectorAll('[data-pdf-page="12"] .textLayer span')].find(span => span.textContent === 'Page 12 first line');
+      const box = line?.getBoundingClientRect();
+      return document.querySelector('input[aria-label="Page number"]')?.value === '12' &&
+        box && viewport && box.top >= viewport.top && box.bottom <= viewport.bottom;
+    });
+    await pause(page);
+    await backToNote();
+    await insertQuery('@Study cell structure');
+    await option('Study cell structure Biology').waitFor();
+    await pause(page);
+    await option('Study cell structure Biology').click();
+    await chip('@Study cell structure').waitFor();
+    await pause(page);
+    await chip('@Study cell structure').click();
+    await page.waitForURL(url => url.pathname === '/questions' && url.searchParams.get('question') === 'q23');
+    const question = page.getByRole('button', { name: 'Add next crops to Study cell structure' });
+    await question.waitFor();
+    await page.waitForFunction(() => {
+      const row = document.querySelector('[data-question-id="q23"]');
+      const viewport = row?.closest('.app-scroll-container')?.getBoundingClientRect();
+      const box = row?.getBoundingClientRect();
+      return box && viewport && box.top >= viewport.top && box.bottom <= viewport.bottom;
+    });
+    await pause(page);
+    await backToNote();
+    await insertQuery('@Study practice');
+    await option('Study practice worksheet Biology').waitFor();
+    await pause(page);
+    await option('Study practice worksheet Biology').click();
+    await chip('@Study practice worksheet').waitFor();
+    await pause(page);
+    await chip('@Study practice worksheet').click();
+    await page.waitForURL(url => url.pathname === '/questions' && url.searchParams.get('worksheet') === 'a1');
+    const header = page.locator('header');
+    await header.getByText('Study practice worksheet', { exact: true }).waitFor();
+    await header.getByRole('button', { name: 'Question 1: Study cell structure', exact: true }).waitFor();
+    await pause(page);
+    await page.close();
+  } finally { await server.close(); }
+});
+
+test('a stale PDF page mention reports the missing page', async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const note = new Y.Doc();
+  const paragraph = new Y.XmlElement('paragraph');
+  const mention = new Y.XmlElement('mention');
+  mention.setAttribute('target', { kind: 'pdf-page', id: 'pdf1', nodeId: null, locator: '12' });
+  mention.setAttribute('mentionId', 'stale-page');
+  note.getXmlFragment('default').push([paragraph]);
+  paragraph.push([mention]);
+  const source = [...Y.encodeStateAsUpdate(note)];
+  note.destroy();
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    await page.addInitScript(source => {
+      window.installTestBridge({ tauri: { invoke: async command => {
+        if (command.startsWith('plugin:')) return 1;
+        if (command === 'modules') return [{ id: 'm1', name: 'Research' }];
+        if (command === 'get_content') return { state: source, updates: [], files: [] };
+        if (command === 'document_path') return '/short-guide.pdf';
+        if (command === 'list_documents') return [{ id: 'pdf1', moduleId: 'm1', name: 'Guide.pdf', pageCount: 12, available: true }];
+        return [];
+      } } });
+    }, source);
+    await page.route('**/short-guide.pdf', route => route.fulfill({ contentType: 'application/pdf', body: textPdfBytes(10) }));
+    await page.goto(`http://localhost:${server.httpServer.address().port}/m1`);
+    await page.getByRole('button', { name: '@Guide.pdf p.12', exact: true }).click();
+    const input = page.getByRole('textbox', { name: 'Page number' });
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Page number"]')?.disabled &&
+      !!document.querySelector('.pdf-viewport'));
+    assert.equal(await input.inputValue(), '1');
+    await page.getByText('Page 12 is unavailable in this PDF.', { exact: true }).waitFor();
+  } finally { await server.close(); }
+});
+
+test('the warmed mention menu shows cached results without loading', async t => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+  const proof = process.env.MENTION_PROOF_DIR;
+  const samples = Number(process.env.MENTION_SAMPLES ?? 1);
+  const holdBank = !process.env.MENTION_SAMPLES;
+  const notes = Array.from({ length: 200 }, (_, index) => ({
+    id: 'note-' + index,
+    name: index === 0 ? 'Research notes' : 'Course notes ' + index,
+  }));
+  const contents = notes.map((_, index) => ({
+    state: seed(index === 0 ? [['heading', 'Reading notes', { level: 1, 'data-toc-id': 'reading-notes' }], ['paragraph', 'See ']] : [
+      ['heading', 'Chapter ' + index, { level: 1, 'data-toc-id': 'chapter-' + index }],
+      ...Array.from({ length: index <= 100 ? 2 : index <= 198 ? 1 : 2 }, (_, image) =>
+        ['image', '', { imageId: 'image-' + image, title: 'Diagram ' + index + '.' + image }]),
+    ]),
+    updates: [],
+    files: [],
+  }));
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    for (let sample = 0; sample < samples; sample++) {
+      const page = await browser.newPage({
+        viewport: { width: 1120, height: 720 },
+        ...(proof && sample === 0 ? { recordVideo: { dir: proof } } : {}),
+      });
+      try {
+        page.setDefaultTimeout(10000);
+        await page.addInitScript(({ notes, contents, holdBank }) => {
+          Object.defineProperty(navigator, 'platform', { value: 'MacIntel' });
+          const files = Array.from({ length: 50 }, (_, index) => ({
+            id: 'pdf-' + index, moduleId: 'note-1', name: 'Course guide ' + index + '.pdf',
+            available: true, pageCount: 100,
+          }));
+          const loads = window.mentionLoads = { content: 0, fullBanks: 0, indexes: 0, inFlight: 0, peak: 0 };
+          const lastBank = new Promise(resolve => { window.finishMentionBank = resolve; });
+          window.installTestBridge({ tauri: { invoke: async (command, args) => {
+            if (command.startsWith('plugin:')) return 1;
+            if (command === 'modules') return notes;
+            if (command === 'get_content') {
+              loads.content++;
+              return contents[Number(args.moduleId.slice(5))];
+            }
+            if (command === 'add_update') {
+              const update = { id: Date.now(), bytes: args.bytes };
+              contents[Number(args.moduleId.slice(5))].updates.push(update);
+              return update;
+            }
+            if (command === 'list_documents') return files;
+            if (command === 'question_bank_enabled') return true;
+            if (command === 'question_bank_get') {
+              loads.fullBanks++;
+              return null;
+            }
+            if (command === 'question_bank_index') {
+              loads.indexes++;
+              loads.inFlight++;
+              loads.peak = Math.max(loads.peak, loads.inFlight);
+              const index = Number(args.moduleId.slice(5));
+              await new Promise(resolve => setTimeout(resolve, 0));
+              if (holdBank && index === 199) await lastBank;
+              loads.inFlight--;
+              if (index >= 50) return null;
+              return {
+                questions: [{ id: 'question', title: 'Review question ' + index, order: 0 }],
+                worksheets: [{ id: 'worksheet', title: 'Practice worksheet ' + index }],
+              };
+            }
+            return [];
+          } } });
+        }, { notes, contents, holdBank });
+        await page.goto(`http://localhost:${server.httpServer.address().port}/note-0`);
+        const editor = page.locator('.tiptap[contenteditable=true]');
+        await editor.getByRole('heading', { name: 'Reading notes' }).waitFor();
+        await page.waitForFunction(held => window.mentionLoads.fullBanks > 0 ||
+          (window.mentionLoads.content >= 200 && window.mentionLoads.indexes === 200 &&
+            window.mentionLoads.inFlight === Number(held)), holdBank);
+        const startup = await page.evaluate(() => window.mentionLoads);
+        assert.equal(startup.fullBanks, 0, 'catalog warming must not load whole banks');
+        assert.equal(startup.indexes, notes.length);
+        assert.ok(startup.peak > 0 && startup.peak <= 3, `peak concurrent index calls: ${startup.peak}`);
+        await editor.evaluate(element => element.editor.commands.focus('end'));
+        await page.waitForFunction(() => {
+          const element = document.querySelector('.tiptap[contenteditable=true]');
+          const editor = element.editor;
+          const selection = document.getSelection();
+          const end = editor.state.doc.content.size - 1;
+          return editor.view.hasFocus() && editor.state.selection.head === end && selection?.isCollapsed &&
+            element.contains(selection.anchorNode) && editor.view.posAtDOM(selection.anchorNode, selection.anchorOffset) === end;
+        });
+        const before = await page.evaluate(() => ({ ...window.mentionLoads }));
+        if (proof && sample === 0) await page.waitForTimeout(900);
+        await page.evaluate(() => {
+          window.mentionTiming = new Promise(resolve => {
+            document.addEventListener('keydown', () => {
+              const start = performance.now();
+              let loading = false;
+              const observer = new MutationObserver(records => {
+                loading ||= records.some(record => [...record.addedNodes].some(node =>
+                  node.textContent.includes('Loading…')));
+                const first = document.querySelector('[role="option"]');
+                if (first && first.closest(".react-renderer").style.visibility !== "hidden") {
+                  observer.disconnect();
+                  window.mentionMeasured = true;
+                  resolve({ ms: performance.now() - start, loading, first: first.firstElementChild.textContent });
+                }
+              });
+              observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
+            }, { capture: true, once: true });
+          });
+        });
+        await page.keyboard.press('@');
+        await page.getByRole('option', { name: 'Research notes', exact: true }).waitFor();
+        await page.waitForFunction(() => window.mentionMeasured);
+        const measurement = await page.evaluate(() => window.mentionTiming);
+        assert.equal(measurement.first, 'Research notes');
+        assert.equal(measurement.loading, false);
+        if (process.env.MENTION_SAMPLES) t.diagnostic(measurement.ms.toFixed(1) + ' ms');
+        if (proof && sample === 0) await page.waitForTimeout(1500);
+        await page.keyboard.type('Diagram 1.0');
+        await page.getByRole('option', { name: 'Diagram 1.0 Course notes 1', exact: true }).waitFor();
+        await page.keyboard.type(' missing');
+        if (holdBank) {
+          await page.getByRole('option').first().waitFor({ state: 'hidden' });
+          assert.equal(await page.getByText('Loading…', { exact: true }).count(), 0);
+          await page.evaluate(() => window.finishMentionBank());
+        }
+        await page.getByRole('status').filter({ hasText: 'No matches' }).waitFor();
+        assert.deepEqual(await page.evaluate(() => window.mentionLoads), { ...before, inFlight: 0 });
+      } finally {
+        await page.context().close();
+      }
+    }
+  } finally {
+    await server.close();
+  }
 });
