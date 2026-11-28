@@ -50,3 +50,62 @@
     clip-path: inset(50%);
     white-space: nowrap;
 }
+.note-image-caption {
+  display: block;
+  contain: inline-size;
+  margin-top: 0.25rem;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.note-image-caption[data-align="left"] { text-align: left; }
+.note-image-caption[data-align="right"] { text-align: right; }
+
+.note-image-caption[data-empty] {
+  position: absolute;
+  z-index: 1;
+  inset-inline: 0;
+  top: 100%;
+  margin-top: 0;
+}
+
+.note-image-caption button {
+  cursor: pointer;
+  text-align: inherit;
+}
+
+.note-image-caption[data-empty] button,
+.note-image-caption[data-empty] .note-image-caption-edit {
+  background: var(--popover);
+}
+
+.note-image-caption-edit {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35em;
+  width: 100%;
+  min-width: 8rem;
+  padding-inline: 0.25rem;
+  border-radius: var(--radius-sm);
+}
+
+.note-image-caption-edit > span {
+  flex: none;
+}
+
+.note-image-caption-edit > input {
+  flex: 1;
+  min-width: 0;
+  color: var(--foreground);
+  background: transparent;
+  text-align: inherit;
+  outline: none;
+}
+
+/* A quiet field outline instead of the browser's focus ring. */
+.note-image-caption-edit:focus-within {
+  box-shadow: 0 0 0 1px var(--border);
+}

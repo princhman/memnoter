@@ -24,28 +24,35 @@ registerFlusher("stored-notes", async () => {
   await Promise.all([...pending.values()]);
 });
 
-// All closed-note changes share order, pacing, and three attempts. Failures
-// remain visible to callers and logs, rather than silently retrying forever.
-export function refreshDerived(moduleId: string, admittedPermit?: WritePermit): Promise<void> {
-  const previous = queue;
-  const run = (permit: WritePermit) => previous.then(async () => {
-    for (let attempt = 0; ; attempt++) {
-      assertWritable(permit);
+async function refreshStoredNote(
+  moduleId: string,
+  permit: WritePermit | undefined,
+  kind: "search" | "cards-and-search",
+) {
+  for (let attempt = 0; ; attempt++) {
+    assertWritable(permit);
+    try {
+      const doc = await loadStoredNote(moduleId);
       try {
-        const doc = await loadStoredNote(moduleId);
-        try {
+        if (kind === "cards-and-search") {
           const { indexStoredCards } = await import("@/lib/card-backfill");
           await indexStoredCards(moduleId, doc, permit);
-          await indexStoredNote(moduleId, doc, permit);
-        } finally { doc.destroy(); }
-        return;
-      } catch (error) {
-        console.error(`Failed to refresh note ${moduleId} (attempt ${attempt + 1}/3):`, error);
-        if (attempt === 2 || !isWriteAdmitted(permit)) throw error;
-        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
-      }
+        }
+        await indexStoredNote(moduleId, doc, permit, kind === "search" ? "background" : undefined);
+      } finally { doc.destroy(); }
+      return;
+    } catch (error) {
+      console.error(`Failed to refresh note ${moduleId} (attempt ${attempt + 1}/3):`, error);
+      if (attempt === 2 || !isWriteAdmitted(permit)) throw error;
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
     }
-  });
+  }
+}
+
+// Changes that can backfill cards share a queue with imports and sync.
+export function refreshDerived(moduleId: string, admittedPermit?: WritePermit): Promise<void> {
+  const previous = queue;
+  const run = (permit: WritePermit) => previous.then(() => refreshStoredNote(moduleId, permit, "cards-and-search"));
   const task = admittedPermit ? run(admittedPermit) : writeOperation(run);
   pending.set(moduleId, task);
   queue = settled(task);
@@ -53,28 +60,43 @@ export function refreshDerived(moduleId: string, admittedPermit?: WritePermit): 
   return task;
 }
 
-let backfill: Promise<void> | undefined;
+async function backfillNotes(ids: Iterable<string>, refresh: (id: string) => Promise<void>) {
+  for (const id of ids) {
+    await new Promise<void>(resolve => {
+      if ("requestIdleCallback" in window) window.requestIdleCallback(() => resolve(), { timeout: 2_000 });
+      else setTimeout(resolve, 50);
+    });
+    if (!isWriteAdmitted()) return;
+    try { await refresh(id); }
+    catch (error) { console.error(`Backfill failed for note ${id}:`, error); }
+  }
+}
+
+function createBackfill() {
+  const cardIds = call<{ id: string }[]>("unindexed_card_modules")
+    .then(notes => new Set(notes.map(note => note.id)))
+    .catch(error => {
+      console.error("Failed to list notes for card backfill:", error);
+      return new Set<string>();
+    });
+  const searchIds = call<string[]>("unindexed_modules", { version: EXTRACTOR_VERSION })
+    .catch(error => {
+      console.error("Failed to list notes for search backfill:", error);
+      return [];
+    });
+  const cards = cardIds.then(ids => backfillNotes(ids, refreshDerived));
+  const search = Promise.all([cardIds, searchIds]).then(([cards, search]) =>
+    backfillNotes(search.filter(id => !cards.has(id)), id =>
+      refreshStoredNote(id, undefined, "search")));
+  return { cards, all: Promise.all([cards, search]).then(() => {}) };
+}
+
+let backfill: ReturnType<typeof createBackfill> | undefined;
+
 export function startBackfill() {
-  backfill ??= (async () => {
-    const [cards, search] = await Promise.allSettled([
-      call<{ id: string }[]>("unindexed_card_modules"),
-      call<string[]>("unindexed_modules", { version: EXTRACTOR_VERSION }),
-    ]);
-    if (cards.status === "rejected") console.error("Failed to list notes for card backfill:", cards.reason);
-    if (search.status === "rejected") console.error("Failed to list notes for search backfill:", search.reason);
-    const ids = new Set([
-      ...(cards.status === "fulfilled" ? cards.value.map(note => note.id) : []),
-      ...(search.status === "fulfilled" ? search.value : []),
-    ]);
-    for (const id of ids) {
-      await new Promise<void>(resolve => {
-        if ("requestIdleCallback" in window) window.requestIdleCallback(() => resolve(), { timeout: 2_000 });
-        else setTimeout(resolve, 50);
-      });
-      if (!isWriteAdmitted()) return;
-      try { await refreshDerived(id); }
-      catch (error) { console.error(`Backfill failed for note ${id}:`, error); }
-    }
-  })().catch(error => { console.error("Failed to start note backfill:", error); });
-  return backfill;
+  return (backfill ??= createBackfill()).all;
+}
+
+export function backfillCards() {
+  return (backfill ??= createBackfill()).cards;
 }
