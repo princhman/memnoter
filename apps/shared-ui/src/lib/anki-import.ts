@@ -77,21 +77,20 @@ const walk = (nodes: DeckNode[]): DeckNode[] => nodes.flatMap(node => [node, ...
 export function defaultSelection(decks: AnkiDeck[]): AnkiSelection {
   const roots = deckTree(decks);
   const nodes = walk(roots).filter(node => node.total > 0);
-  const roles: Record<string, DeckRole> = {};
-  const folders: Record<string, string | null> = {};
-  for (const node of walk(roots)) roles[node.key] = "skip";
+  const roles: Record<string, DeckRole> = Object.fromEntries(walk(roots).map(node => [node.key, "skip"]));
+  const folders = new Map<string, string | null>();
   const branching = [...new Set(nodes.map(node => node.depth))].sort((a, b) => a - b).find(depth => nodes.filter(node => node.depth === depth).length > 1);
   const level = branching ?? Math.min(...nodes.filter(node => node.own > 0).map(node => node.depth), Infinity);
-  if (!Number.isFinite(level)) return { roles, folders };
+  if (!Number.isFinite(level)) return { roles, folders: {} };
   const assign = (node: DeckNode, parent: DeckNode | undefined, inModule: boolean) => {
     if (node.total === 0) return;
     const module = !inModule && (node.depth === level || (node.depth < level && node.own > 0));
-    if (module) { roles[node.key] = "module"; folders[node.key] = parent?.name ?? null; }
+    if (module) { roles[node.key] = "module"; folders.set(node.key, parent?.name ?? null); }
     else if (inModule) roles[node.key] = "heading";
     for (const child of node.children) assign(child, node, inModule || module);
   };
   for (const root of roots) assign(root, undefined, false);
-  return { roles, folders };
+  return { roles, folders: Object.fromEntries(folders) };
 }
 
 export const ANKI_CARDS_PER_MODULE = 2_000;
@@ -214,6 +213,10 @@ function occlusionBlocks(context: Context, item: Extract<AnkiItem, { kind: "occl
   };
 }
 
+function ownValue<T>(values: Record<string, T> | undefined, key: string): T | undefined {
+  return values && Object.prototype.hasOwnProperty.call(values, key) ? values[key] : undefined;
+}
+
 /** Builds the module documents for the chosen decks; nothing is stored. */
 export function prepareAnkiImport(pkg: AnkiPackage, selection: AnkiSelection): AnkiImportPlan {
   const roots = deckTree(pkg.decks);
@@ -227,7 +230,7 @@ export function prepareAnkiImport(pkg: AnkiPackage, selection: AnkiSelection): A
     else itemsByDeck.set(key, [item]);
   }
   const context: Context = { media: new Set(pkg.media), images: new Set(), warnings: new Map(), labels: {} };
-  const role = (node: DeckNode): DeckRole => selection.roles[node.key] ?? "skip";
+  const role = (node: DeckNode): DeckRole => ownValue(selection.roles, node.key) ?? "skip";
   let notes = 0, cards = 0;
   function makeItem(item: AnkiItem) {
     if (item.kind === "unsupported") return undefined;
@@ -295,10 +298,11 @@ export function prepareAnkiImport(pkg: AnkiPackage, selection: AnkiSelection): A
       const deckKey = node.key.replace(/\0/g, "\0\0");
       const key = chunks.length === 1 ? deckKey : `${deckKey}\0${index + 1}`;
       const name = chunks.length === 1 ? node.name : `${node.name} (Part ${index + 1})`;
+      const folder = ownValue(selection.folders, key);
       modules.push({
         key,
-        name: selection.names?.[key]?.trim() || name,
-        folder: (selection.folders && key in selection.folders ? selection.folders[key] : selection.folders?.[deckKey])?.trim() || null,
+        name: ownValue(selection.names, key)?.trim() || name,
+        folder: (folder === undefined ? ownValue(selection.folders, deckKey) : folder)?.trim() || null,
         document: { type: "doc", content: built.blocks },
         cards: built.cards,
         histories: built.histories,

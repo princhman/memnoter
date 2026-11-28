@@ -26,7 +26,7 @@ after(async () => {
   await browser?.close(); await server?.close();
   if (child) { child.stdin.end(); await new Promise(resolve => child.on("exit", resolve)); }
 });
-async function open(failAt = 0) {
+async function open(failAt = 0, pickedSession = session) {
   let imports = 0;
   const page = await browser.newPage({ viewport: { width: 500, height: 750 } });
   await page.exposeFunction("rustCall", async (command, args = {}) => {
@@ -35,7 +35,7 @@ async function open(failAt = 0) {
     if (result.error) throw new Error(result.error.message ?? result.error);
     return result.value;
   });
-  await page.exposeFunction("pickAnki", () => session);
+  await page.exposeFunction("pickAnki", () => pickedSession);
   await page.addInitScript(() => {
     window.closedSessions = [];
     window.installTestBridge({ tauri: { invoke: (command, args) => {
@@ -151,5 +151,46 @@ test("a partial failure reports saved modules without replaying their writes", a
     assert.match(result.error, /Saved modules: Partial A/);
     assert.ok(result.modules.some(m => m.name === "Partial A"));
     assert.ok(!result.modules.some(m => m.name === "Partial B"));
+  } finally { await page.close(); }
+});
+
+test("split appears for selected decks over 2,000 cards and remembers the choice for this file", async () => {
+  const decks = [{ id: 1, name: "constructor", cardCount: 2001 }, { id: 2, name: "toString", cardCount: 2000 }];
+  const items = decks.flatMap(({ id, cardCount }) => Array.from({ length: cardCount }, (_, index) => ({
+    ...pkg.items[0], noteId: id * 10000 + index, deckId: id,
+  })));
+  const page = await open(0, { ...session, package: { ...pkg, decks, items } });
+  try {
+    const split = page.getByRole("checkbox", { name: /Split large decks/ });
+    const largeRole = page.getByRole("combobox", { name: "Role for constructor", exact: true });
+    const smallRole = page.getByRole("combobox", { name: "Role for toString", exact: true });
+    const preparing = page.getByText("Preparing decks…", { exact: true });
+    await split.waitFor();
+    assert.ok(await split.isChecked());
+    await split.uncheck();
+    await smallRole.selectOption("skip");
+    await preparing.waitFor({ state: "hidden" });
+    assert.ok(await split.isVisible());
+    assert.equal(await split.isChecked(), false);
+    await smallRole.selectOption("module");
+    await largeRole.selectOption("skip");
+    await preparing.waitFor({ state: "hidden" });
+    assert.equal(await split.count(), 0);
+    await largeRole.selectOption("module");
+    await split.waitFor();
+    assert.equal(await split.isChecked(), false);
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    const names = page.getByLabel("Module name", { exact: true });
+    assert.deepEqual(await names.evaluateAll(inputs => inputs.map(input => input.value)), ["constructor", "toString"]);
+    await names.first().fill("Renamed");
+    await page.getByLabel("Folder", { exact: true }).first().fill("Course");
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    assert.ok(await page.getByText("Renamed in Course: 2001 cards", { exact: true }).isVisible());
+
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.waitForFunction(() => window.closedSessions.length === 1);
+    await page.getByRole("button", { name: "Import Anki", exact: true }).click();
+    await split.waitFor();
+    assert.ok(await split.isChecked());
   } finally { await page.close(); }
 });

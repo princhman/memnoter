@@ -201,3 +201,19 @@ test("large modules split at card boundaries and keep their headings and review 
   const single = prepareAnkiImport(source, { ...selection, splitLargeDecks: false });
   assert.deepEqual(single.modules.map(module => [module.cards, module.histories.length]), [[2002, 2002]]);
 });
+
+test("deck names shared with Object.prototype use only explicit overrides", () => {
+  const decks = ["constructor", "toString", "__proto__"].map((name, index) => ({ id: index + 1, name, cardCount: 1 }));
+  const source = { decks, media: [], warnings: [], items: decks.map(({ id }) => ({
+    noteId: id, deckId: id, kind: "basic", notetype: "Basic", front: "Question", back: "Answer", extra: "", reversed: false, cards: [],
+  })) };
+  const selection = defaultSelection(decks);
+  const { modules } = prepareAnkiImport(source, {
+    ...selection,
+    names: { ["__proto__"]: "Renamed" },
+    folders: { toString: "Course" },
+  });
+  assert.deepEqual(modules.map(({ key, name, folder }) => [key, name, folder]).sort(), [
+    ["__proto__", "Renamed", null], ["constructor", "constructor", null], ["toString", "toString", "Course"],
+  ]);
+});

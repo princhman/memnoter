@@ -18,8 +18,8 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
   const busyRef = useRef(false);
   const [selection, setSelection] = useState<AnkiSelection>({ roles: {} });
   const [splitLargeDecks, setSplitLargeDecks] = useState(true);
-  const [namesByKey, setNames] = useState<Record<string, string>>({});
-  const [foldersByKey, setFolders] = useState<Record<string, string>>({});
+  const [namesByKey, setNames] = useState(new Map<string, string>());
+  const [foldersByKey, setFolders] = useState(new Map<string, string>());
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
@@ -38,7 +38,7 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
         if (!mounted) { await call("close_anki_package", { sourceId: selected.sourceId }); return; }
         active.current = selected;
         setSelection(defaultSelection(selected.package.decks));
-        setSplitLargeDecks(true); setNames({}); setFolders({});
+        setSplitLargeDecks(true); setNames(new Map()); setFolders(new Map());
         setStep(0); setError(""); setAttempted(false); setSession(selected);
       } catch (e) { if (mounted) importToast("error", "Could not open Anki package", [String(e)], "error details"); }
       finally { picking = false; }
@@ -82,12 +82,16 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
   const localPlan = useMemo(() => session && !large ? prepareAnkiImport(session.package, options) : undefined, [session, options, large]);
   const result = prepared?.session === session && prepared?.options === options ? prepared.result : undefined;
   const plan = localPlan ?? (result && "plan" in result ? result.plan : undefined);
+  // Splitting changes the chunks, but the card count for the same deck roles stays the same.
+  const previousPlan = prepared && prepared.session === session && prepared.options.roles === options.roles && "plan" in prepared.result
+    ? prepared.result.plan : undefined;
+  const hasLargeDeck = (plan ?? previousPlan)?.hasLargeDeck;
   const prepareError = result && "error" in result ? result.error : undefined;
   const tree = useMemo(() => deckTree(session?.package.decks ?? []), [session]);
   const modules = plan?.modules.map(module => ({
     ...module,
-    name: (namesByKey[module.key] ?? module.name).trim(),
-    folder: (foldersByKey[module.key] ?? module.folder)?.trim() || null,
+    name: (namesByKey.get(module.key) ?? module.name).trim(),
+    folder: (foldersByKey.get(module.key) ?? module.folder)?.trim() || null,
   })) ?? [];
   const invalid = !modules.length || modules.some(module => !module.name) || new Set(modules.map(module => module.name)).size !== modules.length;
   const changeRole = (node: DeckNode, role: DeckRole) => {
@@ -147,7 +151,7 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
         <div className="min-h-0 overflow-auto space-y-3 text-sm">
           <p>{session?.fileName}</p>
           {step === 0 && tree.map(node => renderNode(node, false))}
-          {step === 0 && (plan?.hasLargeDeck || !splitLargeDecks) && <label className="flex items-center gap-2">
+          {step === 0 && hasLargeDeck && <label className="flex items-center gap-2">
             <input type="checkbox" className="accent-[var(--primary)]" checked={splitLargeDecks} onChange={event => setSplitLargeDecks(event.target.checked)} />
             Split large decks into modules of about 2,000 cards
           </label>}
@@ -155,8 +159,8 @@ export function ImportAnkiDialog({ onImported }: { onImported: (id: string) => P
           {prepareError && <p role="alert" className="text-destructive">{prepareError}</p>}
           {step === 1 && modules.map(module => <section key={module.key} className="space-y-2">
             <h3>{module.name} ({module.cards} cards)</h3>
-            <label className="block">Module name<Input value={namesByKey[module.key] ?? module.name} onChange={e => setNames({ ...namesByKey, [module.key]: e.target.value })} /></label>
-            <label className="block">Folder<Input value={foldersByKey[module.key] ?? module.folder ?? ""} placeholder="No folder" onChange={e => setFolders({ ...foldersByKey, [module.key]: e.target.value })} /></label>
+            <label className="block">Module name<Input value={namesByKey.get(module.key) ?? module.name} onChange={e => setNames(new Map(namesByKey).set(module.key, e.target.value))} /></label>
+            <label className="block">Folder<Input value={foldersByKey.get(module.key) ?? module.folder ?? ""} placeholder="No folder" onChange={e => setFolders(new Map(foldersByKey).set(module.key, e.target.value))} /></label>
           </section>)}
           {step > 0 && <p>{plan?.modules.length} modules, {plan?.cards} cards, {plan?.images.length} images and {plan?.warnings.length} warnings.</p>}
           {step === 2 && <ul>{modules.map(m => <li key={m.key}>{m.name}{m.folder ? ` in ${m.folder}` : ""}: {m.cards} cards</li>)}</ul>}
