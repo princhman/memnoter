@@ -1482,14 +1482,14 @@ mod tests {
             markdown
         );
 
-        let mut paths: Vec<_> = fs::read_dir(&root)
+        let mut paths: Vec<_> = fs::read_dir(root)
             .unwrap()
             .chain(fs::read_dir(root.join("attachments")).unwrap())
             .map(|entry| {
                 entry
                     .unwrap()
                     .path()
-                    .strip_prefix(&root)
+                    .strip_prefix(root)
                     .unwrap()
                     .display()
                     .to_string()
