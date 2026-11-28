@@ -383,9 +383,9 @@ test("a successful save retry retires a cut card without another editor update",
   });
 });
 
-test("selective backup edits persist, undo, and keep an untouched card's review history", async () => {
+test("applying a backup file persists safe edits, supports undo, and keeps card review history", async () => {
   const original = ["Read chapter one.", "What is the capital of France? :: Paris", "Review again on Friday."];
-  const edited = ["Read chapters one and two.", original[1], "Review again on Monday."];
+  const edited = ["Read chapters one and two.", "What is the capital of France? :: Lyon", original[2]];
   const name = "Geography";
   let file;
   await withCore(async ({ page, editor, source, call, schedules, log, grade, open }) => {
@@ -424,20 +424,19 @@ test("selective backup edits persist, undo, and keep an untouched card's review 
     await pace();
     await check.click();
     const dialog = page.getByRole("dialog", { name: "Backup edits" });
-    await dialog.getByText(edited[0], { exact: true }).waitFor();
-    await dialog.getByText(edited[2], { exact: true }).waitFor();
-    assert.equal(await dialog.getByRole("checkbox").count(), 2);
-    await pace();
-    await dialog.getByRole("button", { name: "Apply all", exact: true }).click();
-    await pace();
-    await dialog.getByRole("checkbox").nth(1).uncheck();
+    await dialog.getByText(file.path, { exact: true }).waitFor();
+    assert.equal(await dialog.getByText(edited[0], { exact: true }).count(), 0);
+    await dialog.getByText("Only safe edits will be applied.").waitFor();
+    await dialog.getByText("attachments/map.pdf", { exact: true }).waitFor();
     await pace();
 
     if (process.env.PROOF_DIR) {
       await dialog.screenshot({ path: join(process.env.PROOF_DIR, `backup-edits-${theme}.png`) });
     }
 
-    await dialog.getByRole("button", { name: "Apply selected changes", exact: true }).click();
+    await dialog.getByRole("button", { name: "Keep attachments/map.pdf", exact: true }).click();
+    await pace();
+    await dialog.getByRole("button", { name: `Apply ${file.path}`, exact: true }).click();
     await editor.getByText(edited[0], { exact: true }).waitFor();
     assert.equal(await editor.getByText(original[2], { exact: true }).count(), 1);
     await pace();
@@ -458,6 +457,7 @@ test("selective backup edits persist, undo, and keep an untouched card's review 
     const blocks = saved.getXmlFragment("default").toArray();
     assert.equal(blocks[0].get(0).toString(), edited[0]);
     assert.equal(blocks[1].getAttribute("cardId"), card.id);
+    assert.equal(blocks[1].get(0).toString(), original[1]);
     assert.equal(blocks[2].get(0).toString(), original[2]);
     assert.deepEqual((await schedules(source, 1))[0], reviewed);
     assert.deepEqual(log.all(card.id), history);
@@ -465,7 +465,9 @@ test("selective backup edits persist, undo, and keep an untouched card's review 
   }, (command, args, call) => {
     if (command === "local_backup_settings") return { enabled: false, folder: "/Documents/Notes" };
     if (command === "local_backup_image_types") return {};
-    if (command === "read_local_backup_edits") return [file];
+    if (command === "read_local_backup_edits") return [
+      file, { path: "attachments/map.pdf", moduleId: null, noteName: null, markdown: null, hash: "pdf-edit" },
+    ];
     return call(command, args);
   }, { mac: true });
 });
@@ -474,17 +476,24 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
   const folder = await mkdtemp(join(await realpath(tmpdir()), "memnoter-backup-"));
   const backupFolder = join(folder, "Memnoter Backup");
   let scans = 0;
+  let splitByHeading = false;
   try {
     await withCore(async ({ page, source, call, editor, open }) => {
       const original = "Review the maps on Friday.";
       const firstEdit = "Review the maps on Monday.";
       const secondEdit = "Review the maps on Tuesday.";
       const doc = new Y.Doc();
-      const paragraph = new Y.XmlElement("paragraph");
-      const text = new Y.XmlText();
-      text.insert(0, original);
-      paragraph.insert(0, [text]);
-      doc.getXmlFragment("default").insert(0, [paragraph]);
+      const block = (value, level) => {
+        const node = new Y.XmlElement(level ? "heading" : "paragraph");
+        if (level) node.setAttribute("level", level);
+        const text = new Y.XmlText();
+        text.insert(0, value);
+        node.insert(0, [text]);
+        return node;
+      };
+      doc.getXmlFragment("default").insert(0, [
+        block("Map notes"), block("Maps", 1), block("Keep the first section."), block("Maps", 2), block(original),
+      ]);
       await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc)) });
       doc.destroy();
 
@@ -497,18 +506,32 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
         assert.equal(scans, count);
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       };
-      const notice = page.locator("[data-sonner-toast]").filter({ hasText: "Edits found in the backup: 1 note" });
+      const notice = page.locator("[data-sonner-toast]").filter({ hasText: "Edits found in the backup: 1 file" });
       const dialog = page.getByRole("dialog", { name: "Backup edits" });
       await open(source);
       await scan(1, true);
-      const filenames = await readdir(backupFolder);
-      const path = join(backupFolder, filenames.find(name => name.startsWith("geography") && name.endsWith(".md")));
+      const filename = (await readdir(backupFolder)).find(name => name.startsWith("geography") && name.endsWith(".md"));
+      assert.ok((await readFile(join(backupFolder, filename), "utf8")).includes(original));
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      const split = page.getByRole("switch", { name: "Split notes into files by heading" });
+      await split.scrollIntoViewIfNeeded();
+      await pace();
+      await split.click();
+      await scan(2, true);
+      const noteFolder = join(backupFolder, filename.slice(0, -3));
+      assert.deepEqual((await readdir(noteFolder)).sort(), ["0000 - Preamble.md", "0001 - Maps.md", "0002 - Maps.md"]);
+      assert.equal(await readFile(join(noteFolder, "0000 - Preamble.md"), "utf8"), "Map notes\n");
+      assert.equal(await readFile(join(noteFolder, "0001 - Maps.md"), "utf8"), "# Maps\n\nKeep the first section.\n");
+      const path = join(noteFolder, "0002 - Maps.md");
       const exported = await readFile(path, "utf8");
-      assert.ok(exported.includes(original));
+      assert.equal(exported, `## Maps\n\n${original}\n`);
+      const switchNote = page.getByRole("link", { name: "Geography", exact: true });
+      await switchNote.click();
+      await editor.click();
 
       await pace();
       await writeFile(path, exported.replace(original, firstEdit));
-      await scan(2);
+      await scan(3);
       await notice.waitFor();
       assert.equal(await dialog.count(), 0);
       assert.equal(await editor.evaluate(el => el === document.activeElement), true);
@@ -516,30 +539,34 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
       if (process.env.PROOF_DIR) await page.screenshot({ path: join(process.env.PROOF_DIR, "backup-toast-light.png") });
       await notice.getByRole("button", { name: "Close toast" }).click();
       await notice.waitFor({ state: "hidden" });
-      await scan(3);
+      await scan(4);
       assert.equal(await notice.count(), 0);
 
       await page.reload();
-      await scan(4, true);
+      await scan(5, true);
       assert.equal(await notice.count(), 0);
 
       await writeFile(path, exported.replace(original, secondEdit));
       if (process.env.PROOF_DIR) await page.emulateMedia({ colorScheme: "dark" });
       await page.reload();
-      await scan(5, true);
+      await scan(6, true);
       await notice.waitFor();
       await pace();
       if (process.env.PROOF_DIR) await page.screenshot({ path: join(process.env.PROOF_DIR, "backup-toast-dark.png") });
       await notice.getByRole("button", { name: "Review", exact: true }).click();
-      await dialog.getByText(secondEdit, { exact: true }).waitFor();
+      const relativePath = `${filename.slice(0, -3)}/0002 - Maps.md`;
+      await dialog.getByText(relativePath, { exact: true }).waitFor();
+      if (process.env.PROOF_DIR) await dialog.screenshot({ path: join(process.env.PROOF_DIR, "backup-split-dark.png") });
       await pace();
-      await dialog.getByRole("checkbox", { name: "Apply change" }).check();
-      await pace();
-      await dialog.getByRole("button", { name: "Apply selected changes" }).click();
+      await dialog.getByRole("button", { name: `Apply ${relativePath}`, exact: true }).click();
       await editor.getByText(secondEdit, { exact: true }).waitFor();
+      assert.equal(await editor.getByText("Keep the first section.", { exact: true }).count(), 1);
       await pace();
     }, async (command, args, call) => {
-      if (command === "local_backup_settings") return { folder, enabled: true };
+      if (command === "set_local_backup_layout") splitByHeading = args.splitByHeading;
+      if (["local_backup_settings", "set_local_backup_layout"].includes(command)) {
+        return { folder, enabled: true, splitByHeading };
+      }
       if (command === "local_backup_image_types") return {};
       const result = await call(command, args);
       if (command === "read_local_backup_edits") scans++;

@@ -1,14 +1,13 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { createStore, useSelector } from "@tanstack/react-store";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useActiveEditor } from "@/lib/active-editor-context";
 import { applyBackupHunks, buildBackupReview, readBackupEdits, recheckBackupFile, type BackupReviewFile } from "@/lib/backup-edit-review";
 import { localBackupSettings } from "@/lib/local-backup";
 import { queryClient } from "@/lib/query-client";
-import { cn } from "@/lib/utils";
 
 const backupReview = createStore<{ folder: string; files: BackupReviewFile[] } | null>(null);
 const toastId = "local-backup-edits";
@@ -56,8 +55,7 @@ export async function notifyOfBackupEdits(folder: string, isActive: () => boolea
   if (fresh.length || shown.size !== edited.length) rememberEdits(folder, edited);
   if (!fresh.length) return;
 
-  const unit = fresh.some(file => file.path.startsWith("attachments/")) ? "file" : "note";
-  toast(`Edits found in the backup: ${fresh.length} ${unit}${fresh.length === 1 ? "" : "s"}`, {
+  toast(`Edits found in the backup: ${fresh.length} file${fresh.length === 1 ? "" : "s"}`, {
     id: toastId,
     closeButton: true,
     duration: 8000,
@@ -82,14 +80,8 @@ export function BackupEditsDialog() {
 function Review({ folder, files }: { folder: string; files: BackupReviewFile[] }) {
   const [finished, setFinished] = useState<string[]>([]);
   const remaining = files.filter(file => !finished.includes(file.path));
-  const [path, setPath] = useState((files.find(file => file.kind === "note") ?? files[0])?.path);
-  const diffId = useId();
-  const [selections, setSelections] = useState<Record<string, number[]>>({});
-  const file = remaining.find(file => file.path === path) ?? remaining[0];
-  const selected = selections[file?.path] ?? [];
-  const setSelected = (indexes: number[]) => setSelections(values => ({ ...values, [file.path]: indexes }));
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<{ note: NoteFile; selected: number[] } | null>(null);
+  const [pending, setPending] = useState<NoteFile | null>(null);
   const [busy, setBusy] = useState(false);
   const appliedEditor = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
@@ -102,7 +94,7 @@ function Review({ folder, files }: { folder: string; files: BackupReviewFile[] }
     try {
       await recheckBackupFile(folder, note);
       await navigate({ to: "/$moduleId", params: { moduleId: note.moduleId } });
-      setPending({ note, selected });
+      setPending(note);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
       setBusy(false);
@@ -110,95 +102,75 @@ function Review({ folder, files }: { folder: string; files: BackupReviewFile[] }
   }
 
   useEffect(() => {
-    if (!pending || activeEditor?.moduleId !== pending.note.moduleId ||
+    if (!pending || activeEditor?.moduleId !== pending.moduleId ||
       (!activeEditor.isReady && !activeEditor.loadError)) return;
     setPending(null);
     setBusy(false);
     try {
       if (activeEditor.loadError) throw activeEditor.loadError;
-      applyBackupHunks(activeEditor.editor, pending.note, pending.selected);
+      applyBackupHunks(activeEditor.editor, pending, applicableHunks(pending));
       appliedEditor.current = activeEditor.editor.view.dom;
       if (remaining.length <= 1) {
         const editor = appliedEditor.current;
         close();
         requestAnimationFrame(() => editor.focus({ preventScroll: true }));
       } else {
-        setFinished(current => [...current, pending.note.path]);
+        setFinished(current => [...current, pending.path]);
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     }
   }, [pending, activeEditor, remaining.length]);
 
-  const hunks = file?.kind === "note" ? file.hunks : [];
-  const applicable = hunks.flatMap((hunk, index) => hunk.reason ? [] : [index]);
+  function keep(path: string) {
+    setError(null);
+    if (remaining.length === 1) close();
+    else setFinished(current => [...current, path]);
+  }
+
   return (
     <Dialog open onOpenChange={open => { if (!open && !busy) close(); }}>
-      <DialogContent className="sm:max-w-3xl" showCloseButton={!busy} finalFocus={() => appliedEditor.current ?? true}>
+      <DialogContent className="sm:max-w-xl" showCloseButton={!busy} finalFocus={() => appliedEditor.current ?? true}>
         <DialogHeader className="pr-8">
           <DialogTitle>Backup edits</DialogTitle>
           <DialogDescription>
-            {file ? "Choose which changes to bring into the note." : "No edits found in the backup."}
+            {remaining.length ? "Apply eligible edits to their notes, or keep them in the backup only." : "No edits found in the backup."}
           </DialogDescription>
         </DialogHeader>
-        {file && (
-          <div className="grid max-h-[min(60vh,36rem)] min-h-0 gap-3 overflow-y-auto sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:overflow-hidden">
-            <nav aria-label="Edited files" className="flex min-h-0 flex-col gap-1 overflow-y-auto">
-              {remaining.map(item => (
-                <button key={item.path} type="button" aria-current={item.path === file.path} disabled={busy}
-                  className={cn("w-full rounded-md px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground",
-                    item.path === file.path && "bg-accent text-accent-foreground")}
-                  onClick={() => { setPath(item.path); setError(null); }}>
-                  <span className="block truncate">{item.title}</span>
-                  {item.title !== item.path && (item.kind === "read-only" || files.some(other => other !== item && other.title === item.title)) &&
-                    <span className="block break-all text-xs opacity-75">{item.path}</span>}
-                </button>
-              ))}
-            </nav>
-            <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto">
-              {file.kind === "read-only" && <p className="px-2 text-muted-foreground">{file.reason}</p>}
-              {file.kind === "note" && !hunks.length && <p className="px-2 text-muted-foreground">The Markdown content already matches the note.</p>}
-              {hunks.map((hunk, index) => (
-                <div key={index} className="space-y-1.5 px-2">
-                  <div id={`${diffId}-${index}`} className="space-y-1.5">
-                    {hunk.before && <div className="rounded-md bg-red-500/10 px-2 py-1 dark:bg-red-400/15">
-                      <span className="text-xs font-medium">Current note</span>
-                      <div className="whitespace-pre-wrap">{hunk.before}</div>
-                    </div>}
-                    {hunk.after && <div className="rounded-md bg-emerald-500/10 px-2 py-1 dark:bg-emerald-400/15">
-                      <span className="text-xs font-medium">Backup file</span>
-                      <div className="whitespace-pre-wrap">{hunk.after}</div>
-                    </div>}
+        {remaining.length > 0 && (
+          <ul aria-label="Edited files" className="flex max-h-[min(60vh,36rem)] min-h-0 flex-col gap-3 overflow-y-auto">
+            {remaining.map(file => {
+              const applicable = file.kind === "note" ? applicableHunks(file).length : 0;
+              const status = file.kind === "read-only" ? file.reason
+                : !file.hunks.length ? "The Markdown content already matches the note."
+                : !applicable ? "These edits cannot be safely applied."
+                : applicable < file.hunks.length ? "Only safe edits will be applied." : null;
+              return (
+                <li key={file.path} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <div className="min-w-0 flex-1 basis-48">
+                    {file.title !== file.path && <div className="break-words font-medium">{file.title}</div>}
+                    <div className="wrap-anywhere text-sm">{file.path}</div>
+                    {status && <p className="text-xs text-muted-foreground">{status}</p>}
                   </div>
-                  {hunk.reason ? <p className="text-xs text-muted-foreground">{hunk.reason}</p> :
-                    <label className="inline-flex items-center gap-2 px-1 text-sm">
-                      <input type="checkbox" className="size-4 shrink-0 accent-primary" aria-describedby={`${diffId}-${index}`}
-                        checked={selected.includes(index)} disabled={busy}
-                        onChange={event => setSelected(event.target.checked
-                          ? [...selected, index].sort((a, b) => a - b)
-                          : selected.filter(item => item !== index))} />
-                      Apply change
-                    </label>}
-                </div>
-              ))}
-            </div>
-          </div>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" aria-label={`Keep ${file.path}`} disabled={busy}
+                      onClick={() => keep(file.path)}>Keep</Button>
+                    {file.kind === "note" && applicable > 0 && (
+                      <Button size="sm" aria-label={`Apply ${file.path}`} disabled={busy}
+                        onClick={() => void apply(file)}>Apply</Button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        {file?.kind === "note" && applicable.length > 0 && (
-          <DialogFooter className="sm:justify-between">
-            <div className="flex gap-1">
-              <Button size="sm" variant="ghost" disabled={busy || selected.length === applicable.length}
-                onClick={() => setSelected(applicable)}>Apply all</Button>
-              <Button size="sm" variant="ghost" disabled={busy || !selected.length}
-                onClick={() => setSelected([])}>Skip all</Button>
-            </div>
-            <Button size="sm" disabled={busy || !selected.length} onClick={() => void apply(file)}>
-              {busy ? "Applying…" : "Apply selected changes"}
-            </Button>
-          </DialogFooter>
-        )}
       </DialogContent>
     </Dialog>
   );
+}
+
+function applicableHunks(note: NoteFile) {
+  return note.hunks.flatMap((hunk, index) => hunk.reason ? [] : [index]);
 }

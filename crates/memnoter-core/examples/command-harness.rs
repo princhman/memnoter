@@ -20,6 +20,9 @@ fn main() {
         let command = request["command"].as_str().unwrap();
         let args = &request["args"];
         let result = match command {
+            "local_backup_markdown_hash" => Ok(serde_json::json!(
+                memnoter_core::markdown_backup::markdown_hash(args["markdown"].as_str().unwrap())
+            )),
             "write_local_backup" => {
                 let folder = std::path::Path::new(args["folder"].as_str().unwrap());
                 let snapshot = serde_json::from_value(args["snapshot"].clone()).unwrap();

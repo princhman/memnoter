@@ -10,10 +10,12 @@ export default function LocalBackupSection() {
   const { data, error: loadError, isPending } = useQuery(localBackupSettings);
   const { data: backupError } = useQuery(localBackupError);
   const save = useMutation({
-    mutationFn: (action: { kind: "pick" } | { kind: "toggle"; enabled: boolean }) =>
+    mutationFn: (action: { kind: "pick" } | { kind: "toggle"; enabled: boolean } | { kind: "layout"; splitByHeading: boolean }) =>
       action.kind === "pick"
         ? call<LocalBackupSettings>("pick_local_backup_folder")
-        : call<LocalBackupSettings>("set_local_backup_enabled", { enabled: action.enabled }),
+        : action.kind === "toggle"
+          ? call<LocalBackupSettings>("set_local_backup_enabled", { enabled: action.enabled })
+          : call<LocalBackupSettings>("set_local_backup_layout", { splitByHeading: action.splitByHeading }),
     onSuccess: settings => queryClient.setQueryData(localBackupSettings.queryKey, settings),
   });
   const check = useMutation({
@@ -40,6 +42,11 @@ export default function LocalBackupSection() {
         <span>Automatic backup</span>
         <Switch checked={data?.enabled ?? false} disabled={!data?.folder || save.isPending || check.isPending}
           onCheckedChange={enabled => save.mutate({ kind: "toggle", enabled })} />
+      </label>
+      <label className="flex items-center justify-between gap-4 text-sm">
+        <span>Split notes into files by heading</span>
+        <Switch checked={data?.splitByHeading ?? false} disabled={isPending || !!loadError || save.isPending || check.isPending}
+          onCheckedChange={splitByHeading => save.mutate({ kind: "layout", splitByHeading })} />
       </label>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <div>

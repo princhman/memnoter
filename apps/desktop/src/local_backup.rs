@@ -8,6 +8,8 @@ use tauri::State;
 pub(crate) struct Settings {
     folder: Option<PathBuf>,
     enabled: bool,
+    #[serde(default)]
+    split_by_heading: bool,
 }
 
 #[derive(Default)]
@@ -67,14 +69,20 @@ pub(crate) fn dispatch(
     args: serde_json::Value,
 ) -> CommandResult<serde_json::Value> {
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct WriteRequest {
         folder: PathBuf,
         snapshot: markdown_backup::Snapshot,
+        #[serde(default)]
+        split_by_heading: bool,
     }
     let format = |settings| serde_json::to_value(settings).map_err(|error| error.to_string());
     match command {
         "local_backup_image_types" => serde_json::to_value(markdown_backup::image_types(&core.db)?)
             .map_err(|error| error.to_string()),
+        "local_backup_markdown_hash" => Ok(serde_json::Value::String(
+            markdown_backup::markdown_hash(args["markdown"].as_str().ok_or("Expected Markdown")?),
+        )),
         "local_backup_settings" => format(read(core)?),
         "set_local_backup_enabled" => {
             let enabled = args["enabled"]
@@ -82,6 +90,14 @@ pub(crate) fn dispatch(
                 .ok_or("Expected backup enabled state")?;
             format(update(core, gate, |settings| {
                 settings.enabled = enabled && settings.folder.is_some()
+            })?)
+        }
+        "set_local_backup_layout" => {
+            let split_by_heading = args["splitByHeading"]
+                .as_bool()
+                .ok_or("Expected backup layout")?;
+            format(update(core, gate, |settings| {
+                settings.split_by_heading = split_by_heading
             })?)
         }
         "read_local_backup_edits" => {
@@ -101,7 +117,10 @@ pub(crate) fn dispatch(
                 serde_json::from_value(args).map_err(|error| error.to_string())?;
             let _guard = gate.0.lock().map_err(|error| error.to_string())?;
             let settings = read(core)?;
-            if settings.enabled && settings.folder.as_ref() == Some(&request.folder) {
+            if settings.enabled
+                && settings.folder.as_ref() == Some(&request.folder)
+                && settings.split_by_heading == request.split_by_heading
+            {
                 return serde_json::to_value(markdown_backup::write(
                     core.data_dir(),
                     &request.folder,

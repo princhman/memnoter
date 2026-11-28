@@ -28,7 +28,7 @@ function canReplace(node: JSONContent): boolean {
     !node.attrs?.clozeIds?.length &&
     !node.attrs?.clozeGroups?.length &&
     !node.attrs?.pdfSource &&
-    (node.marks ?? []).every(mark => safeMarks.has(mark.type) && !String(mark.attrs?.href ?? "").startsWith("attachments/")) &&
+    (node.marks ?? []).every(mark => safeMarks.has(mark.type) && !/^(?:\.\.\/)?attachments\//.test(String(mark.attrs?.href ?? ""))) &&
     (node.content ?? []).every(canReplace);
 }
 

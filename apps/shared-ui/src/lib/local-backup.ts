@@ -1,3 +1,4 @@
+import type { JSONContent } from "@tiptap/core";
 import { useEffect } from "react";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { yDocToProsemirrorJSON } from "@tiptap/y-tiptap";
@@ -10,7 +11,7 @@ import { jsonToMarkdown, markdownLabel } from "./markdown-export";
 import { queryClient } from "./query-client";
 import type { Module } from "./types";
 
-export type LocalBackupSettings = { folder: string | null; enabled: boolean };
+export type LocalBackupSettings = { folder: string | null; enabled: boolean; splitByHeading?: boolean };
 
 export const localBackupSettings = queryOptions({
   queryKey: ["local-backup-settings"],
@@ -35,19 +36,38 @@ export function backupImageExtension(mime: string) {
   return /^image\/([a-z0-9]+)(?:\+xml)?$/.exec(mime)?.[1] ?? "bin";
 }
 
-export function backupPdfAppendix(pdfs: Awaited<ReturnType<typeof listDocuments>>, moduleId: string) {
+export function backupPdfAppendix(pdfs: Awaited<ReturnType<typeof listDocuments>>, moduleId: string, prefix = "") {
   const links = pdfs.filter(pdf => pdf.moduleId === moduleId)
-    .map(pdf => `- [${markdownLabel(pdf.name)}](attachments/${pdf.id}.pdf)`);
+    .map(pdf => `- [${markdownLabel(pdf.name)}](${prefix}attachments/${pdf.id}.pdf)`);
   return links.length ? ["## PDFs", ...links].join("\n") : "";
 }
 
-async function buildSnapshot(shouldContinue: () => boolean) {
+export function backupSections(doc: JSONContent) {
+  const sections: { offset: number; content: JSONContent[] }[] = [{ offset: 0, content: [] }];
+  for (const [offset, block] of (doc.content ?? []).entries()) {
+    if (block.type === "heading") sections.push({ offset, content: [] });
+    sections[sections.length - 1].content.push(block);
+  }
+  return sections;
+}
+
+export function backupSectionMarkdown(content: JSONContent[], imagePath: (id: string) => string) {
+  return jsonToMarkdown({ type: "doc", content }, imagePath) + "\n";
+}
+
+function headingFilename(heading: JSONContent) {
+  const title = heading.content?.map(node => node.text ?? "").join("") ?? "";
+  return [...title.normalize("NFC").replace(/[^\p{L}\p{N} -]/gu, " ").replace(/ +/g, " ").trim()]
+    .slice(0, 45).join("").trimEnd() || "Heading";
+}
+
+async function buildSnapshot(splitByHeading: boolean, shouldContinue: () => boolean) {
   const modules = await call<Module[]>("modules");
   const pdfs = await listDocuments();
   const files = await call<Record<string, string>>("local_backup_image_types");
 
   const snapshot: Record<string,
-    | { kind: "ready"; name: string; filename: string; markdown: string; attachments: Record<string, string> }
+    | { kind: "ready"; name: string; filename: string; markdown: string; sections?: { filename: string; markdown: string; section?: number }[]; attachments: Record<string, string> }
     | { kind: "skipped"; reason: string }> = {};
 
   for (const module of modules) {
@@ -63,10 +83,11 @@ async function buildSnapshot(shouldContinue: () => boolean) {
       function attachmentLink(id: string, extension: string) {
         const name = `${id}.${extension}`;
         attachments[name] = id;
-        return `attachments/${name}`;
+        return `${splitByHeading ? "../" : ""}attachments/${name}`;
       }
       let missingImage = false;
-      const markdown = jsonToMarkdown(yDocToProsemirrorJSON(doc, "default"), id => {
+      const contentJson = yDocToProsemirrorJSON(doc, "default");
+      const imagePath = (id: string) => {
         const mime = Object.prototype.hasOwnProperty.call(files, id) ? files[id] : undefined;
         if (!mime) {
           missingImage = true;
@@ -74,7 +95,15 @@ async function buildSnapshot(shouldContinue: () => boolean) {
         }
         const extension = backupImageExtension(mime);
         return attachmentLink(id, extension);
-      });
+      };
+      const sections = splitByHeading ? backupSections(contentJson).flatMap(({ content }, section, all) => {
+        const markdown = backupSectionMarkdown(content, imagePath);
+        if (section === 0 && markdown === "\n" && all.length > 1) return [];
+        const title = section === 0 ? "Preamble" : headingFilename(content[0]);
+        const number = String(section).padStart(Math.max(4, String(all.length).length), "0");
+        return [{ filename: `${number} - ${title}.md`, markdown, section }];
+      }) : undefined;
+      const markdown = sections ? "" : jsonToMarkdown(contentJson, imagePath);
       if (missingImage) {
         snapshot[module.id] = { kind: "skipped", reason: `An image in “${module.name}” is unavailable.` };
         continue;
@@ -82,11 +111,16 @@ async function buildSnapshot(shouldContinue: () => boolean) {
       for (const pdf of pdfs) {
         if (pdf.moduleId === module.id) attachmentLink(pdf.id, "pdf");
       }
+      const pdfAppendix = backupPdfAppendix(pdfs, module.id, sections ? "../" : "");
       snapshot[module.id] = {
         kind: "ready",
         name: module.name,
         filename: noteFilename(module),
-        markdown: [markdown, backupPdfAppendix(pdfs, module.id)].filter(Boolean).join("\n\n") + "\n",
+        markdown: [markdown, pdfAppendix].filter(Boolean).join("\n\n") + "\n",
+        sections: sections && [
+          ...sections,
+          ...(pdfAppendix ? [{ filename: "PDFs.md", markdown: pdfAppendix + "\n" }] : []),
+        ],
         attachments,
       };
     } finally {
@@ -99,6 +133,7 @@ async function buildSnapshot(shouldContinue: () => boolean) {
 export function useLocalBackup(checkForEdits: (folder: string, isActive: () => boolean) => Promise<void>) {
   const { data } = useQuery(localBackupSettings);
   const folder = data?.enabled ? data.folder : null;
+  const splitByHeading = data?.splitByHeading ?? false;
   useEffect(() => {
     queryClient.setQueryData(localBackupError.queryKey, null);
     if (!folder) return;
@@ -109,9 +144,9 @@ export function useLocalBackup(checkForEdits: (folder: string, isActive: () => b
       if (running) return;
       running = true;
       try {
-        const snapshot = await buildSnapshot(() => active);
+        const snapshot = await buildSnapshot(splitByHeading, () => active);
         if (active && snapshot) {
-          const warnings = await call<string[]>("write_local_backup", { folder, snapshot });
+          const warnings = await call<string[]>("write_local_backup", { folder, snapshot, splitByHeading });
           for (const warning of warnings) console.warn(warning);
           if (active) queryClient.setQueryData(localBackupError.queryKey, warnings.join("\n") || null);
         }
@@ -133,5 +168,5 @@ export function useLocalBackup(checkForEdits: (folder: string, isActive: () => b
       active = false;
       window.clearInterval(timer);
     };
-  }, [folder, checkForEdits]);
+  }, [folder, splitByHeading, checkForEdits]);
 }
