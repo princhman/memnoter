@@ -4,7 +4,7 @@ import { MiddleTruncate } from "@/components/middle-truncate";
 import { action, formatKeys, HOME_ACTION_IDS } from "@/lib/shortcuts";
 import { useModules } from "@/lib/modules";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { call as invoke } from "../lib/backend.ts";
+import { isSecondaryWindow, call as invoke } from "../lib/backend.ts";
 import { useSelector } from "@tanstack/react-store";
 import { FileText, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,9 @@ export const Route = createFileRoute("/")({
     if (hasRestoredModule) return;
     hasRestoredModule = true;
 
-    const moduleId = appStore.state.openedModuleId;
+    const moduleId = isSecondaryWindow()
+      ? appStore.state.openedModuleId ?? window.__memnoterInitialModule
+      : appStore.state.openedModuleId;
     if (!moduleId) return;
 
     const modules = await invoke<Module[]>("modules").catch(() => []);

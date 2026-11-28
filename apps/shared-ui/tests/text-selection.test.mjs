@@ -316,3 +316,77 @@ test("WebKit selection hugs text and keeps image actions exclusive", async () =>
     }
   } finally { await browser?.close(); await server.close(); }
 });
+
+test("block type picker converts the full selection without changing cards", async (t) => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  const openEditor = async (browser, subtest) => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    subtest.after(() => page.close());
+    await page.goto(`http://localhost:${server.httpServer.address().port}/tests/browser/selection.html`);
+    await page.waitForFunction(() => window.editor);
+    return page;
+  };
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+
+    await t.test("Heading 2 and Text preserve grouped cloze identity and selection", async (subtest) => {
+      const page = await openEditor(browser, subtest);
+      const before = await page.evaluate(async () => {
+        const { extractCards } = await import("/src/lib/cards.ts");
+        editor.commands.setContent('<h1>Section</h1><p data-card-id="reviewed">A {{one}} with {{two}}</p><p>Another paragraph</p>');
+        const from = editor.state.doc.firstChild.nodeSize + 1;
+        editor.commands.setTextSelection({ from, to: from + editor.state.doc.child(1).content.size });
+        editor.commands.joinClozes();
+        editor.chain().focus().setTextSelection({ from: from + 1, to: editor.state.doc.content.size - 2 }).run();
+        return extractCards(editor.state.doc).map(({ id }) => id);
+      });
+      assert.deepEqual(before, ["reviewed:c1"]);
+
+      const readBlocks = () => page.evaluate(async () => {
+        const { extractCards } = await import("/src/lib/cards.ts");
+        const { doc, selection } = editor.state;
+        const blocks = [doc.child(1), doc.child(2)].map(node => {
+          const { cardId, clozeIds, clozeGroups } = node.attrs;
+          return { cardId, clozeIds, clozeGroups };
+        });
+        return { blocks, selection: selection.toJSON(), ids: extractCards(doc).map(({ id }) => id) };
+      });
+      const original = await readBlocks();
+      assert.ok(original.blocks[0].clozeGroups?.length);
+      for (const [current, next, type, level] of [
+        ["Text", "Heading 2", "heading", 2],
+        ["Heading 2", "Text", "paragraph", null],
+      ]) {
+        await page.getByRole("button", { name: `Block type: ${current}`, exact: true }).click();
+        await page.getByRole("menuitemradio", { name: next, exact: true }).click();
+        await page.locator('[data-slot="dropdown-menu-content"]').waitFor({ state: "detached" });
+        assert.deepEqual(await page.evaluate(() => [1, 2].map(index => {
+          const node = editor.state.doc.child(index);
+          return [node.type.name, node.attrs.level ?? null];
+        })), [[type, level], [type, level]]);
+        assert.deepEqual(await readBlocks(), original);
+      }
+    });
+
+    await t.test("Heading 2 is disabled when a list item requires a paragraph", async (subtest) => {
+      const page = await openEditor(browser, subtest);
+      const before = await page.evaluate(() => {
+        editor.commands.setContent("<h1>Section</h1><p>Plain text</p><ul><li><p>List text</p></li></ul>");
+        editor.chain().focus().setTextSelection({
+          from: editor.state.doc.firstChild.nodeSize + 2,
+          to: editor.state.doc.content.size - 4,
+        }).run();
+        return editor.getJSON();
+      });
+      await page.getByRole("button", { name: "Block type: Mixed", exact: true }).click();
+      const heading = page.getByRole("menuitemradio", { name: "Heading 2", exact: true });
+      await heading.waitFor();
+      assert.equal(await heading.isDisabled(), true);
+      await heading.click({ force: true });
+      assert.deepEqual(await page.evaluate(() => editor.getJSON()), before);
+    });
+  } finally {
+    await server.close();
+  }
+});

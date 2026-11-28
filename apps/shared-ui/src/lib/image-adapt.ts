@@ -1,3 +1,5 @@
+import { makeImageCanvas } from "./image-canvas";
+
 // Recolors an image so it sits on the app's background: the image's own
 // background becomes transparent, and when its brightness is opposite to the
 // theme's, the remaining "ink" has its lightness flipped (hues are kept).
@@ -121,28 +123,6 @@ function adaptPixels(data: Uint8ClampedArray, width: number, height: number, dar
 // Large photos are scaled down: the result is only ever shown at editor width.
 const MAX_SIDE = 2560;
 
-type Canvas2D = OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
-
-// An OffscreenCanvas where there is one (workers, newer WebKit); a page canvas
-// on the main thread otherwise.
-function makeCanvas(width: number, height: number) {
-  if (typeof OffscreenCanvas !== "undefined") {
-    const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (context) return { context: context as Canvas2D, toPng: () => canvas.convertToBlob({ type: "image/png" }) };
-  }
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) throw new Error("Could not prepare the image");
-  return {
-    context: context as Canvas2D,
-    toPng: () => new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not create the adapted image")), "image/png")),
-  };
-}
-
 // Runs where it is called: in the worker, or on the main thread as a fallback.
 export async function adaptImageHere(source: Blob, dark: boolean): Promise<Blob> {
   const bitmap = await createImageBitmap(source);
@@ -150,12 +130,12 @@ export async function adaptImageHere(source: Blob, dark: boolean): Promise<Blob>
     const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));
-    const { context, toPng } = makeCanvas(width, height);
+    const { context, encode } = makeImageCanvas(width, height);
     context.drawImage(bitmap, 0, 0, width, height);
     const pixels = context.getImageData(0, 0, width, height);
     adaptPixels(pixels.data, width, height, dark);
     context.putImageData(pixels, 0, 0);
-    return await toPng();
+    return await encode("image/png");
   } finally {
     bitmap.close();
   }

@@ -1,6 +1,11 @@
 import { isSchemaReadOnly } from "./guarded-collaboration";
 import { isNoteFromNewerVersion } from "./editor-schema";
 import { settled } from "@/lib/async-work";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
+import type { Doc } from "yjs";
+import { desktopNoteSnapshot } from "./content";
+import { noteSaveCheckpoint } from "./saves";
+import { isStaleNote } from "./stale-note";
 import { useEffect } from "react";
 import type { Editor } from "@tiptap/core";
 import { call as invoke } from "./backend.ts";
@@ -14,14 +19,14 @@ const editors = createEditorWriteSync(1_000);
 export const flushSearchIndexing = editors.flush;
 registerFlusher("search", flushSearchIndexing);
 
-async function indexNote(moduleId: string, text: SearchText, backfill = false, permit?: WritePermit, priority?: "background") {
+async function indexNote(moduleId: string, text: SearchText, backfill = false, permit?: WritePermit, noteSnapshot?: number[], priority?: "background") {
   assertWritable(permit);
   await queryClient.getMutationCache().build(queryClient, {
     mutationKey: [priority === "background" ? MUTATIONS.searchBackfill : MUTATIONS.searchIndex, moduleId],
     gcTime: 0,
     mutationFn: () => {
       if (priority === "background") assertWritable();
-      return invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill });
+      return invoke("index_note", { moduleId, ...text, version: EXTRACTOR_VERSION, backfill, noteSnapshot });
     },
   }).execute(undefined);
   void queryClient.invalidateQueries({ queryKey: ["search-notes"] });
@@ -29,7 +34,7 @@ async function indexNote(moduleId: string, text: SearchText, backfill = false, p
 
 export async function indexStoredNote(moduleId: string, doc?: import("yjs").Doc, permit?: WritePermit, priority?: "background") {
   const loaded = doc ?? await loadStoredNote(moduleId);
-  try { if (!isNoteFromNewerVersion(loaded)) await indexNote(moduleId, extractFromYDoc(loaded), true, permit, priority); }
+  try { if (!isNoteFromNewerVersion(loaded)) await indexNote(moduleId, extractFromYDoc(loaded), true, permit, desktopNoteSnapshot(loaded), priority); }
   finally { if (!doc) loaded.destroy(); }
 }
 
@@ -38,13 +43,21 @@ export function useSearchIndexing(editor: Editor | null, moduleId: string, isRea
     if (!editor || !isReady) return;
     let pending: typeof editor.state.doc | null = editor.state.doc;
     let queue = Promise.resolve();
+    const doc: Doc | undefined = ySyncPluginKey.getState(editor.state)?.doc;
     const flush = (permit?: WritePermit) => {
       debounce.cancel();
       if (!pending || isSchemaReadOnly(editor)) { pending = null; return queue; }
       const snapshot = pending;
       pending = null;
-      const write = queue.then(() => isSchemaReadOnly(editor) ? undefined : indexNote(moduleId, extractFromDoc(snapshot), false, permit)).catch(async error => {
-        console.error(`Failed to index open note ${moduleId}; retrying stored text:`, error);
+      const noteSnapshot = doc ? desktopNoteSnapshot(doc) : undefined;
+      const receipt = doc && noteSnapshot ? noteSaveCheckpoint(doc, moduleId) : undefined;
+      const write = queue.then(async () => {
+        if (isSchemaReadOnly(editor)) return;
+        await receipt?.updateId();
+        await indexNote(moduleId, extractFromDoc(snapshot), false, permit, noteSnapshot);
+      }).catch(async error => {
+        // Another window saved first: the stored text has both edits.
+        if (!isStaleNote(error)) console.error(`Failed to index open note ${moduleId}; retrying stored text:`, error);
         await refreshDerived(moduleId, permit);
       });
       queue = settled(write);

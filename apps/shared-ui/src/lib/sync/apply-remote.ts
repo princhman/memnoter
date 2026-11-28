@@ -51,6 +51,10 @@ function scheduleReindex(moduleId: string) {
 }
 
 export function onRemote(result: ApplyResult) {
+  applyRemoteChanges(result, true);
+}
+
+export function applyRemoteChanges(result: ApplyResult, reindex: boolean) {
   refreshPdfAnnotations(result.annotationsChanged ?? []);
   for (const { moduleId, update } of result.updates) {
     // The same path as a local save: an open editor applies the update from
@@ -62,7 +66,7 @@ export function onRemote(result: ApplyResult) {
     void queryClient.invalidateQueries({ queryKey: bankKey(moduleId) });
     void refreshBankIndex(moduleId);
     window.dispatchEvent(new CustomEvent(MODULE_CONTENT_SYNCED_EVENT, { detail: moduleId }));
-    scheduleReindex(moduleId);
+    if (reindex) scheduleReindex(moduleId);
   }
   for (const moduleId of result.deleted) {
     saveQueue.drop(moduleId);
@@ -83,12 +87,12 @@ export function onRemote(result: ApplyResult) {
   void queryClient.invalidateQueries({ queryKey: documentsKey });
 }
 
-export function onFileStored(moduleId: string, file: FileType) {
+export function onFileStored(moduleId: string, file: FileType, reindex = true) {
   patchContent(moduleId, content => !content.files.some(known => known.id === file.id)
     ? { ...content, files: [...content.files, file] } : content);
   syncedFileArrived();
   // Image occlusion cards need their image to be indexed.
-  scheduleReindex(moduleId);
+  if (reindex) scheduleReindex(moduleId);
 }
 
 

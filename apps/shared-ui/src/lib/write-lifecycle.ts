@@ -141,17 +141,17 @@ async function drainMutations(excluded?: string, writesOnly = false) {
 export type ExclusiveWork =
   | { kind: "restore" }
   | { kind: "delete" }
-  | { kind: "exit"; unsaved?: "discard" | "retry" };
+  | { kind: "exit" | "close"; unsaved?: "discard" | "retry" };
 
 export async function exclusiveWrite<T>(action: () => Promise<T>, work?: ExclusiveWork): Promise<T> {
   if (!isWriteAdmitted()) throw new Error("Another database operation is in progress. Please retry.");
   exclusive = true;
   listeners.forEach(listener => listener(true));
-  const discard = work?.kind === "exit" && work.unsaved === "discard";
+  const discard = (work?.kind === "exit" || work?.kind === "close") && work.unsaved === "discard";
   let suspended = false;
   let completed = false;
   try {
-    await settleWork(discard, work?.kind === "exit" && work.unsaved === "retry");
+    await settleWork(discard, (work?.kind === "exit" || work?.kind === "close") && work.unsaved === "retry");
     if (!discard) await flushAll({ permit: drainPermit });
     await Promise.all([saveQueue.suspend(), ...[...participants].map(owner => owner.suspend())]);
     suspended = true;

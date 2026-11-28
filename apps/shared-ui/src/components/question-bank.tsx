@@ -6,7 +6,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight, ArrowDown, ArrowUp, ArrowUpDown, Crop, FilePlus2, Maximize2, Ellipsis, GripVertical, FileText, ListOrdered, Pencil, Trash2 } from "lucide-react";
 import { DndContext, DragOverlay, MeasuringStrategy, PointerSensor, useDndContext, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
-import { call, isNativeHost, postNativeEvent } from "@/lib/backend";
+import { windowViewStorage, call, isNativeHost, postNativeEvent } from "@/lib/backend";
 import { useSyncedImageUrl } from "@/lib/synced-image";
 import { nextPartLabel, partStyleLabel, partStyleOf, PART_STYLES, type PartStyle, questionLabel, setBankTarget, useBankTarget, partOutline, useBank, useBankEdit, type BankEdit, type Bank } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
@@ -181,11 +181,11 @@ function EditableLabel({ editing, value, placeholder, renameTitle, onStart, onSa
 // shared crops, then its parts in the margin. Clicking a question or part
 // makes it where the next crop goes; crop controls appear on hover.
 function openWorksheet(moduleId: string) {
-  try { const id = localStorage.getItem(`worksheet-open:${moduleId}`); return id ? { moduleId, id } : null; }
+  try { const id = windowViewStorage().getItem(`worksheet-open:${moduleId}`); return id ? { moduleId, id } : null; }
   catch { return null; }
 }
 function rememberWorksheet(moduleId: string, id: string | null) {
-  try { if (id) localStorage.setItem(`worksheet-open:${moduleId}`, id); else localStorage.removeItem(`worksheet-open:${moduleId}`); }
+  try { if (id) windowViewStorage().setItem(`worksheet-open:${moduleId}`, id); else windowViewStorage().removeItem(`worksheet-open:${moduleId}`); }
   catch { /* Storage may be unavailable; the worksheet just won't reopen. */ }
 }
 

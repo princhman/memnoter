@@ -1,6 +1,6 @@
 import { settled } from "@/lib/async-work";
 import * as Y from "yjs";
-import { call } from "@/lib/backend";
+import { call, isSecondaryWindow } from "@/lib/backend";
 import { applySavedContent, reconcileContent, type GetContentResponse } from "@/lib/content";
 import { applyPendingSaves, saveQueue } from "@/lib/saves";
 import { indexStoredNote } from "@/lib/search-index";
@@ -94,9 +94,11 @@ function createBackfill() {
 let backfill: ReturnType<typeof createBackfill> | undefined;
 
 export function startBackfill() {
+  if (isSecondaryWindow()) return Promise.resolve();
   return (backfill ??= createBackfill()).all;
 }
 
 export function backfillCards() {
+  if (isSecondaryWindow()) return Promise.resolve();
   return (backfill ??= createBackfill()).cards;
 }

@@ -44,6 +44,7 @@ impl Fixture {
             math.into(),
             version,
             backfill,
+            None,
         )
     }
 

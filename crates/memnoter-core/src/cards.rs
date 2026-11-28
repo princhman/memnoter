@@ -635,13 +635,27 @@ pub fn undo_review(
     tx.commit().map_err(db_err)
 }
 
+#[cfg(test)]
 pub fn sync_cards(
     db: &Db,
     module_id: String,
     cards: Vec<CardContent>,
     update_id: Option<i64>,
 ) -> CommandResult<Vec<String>> {
+    sync_cards_at_snapshot(db, module_id, cards, update_id, None)
+}
+
+pub fn sync_cards_at_snapshot(
+    db: &Db,
+    module_id: String,
+    cards: Vec<CardContent>,
+    update_id: Option<i64>,
+    snapshot: Option<Vec<u8>>,
+) -> CommandResult<Vec<String>> {
     let mut conn = db.lock()?;
+    if let Some(snapshot) = snapshot {
+        crate::content::check_note_snapshot(db, &conn, &module_id, &snapshot)?;
+    }
     sync_module_cards(&mut conn, &module_id, &cards, update_id, Utc::now().timestamp_millis())
 }
 
@@ -738,6 +752,63 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+
+
+    #[test]
+    fn an_older_window_cannot_restore_a_card_after_a_saved_deletion() {
+        use yrs::{
+            updates::encoder::Encode, Doc, ReadTxn, StateVector, Text, Transact, XmlElementPrelim,
+            XmlFragment, XmlTextPrelim,
+        };
+
+        let f = Fixture::new();
+        let doc = Doc::new();
+        let root = doc.get_or_insert_xml_fragment("default");
+        let text = {
+            let mut txn = doc.transact_mut();
+            let paragraph = root.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            paragraph.push_back(&mut txn, XmlTextPrelim::new("card"))
+        };
+        let before = doc.transact().snapshot();
+        let update = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        crate::add_update(&f.db, "a".into(), update).unwrap();
+        let card = || basic("card", "Question", "Answer");
+        sync_cards_at_snapshot(&f.db, "a".into(), vec![card()], None, Some(before.encode_v1())).unwrap();
+        assert_eq!(f.due(Some("a"), i64::MAX).len(), 1);
+
+        let mut deletion = doc.transact_mut();
+        text.remove_range(&mut deletion, 0, 4);
+        let update = deletion.encode_update_v1();
+        drop(deletion);
+        let after = doc.transact().snapshot();
+        assert_eq!(before.state_map, after.state_map);
+        crate::add_update(&f.db, "a".into(), update).unwrap();
+        sync_cards_at_snapshot(&f.db, "a".into(), vec![], None, Some(after.encode_v1())).unwrap();
+
+        assert_eq!(
+            sync_cards_at_snapshot(&f.db, "a".into(), vec![card()], None, Some(before.encode_v1())),
+            Err(crate::content::STALE_NOTE.to_owned()),
+        );
+        assert!(f.due(Some("a"), i64::MAX).is_empty());
+
+        // An edit stored by another path (sync, worksheets) must not leave the
+        // remembered snapshot of the last save looking current.
+        let mut restore = doc.transact_mut();
+        text.insert(&mut restore, 0, "card");
+        let update = restore.encode_update_v1();
+        drop(restore);
+        f.db.lock().unwrap().execute(
+            "insert into contents_updates (module_id, bytes, created_at) values ('a', ?1, 0)",
+            [update],
+        ).unwrap();
+        assert_eq!(
+            sync_cards_at_snapshot(&f.db, "a".into(), vec![], None, Some(after.encode_v1())),
+            Err(crate::content::STALE_NOTE.to_owned()),
+        );
+        let current = doc.transact().snapshot();
+        sync_cards_at_snapshot(&f.db, "a".into(), vec![card()], None, Some(current.encode_v1())).unwrap();
+        assert_eq!(f.due(Some("a"), i64::MAX).len(), 1);
     }
 
     #[test]

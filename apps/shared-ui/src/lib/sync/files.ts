@@ -34,10 +34,13 @@ export function createFileSync({ generation, signal, server, token, key, onStore
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
   let running = true;
-  let busy = false;
-  let drained: Promise<void> = Promise.resolve();
-  let finish: (() => void) | undefined;
+  let stoppedError: string | null = null;
+  let draining: Promise<string | null> | null = null;
   let again = false;
+  // Uploads run one batch at a time on their own queue, so a manual sync can
+  // wait for them without waiting for deletes or downloads.
+  let uploads: Promise<string | null> = Promise.resolve(null);
+  let failed = false;
   let kickTimer: number | undefined;
   let retryTimer: number | undefined;
   // Images someone is looking at come first.
@@ -76,39 +79,53 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     onStored(file.moduleId, stored);
   }
 
-  async function pass() {
-    let failed = false;
-    const attempt = async (fileId: string, task: () => Promise<void>) => {
-      try {
-        await task();
-      } catch (error) {
-        if (!running || controller.signal.aborted) return;
-        if (error instanceof SyncApiError && error.status === 410) {
-          await invoke("sync_file_gone", { fileId, generation });
-          wanted.delete(fileId);
-          notYet.delete(fileId);
-          return;
-        }
-        if (error instanceof SyncApiError && error.status === 426) {
-          running = false;
-          return;
-        }
-        if (error instanceof SyncApiError && error.status === 401) {
-          running = false;
-          onUnauthorized();
-          return;
-        }
+  async function attempt(fileId: string, task: () => Promise<void>) {
+    try {
+      await task();
+      return null;
+    } catch (error) {
+      if (!running || controller.signal.aborted) return null;
+      if (error instanceof SyncApiError && error.status === 410) {
+        await invoke("sync_file_gone", { fileId, generation });
+        wanted.delete(fileId);
+        notYet.delete(fileId);
+        return null;
+      }
+      if (error instanceof SyncApiError && error.status === 426) {
+        stoppedError = error.message;
+        running = false;
+      } else if (error instanceof SyncApiError && error.status === 401) {
+        running = false;
+        onUnauthorized();
+      } else {
         console.error("Image sync failed:", error);
         failed = true;
       }
-    };
-
-    for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
-      if (!running) return;
-      await attempt(fileId, () => upload(fileId));
+      return error instanceof Error ? error.message : String(error);
     }
+  }
+
+  async function uploadPending(): Promise<string | null> {
+    let uploadError: string | null = null;
+    for (const fileId of await invoke<string[]>("sync_pending_uploads", { generation })) {
+      if (!running) break;
+      const error = await attempt(fileId, () => upload(fileId));
+      if (error !== null) uploadError ??= `Image upload failed: ${error}`;
+    }
+    return uploadError ?? (running ? null : stoppedError);
+  }
+
+  function queueUploads(): Promise<string | null> {
+    const next = uploads.then(uploadPending);
+    uploads = next.catch(() => null);
+    return next.catch(error => `Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  async function pass(): Promise<string | null> {
+    failed = false;
+    const uploadError = await queueUploads();
     for (const fileId of await invoke<string[]>("sync_pending_deletes", { generation })) {
-      if (!running) return;
+      if (!running) return uploadError;
       await attempt(fileId, async () => {
         await deleteObject(server, token, fileId, controller.signal);
         if (!running) return;
@@ -121,7 +138,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     for (const id of notYetAttempts.keys()) if (!pending.has(id)) notYetAttempts.delete(id);
     missing.sort((a, b) => Number(wanted.has(b.fileId)) - Number(wanted.has(a.fileId)));
     for (const file of missing) {
-      if (!running) return;
+      if (!running) return uploadError;
       await attempt(file.fileId, () => download(file));
     }
     if (running && (failed || notYet.size > 0)) {
@@ -131,27 +148,34 @@ export function createFileSync({ generation, signal, server, token, key, onStore
         : RETRY_MS;
       retryTimer = window.setTimeout(() => void run(), delay);
     }
+    return uploadError;
   }
 
-  async function run() {
-    if (!running) return;
-    if (busy) {
-      again = true;
-      return;
-    }
-    busy = true;
-    drained = new Promise<void>((resolve) => { finish = resolve; });
+  async function drain() {
+    let uploadError: string | null = null;
     try {
       do {
         again = false;
-        await pass();
+        const error = await pass();
+        uploadError ??= error;
       } while (again && running);
+      return uploadError;
     } catch (error) {
       console.error("Image sync failed:", error);
+      return uploadError ?? `Image sync failed: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
-      busy = false;
-      finish?.();
+      draining = null;
     }
+  }
+
+  function run() {
+    if (!running) return Promise.resolve(null);
+    if (draining) {
+      again = true;
+      return draining;
+    }
+    draining = drain();
+    return draining;
   }
 
   return {
@@ -159,6 +183,13 @@ export function createFileSync({ generation, signal, server, token, key, onStore
     kick() {
       window.clearTimeout(kickTimer);
       kickTimer = window.setTimeout(() => void run(), KICK_DELAY_MS);
+    },
+    flushUploads() {
+      window.clearTimeout(kickTimer);
+      if (stoppedError || !running) return Promise.resolve(stoppedError);
+      const uploaded = queueUploads();
+      void run();
+      return uploaded;
     },
     // An image on screen is missing: fetch it before the others.
     request(fileId: string) {
@@ -172,7 +203,7 @@ export function createFileSync({ generation, signal, server, token, key, onStore
       signal?.removeEventListener("abort", abort);
       window.clearTimeout(kickTimer);
       window.clearTimeout(retryTimer);
-      return drained;
+      return draining;
     },
   };
 }
