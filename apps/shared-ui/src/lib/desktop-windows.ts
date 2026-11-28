@@ -1,6 +1,5 @@
 import { toast } from "sonner";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { call, isTauri, listen } from "./backend";
+import { call, desktopWindowLabel, listen } from "./backend";
 import { contentKey, type ContentUpdate, type FileType } from "./content";
 import { cardsChanged } from "./card-events";
 import { dueCountsKey } from "./card-sync";
@@ -25,8 +24,9 @@ export function openDesktopWindow(moduleId?: string) {
 }
 
 export async function startWindowEvents() {
-  if (!isTauri()) return;
-  const primary = getCurrentWindow().label === "main";
+  const label = desktopWindowLabel();
+  if (label === null) return;
+  const primary = label === "main";
   if (!primary) {
     setSyncedFileHandler(fileId => {
       void call("request_desktop_file", { fileId }).catch(console.error);

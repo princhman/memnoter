@@ -6,6 +6,49 @@ import { browserHarness } from "./support/browser.mjs";
 
 const { createServer, webkit } = browserHarness(import.meta.url);
 
+test("desktop startup targets the current window and signals readiness only for main", async () => {
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    for (const [label, target] of [[null, "main"], ["note-1", "note-1"]]) {
+      const page = await browser.newPage();
+      await page.addInitScript(label => {
+        const subscriptions = [];
+        window.desktopStartup = { subscriptions, ready: [] };
+        window.installTestBridge({ tauri: {
+          invoke(command, args) {
+            if (command === "plugin:event|listen") {
+              subscriptions.push({ event: args.event, target: args.target });
+              return Promise.resolve(args.handler);
+            }
+            if (command === "primary_window_ready") {
+              window.desktopStartup.ready.push(subscriptions.map(({ event }) => event));
+            }
+            return Promise.resolve([]);
+          },
+        } });
+        if (label === null) delete window.__TAURI_INTERNALS__.metadata;
+        else window.__TAURI_INTERNALS__.metadata.currentWindow.label = label;
+      }, label);
+      await page.goto(`http://localhost:${server.httpServer.address().port}`);
+      if (label === null) {
+        await page.waitForFunction(() => window.desktopStartup.ready.length > 0, undefined, { timeout: 5000 });
+      } else {
+        await page.getByRole("heading", { name: "Memnoter" }).waitFor();
+      }
+      const { subscriptions, ready } = await page.evaluate(() => window.desktopStartup);
+      assert.deepEqual(subscriptions.find(({ event }) => event === "note-update-saved")?.target,
+        { kind: "WebviewWindow", label: target });
+      assert.equal(ready.length, label === null ? 1 : 0);
+      if (label === null) assert.ok(ready[0].includes("note-update-saved"));
+      await page.close();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
 test("desktop windows show each other's saved edits and converge after concurrent typing", async () => {
   const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
   try {
