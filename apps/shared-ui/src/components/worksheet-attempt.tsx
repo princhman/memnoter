@@ -253,7 +253,7 @@ export function WorksheetAttempt({ moduleId, attemptId, bank, onBack }: { module
           ancestorDepth = ancestor.depth;
           if (folded.has(JSON.stringify([moduleId, answerKey(attemptId, pin.revisionId, ancestor.id)]))) hidden = true;
         }
-        return <section key={foldKey} hidden={hidden} className={layout.partClass} style={{ marginLeft: layout.marginLeft, display: hidden ? "none" : undefined }}>
+        return <section key={foldKey} hidden={hidden} className={cn(layout.partClass, root && "worksheet-root-question")} style={{ marginLeft: layout.marginLeft, display: hidden ? "none" : undefined }}>
           <h3 className={cn(questionHeadingClass, "worksheet-question-heading")}>
             <span className="bank-disclosure flex h-7 w-4 shrink-0 items-center justify-center"><button type="button" className="text-muted-foreground hover:text-foreground" aria-expanded={!collapsed} aria-label={`${collapsed ? "Expand" : "Fold"} ${part.label}`} onClick={toggle}><ChevronRight size={14} className={collapsed ? "" : "rotate-90"} /></button></span>
             <button type="button" className={cn(layout.labelClass, "worksheet-question-label")} aria-expanded={!collapsed} onClick={toggle}>{root ? label : ownPartLabel(revision.parts[part.id].label)}</button>

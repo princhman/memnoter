@@ -227,6 +227,15 @@ html .image-preview-dialog [data-slot="dialog-close"] {
 .native-questions .group\/part.grid > .bank-drag-row > .bank-row-menu { grid-column: 2; grid-row: 2; justify-self: center; margin: 0; }
 .native-questions .group\/part.grid > .bank-drag-row > input[type="checkbox"] { grid-column: 1 / -1; grid-row: 3; }
 .native-questions .group\/part.grid > .bank-drag-row + div { grid-column: 2; }
+.native-tablet .native-questions .worksheet-root-question.grid {
+  grid-template-columns: fit-content(40%) minmax(0, 1fr);
+}
+.native-tablet .native-questions .worksheet-root-question.grid > h3 > .worksheet-question-label {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+}
+.native-worksheet-beside-toolbar .worksheet-beside-fallback { display: none; }
 .image-crop-handle { background: transparent; border: none; }
 .image-crop-handle::after { content: ""; position: absolute; inset: 16px; border: 2px solid white; background: var(--primary); border-radius: 3px; }
 .image-crop-handle-n, .image-crop-handle-s { left: calc(50% - 22px); }

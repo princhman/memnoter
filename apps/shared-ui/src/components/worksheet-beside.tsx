@@ -103,7 +103,11 @@ export function WorksheetBeside({ toolbar, children }: { toolbar: HTMLElement | 
   const open = target !== null;
 
   useEffect(() => {
-    if (isNativeHost()) return;
+    if (isNativeHost()) {
+      const openBeside = () => setPicker(true);
+      window.addEventListener("worksheet-open-beside", openBeside);
+      return () => window.removeEventListener("worksheet-open-beside", openBeside);
+    }
     return registerCommand({ id: "worksheet.open-beside", title: "Open beside", keywords: ["worksheet", "note", "file", "pdf", "image"], run: () => setPicker(true) });
   }, []);
 
@@ -144,7 +148,7 @@ export function WorksheetBeside({ toolbar, children }: { toolbar: HTMLElement | 
   return <div ref={root} className="worksheet-beside" data-split={open || undefined} style={{ "--beside-share": `${share}%` } as CSSProperties}>
     {toolbar && createPortal(openButton, toolbar)}
     <div ref={main} className={open ? "worksheet-beside-main app-scroll-container" : undefined}>
-      {!toolbar && <div className="mx-auto flex max-w-3xl justify-end">{openButton}</div>}
+      {!toolbar && <div className="worksheet-beside-fallback mx-auto flex max-w-3xl justify-end">{openButton}</div>}
       {children}
     </div>
     {target && <>

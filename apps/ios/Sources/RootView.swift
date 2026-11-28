@@ -644,7 +644,8 @@ struct RootView: View {
                             if chrome.count <= 3 && detailWidth >= 650 {
                                 ForEach(0..<chrome.count, id: \.self) { index in
                                     Button { session?.worksheetQuestion(index) } label: {
-                                        Text(chrome.label(index)).font(.subheadline.weight(.medium)).lineLimit(1).padding(.horizontal, 6).frame(minWidth: 30, minHeight: 30)
+                                        fittedText(chrome.label(index), width: min(160, detailWidth * 0.3 / CGFloat(chrome.count)))
+                                            .font(.subheadline.weight(.medium)).padding(.horizontal, 6).frame(minWidth: 30, minHeight: 30)
                                             .foregroundStyle(index == chrome.index ? Color.white : Color.primary)
                                             .background(index == chrome.index ? DrawingStyle.accent : .clear, in: RoundedRectangle(cornerRadius: 8))
                                     }.buttonStyle(.plain).accessibilityLabel("Question \(chrome.label(index))")
@@ -654,7 +655,9 @@ struct RootView: View {
                                     ForEach(0..<chrome.count, id: \.self) { index in
                                         Button("Question \(chrome.label(index))") { session?.worksheetQuestion(index) }
                                     }
-                                } label: { Text("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))") }
+                                } label: {
+                                    fittedText("\(chrome.label(chrome.index)) (\(chrome.index + 1)/\(chrome.count))", width: 100)
+                                }
                             }
                             Button { session?.worksheetQuestion(chrome.index + 1) } label: { Image(systemName: "chevron.right") }
                                 .disabled(chrome.index + 1 >= chrome.count).accessibilityLabel("Next question")
@@ -664,15 +667,23 @@ struct RootView: View {
                         }.padding(.horizontal, 6).fixedSize()
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        if chrome.finished == true {
-                            Button { session?.worksheetAction() } label: { Image(systemName: "xmark") }
-                                .accessibilityLabel("Close worksheet")
-                        } else {
-                            Button("Finish") { session?.worksheetAction("worksheet-finish") }
-                                .buttonStyle(.plain).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-                                .padding(.horizontal, 14).frame(height: 34)
-                                .background(DrawingStyle.accent, in: Capsule())
-                        }
+                        HStack(spacing: 4) {
+                            if chrome.finished == true {
+                                Button { session?.worksheetAction() } label: { Image(systemName: "xmark") }
+                                    .accessibilityLabel("Close worksheet")
+                            } else {
+                                Button("Finish") { session?.worksheetAction("worksheet-finish") }
+                                    .buttonStyle(.plain).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 14).frame(height: 34)
+                                    .background(DrawingStyle.accent, in: Capsule())
+                            }
+                            Button { session?.worksheetAction("worksheet-open-beside") } label: {
+                                Image(systemName: "sidebar.right")
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Open beside")
+                        }.fixedSize()
                     }
 
                 }
@@ -839,9 +850,9 @@ struct RootView: View {
             let leading: CGFloat = tabletShowsSidebarButton ? 130 : 80
             let history: CGFloat = session?.worksheetAnswerFocused == true && session?.worksheetDrawing.request == nil ? 88 : 0
             let navigation: CGFloat = worksheet.count <= 3 && detailWidth >= 650 ? 92 + CGFloat(worksheet.count) * 46 : 174
-            let finish: CGFloat = worksheet.status == "Save failed" ? 132 : 92
+            let finishAndOpenBeside: CGFloat = worksheet.status == "Save failed" ? 180 : 140
             TabletWorksheetTitle(title: worksheet.title ?? "Worksheet",
-                                 maximumWidth: max(100, detailWidth - leading - history - navigation - finish))
+                                 maximumWidth: max(100, detailWidth - leading - history - navigation - finishAndOpenBeside))
         } else {
             TabletBreadcrumb(modules: store.modules, scope: sectionScope, section: currentSection,
                              item: breadcrumbItem,
