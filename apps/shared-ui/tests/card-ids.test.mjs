@@ -509,6 +509,7 @@ test("Windows scheduled backup notices deduplicate file contents and Review appl
   let splitByHeading = false;
   try {
     await withCore(async ({ page, source, call, editor, open }) => {
+      await call("rename_module", { moduleId: source, name: "NUL.txt" });
       const original = "Review the maps on Friday.";
       const firstEdit = "Review the maps on Monday.";
       const secondEdit = "Review the maps on Tuesday.";
@@ -543,7 +544,8 @@ test("Windows scheduled backup notices deduplicate file contents and Review appl
       const dialog = page.getByRole("dialog", { name: "Backup edits" });
       await open(source);
       await scan(1, true);
-      const filename = (await readdir(backupFolder)).find(name => name.startsWith("geography") && name.endsWith(".md"));
+      const filename = `note-nul.txt - ${source}.md`;
+      assert.ok((await readdir(backupFolder)).includes(filename));
       assert.ok((await readFile(join(backupFolder, filename), "utf8")).includes(original));
       await page.getByRole("link", { name: "Settings", exact: true }).click();
       const split = page.getByRole("switch", { name: "Split notes into files by heading" });
@@ -558,7 +560,7 @@ test("Windows scheduled backup notices deduplicate file contents and Review appl
       const path = join(noteFolder, "0002 - Maps.md");
       const exported = await readFile(path, "utf8");
       assert.equal(exported, `## Maps\n\n${original}\n`);
-      const switchNote = page.getByRole("link", { name: "Geography", exact: true });
+      const switchNote = page.getByRole("link", { name: "NUL.txt", exact: true });
       await switchNote.click();
       await editor.click();
 
