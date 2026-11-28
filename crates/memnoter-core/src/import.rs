@@ -58,6 +58,53 @@ pub fn import_module(
     result
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BinaryModule {
+    name: String,
+    note_length: usize,
+    images: Vec<BinaryImage>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BinaryImage {
+    id: String,
+    mime_type: String,
+    length: usize,
+}
+
+pub fn import_binary_module(core: &Core, mut bytes: &[u8]) -> CommandResult<String> {
+    fn take<'a>(bytes: &mut &'a [u8], len: usize) -> CommandResult<&'a [u8]> {
+        let (value, rest) = bytes
+            .split_at_checked(len)
+            .ok_or("Incomplete Anki import payload")?;
+        *bytes = rest;
+        Ok(value)
+    }
+
+    let header = take(&mut bytes, 4)?;
+    let header_length = u32::from_le_bytes(header.try_into().unwrap()) as usize;
+    let module: BinaryModule = serde_json::from_slice(take(&mut bytes, header_length)?)
+        .map_err(|error| error.to_string())?;
+    let note = take(&mut bytes, module.note_length)?.to_vec();
+    let images = module
+        .images
+        .into_iter()
+        .map(|image| {
+            Ok(ImportImage {
+                id: image.id,
+                mime_type: image.mime_type,
+                bytes: take(&mut bytes, image.length)?.to_vec(),
+            })
+        })
+        .collect::<CommandResult<Vec<_>>>()?;
+    if !bytes.is_empty() {
+        return Err("Unexpected bytes in Anki import payload".into());
+    }
+    import_module(core.data_dir(), &core.db, module.name, note, images)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +177,25 @@ mod tests {
         assert_eq!(get_content(&reopened.db, id).unwrap().files.len(), 1);
         assert!(dir.0.join("files").join(file_id).exists());
     }
+    #[test]
+    fn binary_import_preserves_image_bytes_and_rejects_incomplete_payloads() {
+        let (_dir, core) = fixture();
+        let id = Uuid::new_v4().to_string();
+        let header = serde_json::to_vec(&serde_json::json!({
+            "name": "L'étude", "noteLength": 2,
+            "images": [{ "id": id, "mimeType": "image/png", "length": 3 }]
+        })).unwrap();
+        let mut data = (header.len() as u32).to_le_bytes().to_vec();
+        data.extend(header);
+        data.extend([0, 0, 255, 1, 0]);
+        assert!(import_binary_module(&core, &data[..data.len() - 1]).is_err());
+        assert!(modules(&core.db).unwrap().is_empty());
+        let module = import_binary_module(&core, &data).unwrap();
+        let content = get_content(&core.db, module).unwrap();
+        assert_eq!(content.state, [0, 0]);
+        assert_eq!(std::fs::read(&content.files[0].path).unwrap(), [255, 1, 0]);
+    }
+
     #[test]
     fn failures_at_each_persistence_stage_roll_back_database_sync_and_files() {
         for table in [

@@ -159,7 +159,18 @@ function displayMath(block: Node): Segment[] {
   return tex ? [{ type: "math", tex, display: true }] : [];
 }
 
+const blockSyntax = new WeakMap<Node, BlockSyntax>();
+
 export function parseBlock(block: Node): BlockSyntax {
+  let syntax = blockSyntax.get(block);
+  if (!syntax) {
+    syntax = parseBlockSyntax(block);
+    blockSyntax.set(block, syntax);
+  }
+  return syntax;
+}
+
+function parseBlockSyntax(block: Node): BlockSyntax {
   const syntax: BlockSyntax = { separator: null, clozes: [], cards: [] };
   // A formula's braces are LaTeX, never card syntax.
   if (block.type.spec.code) {
@@ -558,6 +569,17 @@ export function extractCards(doc: Node): ExtractedCard[] {
   return cards;
 }
 
+export function cardSnapshot(document: Node) {
+  return extractCards(document).map(({ id, kind, front, back, section }) => ({
+    id,
+    // Older review screens reveal the whole list as a basic card.
+    kind: kind === "list" ? "basic" : kind,
+    front,
+    back,
+    section,
+  }));
+}
+
 // The ranges of the final document touched by a series of step maps.
 export function changedRanges(maps: readonly StepMap[]): Range[] {
   const ranges: Range[] = [];
@@ -602,7 +624,7 @@ export function planCardIds(
   });
 
   const plan: { pos: number; cardId: string | null }[] = [];
-  const withCards = touched.filter((block) => parseBlock(block.node).cards.length > 0 || groupOpener(block.node) !== null);
+  const withCards = new Set(touched.filter((block) => parseBlock(block.node).cards.length > 0 || groupOpener(block.node) !== null));
   for (const block of withCards) {
     if (block.id && !kept.has(block.id)) {
       kept.add(block.id);
@@ -611,7 +633,7 @@ export function planCardIds(
     }
   }
   for (const block of touched) {
-    if (!withCards.includes(block) && block.id && kept.has(block.id)) {
+    if (!withCards.has(block) && block.id && kept.has(block.id)) {
       plan.push({ pos: block.pos, cardId: null });
     }
   }
