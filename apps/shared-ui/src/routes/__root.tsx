@@ -146,7 +146,7 @@ const RootLayout = () => {
           <div ref={toolbar} data-tauri-drag-region="deep" className="absolute left-0 top-0 z-50 flex h-8 items-center">
             {/* Traffic lights cover this corner only in the Mac app window. */}
             {isTauri() && IS_MAC && !isFullscreen && <div className="h-full w-18" />}
-            <div className="flex items-center pl-2.5 gap-1.5">
+            <div className="flex items-center pl-2 gap-1.5">
               <IconTooltip label="Toggle sidebar" hint={formatKeys(action("sidebar.toggle").keys)} side="bottom">
                 <SidebarTrigger aria-label="Toggle sidebar" />
               </IconTooltip>
