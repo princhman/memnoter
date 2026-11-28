@@ -1,6 +1,7 @@
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { noteSaveCheckpoint } from "@/lib/saves";
-import type { Doc } from "yjs";
+import { desktopNoteSnapshot, LOAD_ORIGIN } from "./content";
+import type { Doc, Transaction } from "yjs";
 import { isSchemaReadOnly } from "./guarded-collaboration";
 import { settled } from "@/lib/async-work";
 import { writeCards } from "@/lib/card-writes";
@@ -14,6 +15,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { blockIdOf, extractCards } from "@/lib/cards";
 import type { CardSchedule } from "@/lib/flashcards";
 
+import { isStaleNote } from "./stale-note";
 import { appStore } from "./store.ts";
 import { useSelector } from "@tanstack/react-store";
 
@@ -22,6 +24,9 @@ const DUE_REFRESH_MS = 60_000;
 
 const editorSync = createEditorWriteSync(SYNC_DEBOUNCE_MS);
 export const flushCardSyncs = editorSync.flush;
+
+const refreshStoredNote = async (moduleId: string, permit?: WritePermit) =>
+  (await import("@/lib/note-index")).refreshDerived(moduleId, permit);
 registerFlusher("cards", flushCardSyncs);
 
 export const dueCountsKey = ["cards", "due-counts"];
@@ -40,11 +45,14 @@ const openModules = new Map<string, number>();
 // Keeps a module's cards in the database in step with an editor's text: now,
 // after edits settle, and when stopped. `flush` waits until the database has
 // the editor's current cards, including ids renewed after a conflict.
-export function startCardSync(editor: Editor, moduleId: string, onSynced: () => void, admittedPermit?: WritePermit) {
+// In the background (no editor on screen) a stale write is the caller's to
+// retry: refreshing from here would wait on the refresh that started it.
+export function startCardSync(editor: Editor, moduleId: string, onSynced: () => void, admittedPermit?: WritePermit, background = false) {
   let lastSent: ReturnType<typeof snapshot> | undefined;
   let queue = Promise.resolve();
   let lastWrite = queue;
 
+  const doc: Doc | undefined = ySyncPluginKey.getState(editor.state)?.doc;
   const snapshot = () => {
     const cards = extractCards(editor.state.doc).map(({ id, kind, front, back, section }) => ({
       id,
@@ -55,14 +63,15 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
       back,
       section,
     }));
-    const doc: Doc | undefined = ySyncPluginKey.getState(editor.state)?.doc;
     const checkpoint = doc ? noteSaveCheckpoint(doc, moduleId) : undefined;
-    return { cards, payload: JSON.stringify(cards), checkpoint };
+    const noteSnapshot = doc ? desktopNoteSnapshot(doc) : undefined;
+    return { cards, payload: JSON.stringify(cards), checkpoint, noteSnapshot };
   };
 
   const wasSent = (current: ReturnType<typeof snapshot>) => lastSent?.payload === current.payload &&
     lastSent.checkpoint?.edit === current.checkpoint?.edit &&
-    lastSent.checkpoint?.appliedId === current.checkpoint?.appliedId;
+    lastSent.checkpoint?.appliedId === current.checkpoint?.appliedId &&
+    lastSent.noteSnapshot?.join(",") === current.noteSnapshot?.join(",");
 
   const sync = (permit: WritePermit | undefined = admittedPermit, captured?: ReturnType<typeof snapshot>): Promise<void> => {
     debounce.cancel();
@@ -70,7 +79,7 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
     const current = captured ?? snapshot();
     if (wasSent(current)) return lastWrite;
     lastSent = current;
-    const { cards, checkpoint } = current;
+    const { cards, checkpoint, noteSnapshot } = current;
     // Keep syncs in order so an older snapshot never lands last.
     const write = queue
       .then(async () => {
@@ -87,7 +96,14 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
           throw error;
         });
         if (isSchemaReadOnly(editor)) return [];
-        return writeCards<string[]>("sync_cards", { moduleId, cards, updateId }, permit);
+        return writeCards<string[]>("sync_cards", { moduleId, cards, updateId, noteSnapshot }, permit)
+          .catch(async (error: unknown) => {
+            if (background || !isStaleNote(error)) throw error;
+            // Another window saved first. Index the stored note, which has
+            // both edits, even if every editor on it closes meanwhile.
+            await refreshStoredNote(moduleId, permit);
+            return [];
+          });
       })
       .then((conflicts) => {
         // Blocks copied from another note get their own cards here.
@@ -115,9 +131,14 @@ export function startCardSync(editor: Editor, moduleId: string, onSynced: () => 
   const schedule = debounce.schedule;
   void settled(sync());
   editor.on("update", schedule);
+  const onSavedContent = (transaction: Transaction) => {
+    if (transaction.origin === LOAD_ORIGIN && transaction.changed.size > 0) schedule();
+  };
+  doc?.on("afterTransaction", onSavedContent);
 
   const stop = () => {
     editor.off("update", schedule);
+    doc?.off("afterTransaction", onSavedContent);
     debounce.stop();
   };
   return { flush, stop };

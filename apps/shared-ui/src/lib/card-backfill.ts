@@ -34,7 +34,7 @@ export async function indexStoredCards(moduleId: string, doc: import("yjs").Doc,
 
     const sync = startCardSync(editor!, moduleId, () => {
       void queryClient.invalidateQueries({ queryKey: dueCountsKey });
-    }, permit);
+    }, permit, true);
     try {
       await sync.flush(permit);
     } finally {

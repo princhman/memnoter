@@ -13,7 +13,10 @@ import {
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { appStore, setModulePage } from "@/lib/store";
-import { call as invoke } from "../lib/backend.ts";
+import { capabilities, call as invoke } from "../lib/backend.ts";
+import { openDesktopWindow } from "@/lib/desktop-windows";
+import { IS_WINDOWS } from "@/lib/platform";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FileText, Search, SquareChevronRight } from "lucide-react";
 import { headingNumbers } from "@/lib/heading-numbering";
 import { headingTitleHtml } from "@/components/table-of-contents";
@@ -101,11 +104,54 @@ function useBuiltinCommands() {
   const { toggleSidebar } = useSidebar();
   const { activeEditor } = useActiveEditor();
   const hasEditor = !!activeEditor;
+  const matchModule = useMatchRoute()({ to: "/$moduleId" });
+  const currentModule = matchModule ? matchModule.moduleId : null;
 
   useCommand({
     ...action("sidebar.toggle"),
     run: toggleSidebar,
   });
+
+  useEffect(() => {
+    if (!IS_WINDOWS || !capabilities.windowControls) return;
+    const entry = action("window.fullscreen");
+    const appWindow = getCurrentWindow();
+    let toggling = false;
+    const run = async () => {
+      if (toggling) return;
+      toggling = true;
+      try {
+        await appWindow.setFullscreen(!(await appWindow.isFullscreen()));
+      } finally {
+        toggling = false;
+      }
+    };
+    const unregister = registerCommand({ ...entry, keywords: ["fullscreen"], run });
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!matchesShortcut(event, entry.keys)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) void run().catch(error => console.error("Failed to toggle full screen", error));
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      unregister();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!capabilities.windowControls) return;
+    return registerCommand({ ...action("window.new"), run: async () => { await openDesktopWindow(); } });
+  }, []);
+
+  useEffect(() => {
+    if (!capabilities.windowControls || !currentModule) return;
+    return registerCommand({
+      id: "window.openNote", title: "Open in new window",
+      run: async () => { await openDesktopWindow(currentModule); },
+    });
+  }, [currentModule]);
 
   // Only offered while a note is open; the request would otherwise wait.
   useEffect(() => {
@@ -345,6 +391,13 @@ export function CommandPalette() {
   const actions: { label: string; keys: string; run: () => void }[] = !active ? [] : [
     { label: active.kind === "command" ? "Run command" : active.kind === "note" ? "Open note" : "Open section", keys: "Enter", run: () => activate(active) },
     ...(active.kind === "note" || (active.kind === "heading" && active.hasChildren) ? [{ label: "Browse sections", keys: "Mod-Enter", run: () => drill(active) }] : []),
+    ...(active.kind === "note" && capabilities.windowControls ? [{
+      label: "Open in new window", keys: "", run: () => {
+        restoreFocus.current = true;
+        setOpen(false);
+        void openDesktopWindow(active.moduleId);
+      },
+    }] : []),
     ...(scope ? [{ label: parent ? "Back to parent section" : "Back to modules", keys: "ArrowLeft", run: () => back() }] : []),
   ];
   const runAction = (index: number) => { const chosen = actions[index]; setActionsOpen(false); chosen?.run(); };
@@ -606,7 +659,7 @@ export function CommandPalette() {
             {actions.map((item, index) => <div key={item.label} role="menuitem" aria-selected={index === actionIndex}
               onMouseDown={event => event.preventDefault()} onMouseMove={() => setActionIndex(index)} onClick={() => runAction(index)}
               className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 aria-selected:bg-accent aria-selected:text-accent-foreground">
-              <span className="min-w-0 flex-1 truncate">{item.label}</span><Kbd>{formatKeys(item.keys)}</Kbd>
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>{item.keys && <Kbd>{formatKeys(item.keys)}</Kbd>}
             </div>)}
           </div>}
         </div>

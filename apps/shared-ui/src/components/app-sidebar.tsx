@@ -19,14 +19,15 @@ import {
 import { TOGGLE_SIDEBAR_EVENT } from "@/lib/app-events";
 import { Link, useMatchRoute, useRouter } from "@tanstack/react-router";
 import { SidebarModules } from "./sidebar-modules";
-import { ChevronRight, Ellipsis, FilePlus, FileText, House, Files, CircleHelp, Layers, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Ellipsis, FilePlus, FileText, House, Files, CircleHelp, Layers, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import { openSidebarSection, SidebarSectionNavigation, useSidebarSections } from "@/lib/sidebar-sections";
 import type { Module } from "@/lib/types";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "@/lib/store";
 import { SidebarSectionRow } from "./sidebar-section-row";
 import { pickPdfs } from "./add-pdf";
-import { isTauri } from "@/lib/backend";
+import { openDesktopWindow } from "@/lib/desktop-windows";
+import { isSecondaryWindow, isTauri } from "@/lib/backend";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,6 +45,7 @@ import {
 import RenameModule from "./rename-module";
 import DeleteModule from "./delete-module";
 import UpdateStatus from "./update-status";
+import { SyncNowButton } from "./sync-now-button";
 import { BetaBadge } from "./beta-notice";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
@@ -63,6 +65,7 @@ const ModuleMenu = ({ name, moduleId, children }: { name: string; moduleId: stri
   // Shared by the pointer-positioned context menu and the "…" dropdown.
   const items = (Item: typeof DropdownMenuItem | typeof ContextMenuItem) => (
     <>
+      {isTauri() && <Item onClick={() => void openDesktopWindow(moduleId)}><ArrowUpRight className="size-3" />Open in new window</Item>}
       {sidebarSections && <Item onClick={() => {
         openSidebarSection(moduleId, { kind: "add" }, router);
       }}><Plus className="size-3" />Add section</Item>}
@@ -238,6 +241,8 @@ const AppSidebar = () => {
       <SidebarFooter>
         <UpdateStatus>
           <BetaBadge />
+          {/* Sync runs only in the main window; another window would start a second engine. */}
+          {isTauri() && !isSecondaryWindow() && <SyncNowButton />}
           <IconTooltip label="Settings" hint={formatKeys(action("settings.open").keys)} side="top">
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-[current=page]:text-foreground" aria-label="Settings" render={<Link to="/settings" />}><Settings /></Button>
           </IconTooltip>

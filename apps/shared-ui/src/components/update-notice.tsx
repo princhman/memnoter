@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { updateRequiredStore } from "@/lib/update-required";
 import { latestRelease } from "@/lib/releases";
 import { IS_IOS } from "@/lib/platform";
-import { openExternalLink } from "@/lib/backend";
+import { isSecondaryWindow, openExternalLink } from "@/lib/backend";
 
 export function UpdateNotice() {
   const required = useSelector(updateRequiredStore, state => state);
@@ -13,7 +13,9 @@ export function UpdateNotice() {
   const [open, setOpen] = useState(false);
   const requiredShown = useRef(false);
   const optionalShown = useRef(false);
-  useEffect(() => { void latestRelease(import.meta.env.VITE_APP_VERSION).then(tag => {
+  useEffect(() => {
+    if (isSecondaryWindow()) return;
+    void latestRelease(import.meta.env.VITE_APP_VERSION).then(tag => {
     try { if (tag !== localStorage.getItem("memnoter-dismissed-release")) setAvailable(tag); } catch { /* Storage unavailable. */ }
   }); }, []);
   useEffect(() => {
