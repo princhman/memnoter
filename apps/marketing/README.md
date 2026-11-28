@@ -39,11 +39,18 @@ dashboard's Git integration; never deploy it by hand.
 ## Editing
 
 - `index.html`: copy, layout, metadata, and direct download links.
+- `demo.js`: the homepage card, cloze and review demo. The page still reads without it.
 - `support.html`: the support page at `/support`, also the App Store support URL.
-- `privacy.html`: the privacy policy at `/privacy`, also the App Store privacy policy URL.
+- `privacy.html`: the privacy policy at `/privacy`, also the App Store privacy policy URL. This is the published policy, not a draft.
+- `terms.html`: draft terms at `/terms`, marked for review and hidden from search engines (`noindex`, not in the sitemap) until approved.
 - `styles.css`: responsive styles and reduced-motion support.
+- `screenshots/`: cropped product frames, light and dark, in AVIF and WebP. The TanStack dev badge is painted out. Review was only captured in light, so that frame stays on the light shot.
 - `build.mjs`: asset packaging and verified release links.
 - `worker.js`: keeps download links on the latest release between deploys.
 
-The page works without JavaScript. It uses the approved brand mark as its hero visual.
+The frames are crops, not full windows: `hero` pans a note, `cards` and `occlusion` alternate, `review-card` and `review-grades` alternate, and `pdf`, `bank`, and `worksheet` play in that order. `maths` is the formula. Each has `-light` and `-dark` except the review pair, plus a `-720` width where the crop is wider than 720. `og.png` is the link preview.
+
+There is no public TestFlight URL in the repo. The iOS control is a disabled placeholder until that URL is pasted into `index.html`.
+
+The page works without JavaScript. Sequences stay on their first frame, and the hero pan is CSS, so it still moves unless the visitor prefers reduced motion.
 Branding and font license are copied into the output at build time.

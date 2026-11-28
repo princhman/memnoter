@@ -12,8 +12,14 @@
   <meta property="og:url" content="https://memnoter.com/privacy">
   <meta property="og:title" content="Memnoter privacy policy">
   <meta property="og:description" content="How Memnoter handles your data, including optional encrypted sync and account deletion.">
-  <meta property="og:image" content="https://memnoter.com/assets/social-icon.png">
-  <meta name="twitter:card" content="summary">
+  <meta property="og:image" content="https://memnoter.com/screenshots/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Memnoter, a free local-first study app.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Memnoter privacy policy">
+  <meta name="twitter:description" content="How Memnoter handles your data, including optional encrypted sync and account deletion.">
+  <meta name="twitter:image" content="https://memnoter.com/screenshots/og.png">
   <link rel="icon" href="assets/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="assets/social-icon.png">
   <link rel="preload" href="assets/inter.woff2" as="font" type="font/woff2" crossorigin>
@@ -22,11 +28,13 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="header">
-    <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
-    <nav aria-label="Main navigation">
-      <a class="nav-link" href="https://github.com/princhman/memnoter">GitHub</a>
-      <a class="nav-button" href="/#download">Download</a>
-    </nav>
+    <div class="bar">
+      <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
+      <nav aria-label="Main navigation">
+        <a class="nav-link" href="https://github.com/princhman/memnoter">GitHub</a>
+        <a class="nav-button" href="/#download">Download</a>
+      </nav>
+    </div>
   </header>
 
   <main id="main" class="page">
@@ -68,9 +76,33 @@
     </div>
   </main>
 
-  <footer>
-    <span>© 2026 Memnoter</span>
-    <span class="footer-links"><a href="/support">Support</a><a href="/privacy" aria-current="page">Privacy</a><a href="https://github.com/princhman/memnoter">GitHub</a></span>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
+        <p>Free, local-first study notes.</p>
+      </div>
+      <nav class="footer-col" aria-label="Product">
+        <p class="footer-heading">Product</p>
+        <a href="/#download">Download</a>
+        <a href="/#cards">Features</a>
+        <a href="/#compare">From Anki or Obsidian</a>
+        <a href="/#faq">FAQ</a>
+      </nav>
+      <nav class="footer-col" aria-label="Help">
+        <p class="footer-heading">Help</p>
+        <a href="/support">Support</a>
+        <a href="mailto:hello@memnoter.com">hello@memnoter.com</a>
+        <a href="https://github.com/princhman/memnoter">GitHub</a>
+      </nav>
+      <nav class="footer-col" aria-label="Legal">
+        <p class="footer-heading">Legal</p>
+        <a href="/privacy" aria-current="page">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="https://github.com/princhman/memnoter/blob/main/LICENSE">MIT license</a>
+      </nav>
+      <p class="footer-copy">© 2026 Memnoter</p>
+    </div>
   </footer>
 </body>
 </html>

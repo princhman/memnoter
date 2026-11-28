@@ -1,12 +1,17 @@
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const root = new URL('./', import.meta.url);
 const output = new URL('./dist/', root);
 await rm(output, { recursive: true, force: true });
 await mkdir(new URL('assets/', output), { recursive: true });
-for (const name of ['index.html', 'support.html', 'privacy.html', 'styles.css', 'robots.txt', 'sitemap.xml']) {
+for (const name of ['index.html', 'support.html', 'privacy.html', 'terms.html', 'styles.css', 'demo.js', 'robots.txt', 'sitemap.xml']) {
   await cp(new URL(name, root), new URL(name, output));
+}
+await mkdir(new URL('screenshots/', output), { recursive: true });
+for (const name of await readdir(new URL('screenshots/', root))) {
+  if (!/\.(avif|webp|png)$/.test(name)) continue;
+  await cp(new URL(`screenshots/${name}`, root), new URL(`screenshots/${name}`, output));
 }
 for (const [source, target] of [
   ['icon-transparent.png', 'icon.png'],

@@ -4,65 +4,317 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#fafafa">
-  <title>Memnoter: Notes worth remembering</title>
-  <meta name="description" content="Write notes, turn them into flashcards, and remember what you learn with spaced repetition. A free, open-source desktop app for macOS, Windows, and Linux.">
+  <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121116" media="(prefers-color-scheme: dark)">
+  <title>Memnoter: notes, flashcards and PDF question banks</title>
+  <meta name="description" content="Free, open-source study app for students. Write flashcards in your notes, crop questions from PDFs, and review with FSRS. Mac, Windows, Linux, iPad and iPhone.">
   <link rel="canonical" href="https://memnoter.com/">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://memnoter.com/">
-  <meta property="og:title" content="Memnoter: Notes worth remembering">
-  <meta property="og:description" content="Your notes and flashcards. Finally, in the same place.">
-  <meta property="og:image" content="https://memnoter.com/assets/social-icon.png">
-  <meta name="twitter:card" content="summary">
+  <meta property="og:title" content="Memnoter: notes, flashcards and PDF question banks">
+  <meta property="og:description" content="A free, local-first study app. Flashcards live in your notes, questions come from PDFs you add, and FSRS schedules the review.">
+  <meta property="og:image" content="https://memnoter.com/screenshots/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Memnoter, a free local-first study app for notes and flashcards.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Memnoter: notes, flashcards and PDF question banks">
+  <meta name="twitter:description" content="Write flashcards in your notes, crop questions from PDFs, and review with FSRS.">
+  <meta name="twitter:image" content="https://memnoter.com/screenshots/og.png">
   <link rel="icon" href="assets/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="assets/social-icon.png">
   <link rel="preload" href="assets/inter.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="screenshots/hero-light.webp" as="image" type="image/webp">
   <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Memnoter",
+    "applicationCategory": "EducationalApplication",
+    "operatingSystem": "macOS, Windows, Linux, iOS, iPadOS",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "license": "https://opensource.org/licenses/MIT",
+    "url": "https://memnoter.com/",
+    "image": "https://memnoter.com/screenshots/og.png",
+    "description": "Free, local-first study app. Write flashcards in your notes, crop questions from PDFs you add, and review with FSRS."
+  }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="header">
-    <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
-    <nav aria-label="Main navigation">
-      <a class="nav-link" href="https://github.com/princhman/memnoter">GitHub</a>
+    <div class="bar">
+      <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
       <a class="nav-button" href="#download">Download</a>
-    </nav>
+    </div>
   </header>
 
-  <main id="main">
+  <main id="main" class="home">
     <section class="hero" aria-labelledby="headline">
-      <img class="hero-icon" src="assets/icon.png" width="112" height="112" fetchpriority="high" alt="">
-      <h1 id="headline">Good notes.<br>Lasting knowledge.</h1>
-      <p class="description">Write notes, turn them into flashcards, and actually remember what you learn.</p>
-
-      <div id="download" class="download">
-        <div class="download-buttons">
-          <a class="button primary" href="{{mac-arm}}" aria-label="Download for Mac, Apple silicon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 12.7c0-2 1.6-3 1.7-3.1-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.4.8-.7 0-1.8-.8-2.9-.7-1.5 0-2.9.9-3.7 2.2-1.6 2.8-.4 7 1.2 9.2.7 1.1 1.6 2.2 2.8 2.1 1.1 0 1.6-.7 3-.7 1.4 0 1.8.7 3 .7 1.2 0 2-1.1 2.7-2.1.8-1.2 1.2-2.3 1.2-2.4-.1 0-2.4-.9-2.4-3.6ZM14.3 6.4c.6-.8 1.1-1.9 1-3-.9 0-2 .6-2.7 1.4-.6.7-1.2 1.8-1 2.9 1 .1 2-.5 2.7-1.3Z"/></svg>Download for Mac</a>
-          <a class="button secondary" href="{{windows}}" aria-label="Download for Windows, 64-bit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.2 10.5 4v7.3H3zm8.5-1.4L21 2.5v8.8h-9.5zM3 12.7h7.5V20L3 18.8zm8.5 0H21v8.8l-9.5-1.3z"/></svg>Download for Windows</a>
+      <div>
+        <h1 id="headline">Good notes.<br>Lasting knowledge.</h1>
+        <p class="lead">Flashcards in your notes, questions from your PDFs.</p>
+        <div class="download" id="download">
+          <a class="button primary" data-smart-download href="https://github.com/princhman/memnoter/releases/latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a1 1 0 0 1 1 1v8.1l2.3-2.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L11 12.6V4.5a1 1 0 0 1 1-1ZM5 18.5a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"/></svg><span data-download-label>Download</span></a>
+          <details class="platforms" id="platforms">
+            <summary>Other platforms</summary>
+            <div class="platform-links">
+              <a data-platform="mac" href="{{mac-arm}}">Mac, Apple silicon</a>
+              <a data-platform="intel" href="{{mac-intel}}">Intel Mac</a>
+              <a data-platform="windows" href="{{windows}}">Windows</a>
+              <a data-platform="linux" href="{{linux}}">Linux</a>
+              <a href="https://github.com/princhman/memnoter/releases/latest">deb and rpm, version <span data-version>{{version}}</span></a>
+              <!-- TODO for Vlad: point this at the public TestFlight URL. No join link is in the repo. -->
+              <button type="button" disabled>iPhone and iPad</button>
+            </div>
+          </details>
         </div>
-        <p class="other-downloads">Also for <a href="{{mac-intel}}">Intel Mac</a> and <a href="{{linux}}">Linux</a>. <a href="https://github.com/princhman/memnoter/releases/latest">Version <span data-version>{{version}}</span></a></p>
+      </div>
+      <figure class="stage stage-pan">
+        <div class="stage-frame">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/hero-dark-720.avif 720w, screenshots/hero-dark.avif 1080w" sizes="(min-width: 960px) 520px, calc(100vw - 48px)">
+            <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/hero-dark-720.webp 720w, screenshots/hero-dark.webp 1080w" sizes="(min-width: 960px) 520px, calc(100vw - 48px)">
+            <source type="image/avif" srcset="screenshots/hero-light-720.avif 720w, screenshots/hero-light.avif 1080w" sizes="(min-width: 960px) 520px, calc(100vw - 48px)">
+            <source type="image/webp" srcset="screenshots/hero-light-720.webp 720w, screenshots/hero-light.webp 1080w" sizes="(min-width: 960px) 520px, calc(100vw - 48px)">
+            <img src="screenshots/hero-light.webp" width="1080" height="842" fetchpriority="high" decoding="async" alt="A Memnoter note titled Logic and proof. The line says cards are written inline, anything with a double colon is a flashcard, and an induction proof is set in LaTeX.">
+          </picture>
+          <span class="callout">Inline cards and LaTeX</span>
+        </div>
+      </figure>
+    </section>
+
+    <section class="section" id="try" aria-label="Try a card">
+      <div class="demo" data-demo>
+        <div class="demo-toolbar">
+          <div class="demo-tabs" role="tablist" aria-label="Demo">
+            <button type="button" role="tab" id="tab-card" aria-controls="panel-card" aria-selected="true" data-demo-tab>Write a card</button>
+            <button type="button" role="tab" id="tab-cloze" aria-controls="panel-cloze" aria-selected="false" tabindex="-1" data-demo-tab>Reveal a cloze</button>
+            <button type="button" role="tab" id="tab-review" aria-controls="panel-review" aria-selected="false" tabindex="-1" data-demo-tab>Grade a review</button>
+          </div>
+          <button type="button" class="demo-pause" data-demo-pause aria-pressed="false">Pause</button>
+        </div>
+        <div class="demo-stage">
+          <div class="demo-step" id="panel-card" role="tabpanel" aria-labelledby="tab-card" data-step data-label="A line with a double colon becomes a flashcard.">
+            <div class="note-line">
+              <span class="dot" aria-hidden="true"></span>
+              <p>Modus ponens <span class="sep">::</span> from A and A → B, infer B</p>
+            </div>
+            <div class="spawned-card">
+              <p class="face"><span>Front</span> Modus ponens</p>
+              <p class="face"><span>Back</span> from A and A → B, infer B</p>
+            </div>
+          </div>
+          <div class="demo-step" id="panel-cloze" role="tabpanel" aria-labelledby="tab-cloze" data-step data-label="A cloze hides a word until you reveal it.">
+            <p class="cloze-sentence">The derivative of x² is <button type="button" class="blank" data-cloze aria-pressed="true" aria-label="Hide the word 2x"><span aria-hidden="true">2x</span></button>.</p>
+          </div>
+          <div class="demo-step" id="panel-review" role="tabpanel" aria-labelledby="tab-review" data-step data-label="Review shows the front, then the answer, then four grades.">
+            <p class="mini-path">Logic / Inference</p>
+            <p class="mini-front">Modus ponens</p>
+            <button type="button" class="button primary show-answer" data-show-answer hidden>Show answer <kbd>Space</kbd></button>
+            <p class="mini-back" data-review-back hidden>from A and A → B, infer B</p>
+            <div class="grades" data-grades hidden>
+              <button type="button" data-grade="Again" aria-pressed="false">Again <kbd>1</kbd></button>
+              <button type="button" data-grade="Hard" aria-pressed="false">Hard <kbd>2</kbd></button>
+              <button type="button" data-grade="Good" aria-pressed="false">Good <kbd>3</kbd></button>
+              <button type="button" data-grade="Easy" aria-pressed="false">Easy <kbd>4</kbd></button>
+            </div>
+            <p class="grade-result" data-grade-result hidden></p>
+            <noscript>
+              <p class="mini-back">from A and A → B, infer B</p>
+              <p class="demo-aside">In the app, Space shows the answer. Then you grade Again, Hard, Good or Easy.</p>
+            </noscript>
+          </div>
+        </div>
+        <p class="demo-live" data-demo-live aria-live="polite"></p>
       </div>
     </section>
 
-    <section class="features" aria-label="Why Memnoter">
-      <div>
-        <h2>Notes and flashcards together</h2>
-        <p>Make flashcards right inside your notes.</p>
+    <section class="section" id="cards">
+      <article class="feature">
+        <div class="feature-copy">
+          <h2>Cards in the note</h2>
+          <p>The line you write is the flashcard.</p>
+        </div>
+        <figure class="stage stage-cards" data-sequence>
+          <div class="stage-frame">
+            <div class="stage-slide is-on">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/cards-dark-720.avif 720w, screenshots/cards-dark.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/cards-dark-720.webp 720w, screenshots/cards-dark.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/avif" srcset="screenshots/cards-light-720.avif 720w, screenshots/cards-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/cards-light-720.webp 720w, screenshots/cards-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/cards-light.webp" width="960" height="600" loading="lazy" decoding="async" alt="Propositional logic written in a note. Modus ponens and its contrapositive are inline cards, with a truth table and the start of an induction proof underneath.">
+              </picture>
+              <span class="ring" style="left:3%;top:12%;width:94%;height:30%" aria-hidden="true"></span>
+              <span class="callout">Written in the note</span>
+            </div>
+            <div class="stage-slide" aria-hidden="true">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/occlusion-dark-720.avif 720w, screenshots/occlusion-dark.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/occlusion-dark-720.webp 720w, screenshots/occlusion-dark.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/avif" srcset="screenshots/occlusion-light-720.avif 720w, screenshots/occlusion-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/occlusion-light-720.webp 720w, screenshots/occlusion-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/occlusion-light.webp" width="960" height="600" loading="lazy" decoding="async" alt="Image occlusion on a graph. Blue masks hide three distances, and each mask is its own card.">
+              </picture>
+              <span class="ring" style="left:8%;top:28%;width:84%;height:58%" aria-hidden="true"></span>
+              <span class="callout">One mask, one card</span>
+            </div>
+          </div>
+        </figure>
+      </article>
+
+      <article class="feature reverse" id="review">
+        <div class="feature-copy">
+          <h2>Review with FSRS</h2>
+          <p>FSRS picks when you see it again.</p>
+        </div>
+        <figure class="stage stage-review" data-sequence>
+          <div class="stage-frame">
+            <div class="stage-slide is-on">
+              <picture>
+                <source type="image/avif" srcset="screenshots/review-card-light-720.avif 720w, screenshots/review-card-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/review-card-light-720.webp 720w, screenshots/review-card-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/review-card-light.webp" width="960" height="240" loading="lazy" decoding="async" alt="A revealed cloze card: Dijkstra's algorithm finds shortest paths in a graph with non-negative edge weights.">
+              </picture>
+              <span class="ring" style="left:8%;top:22%;width:84%;height:56%" aria-hidden="true"></span>
+              <span class="callout">A cloze, revealed</span>
+            </div>
+            <div class="stage-slide" aria-hidden="true">
+              <picture>
+                <source type="image/avif" srcset="screenshots/review-grades-light-720.avif 720w, screenshots/review-grades-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/review-grades-light-720.webp 720w, screenshots/review-grades-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/review-grades-light.webp" width="960" height="240" loading="lazy" decoding="async" alt="FSRS grade buttons for this card: Again in 1 minute, Hard in 14 hours, Good in 5 days, and Easy in 1.8 months.">
+              </picture>
+              <span class="ring" style="left:3%;top:18%;width:94%;height:64%" aria-hidden="true"></span>
+              <span class="callout callout-top">FSRS-7 chooses the gap</span>
+            </div>
+          </div>
+        </figure>
+      </article>
+
+      <article class="feature" id="questions">
+        <div class="feature-copy">
+          <h2>Question banks</h2>
+          <p>Crop a question from a PDF you add.</p>
+        </div>
+        <figure class="stage stage-questions" data-sequence>
+          <div class="stage-frame">
+            <div class="stage-slide is-on">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/pdf-dark.avif 432w">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/pdf-dark.webp 432w">
+                <source type="image/avif" srcset="screenshots/pdf-light.avif 432w">
+                <source type="image/webp" srcset="screenshots/pdf-light.webp 432w">
+                <img src="screenshots/pdf-light.webp" width="432" height="324" loading="lazy" decoding="async" alt="A problem sheet PDF open beside the note: Discrete Mathematics, Problem Sheet 3, with questions on conditionals and induction.">
+              </picture>
+              <span class="callout">The PDF you add</span>
+            </div>
+            <div class="stage-slide" aria-hidden="true">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/bank-dark-720.avif 720w, screenshots/bank-dark.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/bank-dark-720.webp 720w, screenshots/bank-dark.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/avif" srcset="screenshots/bank-light-720.avif 720w, screenshots/bank-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/bank-light-720.webp 720w, screenshots/bank-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/bank-light.webp" width="960" height="540" loading="lazy" decoding="async" alt="The question bank for that sheet: numbered questions on logic and graphs, with a worksheet ready to resume.">
+              </picture>
+              <span class="ring" style="left:6%;top:16%;width:88%;height:76%" aria-hidden="true"></span>
+              <span class="callout">Cropped into the bank</span>
+            </div>
+            <div class="stage-slide" aria-hidden="true">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/worksheet-dark-720.avif 720w, screenshots/worksheet-dark.avif 1040w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/worksheet-dark-720.webp 720w, screenshots/worksheet-dark.webp 1040w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/avif" srcset="screenshots/worksheet-light-720.avif 720w, screenshots/worksheet-light.avif 1040w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <source type="image/webp" srcset="screenshots/worksheet-light-720.webp 720w, screenshots/worksheet-light.webp 1040w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+                <img src="screenshots/worksheet-light.webp" width="1040" height="284" loading="lazy" decoding="async" alt="A worksheet question on induction, with a typed answer underneath the formula.">
+              </picture>
+              <span class="callout">Then a worksheet</span>
+            </div>
+          </div>
+        </figure>
+      </article>
+
+      <article class="feature reverse" id="maths">
+        <div class="feature-copy">
+          <h2>Maths and code</h2>
+          <p>LaTeX and code, in the same note.</p>
+        </div>
+        <figure class="stage stage-maths">
+          <div class="stage-frame">
+            <picture>
+              <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="screenshots/maths-dark-720.avif 720w, screenshots/maths-dark.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+              <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="screenshots/maths-dark-720.webp 720w, screenshots/maths-dark.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+              <source type="image/avif" srcset="screenshots/maths-light-720.avif 720w, screenshots/maths-light.avif 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+              <source type="image/webp" srcset="screenshots/maths-light-720.webp 720w, screenshots/maths-light.webp 960w" sizes="(min-width: 960px) 580px, calc(100vw - 48px)">
+              <img src="screenshots/maths-light.webp" width="960" height="190" loading="lazy" decoding="async" alt="An induction proof in a note. The sum of the first n numbers is rendered as a display formula, with the base case and inductive step in the lines around it.">
+            </picture>
+            <span class="ring" style="left:30%;top:4%;width:40%;height:52%" aria-hidden="true"></span>
+            <span class="callout callout-top">Rendered with KaTeX</span>
+          </div>
+        </figure>
+      </article>
+    </section>
+
+    <section class="section" id="faq">
+      <h2>Questions</h2>
+      <div class="faq">
+        <details>
+          <summary>Is it free?</summary>
+          <p>Yes. The app is MIT licensed.</p>
+        </details>
+        <details>
+          <summary>Does it write cards with AI?</summary>
+          <p>No. You write them.</p>
+        </details>
+        <details>
+          <summary>Does it find past papers?</summary>
+          <p>No. You add the PDF.</p>
+        </details>
+        <details>
+          <summary>Can I bring an Anki deck?</summary>
+          <p>Yes. Import an .apkg file.</p>
+        </details>
+        <details>
+          <summary>Where are my notes?</summary>
+          <p>On your device. Sync is optional and encrypted.</p>
+        </details>
       </div>
-      <div>
-        <h2>Spaced repetition built in</h2>
-        <p>Review at the right moment, so it sticks.</p>
-      </div>
-      <div>
-        <h2>Yours, on your device</h2>
-        <p>Free, open source, and stored locally.</p>
-      </div>
+    </section>
+
+    <section class="close">
+      <a class="button primary" data-smart-download href="https://github.com/princhman/memnoter/releases/latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a1 1 0 0 1 1 1v8.1l2.3-2.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L11 12.6V4.5a1 1 0 0 1 1-1ZM5 18.5a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"/></svg><span data-download-label>Download</span></a>
     </section>
   </main>
 
-  <footer>
-    <span>© 2026 Memnoter</span>
-    <span class="footer-links"><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="https://github.com/princhman/memnoter">GitHub</a></span>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
+        <p>Local-first notes.</p>
+      </div>
+      <nav class="footer-col" aria-label="Product">
+        <p class="footer-heading">Product</p>
+        <a href="#download">Download</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <nav class="footer-col" aria-label="Help">
+        <p class="footer-heading">Help</p>
+        <a href="/support">Support</a>
+        <a href="mailto:hello@memnoter.com">hello@memnoter.com</a>
+        <a href="https://github.com/princhman/memnoter">GitHub</a>
+        <a href="https://github.com/princhman/memnoter/issues">Report a bug</a>
+      </nav>
+      <nav class="footer-col" aria-label="Legal">
+        <p class="footer-heading">Legal</p>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="https://github.com/princhman/memnoter/blob/main/LICENSE">MIT license</a>
+      </nav>
+      <p class="footer-copy">© 2026 Memnoter</p>
+    </div>
   </footer>
+  <script src="demo.js"></script>
 </body>
 </html>
