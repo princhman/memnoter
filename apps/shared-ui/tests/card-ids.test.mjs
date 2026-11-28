@@ -582,6 +582,10 @@ test("scheduled backup notices deduplicate file contents and Review applies an e
 
 for (const [name, change] of [
   ["a split backup edit applies to an unchanged note with a unique heading ID", "unchanged"],
+  ["split backup files apply together with one undo and preserve card review history", "batch"],
+  ["a split backup edit rejects an identical replacement with the same heading ID", "replace"],
+  ["a split backup edit rejects a delete-only update with the same editor content", "delete-only"],
+  ["a split backup edit without a Yjs revision stays visible and read-only", "legacy"],
   ["a split backup edit stays read-only when identical headings are reordered", "move"],
   ["a split backup edit cannot target the identical sibling of a deleted heading", "delete"],
   ["a split backup edit cannot target a copy that inherits the original heading ID", "copy"],
@@ -592,7 +596,7 @@ for (const [name, change] of [
     let finishExport;
     const exportFinished = new Promise(resolve => { finishExport = resolve; });
     try {
-      await withCore(async ({ page, source, call, open, editor }) => {
+      await withCore(async ({ page, source, call, open, editor, schedules, grade, log }) => {
         const doc = new Y.Doc();
         const fragment = doc.getXmlFragment("default");
         for (const id of ["original", "sibling"]) {
@@ -604,15 +608,37 @@ for (const [name, change] of [
           heading.insert(0, [text]);
           fragment.push([heading]);
         }
+        if (change === "batch") {
+          const cardBlock = new Y.XmlElement("paragraph");
+          cardBlock.setAttribute("cardId", "00000000-0000-0000-0000-000000000409");
+          const cardText = new Y.XmlText();
+          cardText.insert(0, "Capital of France? :: Paris");
+          cardBlock.insert(0, [cardText]);
+          fragment.insert(1, [cardBlock]);
+        }
         await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc)) });
         await open(source);
 
         const relativePath = `geography - ${source}/0001 - Maps.md`;
         const file = join(folder, "Memnoter Backup", relativePath);
         await exportFinished;
-        await writeFile(file, "# Maps\n\nExternal edit\n");
+        const secondPath = `geography - ${source}/0002 - Maps.md`;
+        const secondFile = join(folder, "Memnoter Backup", secondPath);
+        const firstEdit = change === "batch"
+          ? "# Maps\n\nFirst edit\n\nCapital of France? :: Paris\n"
+          : "# Maps\n\nExternal edit\n";
+        const secondEdit = "# Maps\n\nSecond edit\n";
+        await writeFile(file, firstEdit);
+        if (change === "batch") await writeFile(secondFile, secondEdit);
         enabled = false;
-        if (change === "copy") {
+        const before = await editor.evaluate(el => el.editor.getJSON());
+        if (change === "legacy") {
+          const path = join(folder, "Memnoter Backup", ".memnoter-manifest.json");
+          const manifest = JSON.parse(await readFile(path, "utf8"));
+          manifest[relativePath].note_snapshot_hash = manifest[relativePath].note_revision_hash;
+          delete manifest[relativePath].note_revision_hash;
+          await writeFile(path, JSON.stringify(manifest));
+        } else if (change === "copy") {
           await editor.evaluate(el => {
             const { state, view } = el.editor;
             view.dispatch(state.tr.insert(0, state.doc.firstChild));
@@ -621,15 +647,33 @@ for (const [name, change] of [
           assert.equal(ids[0], "original", "the inserted copy inherited the original ID");
           assert.notEqual(ids[1], "original", "TipTap gave the original heading a different ID");
           assert.equal(ids[2], "sibling");
-        } else if (change !== "unchanged") {
+        } else if (change !== "unchanged" && change !== "batch") {
           const since = Y.encodeStateVector(doc);
-          const original = fragment.get(0).clone();
-          fragment.delete(0, 1);
-          if (change === "move") fragment.push([original]);
+          if (change === "delete-only") {
+            fragment.get(0).removeAttribute("level");
+            assert.deepEqual(Y.encodeStateVector(doc), since);
+          } else {
+            const original = fragment.get(0).clone();
+            fragment.delete(0, 1);
+            if (change === "move") fragment.push([original]);
+            if (change === "replace") fragment.insert(0, [original]);
+          }
           await call("add_update", { moduleId: source, bytes: Array.from(Y.encodeStateAsUpdate(doc, since)) });
           await page.reload();
+          if (change === "replace" || change === "delete-only") {
+            assert.deepEqual(await editor.evaluate(el => el.editor.getJSON()), before);
+          }
         }
         doc.destroy();
+        let reviewed, history;
+        if (change === "batch") {
+          await schedules(source, 1);
+          const [card] = await call("due_cards", { moduleId: source, now: Number.MAX_SAFE_INTEGER });
+          await grade(card);
+          [reviewed] = await schedules(source, 1);
+          history = log.all(reviewed.id);
+          assert.equal(history.length, 1);
+        }
         await page.getByRole("link", { name: "Settings", exact: true }).click();
         await page.getByRole("button", { name: "Check backup for edits", exact: true }).click();
         const dialog = page.getByRole("dialog", { name: "Backup edits" });
@@ -641,10 +685,31 @@ for (const [name, change] of [
           assert.deepEqual(await editor.evaluate(el => el.editor.getJSON().content.map(node =>
             node.attrs?.["data-toc-id"] ?? node.content?.[0]?.text
           ).filter(Boolean)), ["original", "External edit", "sibling"]);
+        } else if (change === "batch") {
+          await dialog.getByText(secondPath, { exact: true }).waitFor();
+          await dialog.getByRole("button", { name: `Keep ${secondPath}`, exact: true }).waitFor();
+          await dialog.getByRole("button", { name: "Apply all 2 files for Geography", exact: true }).click();
+          const first = editor.getByText("First edit", { exact: true });
+          const second = editor.getByText("Second edit", { exact: true });
+          await first.waitFor();
+          await second.waitFor();
+          const cardId = () => editor.evaluate(el => el.editor.getJSON().content.find(node => node.attrs?.cardId)?.attrs.cardId);
+          assert.equal(await cardId(), reviewed.id);
+          await page.getByRole("button", { name: "Undo", exact: true }).click();
+          await first.waitFor({ state: "detached" });
+          await second.waitFor({ state: "detached" });
+          await page.getByRole("button", { name: "Redo", exact: true }).click();
+          await first.waitFor();
+          await second.waitFor();
+          assert.equal(await cardId(), reviewed.id);
+          assert.deepEqual((await schedules(source, 1))[0], reviewed);
+          assert.deepEqual(log.all(reviewed.id), history);
+          assert.equal(await readFile(secondFile, "utf8"), secondEdit);
         } else {
-          assert.equal(await apply.count(), 0, "the changed note must not receive the split-file edit");
+          assert.equal(await apply.count(), 0, "the unverified note must not receive the split-file edit");
+          await dialog.getByRole("button", { name: `Keep ${relativePath}`, exact: true }).click();
         }
-        assert.equal(await readFile(file, "utf8"), "# Maps\n\nExternal edit\n");
+        assert.equal(await readFile(file, "utf8"), firstEdit);
       }, async (command, args, call) => {
         if (command === "local_backup_settings") return { folder, enabled, splitByHeading: true };
         if (command === "local_backup_image_types") return {};

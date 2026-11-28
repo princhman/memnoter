@@ -26,7 +26,7 @@ enum Module {
         filename: String,
         markdown: String,
         sections: Option<Vec<Section>>,
-        note_snapshot: Option<String>,
+        note_revision: Option<String>,
         attachments: BTreeMap<String, String>,
     },
     Skipped {
@@ -55,7 +55,7 @@ struct OwnedFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     heading_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    note_snapshot_hash: Option<String>,
+    note_revision_hash: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -377,7 +377,7 @@ pub struct EditedFile {
     section: Option<usize>,
     baseline_hash: Option<String>,
     heading_id: Option<String>,
-    note_snapshot_hash: Option<String>,
+    note_revision_hash: Option<String>,
 }
 
 pub fn edited_files(data_dir: &Path, selected: &Path) -> CommandResult<Vec<EditedFile>> {
@@ -425,7 +425,7 @@ pub fn edited_files(data_dir: &Path, selected: &Path) -> CommandResult<Vec<Edite
             section: file.section,
             baseline_hash: file.hash,
             heading_id: file.heading_id,
-            note_snapshot_hash: file.note_snapshot_hash,
+            note_revision_hash: file.note_revision_hash,
         });
     }
     Ok(edits)
@@ -482,22 +482,22 @@ fn reconcile(
     let mut conflicts = BTreeSet::new();
     let mut warnings = Vec::new();
     for (id, module) in snapshot.modules {
-        let (name, filename, markdown, sections, note_snapshot, module_attachments) = match module {
+        let (name, filename, markdown, sections, note_revision, module_attachments) = match module {
             Module::Ready {
                 name,
                 filename,
                 markdown,
                 sections,
-                note_snapshot,
+                note_revision,
                 attachments,
-            } => (name, filename, markdown, sections, note_snapshot, attachments),
+            } => (name, filename, markdown, sections, note_revision, attachments),
             Module::Skipped { reason } => {
                 preserve_module(root, &id, &previous, &mut current);
                 warnings.push(reason);
                 continue;
             }
         };
-        let note_snapshot_hash = note_snapshot.as_deref().map(markdown_hash);
+        let note_revision_hash = note_revision.as_deref().map(markdown_hash);
         let result = (|| -> CommandResult<()> {
             let filename = filenames.remove(&id).unwrap_or(filename);
             let files =
@@ -549,7 +549,7 @@ fn reconcile(
                         file.note_name = Some(name.clone());
                         file.section = *section;
                         file.heading_id.clone_from(heading_id);
-                        file.note_snapshot_hash = section.and(note_snapshot_hash.clone());
+                        file.note_revision_hash = section.and(note_revision_hash.clone());
                     }
                     continue;
                 }
@@ -577,7 +577,7 @@ fn reconcile(
                     file.note_name = Some(name.clone());
                     file.section = section;
                     file.heading_id = heading_id;
-                    file.note_snapshot_hash = section.and(note_snapshot_hash.clone());
+                    file.note_revision_hash = section.and(note_revision_hash.clone());
                 }
                 file.modules.insert(id.clone());
             }
@@ -629,7 +629,7 @@ fn reconcile(
         .flat_map(|(_, file)| file.modules.iter().cloned())
         .collect();
     carry_attachment_owners(&mut current, &previous_by_path, &retained_note_owners);
-    save_manifest(root, &current)?;
+    save_cleanup_manifest(root, &current, &obsolete, &previous_by_path)?;
     if !obsolete.is_empty() {
         clean_obsolete(
             root,
@@ -640,6 +640,27 @@ fn reconcile(
         )?;
     }
     Ok(warnings)
+}
+
+fn save_cleanup_manifest(
+    root: &Path,
+    current: &BTreeMap<String, OwnedFile>,
+    obsolete: &[(String, String)],
+    previous_by_path: &BTreeMap<String, &OwnedFile>,
+) -> CommandResult<()> {
+    if obsolete.is_empty() {
+        return save_manifest(root, current);
+    }
+    // Until cleanup checks the old notes again, a concurrent edit can still
+    // need any attachment they owned. Persist those links for crash recovery.
+    let pending_note_owners = obsolete
+        .iter()
+        .filter(|(path, _)| markdown_path(path))
+        .flat_map(|(path, _)| current[path].modules.iter().cloned())
+        .collect();
+    let mut staged = current.clone();
+    carry_attachment_owners(&mut staged, previous_by_path, &pending_note_owners);
+    save_manifest(root, &staged)
 }
 
 fn carry_attachment_owners(
@@ -735,7 +756,7 @@ mod tests {
             filename: format!("{name}.md"),
             markdown: markdown.into(),
             sections: None,
-            note_snapshot: None,
+            note_revision: None,
             attachments,
         }
     }
@@ -789,7 +810,7 @@ mod tests {
             name: "Note".into(),
             filename: "Note.md".into(),
             markdown: String::new(),
-            note_snapshot: None,
+            note_revision: None,
             sections: Some(vec![
                 Section {
                     filename: "0001 - Maps.md".into(),
@@ -1152,7 +1173,7 @@ mod tests {
             name: "Edited".into(),
             filename: "Edited.md".into(),
             markdown: String::new(),
-            note_snapshot: None,
+            note_revision: None,
             sections: Some(vec![Section {
                 filename: "0001 - Maps.md".into(),
                 markdown: section.clone(),
@@ -1195,6 +1216,15 @@ mod tests {
 
     #[test]
     fn an_edit_during_cleanup_keeps_its_attachment_after_the_other_export_drops_it() {
+        late_cleanup_edit_keeps_attachment(false);
+    }
+
+    #[test]
+    fn retry_after_interrupted_cleanup_keeps_the_late_edits_attachment() {
+        late_cleanup_edit_keeps_attachment(true);
+    }
+
+    fn late_cleanup_edit_keeps_attachment(interrupted: bool) {
         let backup = Backup::new();
         let image = "00000000-0000-0000-0000-000000000001";
         let name = format!("{image}.png");
@@ -1217,19 +1247,21 @@ mod tests {
         let mut staged = previous.clone();
         staged.get_mut(&path).unwrap().modules = BTreeSet::from(["other".into()]);
         let obsolete = vec![("Edited.md".into(), markdown_hash(&markdown))];
-        save_manifest(&backup.root, &staged).unwrap();
+        save_cleanup_manifest(&backup.root, &staged, &obsolete, &previous_by_path).unwrap();
         let edited = format!("{markdown}\n\nExternal edit");
         let edited_path = backup.root.join("Edited.md");
         fs::write(&edited_path, &edited).unwrap();
 
-        clean_obsolete(
-            &backup.root,
-            staged,
-            obsolete,
-            &previous_by_path,
-            BTreeSet::new(),
-        )
-        .unwrap();
+        if !interrupted {
+            clean_obsolete(
+                &backup.root,
+                staged,
+                obsolete,
+                &previous_by_path,
+                BTreeSet::new(),
+            )
+            .unwrap();
+        }
         assert!(backup
             .run(with_modules([("other", ready("Other", "No image", BTreeMap::new()))]))
             .is_empty());

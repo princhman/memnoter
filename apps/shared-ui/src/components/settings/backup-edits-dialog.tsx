@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useActiveEditor } from "@/lib/active-editor-context";
-import { applyBackupHunks, buildBackupReview, readBackupEdits, recheckBackupFile, type BackupReviewFile } from "@/lib/backup-edit-review";
+import { applyBackupHunks, buildBackupReview, readBackupEdits, recheckBackupFiles, type BackupReviewFile } from "@/lib/backup-edit-review";
 import { localBackupSettings } from "@/lib/local-backup";
 import { queryClient } from "@/lib/query-client";
 
@@ -81,20 +81,20 @@ function Review({ folder, files }: { folder: string; files: BackupReviewFile[] }
   const [finished, setFinished] = useState<string[]>([]);
   const remaining = files.filter(file => !finished.includes(file.path));
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<NoteFile | null>(null);
+  const [pending, setPending] = useState<NoteFile[] | null>(null);
   const [busy, setBusy] = useState(false);
   const appliedEditor = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
   const { activeEditor } = useActiveEditor();
   const close = () => backupReview.setState(() => null);
 
-  async function apply(note: NoteFile) {
+  async function apply(notes: NoteFile[]) {
     setError(null);
     setBusy(true);
     try {
-      await recheckBackupFile(folder, note);
-      await navigate({ to: "/$moduleId", params: { moduleId: note.moduleId } });
-      setPending(note);
+      await recheckBackupFiles(folder, notes);
+      await navigate({ to: "/$moduleId", params: { moduleId: notes[0].moduleId } });
+      setPending(notes);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
       setBusy(false);
@@ -102,20 +102,20 @@ function Review({ folder, files }: { folder: string; files: BackupReviewFile[] }
   }
 
   useEffect(() => {
-    if (!pending || activeEditor?.moduleId !== pending.moduleId ||
+    if (!pending || activeEditor?.moduleId !== pending[0].moduleId ||
       (!activeEditor.isReady && !activeEditor.loadError)) return;
     setPending(null);
     setBusy(false);
     try {
       if (activeEditor.loadError) throw activeEditor.loadError;
-      applyBackupHunks(activeEditor.editor, pending, applicableHunks(pending));
+      applyBackupHunks(activeEditor.editor, pending);
       appliedEditor.current = activeEditor.editor.view.dom;
-      if (remaining.length <= 1) {
+      if (remaining.length === pending.length) {
         const editor = appliedEditor.current;
         close();
         requestAnimationFrame(() => editor.focus({ preventScroll: true }));
       } else {
-        setFinished(current => [...current, pending.path]);
+        setFinished(current => [...current, ...pending.map(file => file.path)]);
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
@@ -140,7 +140,13 @@ function Review({ folder, files }: { folder: string; files: BackupReviewFile[] }
         {remaining.length > 0 && (
           <ul aria-label="Edited files" className="flex max-h-[min(60vh,36rem)] min-h-0 flex-col gap-3 overflow-y-auto">
             {remaining.map(file => {
-              const applicable = file.kind === "note" ? applicableHunks(file).length : 0;
+              const applicable = file.kind === "note" ? applicableCount(file) : 0;
+              const section = file.kind === "note" ? file.input.section : undefined;
+              const batch = file.kind !== "note" || !applicable ? []
+                : section ? remaining.filter((candidate): candidate is NoteFile =>
+                  candidate.kind === "note" && candidate.moduleId === file.moduleId &&
+                  candidate.input.section?.revision === section.revision && applicableCount(candidate) > 0)
+                : [file];
               const status = file.kind === "read-only" ? file.reason
                 : !file.hunks.length ? "The Markdown content already matches the note."
                 : !applicable ? "These edits cannot be safely applied."
@@ -155,9 +161,12 @@ function Review({ folder, files }: { folder: string; files: BackupReviewFile[] }
                   <div className="flex gap-1">
                     <Button size="sm" variant="ghost" aria-label={`Keep ${file.path}`} disabled={busy}
                       onClick={() => keep(file.path)}>Keep</Button>
-                    {file.kind === "note" && applicable > 0 && (
-                      <Button size="sm" aria-label={`Apply ${file.path}`} disabled={busy}
-                        onClick={() => void apply(file)}>Apply</Button>
+                    {batch[0] === file && (
+                      <Button size="sm"
+                        aria-label={batch.length === 1 ? `Apply ${file.path}` : `Apply all ${batch.length} files for ${file.title}`}
+                        disabled={busy} onClick={() => void apply(batch)}>
+                        {batch.length === 1 ? "Apply" : `Apply all ${batch.length}`}
+                      </Button>
                     )}
                   </div>
                 </li>
@@ -171,6 +180,6 @@ function Review({ folder, files }: { folder: string; files: BackupReviewFile[] }
   );
 }
 
-function applicableHunks(note: NoteFile) {
-  return note.hunks.flatMap((hunk, index) => hunk.reason ? [] : [index]);
+function applicableCount(note: NoteFile) {
+  return note.hunks.filter(hunk => !hunk.reason).length;
 }

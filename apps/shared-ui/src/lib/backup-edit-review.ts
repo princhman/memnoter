@@ -1,5 +1,5 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { yDocToProsemirrorJSON, yUndoPluginKey } from "@tiptap/y-tiptap";
+import { yDocToProsemirrorJSON, ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
 import type { Editor } from "@tiptap/core";
 import * as Y from "yjs";
 import { call } from "./backend";
@@ -8,7 +8,7 @@ import { applySavedContent, type GetContentResponse } from "./content";
 import { listDocuments } from "./documents";
 import { isNoteFromNewerVersion, noteSchema } from "./editor-schema";
 import { isSchemaReadOnly } from "./guarded-collaboration";
-import { backupImageExtension, backupPdfAppendix, backupSectionMarkdown, backupSections, noteFilename } from "./local-backup";
+import { backupImageExtension, backupNoteRevision, backupPdfAppendix, backupSectionMarkdown, backupSections, noteFilename } from "./local-backup";
 import { applyPendingSaves, saveQueue } from "./saves";
 import type { Module } from "./types";
 import { assertWritable } from "./write-lifecycle";
@@ -22,12 +22,12 @@ type EditedFile = {
   section?: number | null;
   headingId?: string | null;
   baselineHash?: string | null;
-  noteSnapshotHash?: string | null;
+  noteRevisionHash?: string | null;
 };
 
 type SectionRef = { index: number; headingId: string | null };
 
-type DiffInput = Pick<Parameters<typeof diffBackupNote>[0], "imagePath" | "pdfAppendix"> & { edited: string; section?: SectionRef & { original: string; baselineHash: string; snapshot: string; snapshotHash: string } };
+type DiffInput = Pick<Parameters<typeof diffBackupNote>[0], "imagePath" | "pdfAppendix"> & { edited: string; section?: SectionRef & { original: string; baselineHash: string; revision: string; revisionHash: string } };
 
 export type BackupReviewFile = { path: string; title: string } & (
   | { kind: "read-only"; reason: string }
@@ -52,9 +52,6 @@ function findSection(doc: ProseMirrorNode, { index, headingId }: SectionRef) {
 function reviewedHunks(doc: ProseMirrorNode, input: DiffInput) {
   if (!input.section) {
     return { offset: 0, hunks: protectBackupHunks(doc, diffBackupNote({ ...input, current: doc.toJSON() })) };
-  }
-  if (JSON.stringify(doc.toJSON()) !== input.section.snapshot) {
-    throw new Error("The note changed. Check for edits again.");
   }
   const section = findSection(doc, input.section);
   if (!section || backupSectionMarkdown(section.content, input.imagePath) !== input.section.original) {
@@ -107,9 +104,9 @@ export async function buildBackupReview(edited: EditedFile[]): Promise<BackupRev
         pdfAppendix: file.section == null ? backupPdfAppendix(pdfs, module.id) : "",
       };
       if (file.section != null) {
-        const snapshot = JSON.stringify(doc.toJSON());
-        if (!file.noteSnapshotHash ||
-          await call<string>("local_backup_markdown_hash", { markdown: snapshot }) !== file.noteSnapshotHash) {
+        const revision = backupNoteRevision(yDoc);
+        if (!revision || !file.noteRevisionHash ||
+          await call<string>("local_backup_markdown_hash", { markdown: revision }) !== file.noteRevisionHash) {
           return readOnly("The note no longer matches its backup snapshot. The edit is still in the backup file.");
         }
         const ref = { index: file.section, headingId: file.headingId ?? null };
@@ -120,7 +117,7 @@ export async function buildBackupReview(edited: EditedFile[]): Promise<BackupRev
           (original !== file.markdown && await call<string>("local_backup_markdown_hash", { markdown: original }) !== file.baselineHash)) {
           return readOnly("This section has changed in Memnoter since it was backed up.");
         }
-        input.section = { ...ref, original, baselineHash: file.baselineHash, snapshot, snapshotHash: file.noteSnapshotHash };
+        input.section = { ...ref, original, baselineHash: file.baselineHash, revision, revisionHash: file.noteRevisionHash };
       }
       const { hunks } = reviewedHunks(doc, input);
       return { kind: "note", path: file.path, title, moduleId: module.id, hash: file.hash, hunks, input };
@@ -132,35 +129,55 @@ export async function buildBackupReview(edited: EditedFile[]): Promise<BackupRev
   }));
 }
 
-export async function recheckBackupFile(folder: string, note: Extract<BackupReviewFile, { kind: "note" }>) {
+type NoteFile = Extract<BackupReviewFile, { kind: "note" }>;
+
+export async function recheckBackupFiles(folder: string, notes: readonly NoteFile[]) {
   const [files, modules, pdfs] = await Promise.all([
     readBackupEdits(folder), call<Module[]>("modules"), listDocuments(),
   ]);
-  const file = files.find(file => file.path === note.path && file.hash === note.hash && file.moduleId === note.moduleId);
-  const module = modules.find(module => module.id === note.moduleId);
-  if (!file || !module || !ownsNote(file, module) ||
-    (note.input.section
-      ? file.section !== note.input.section.index || (file.headingId ?? null) !== note.input.section.headingId ||
-        file.baselineHash !== note.input.section.baselineHash || file.noteSnapshotHash !== note.input.section.snapshotHash
-      : backupPdfAppendix(pdfs, note.moduleId) !== note.input.pdfAppendix)) {
-    throw new Error("The backup file or note changed. Check for edits again.");
+  for (const note of notes) {
+    const file = files.find(file => file.path === note.path && file.hash === note.hash && file.moduleId === note.moduleId);
+    const module = modules.find(module => module.id === note.moduleId);
+    if (!file || !module || !ownsNote(file, module) ||
+      (note.input.section
+        ? file.section !== note.input.section.index || (file.headingId ?? null) !== note.input.section.headingId ||
+          file.baselineHash !== note.input.section.baselineHash || file.noteRevisionHash !== note.input.section.revisionHash
+        : file.section != null || backupPdfAppendix(pdfs, note.moduleId) !== note.input.pdfAppendix)) {
+      throw new Error("The backup file or note changed. Check for edits again.");
+    }
   }
 }
 
-export function applyBackupHunks(editor: Editor, note: Extract<BackupReviewFile, { kind: "note" }>, selected: readonly number[]) {
+export function applyBackupHunks(editor: Editor, notes: readonly NoteFile[]) {
   assertWritable();
   if (editor.isDestroyed || !editor.isEditable || isSchemaReadOnly(editor)) {
     throw new Error("This note is currently read-only.");
   }
-  const current = editor.state.doc;
-  const { offset, hunks: latest } = reviewedHunks(current, note.input);
-  if (JSON.stringify(latest) !== JSON.stringify(note.hunks)) {
-    throw new Error("The note changed after you checked the backup. Check for edits again.");
+  const first = notes[0];
+  if (!first) return;
+  const section = first.input.section;
+  if (section) {
+    const yDoc: unknown = ySyncPluginKey.getState(editor.state)?.doc;
+    if (!(yDoc instanceof Y.Doc) || backupNoteRevision(yDoc) !== section.revision ||
+      notes.some(note => note.moduleId !== first.moduleId || note.input.section?.revision !== section.revision) ||
+      new Set(notes.map(note => note.input.section?.index)).size !== notes.length) {
+      throw new Error("The note changed after you checked the backup. Check for edits again.");
+    }
+  } else if (notes.length !== 1) {
+    throw new Error("Only heading files from the same backup can be applied together.");
   }
-  const hunks = selected.map(index => {
-    const hunk = latest[index];
-    return { ...hunk, from: hunk.from + offset, to: hunk.to + offset };
-  });
+  const current = editor.state.doc;
+  const hunks = [...notes]
+    .sort((a, b) => (a.input.section?.index ?? 0) - (b.input.section?.index ?? 0))
+    .flatMap(note => {
+      const { offset, hunks: latest } = reviewedHunks(current, note.input);
+      if (JSON.stringify(latest) !== JSON.stringify(note.hunks)) {
+        throw new Error("The note changed after you checked the backup. Check for edits again.");
+      }
+      return latest.filter(hunk => !hunk.reason).map(hunk => ({
+        ...hunk, from: hunk.from + offset, to: hunk.to + offset,
+      }));
+    });
   const tr = backupChangeTransaction(editor.state, hunks);
   if (!tr.docChanged) return;
   const undo = yUndoPluginKey.getState(editor.state)?.undoManager;
