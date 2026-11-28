@@ -37,7 +37,7 @@ function FullscreenPdf({ documentId }: { documentId: string }) {
 
 /** The note stays mounted, with the native host's original scroll container. */
 export function NativePdfWorkspace({ moduleId, actions, children, sourceDocumentId, onCloseSource, questions = false }: { moduleId: string | null; actions: Ref<NativePdfActions>; children: ReactNode; sourceDocumentId?: string | null; onCloseSource?: () => void; questions?: boolean }) {
-  const pane = usePdfPane(moduleId ?? "");
+  const pane = usePdfPane(moduleId ?? "", { worksheetSurfaceVisible: questions });
   const router = useRouter();
   const location = useRouterState({ select: state => state.location });
   const routedDocumentId = useRouterState({ select: state => {

@@ -17,6 +17,15 @@ function noteState() {
   return state;
 }
 
+function algebraBank() {
+  return {
+    questions: { q: { title: "Solve 2x + 3 = 11", order: 0, revisionId: "r" } },
+    revisions: { r: { questionId: "q", rootPartId: "p", parts: { p: { label: "", cropIds: [] } } } },
+    attempts: { a: { title: "Algebra practice", questions: [{ questionId: "q", revisionId: "r" }] } },
+    answers: {}, crops: {},
+  };
+}
+
 function samplePdf() {
   const stream = "BT /F1 18 Tf 20 180 Td (Example equation) Tj ET\n";
   const objects = [
@@ -48,15 +57,9 @@ test("opening, resizing and closing a note beside a worksheet preserves both edi
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.route("**/repos/princhman/memnoter/releases/latest", route => route.fulfill({ status: 404, json: {} }));
-    const setup = ({ state }) => {
+    const setup = ({ state, bank }) => {
       Object.defineProperty(navigator, "platform", { value: "MacIntel" });
       localStorage.setItem("app-state", JSON.stringify({ modulePageByModule: { algebra: "questions" } }));
-      const bank = {
-        questions: { q: { title: "Solve 2x + 3 = 11", order: 0, revisionId: "r" } },
-        revisions: { r: { questionId: "q", rootPartId: "p", parts: { p: { label: "", cropIds: [] } } } },
-        attempts: { a: { title: "Algebra practice", questions: [{ questionId: "q", revisionId: "r" }] } },
-        answers: {}, crops: {},
-      };
       window.noteUpdates = [];
       window.answerUpdates = [];
       window.installTestBridge({ tauri: { invoke: async (command, args) => {
@@ -91,7 +94,7 @@ test("opening, resizing and closing a note beside a worksheet preserves both edi
         if (moduleId !== "equations") throw new Error("Wrong note persisted");
       }
     };
-    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; (${setup.toString()})(${JSON.stringify({ state: noteState() })});`);
+    await page.addInitScript(`window.installTestBridge = ${installTestBridge.toString()}; (${setup.toString()})(${JSON.stringify({ state: noteState(), bank: algebraBank() })});`);
     await page.route("**/diagram.svg", route => route.fulfill({
       contentType: "image/svg+xml",
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="seagreen"/></svg>',
@@ -210,6 +213,64 @@ test("opening, resizing and closing a note beside a worksheet preserves both edi
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();
+    await server.close();
+  }
+});
+
+test("native Files opens a same-module PDF while a worksheet is hidden in Questions", async () => {
+  const { createServer, webkit } = browserHarness(import.meta.url);
+  const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: "error" });
+  try {
+    await server.listen();
+    const browser = await webkit.launch();
+    const page = await browser.newPage({ viewport: { width: 1180, height: 820 }, hasTouch: true });
+    page.setDefaultTimeout(10000);
+    const pdf = Buffer.from(samplePdf());
+    await page.addInitScript(({ bank, data, total }) => {
+      const documents = [{ id: "algebra-pdf", moduleId: "algebra", moduleName: "Algebra",
+        name: "Example.pdf", size: total, pageCount: 1, createdAt: 0, available: true }];
+      window.installTestBridge({ native(message) {
+        if (message.kind !== "call") return;
+        const { id, command, args } = message;
+        let value = null;
+        if (command === "modules") value = [{ id: "algebra", name: "Algebra" }];
+        if (command === "get_content") value = { state: [], updates: [], files: [] };
+        if (command === "question_bank_enabled") value = true;
+        if (command === "question_bank_get") value = bank;
+        if (command === "worksheet_answer_document_load") value = { document: [0, 0], expected: "base", plainText: null };
+        if (command === "list_documents") value = documents.filter(doc => !args?.moduleId || doc.moduleId === args.moduleId);
+        if (command === "read_pdf_chunk" && args.documentId === "algebra-pdf") value = { total, offset: 0, data };
+        if (["unindexed_modules", "unindexed_card_modules", "card_schedules", "sync_cards"].includes(command)) value = [];
+        queueMicrotask(() => window.__memnoterBridge.resolve(id, value));
+      } });
+    }, { bank: algebraBank(), data: pdf.toString("base64"), total: pdf.length });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/editor.html`);
+    await page.waitForFunction(() => window.memnoterEditor);
+    await page.evaluate(async () => {
+      document.documentElement.classList.add("native-tablet", "native-worksheet-beside-toolbar");
+      await window.memnoterEditor.open("algebra");
+      await window.memnoterEditor.openQuestions("algebra");
+    });
+    await page.getByRole("button", { name: "Resume Algebra practice" }).click();
+    const attempt = page.getByRole("region", { name: "Algebra practice" });
+    await attempt.waitFor();
+
+    await page.evaluate(() => window.memnoterEditor.open("algebra"));
+    await attempt.waitFor({ state: "hidden" });
+    // Mirror the native module-filtered Files picker's handoff to the web host.
+    await page.evaluate(async () => {
+      const api = window.memnoterEditor;
+      await api.open("algebra");
+      await api.refreshDocuments("algebra");
+      api.pdfCommand("openFile", "algebra-pdf");
+    });
+    const files = page.getByRole("complementary", { name: "Files" });
+    await files.locator(".textLayer").getByText("Example equation").waitFor();
+
+    await page.evaluate(() => window.memnoterEditor.openQuestions("algebra"));
+    await files.waitFor({ state: "hidden" });
+    await attempt.waitFor();
+  } finally {
     await server.close();
   }
 });
