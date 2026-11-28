@@ -430,7 +430,7 @@ body {
 
 .tiptap .note-code-block {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) fit-content(55%);
+    grid-template-columns: minmax(0, 1fr) fit-content(100%);
     margin: 1.25rem 0;
     border-radius: 0.75rem;
     background: var(--secondary);

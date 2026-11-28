@@ -31,7 +31,9 @@ export const localBackupError = queryOptions({
 export function noteFilename(module: Module) {
   const title = [...module.name.normalize("NFC").toLowerCase().replace(/[\u0000-\u001f/\\:*?"<>|#[\]]/g, " ")
     .trim().replace(/^\.+/, "")].slice(0, 45).join("").trim();
-  return `${title || "Untitled"} - ${module.id}.md`;
+  const portableTitle = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$) *\./.test(title)
+    ? `note-${title}` : title;
+  return `${portableTitle || "Untitled"} - ${module.id}.md`;
 }
 
 export function backupImageExtension(mime: string) {

@@ -133,7 +133,7 @@ export const capabilities = {
   get nativeMenu() { return isTauri() && IS_MAC; },
   get nativeHistory() { return isTauri(); },
   get updates() { return isTauri() && !isSecondaryWindow(); },
-  get localBackup() { return isTauri() && IS_MAC && !isSecondaryWindow(); },
+  get localBackup() { return isTauri() && !isSecondaryWindow(); },
   get folderImport() { return isTauri(); },
   get windowControls() { return isTauri(); },
   // WebView2 spell checks with the Windows checker, which the shell can ask.

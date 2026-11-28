@@ -2380,7 +2380,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "memnoter"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "keyring",
  "memnoter-core",
@@ -2399,7 +2399,7 @@ dependencies = [
 
 [[package]]
 name = "memnoter-core"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2418,7 +2418,7 @@ dependencies = [
 
 [[package]]
 name = "memnoter-ffi"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "memnoter-core",
  "serde_json",

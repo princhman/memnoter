@@ -51,6 +51,11 @@ Never run a dev server in the foreground of a tool call.
 
 ## One platform first
 
+Desktop features ship on every supported desktop platform (macOS, Windows,
+and Linux). Check feature availability and its native command paths on all
+three before release. Get the user’s explicit agreement before shipping a
+platform exception.
+
 Build and check a feature on the one platform the user is testing. Don't port
 it to, or polish it for, the other platforms until the user says it's right.
 Then port it and check every platform: Mac, Windows (Chromium), iPad and
