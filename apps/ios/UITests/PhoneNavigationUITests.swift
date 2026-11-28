@@ -13,6 +13,11 @@ final class PhoneNavigationUITests: XCTestCase {
         editor.tap()
         let style = app.buttons["Block style"]
         XCTAssertTrue(style.existsOrWait(timeout: 5))
+        let leadingControls = [style, app.buttons["Bold"], app.buttons["Italic"],
+                               app.buttons["Underline"], app.buttons["Strikethrough"]]
+        let positions = leadingControls.map { $0.frame.midX }
+        XCTAssertTrue(zip(positions, positions.dropFirst()).allSatisfy { pair in pair.0 < pair.1 },
+                      "Block style must lead the inline formatting controls from left to right")
         style.tap()
         app.buttons["H1"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Heading 1"), object: style)], timeout: 5), .completed)
