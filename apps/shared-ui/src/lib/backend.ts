@@ -77,7 +77,7 @@ export async function call<T>(command: string, args?: object): Promise<T> {
 
 function dispatchCall<T>(command: string, args?: object): Promise<T> {
   if (!isNativeHost()) {
-    const shell = command.startsWith("plugin:") || ["set_update_installing", "open_window", "show_main_settings", "request_desktop_file", "primary_window_ready", "confirm_window_close", "cancel_window_exit", "request_restart", "confirm_exit", "confirm_restart", "set_editor_history", "pick_pdfs", "pick_import_folder", "pick_import_image_folder", "read_import_images", "pick_anki_package", "read_anki_media", "close_anki_package", "edit_drawing", "drawing_committed", "check_spelling", "add_to_dictionary", "spelling_languages", "set_spelling_language"].includes(command);
+    const shell = command.startsWith("plugin:") || ["set_update_installing", "open_window", "show_main_settings", "request_desktop_file", "primary_window_ready", "confirm_window_close", "cancel_window_exit", "request_restart", "confirm_exit", "confirm_restart", "set_editor_history", "pick_pdfs", "pick_local_backup_folder", "pick_import_folder", "pick_import_image_folder", "read_import_images", "pick_anki_package", "read_anki_media", "close_anki_package", "edit_drawing", "drawing_committed", "check_spelling", "add_to_dictionary", "spelling_languages", "set_spelling_language"].includes(command);
     return (shell ? invoke<T>(command, args as Record<string, unknown> | undefined)
       : invoke<T>("core", { command, args: args ?? {} })).catch(error => {
         throw new Error(typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error));
@@ -133,6 +133,7 @@ export const capabilities = {
   get nativeMenu() { return isTauri() && IS_MAC; },
   get nativeHistory() { return isTauri(); },
   get updates() { return isTauri() && !isSecondaryWindow(); },
+  get localBackup() { return isTauri() && IS_MAC && !isSecondaryWindow(); },
   get folderImport() { return isTauri(); },
   get windowControls() { return isTauri(); },
   // WebView2 spell checks with the Windows checker, which the shell can ask.

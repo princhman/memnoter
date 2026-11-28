@@ -144,6 +144,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      diff:
+        specifier: 8.0.4
+        version: 8.0.4
       highlight.js:
         specifier: ^11.11.1
         version: 11.12.0

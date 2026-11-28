@@ -17,14 +17,40 @@ fn main() {
     for line in std::io::stdin().lock().lines() {
         let line = line.unwrap();
         let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-        let result = memnoter_core::dispatch(
-            &core,
-            request["command"].as_str().unwrap(),
-            &request["args"].to_string(),
-        );
+        let command = request["command"].as_str().unwrap();
+        let args = &request["args"];
+        let result = match command {
+            "local_backup_markdown_hash" => Ok(serde_json::json!(
+                memnoter_core::markdown_backup::markdown_hash(args["markdown"].as_str().unwrap())
+            )),
+            "write_local_backup" => {
+                let folder = std::path::Path::new(args["folder"].as_str().unwrap());
+                let snapshot = serde_json::from_value(args["snapshot"].clone()).unwrap();
+                memnoter_core::markdown_backup::write(&dir, folder, snapshot)
+                    .map(|warnings| serde_json::json!(warnings))
+                    .map_err(serde_json::Value::String)
+            }
+            "resolve_local_backup_edits" => {
+                let folder = std::path::Path::new(args["folder"].as_str().unwrap());
+                let snapshot = serde_json::from_value(args["snapshot"].clone()).unwrap();
+                let reviewed = serde_json::from_value(args["reviewed"].clone()).unwrap();
+                memnoter_core::markdown_backup::resolve(&dir, folder, snapshot, reviewed)
+                    .map(|results| serde_json::json!(results))
+                    .map_err(serde_json::Value::String)
+            }
+            "read_local_backup_edits" => {
+                let folder = std::path::Path::new(args["folder"].as_str().unwrap());
+                memnoter_core::markdown_backup::edited_files(&dir, folder)
+                    .map(|edits| serde_json::json!(edits))
+                    .map_err(serde_json::Value::String)
+            }
+            _ => memnoter_core::dispatch(&core, command, &args.to_string())
+                .map(|value| serde_json::from_str(&value).unwrap())
+                .map_err(|error| serde_json::json!(error)),
+        };
         let response = match result {
             Ok(value) => {
-                serde_json::json!({"value": serde_json::from_str::<serde_json::Value>(&value).unwrap()})
+                serde_json::json!({"value": value})
             }
             Err(error) => serde_json::json!({"error": error}),
         };

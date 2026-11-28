@@ -125,7 +125,7 @@ const CARD_SEPARATOR = /(?<!\S):{2,3}(?!\S)/;
 
 export type ImageResolver = (target: string, alt: string, width?: number, syntax?: "markdown" | "wiki") => JSONContent | undefined;
 
-function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageResolver): JSONContent[] {
+function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageResolver, resolveRemoteImages = false): JSONContent[] {
   const result: JSONContent[] = [];
   const marks = [...inherited];
   for (const token of tokens) {
@@ -142,20 +142,23 @@ function inlines(tokens: Token[], inherited: Mark[] = [], resolveImage?: ImageRe
       const highlight = marks.filter(mark => mark.type === "highlight");
       result.push({ type: "inlineMath", content: [text(token.content)], ...(highlight.length ? { marks: highlight } : {}) });
     }
-    else if (token.type === "obsidian_highlight") result.push(...inlines(token.children ?? [], [...marks, { type: "highlight", attrs: { color: "yellow" } }], resolveImage));
+    else if (token.type === "obsidian_highlight") result.push(...inlines(token.children ?? [], [...marks, { type: "highlight", attrs: { color: "yellow" } }], resolveImage, resolveRemoteImages));
     else if (token.type === "obsidian_placeholder") result.push({ type: "pastePlaceholder", content: [text(token.content)] });
     else if (token.type === "obsidian_image") result.push(resolveImage?.(token.content, "", typeof token.meta?.width === "number" ? token.meta.width : undefined, "wiki") ?? { type: "pastePlaceholder", content: [text(`[image: ${token.content.split(/[\\/]/).pop()}]`)] });
     else if (token.type === "image") {
       const src = String(token.attrGet("src") ?? "");
-      if (/^https?:\/\//i.test(src)) result.push(text(token.content || src, [...marks, { type: "link", attrs: { href: src } }]));
-      else result.push(resolveImage?.(src, token.content, undefined, "markdown") ?? { type: "pastePlaceholder", content: [text(`[image: ${src.split(/[\\/]/).pop()}]`)] });
+      const remote = /^https?:\/\//i.test(src);
+      const resolved = (!remote || resolveRemoteImages) && resolveImage?.(src, token.content, undefined, "markdown");
+      if (resolved) result.push(resolved);
+      else if (remote) result.push(text(token.content || src, [...marks, { type: "link", attrs: { href: src } }]));
+      else result.push({ type: "pastePlaceholder", content: [text(`[image: ${src.split(/[\\/]/).pop()}]`)] });
     }
   }
   return result;
 }
 
 /** Schema-independent TipTap JSON; never fetches files or generates identities. */
-export type MarkdownImportOptions = { removeNoteLinks?: boolean; removeUnsupportedEmbeds?: boolean; keepFrontMatter?: boolean };
+export type MarkdownImportOptions = { removeNoteLinks?: boolean; removeUnsupportedEmbeds?: boolean; keepFrontMatter?: boolean; resolveRemoteImages?: boolean };
 export function markdownToJSON(source: string, resolveImage?: ImageResolver, options: MarkdownImportOptions = {}): JSONContent {
   // Retain YAML as literal data, rather than interpreting its delimiters as headings.
   const front = options.keepFrontMatter && /^\uFEFF?---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(source);
@@ -210,12 +213,12 @@ export function markdownToJSON(source: string, resolveImage?: ImageResolver, opt
       const callout = stack.some(node => node.type === "blockquote") && /^\[!([\w-]+)\][+-]?(?:[ \t]+([^\n]*))?(?:\n|$)/.exec(value);
       if (callout) {
         const title = callout[2] || callout[1];
-        parent.content!.push(...inlines(md.parseInline(title, {})[0].children ?? [], [{ type: "bold" }], resolveImage));
+        parent.content!.push(...inlines(md.parseInline(title, {})[0].children ?? [], [{ type: "bold" }], resolveImage, options.resolveRemoteImages));
         value = value.slice(callout[0].length);
         if (value) parent.content!.push(text("\n"));
       }
       if (stack.some(node => node.type === "listItem")) value = value.replace(/^\[([ xX])\](?:[ \t]+|$)/, (_, done) => done === " " ? "☐ " : "☑ ");
-      parent.content!.push(...inlines(value === token.content ? token.children ?? [] : md.parseInline(value, {})[0].children ?? [], [], resolveImage));
+      parent.content!.push(...inlines(value === token.content ? token.children ?? [] : md.parseInline(value, {})[0].children ?? [], [], resolveImage, options.resolveRemoteImages));
     } else if (token.type === "fence" || token.type === "code_block") {
       add({ type: "codeBlock", attrs: { language: token.info.trim().split(/\s/)[0] || null }, content: token.content ? [text(token.content.replace(/\n$/, ""))] : [] });
     } else if (token.type === "obsidian_math_block") add({ type: "mathBlock", content: token.content ? [text(token.content)] : [] });

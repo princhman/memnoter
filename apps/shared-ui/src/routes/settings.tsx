@@ -6,12 +6,13 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconTooltip } from "@/components/icon-tooltip";
 import AboutSection from "@/components/settings/about-section";
+import LocalBackupSection from "@/components/settings/local-backup-section";
 import BackupsSection from "@/components/settings/backups-section";
 import NumberingSection from "@/components/settings/numbering-section";
 import OutlineSection from "@/components/settings/outline-section";
 import ReviewSection from "@/components/settings/review-section";
 import SpellingSection from "@/components/settings/spelling-section";
-import { isSecondaryWindow, call } from "@/lib/backend";
+import { capabilities, isSecondaryWindow, call } from "@/lib/backend";
 import { toast } from "sonner";
 import SyncSection from "@/components/settings/sync-section";
 
@@ -55,6 +56,7 @@ function Settings() {
         </label>
       </section>
       <SpellingSection />
+      {capabilities.localBackup && <LocalBackupSection />}
       {!secondary && <BackupsSection />}
       <AboutSection />
     </div>

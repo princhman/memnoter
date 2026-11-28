@@ -5,6 +5,8 @@ mod import_folder;
 mod import_anki;
 mod pdf_picker;
 #[cfg(target_os = "macos")]
+mod local_backup;
+#[cfg(target_os = "macos")]
 mod menu;
 #[cfg(target_os = "macos")]
 mod selection_limit;
@@ -38,10 +40,18 @@ fn confirm_restart(window: tauri::WebviewWindow) -> Result<(), String> {
 async fn core(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, std::sync::Arc<Core>>,
+    app: tauri::AppHandle,
     command: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, CoreError> {
     let core = state.inner().clone();
+    #[cfg(target_os = "macos")]
+    let backup_gate = app
+        .state::<std::sync::Arc<local_backup::BackupGate>>()
+        .inner()
+        .clone();
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     tauri::async_runtime::spawn_blocking(move || {
         match command.as_str() {
             "sync_credentials_save" => {
@@ -52,6 +62,18 @@ async fn core(
             "sync_credentials_delete" => {
                 sync_credentials::delete(&core)?;
                 return Ok(serde_json::Value::Null);
+            }
+            #[cfg(target_os = "macos")]
+            "local_backup_settings"
+            | "local_backup_image_types"
+            | "local_backup_markdown_hash"
+            | "set_local_backup_enabled"
+            | "set_local_backup_layout"
+            | "read_local_backup_edits"
+            | "resolve_local_backup_edits"
+            | "write_local_backup" => {
+                return local_backup::dispatch(&core, &backup_gate, &command, args)
+                    .map_err(CoreError::Storage);
             }
             _ => {}
         }
@@ -144,6 +166,8 @@ pub fn run() {
                     eprintln!("Unable to announce sync outbox: {error}");
                 }
             }));
+            #[cfg(target_os = "macos")]
+            app.manage(std::sync::Arc::new(local_backup::BackupGate::default()));
             app.manage(core.clone());
             app.manage(ExitGate::default());
             app.manage(windows::Windows::default());
@@ -168,6 +192,8 @@ pub fn run() {
             confirm_exit,
             confirm_restart,
             core,
+            #[cfg(target_os = "macos")]
+            local_backup::pick_local_backup_folder,
             import_folder::pick_import_folder,
             import_folder::pick_import_image_folder,
             import_anki::pick_anki_package,
