@@ -13,7 +13,7 @@ import { startSync } from "@/lib/sync/manager";
 import { MODULE_DELETED_REMOTELY_EVENT } from "@/lib/sync/apply-remote";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
-import { isSecondaryWindow, listen } from "@/lib/backend";
+import { isSecondaryWindow, isTauri, listen } from "@/lib/backend";
 import CreateModule from "@/components/create-module";
 import {
   SidebarInset,
@@ -144,8 +144,9 @@ const RootLayout = () => {
             </main>
           </SidebarInset>
           <div ref={toolbar} data-tauri-drag-region="deep" className="absolute left-0 top-0 z-50 flex h-8 items-center">
-            {IS_MAC && !isFullscreen && <div className="h-full w-18" />}
-            <div className="flex items-center pl-2 gap-1.5">
+            {/* Traffic lights cover this corner only in the Mac app window. */}
+            {isTauri() && IS_MAC && !isFullscreen && <div className="h-full w-18" />}
+            <div className="flex items-center pl-2.5 gap-1.5">
               <IconTooltip label="Toggle sidebar" hint={formatKeys(action("sidebar.toggle").keys)} side="bottom">
                 <SidebarTrigger aria-label="Toggle sidebar" />
               </IconTooltip>
