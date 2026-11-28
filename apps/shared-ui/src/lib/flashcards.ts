@@ -969,7 +969,11 @@ export const Flashcards = Extension.create<{ withCardTransfers?: WithCardTransfe
             // Attribute-only edits (joining clozes, assigning ids, undo) have
             // no mapped text ranges, but change the cards and their info dot.
             const ranges = changedRanges(tr.mapping.maps);
-            if (!ranges.length) return buildDecorations(tr.doc, schedules);
+            // Yjs loads the note in one replacement. Build its decorations
+            // together instead of finding and adding them one block at a time.
+            if (!ranges.length || ranges.some(({ from, to }) => from === 0 && to === tr.doc.content.size)) {
+              return buildDecorations(tr.doc, schedules);
+            }
             const notes = clozeNotesOf(tr.doc);
             if (cardGroupsOf(tr.doc).length || cardGroupsOf(tr.before).length || touchesNotes(tr, value.notes, notes, ranges)) {
               return buildDecorations(tr.doc, schedules);
