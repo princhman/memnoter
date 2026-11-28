@@ -209,26 +209,46 @@ fn load_manifest(root: &Path) -> CommandResult<BTreeMap<String, OwnedFile>> {
             return Err("Invalid path in Markdown backup manifest".into());
         }
     }
-    // A reset records its intended hash before writing. If the write did not
-    // land, recover the previous ownership (or leave a new path unowned).
-    let mut unwritten = Vec::new();
+    // Recover staged resets without treating intervening edits as owned bytes.
+    let mut discarded = Vec::new();
     for (path, file) in &mut previous {
         let Some(fallback) = file.reset_fallback.take() else {
             continue;
         };
-        check_export_folder(root, path.split_once('/').map(|(folder, _)| folder))?;
-        let hash = existing_bytes(&root.join(path))?
-            .as_deref()
-            .map(content_hash);
-        if hash != file.hash {
-            if fallback.hash.is_some() || fallback.external {
-                *file = *fallback;
-            } else {
-                unwritten.push(path.clone());
+        if let Some((folder, _)) = path.split_once('/') {
+            match fs::symlink_metadata(root.join(folder)) {
+                Ok(info) if !info.is_dir() => {
+                    discarded.push(path.clone());
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(db_err(error)),
             }
         }
+        let target = root.join(path);
+        match fs::symlink_metadata(&target) {
+            Ok(info) if info.is_file() => {
+                let hash = content_hash(&fs::read(&target).map_err(db_err)?);
+                if file.hash.as_ref() != Some(&hash) {
+                    if fallback.hash.is_some() || fallback.external {
+                        *file = *fallback;
+                    }
+                    file.external = true;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if fallback.hash.is_some() || fallback.external {
+                    *file = *fallback;
+                } else {
+                    discarded.push(path.clone());
+                }
+            }
+            Ok(_) => discarded.push(path.clone()),
+            Err(error) => return Err(db_err(error)),
+        }
     }
-    for path in unwritten {
+    for path in discarded {
         previous.remove(&path);
     }
     Ok(previous)
@@ -571,7 +591,7 @@ fn resolve_file(
     let observed = existing.as_deref().map(content_hash);
     let changed = || "The backup file changed after review. Check for edits again.".to_owned();
 
-    let mut exports = BTreeMap::new();
+    let mut replacement = None;
     if let Some(name) = path.strip_prefix("attachments/") {
         let mut owners: BTreeSet<_> = snapshot
             .modules
@@ -588,19 +608,15 @@ fn resolve_file(
             owners.extend(old.modules.iter().cloned());
             let (asset_id, _) = name.split_once('.').unwrap();
             let bytes = attachment_bytes(data_dir, name, asset_id)?;
-            exports.insert(
-                path.to_owned(),
-                (
-                    bytes,
-                    OwnedFile {
-                        modules: owners,
-                        ..OwnedFile::default()
-                    },
-                ),
-            );
+            replacement = Some((
+                bytes,
+                OwnedFile {
+                    modules: owners,
+                    ..OwnedFile::default()
+                },
+            ));
         }
     } else {
-        let path_key = path.to_lowercase();
         for id in &old.modules {
             let Some(Module::Ready {
                 name,
@@ -616,17 +632,7 @@ fn resolve_file(
                 .get(id)
                 .ok_or("The current note has an invalid backup filename.")?;
             for export in note_exports(filename, markdown, sections.as_deref())? {
-                let same_heading = match (&old.heading_id, &export.heading_id) {
-                    (Some(old_id), Some(new_id)) => old_id == new_id,
-                    _ => {
-                        old.section == Some(0) && export.section == Some(0)
-                            || old.section.is_none() && export.section.is_none()
-                    }
-                };
-                let same_layout =
-                    split_note_path(path).is_some() == split_note_path(&export.path).is_some();
-                let same_path = export.path.to_lowercase() == path_key;
-                if !same_path && same_layout && !same_heading {
+                if export.path != path {
                     continue;
                 }
                 // Sectionless files in the split layout are the generated PDF appendix.
@@ -640,18 +646,12 @@ fn resolve_file(
                         .and_then(|_| note_revision.as_deref().map(markdown_hash)),
                     ..OwnedFile::default()
                 };
-                let destination = if same_path {
-                    path.to_owned()
-                } else {
-                    export.path
-                };
-                exports.insert(destination, (export.bytes, file));
+                replacement = Some((export.bytes, file));
             }
         }
     }
 
-    let replaces_in_place = exports.contains_key(path);
-    if !replaces_in_place
+    if replacement.is_none()
         && old
             .modules
             .iter()
@@ -659,59 +659,29 @@ fn resolve_file(
     {
         return Err("Memnoter could not export the current version of this file.".into());
     }
-    let already_restored = exports
-        .get(path)
+    let already_restored = replacement
+        .as_ref()
         .is_some_and(|(bytes, _)| existing.as_deref() == Some(bytes));
     if !already_restored
-        && (replaces_in_place || observed.is_some())
+        && (replacement.is_some() || observed.is_some())
         && (observed.as_deref() != Some(reviewed_hash) || (!old.external && old.hash == observed))
     {
         return Err(changed());
     }
 
-    let managed: BTreeSet<_> = manifest.keys().map(|path| path.to_lowercase()).collect();
-    // Reset owns the selected path and any new destinations. Other managed
-    // paths stay untouched, including missing sections from a layout change.
-    exports.retain(|destination, _| {
-        destination == path || !managed.contains(&destination.to_lowercase())
-    });
     let mut staged = manifest;
-    let mut writes = Vec::new();
-    for (destination, (bytes, mut file)) in exports {
-        let destination_folder = destination.split_once('/').map(|(folder, _)| folder);
-        let hash = content_hash(&bytes);
-        let seen = if destination == path {
-            observed.clone()
-        } else {
-            check_export_folder(root, destination_folder)?;
-            match existing_bytes(&root.join(&destination))? {
-                Some(current) if current == bytes => Some(hash.clone()),
-                Some(_) => return Err(format!("Backup would overwrite {destination}")),
-                None => None,
-            }
-        };
-        file.hash = Some(hash);
-        let mut pending = file.clone();
-        pending.reset_fallback = Some(Box::new(if destination == path {
-            old.clone()
-        } else {
-            OwnedFile::default()
-        }));
-        staged.insert(destination.clone(), pending);
-        writes.push((destination, bytes, file, seen));
-    }
-    if !writes.is_empty() {
-        save_manifest(root, &staged)?;
-    }
-    for (destination, bytes, file, seen) in writes {
-        let destination_folder = destination.split_once('/').map(|(folder, _)| folder);
-        if let Some(folder) = destination_folder {
-            directory(&root.join(folder))?;
+    if let Some((bytes, mut file)) = replacement {
+        file.hash = Some(content_hash(&bytes));
+        if !already_restored {
+            let mut pending = file.clone();
+            pending.reset_fallback = Some(Box::new(old));
+            staged.insert(path.to_owned(), pending);
+            save_manifest(root, &staged)?;
         }
-        write_unless_changed_since(&root.join(&destination), &bytes, Some(seen.as_deref()))?;
-        staged.insert(destination, file);
-    }
-    if !replaces_in_place {
+        check_export_folder(root, folder)?;
+        write_unless_changed_since(&target, &bytes, Some(observed.as_deref()))?;
+        staged.insert(path.to_owned(), file);
+    } else {
         check_export_folder(root, folder)?;
         if let Some(bytes) = existing_bytes(&target)? {
             if content_hash(&bytes) != reviewed_hash || observed.is_none() {
@@ -1160,7 +1130,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_finishes_a_split_heading_rename_after_the_new_file_has_landed() {
+    fn reset_leaves_a_renamed_split_heading_for_the_next_backup() {
         let backup = Backup::new();
         let snapshot = |title: &str| {
             with_modules([(
@@ -1189,8 +1159,6 @@ mod tests {
             .try_into()
             .ok()
             .unwrap();
-        // A previous attempt wrote the new file before closing the old entry.
-        fs::write(backup.root.join(new), "# After\n").unwrap();
         let results = resolve(
             &backup.source,
             &backup.destination,
@@ -1203,11 +1171,9 @@ mod tests {
         .unwrap();
         assert_eq!(results[0].error, None);
         assert!(!backup.root.join(old).exists());
+        assert!(!backup.root.join(new).exists());
+        assert!(backup.run(snapshot("After")).is_empty());
         assert_eq!(fs::read(backup.root.join(new)).unwrap(), b"# After\n");
-        assert!(edited_files(&backup.source, &backup.destination)
-            .unwrap()
-            .is_empty());
-        assert!(load_manifest(&backup.root).unwrap().contains_key(new));
     }
 
     fn reset_layout_snapshot(sections: Option<(&str, &str)>) -> Snapshot {
@@ -1262,14 +1228,15 @@ mod tests {
     }
 
     #[test]
-    fn reset_preflights_later_sections_before_writing_the_first() {
+    fn resetting_a_whole_note_leaves_an_occupied_split_destination_alone() {
         let backup = Backup::new();
         backup.run(reset_layout_snapshot(None));
         let old = backup.root.join("Note.md");
         fs::write(&old, "Outside edit").unwrap();
         fs::create_dir(backup.root.join("Note")).unwrap();
         let occupied = backup.root.join("Note/0002.md");
-        fs::write(&occupied, "User file").unwrap();
+        fs::create_dir(&occupied).unwrap();
+        fs::write(occupied.join("user.txt"), "User file").unwrap();
 
         let results = resolve(
             &backup.source,
@@ -1281,12 +1248,12 @@ mod tests {
             }],
         )
         .unwrap();
-        assert!(results[0].error.is_some());
-        assert_eq!(fs::read(&old).unwrap(), b"Outside edit");
-        assert_eq!(fs::read(&occupied).unwrap(), b"User file");
+        assert_eq!(results[0].error, None);
+        assert!(!old.exists());
+        assert_eq!(fs::read(occupied.join("user.txt")).unwrap(), b"User file");
         assert!(!backup.root.join("Note/0001.md").exists());
 
-        fs::remove_file(occupied).unwrap();
+        fs::remove_dir_all(occupied).unwrap();
         let latest = || reset_layout_snapshot(Some(("Changed in Memnoter", "Second export")));
         assert!(backup.run(latest()).is_empty());
         assert_eq!(
@@ -1295,46 +1262,43 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
-    fn backup_updates_a_replacement_left_by_a_failed_reset() {
-        use std::os::unix::fs::PermissionsExt;
+    fn backup_recovers_an_interrupted_reset_with_an_edited_file_and_a_directory() {
         let backup = Backup::new();
         backup.run(reset_layout_snapshot(Some((
             "First section",
             "Second section",
         ))));
-        let folder = backup.root.join("Note");
-        let old = folder.join("0001.md");
-        fs::write(&old, "Outside edit").unwrap();
-        fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
-        if fs::write(folder.join("permission-probe"), b"").is_ok() {
-            return;
+        let edited = "Note/0001.md";
+        let blocked = "Note/0002.md";
+
+        // A development build staged these paths as new Reset destinations.
+        let mut manifest = load_manifest(&backup.root).unwrap();
+        for path in [edited, blocked] {
+            manifest.get_mut(path).unwrap().reset_fallback = Some(Box::default());
         }
+        save_manifest(&backup.root, &manifest).unwrap();
+        fs::write(backup.root.join(edited), "Edited after the Reset write").unwrap();
+        fs::remove_file(backup.root.join(blocked)).unwrap();
+        fs::create_dir(backup.root.join(blocked)).unwrap();
+        fs::write(backup.root.join(blocked).join("user.txt"), "User file").unwrap();
 
-        let results = resolve(
-            &backup.source,
-            &backup.destination,
-            reset_layout_snapshot(None),
-            vec![ReviewedFile {
-                path: "Note/0001.md".into(),
-                hash: markdown_hash("Outside edit"),
-            }],
+        assert!(backup.run(reset_layout_snapshot(None)).is_empty());
+        assert_eq!(
+            fs::read(backup.root.join("Note.md")).unwrap(),
+            b"Whole note"
         );
-        fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(results.unwrap()[0].error.is_some());
-        assert_eq!(fs::read(&old).unwrap(), b"Outside edit");
-        let replacement = backup.root.join("Note.md");
-        assert_eq!(fs::read(&replacement).unwrap(), b"Whole note");
-
-        assert!(backup
-            .run(with_modules([(
-                "note",
-                ready("Note", "Changed in Memnoter", BTreeMap::new()),
-            )]))
-            .is_empty());
-        assert_eq!(fs::read(replacement).unwrap(), b"Changed in Memnoter");
-        assert_eq!(fs::read(old).unwrap(), b"Outside edit");
+        assert_eq!(
+            fs::read(backup.root.join(blocked).join("user.txt")).unwrap(),
+            b"User file"
+        );
+        let edits = edited_files(&backup.source, &backup.destination).unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].path, edited);
+        assert_eq!(
+            edits[0].markdown.as_deref(),
+            Some("Edited after the Reset write")
+        );
     }
 
     #[test]
