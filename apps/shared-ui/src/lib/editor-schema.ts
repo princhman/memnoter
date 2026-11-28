@@ -36,12 +36,14 @@ import type { WithCardTransfers } from "./cloze-clipboard";
 import { Flashcards } from "@/lib/flashcards";
 import { FoldableBlock } from "@/lib/foldable-block";
 
+export type ImageTransfer = "paste" | "drop";
+
 type NoteExtensionOptions = {
   reduced?: boolean;
   document: Y.Doc;
   fragment?: Y.XmlFragment;
   ui?: { mention?: typeof Mention; pdfTextQuote?: typeof PdfTextQuote; mermaidView?: AnyExtension; inlineMath?: AnyExtension; mathBlock?: AnyExtension; savedImage?: typeof SavedImage; inlineImage?: typeof InlineImage; menus?: AnyExtension[] };
-  insertImages?: (editor: Editor, files: File[], position: number, pasted?: boolean) => void;
+  insertImages?: (editor: Editor, files: File[], position: number, transfer?: ImageTransfer) => void;
   scrollContainer?: () => HTMLElement | null;
   onTocUpdate?: (content: TableOfContentData) => void;
   onFirstRender?: () => void;
@@ -149,10 +151,10 @@ export function noteExtensions({
       onPaste: (currentEditor, files) => {
         const { state } = currentEditor;
         const position = sectionFocusKey.getState(state) == null ? state.selection.anchor : state.selection.from;
-        insertImages(currentEditor, files, position, true);
+        insertImages(currentEditor, files, position, "paste");
       },
       onDrop: (currentEditor, files, position) => {
-        insertImages(currentEditor, files, position);
+        insertImages(currentEditor, files, position, "drop");
       },
     }),
   ];
@@ -160,11 +162,15 @@ export function noteExtensions({
 
 // Hidden consumers need the same persisted schema without mounting an editor.
 let persistedSchema: ReturnType<typeof getSchema> | undefined;
-export function isNoteFromNewerVersion(doc: Y.Doc) {
+export function noteSchema() {
   if (!persistedSchema) {
     const empty = new Y.Doc();
     try { persistedSchema = getSchema(noteExtensions({ document: empty })); }
     finally { empty.destroy(); }
   }
-  return hasUnknownContent(doc.getXmlFragment("default"), persistedSchema);
+  return persistedSchema;
+}
+
+export function isNoteFromNewerVersion(doc: Y.Doc) {
+  return hasUnknownContent(doc.getXmlFragment("default"), noteSchema());
 }

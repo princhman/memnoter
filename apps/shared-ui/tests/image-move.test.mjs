@@ -48,7 +48,9 @@ test("dragging block and inline images moves them with assets, descriptions and 
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
       await page.mouse.move(box.x + box.width / 2 + 10, box.y + box.height / 2 + 10, { steps: 3 });
-      await page.mouse.move(target.x + target.width - 5, target.y + target.height / 2, { steps: 10 });
+      // Keep the block drop inside the lower half when WebKit rounds pointer coordinates.
+      const dropY = target.y + target.height * (type === "image" ? 0.75 : 0.5);
+      await page.mouse.move(target.x + target.width - 5, dropY, { steps: 10 });
       assert.equal(await page.locator(".note-image-drop-indicator").isVisible(), true, "drop marker while moving");
       await page.mouse.up();
 

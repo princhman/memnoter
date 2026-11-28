@@ -5,6 +5,9 @@ pub struct Db {
     pub(crate) unavailable: AtomicBool,
     pub(crate) annotation_generation: Mutex<String>,
     pub(crate) outbox_callback: Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
+    // Each note's Yjs snapshot as stored, keyed by what identifies that
+    // storage, so a window's index write can be checked without a replay.
+    pub(crate) note_snapshots: Mutex<std::collections::HashMap<String, crate::content::StoredSnapshot>>,
 }
 
 impl Db {
@@ -205,6 +208,7 @@ pub(crate) fn open_db(app_dir: &Path) -> CommandResult<Db> {
         unavailable: AtomicBool::new(false),
         annotation_generation: Mutex::new(Uuid::new_v4().to_string()),
         outbox_callback: Mutex::new(None),
+        note_snapshots: Mutex::new(Default::default()),
     })
 }
 
@@ -287,6 +291,8 @@ const MIGRATIONS: &[fn(&Connection) -> CommandResult<()>] = &[
     crate::sync::migrate,
     asset_refs::migrate_worksheet_leases,
     crate::card_moves::migrate,
+    documents::migrate_order,
+    documents::migrate_arrival_order,
 ];
 
 fn migrate_sidebar_items(conn: &Connection) -> CommandResult<()> {

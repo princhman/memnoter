@@ -647,6 +647,99 @@ fn future_survivor_retains_assets_when_the_uploader_module_is_deleted() {
 }
 
 #[test]
+fn question_bank_index_keeps_questions_during_compaction() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+
+    let (dir, core, module) = core();
+    let value = fixture();
+    let expected: Bank = serde_json::from_value(value.clone()).unwrap();
+    assets(&core, &module, &expected);
+    let update_id = content::add_update(&core.db, module.clone(), bytes(&document(&value)))
+        .unwrap()
+        .id;
+    let writer = Core::open(&dir.0).unwrap();
+    let mut compaction = Some((writer, module.clone()));
+
+    // Run compaction before SQLite starts executing the statement that reads updates.
+    core.db
+        .lock()
+        .unwrap()
+        .authorizer(Some(move |context: AuthContext<'_>| {
+            if matches!(
+                context.action,
+                AuthAction::Read {
+                    table_name: "contents_updates",
+                    ..
+                }
+            ) {
+                if let Some((writer, module)) = compaction.take() {
+                    content::save_compaction(&writer.db, module, Vec::new(), update_id).unwrap();
+                }
+            }
+            Authorization::Allow
+        }))
+        .unwrap();
+
+    let index = bank::index(&core, module.clone()).unwrap();
+    let conn = core.db.lock().unwrap();
+    conn.authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        .unwrap();
+    let remaining: i64 = conn
+        .query_row(
+            "select count(*) from contents_updates where module_id=?1",
+            [&module],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "the second connection did not compact the update"
+    );
+    let index = serde_json::to_value(index).unwrap();
+    for (id, question) in expected
+        .questions
+        .iter()
+        .filter(|(_, question)| !question.deleted)
+    {
+        assert!(
+            index["questions"]
+                .as_array()
+                .is_some_and(|questions| questions.contains(
+                    &json!({"id": id, "title": question.title, "order": question.order})
+                )),
+            "question {id} disappeared during compaction: {index}"
+        );
+    }
+}
+
+#[test]
+fn question_bank_index_releases_database_before_replay() {
+    let (_dir, core, module) = core();
+    let core = std::rc::Rc::new(core);
+    let value = json!({"schemaVersion": 1, "questions": {}, "attempts": {}, "answers": {}});
+    core.db
+        .lock()
+        .unwrap()
+        .execute(
+            "insert into contents_updates(module_id, bytes, created_at) values (?1, ?2, 0)",
+            rusqlite::params![module, bytes(&document(&value))],
+        )
+        .unwrap();
+
+    let database_owner = core.clone();
+    BEFORE_REPLAY.with(|hook| {
+        hook.replace(Some(Box::new(move || {
+            assert!(
+                database_owner.db.conn.try_lock().is_ok(),
+                "index replay holds the database lock"
+            );
+        })));
+    });
+    assert!(bank::index(&core, module).unwrap().is_some());
+    assert!(BEFORE_REPLAY.with(|hook| hook.take().is_none()), "index did not reach replay");
+}
+
+#[test]
 fn finish_retains_answers_and_pins_and_rejects_further_writes() {
     let _lock = super::DEV_TEST_LOCK.lock().unwrap();
     let (dir, core, module) = core();
@@ -671,6 +764,16 @@ fn finish_retains_answers_and_pins_and_rejects_further_writes() {
     let leaf = before.revisions[&pin.revision_id].parts.iter().find(|(id, _)| !before.revisions[&pin.revision_id].parts.values().any(|p| p.parent_id.as_ref() == Some(id))).unwrap().0.clone();
     attempts::save_answer(&core, module.clone(), attempt.clone(), pin.revision_id.clone(), leaf.clone(), "Final answer".into()).unwrap();
     let saved = bank::get(&core, module.clone()).unwrap().unwrap();
+    let index: Value = serde_json::from_str(&crate::dispatch::dispatch(
+        &core, "question_bank_index", &json!({"moduleId": module}).to_string(),
+    ).unwrap()).unwrap();
+    let questions: Vec<_> = saved.questions.iter().filter(|(_, question)| !question.deleted)
+        .map(|(id, question)| json!({"id": id, "title": question.title, "order": question.order}))
+        .collect();
+    assert_eq!(index, json!({
+        "questions": questions,
+        "worksheets": [{"id": attempt, "title": saved.attempts[&attempt].title}],
+    }));
     attempts::finish(&core, module.clone(), attempt.clone()).unwrap();
     let finished = bank::get(&core, module.clone()).unwrap().unwrap();
     assert!(finished.attempts[&attempt].finished);

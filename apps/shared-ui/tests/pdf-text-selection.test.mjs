@@ -96,7 +96,7 @@ test('native PDF text selections quote only on demand, with per-page sources and
 });
 
 test('PDF text menu stays in view on a zoomed PDF panned to the right', async () => {
-  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0 }, logLevel: 'error' });
+  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   try {
     await server.listen();
@@ -140,7 +140,7 @@ test('PDF text menu stays in view on a zoomed PDF panned to the right', async ()
 });
 
 test('PDF text menu stays anchored during selection and scrolling', async () => {
-  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0 }, logLevel: 'error' });
+  const server = await browserHarness(import.meta.url).createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
   let browser;
   try {
     await server.listen();

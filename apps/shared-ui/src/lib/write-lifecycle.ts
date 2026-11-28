@@ -141,21 +141,26 @@ async function drainMutations(excluded?: string, writesOnly = false) {
 export type ExclusiveWork =
   | { kind: "restore" }
   | { kind: "delete" }
-  | { kind: "exit"; unsaved?: "discard" | "retry" };
+  | { kind: "exit" | "close"; unsaved?: "discard" | "retry" };
 
 export async function exclusiveWrite<T>(action: () => Promise<T>, work?: ExclusiveWork): Promise<T> {
   if (!isWriteAdmitted()) throw new Error("Another database operation is in progress. Please retry.");
   exclusive = true;
   listeners.forEach(listener => listener(true));
-  const discard = work?.kind === "exit" && work.unsaved === "discard";
+  const discard = (work?.kind === "exit" || work?.kind === "close") && work.unsaved === "discard";
   let suspended = false;
   let completed = false;
   try {
-    await settleWork(discard, work?.kind === "exit" && work.unsaved === "retry");
+    await settleWork(discard, (work?.kind === "exit" || work?.kind === "close") && work.unsaved === "retry");
     if (!discard) await flushAll({ permit: drainPermit });
     await Promise.all([saveQueue.suspend(), ...[...participants].map(owner => owner.suspend())]);
     suspended = true;
-    await drainMutations(work?.kind === "restore" ? MUTATIONS.restoreBackup : work?.kind === "delete" ? MUTATIONS.deleteModule : undefined);
+    // Restore and delete still drain dispatched background search writes.
+    await drainMutations(
+      work?.kind === "restore" ? MUTATIONS.restoreBackup :
+      work?.kind === "delete" ? MUTATIONS.deleteModule :
+      work?.kind === "exit" ? MUTATIONS.searchBackfill : undefined,
+    );
     const result = await action();
     if (discard || work?.kind === "restore" || work?.kind === "delete") {
       for (const owner of participants) owner.discard();
@@ -185,7 +190,7 @@ async function settleWork(discard = false, retry = false) {
 
 export const MUTATIONS = {
   restoreBackup: "restore-backup", cardWrite: "card-write", searchIndex: "search-index",
-  deleteModule: "delete-module", compactContent: "compact-content",
+  deleteModule: "delete-module", compactContent: "compact-content", searchBackfill: "search-backfill",
   uploadFile: "upload-file", backupNow: "backup-now",
 } as const;
 

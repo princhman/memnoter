@@ -1,7 +1,8 @@
 import { createStore, useSelector } from "@tanstack/react-store";
+import { windowViewStorage } from "./backend";
 import { parsePdfPane, type PdfPaneState } from "./pdf-state";
 function readPane(moduleId: string): PdfPaneState {
-  try { return parsePdfPane(JSON.parse(localStorage.getItem(`pdf-pane:${moduleId}`) ?? "null")); }
+  try { return parsePdfPane(JSON.parse(windowViewStorage().getItem(`pdf-pane:${moduleId}`) ?? "null")); }
   catch { return parsePdfPane(null); }
 }
 const panes = new Map<string, ReturnType<typeof createStore<PdfPaneState>>>();
@@ -13,7 +14,7 @@ function paneStore(moduleId: string) {
 export function updatePdfPane(moduleId: string, patch: Partial<PdfPaneState>) {
   const store = paneStore(moduleId);
   store.setState(state => ({ ...state, ...patch }));
-  try { localStorage.setItem(`pdf-pane:${moduleId}`, JSON.stringify(store.state)); } catch { /* Storage may be unavailable. */ }
+  try { windowViewStorage().setItem(`pdf-pane:${moduleId}`, JSON.stringify(store.state)); } catch { /* Storage may be unavailable. */ }
 }
 export const pdfPageRequest = createStore<{ id: string; page: number; serial: number } | null>(null);
 export function requestPdfPage(id: string, page: number) { pdfPageRequest.setState(old => ({ id, page, serial: (old?.serial ?? 0) + 1 })); }

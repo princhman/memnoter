@@ -2,6 +2,7 @@ import { queryClient } from "./query-client";
 import { IS_MAC, IS_IOS, IS_WINDOWS } from "./platform.ts";
 import { FILE_SCHEME, type NativeEvent, type NativeEvents } from "../editor-host/protocol.ts";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
 type NativeMessage = { kind: "call"; id: string; command: string; args: object } |
@@ -20,6 +21,16 @@ declare global {
 }
 
 export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+export function desktopWindowLabel(): string | null {
+  if (!isTauri()) return null;
+  try {
+    return getCurrentWindow().label ?? "main";
+  } catch {
+    return "main";
+  }
+}
+export const isSecondaryWindow = () => desktopWindowLabel()?.startsWith("note-") ?? false;
+export const windowViewStorage = () => isSecondaryWindow() ? sessionStorage : localStorage;
 export const isNativeHost = () => !isTauri() && !!window.webkit?.messageHandlers?.memnoter;
 let sequence = 0;
 const pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void }>();
@@ -66,7 +77,7 @@ export async function call<T>(command: string, args?: object): Promise<T> {
 
 function dispatchCall<T>(command: string, args?: object): Promise<T> {
   if (!isNativeHost()) {
-    const shell = command.startsWith("plugin:") || ["confirm_exit", "confirm_restart", "set_editor_history", "pick_pdfs", "pick_import_folder", "pick_import_image_folder", "read_import_images", "pick_anki_package", "read_anki_media", "close_anki_package", "edit_drawing", "drawing_committed", "check_spelling", "add_to_dictionary", "spelling_languages", "set_spelling_language"].includes(command);
+    const shell = command.startsWith("plugin:") || ["set_update_installing", "open_window", "show_main_settings", "request_desktop_file", "primary_window_ready", "confirm_window_close", "cancel_window_exit", "request_restart", "confirm_exit", "confirm_restart", "set_editor_history", "pick_pdfs", "pick_local_backup_folder", "pick_import_folder", "pick_import_image_folder", "read_import_images", "pick_anki_package", "read_anki_media", "close_anki_package", "edit_drawing", "drawing_committed", "check_spelling", "add_to_dictionary", "spelling_languages", "set_spelling_language"].includes(command);
     return (shell ? invoke<T>(command, args as Record<string, unknown> | undefined)
       : invoke<T>("core", { command, args: args ?? {} })).catch(error => {
         throw new Error(typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error));
@@ -85,7 +96,9 @@ function dispatchCall<T>(command: string, args?: object): Promise<T> {
 }
 
 export async function listen<T>(event: string, handler: (event: { event: string; id: number; payload: T }) => void): Promise<() => void> {
-  if (!isNativeHost()) return isTauri() ? tauriListen<T>(event, handler) : Promise.resolve(() => {});
+  const label = desktopWindowLabel();
+  if (label !== null) return tauriListen<T>(event, handler, { target: { kind: "WebviewWindow", label } });
+  if (!isNativeHost()) return () => {};
   const handlers = listeners.get(event) ?? new Set<Handler>();
   listeners.set(event, handlers);
   const wrapped: Handler = value => handler({ ...value, payload: value.payload as T });
@@ -119,7 +132,8 @@ export const capabilities = {
   get nativeViewState() { return isNativeHost(); },
   get nativeMenu() { return isTauri() && IS_MAC; },
   get nativeHistory() { return isTauri(); },
-  get updates() { return isTauri(); },
+  get updates() { return isTauri() && !isSecondaryWindow(); },
+  get localBackup() { return isTauri() && IS_MAC && !isSecondaryWindow(); },
   get folderImport() { return isTauri(); },
   get windowControls() { return isTauri(); },
   // WebView2 spell checks with the Windows checker, which the shell can ask.

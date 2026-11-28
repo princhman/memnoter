@@ -7,12 +7,15 @@ import { action, formatKeys } from "@/lib/shortcuts";
 import { CardCounts } from "@/components/card-counts";
 import { reviewActionsStore } from "@/lib/review-actions";
 import { openReview } from "@/components/card-navigation-guard";
+import { BackupEditsDialog, notifyOfBackupEdits } from "@/components/settings/backup-edits-dialog";
+import { useLocalBackup } from "@/lib/local-backup";
 import { bootstrapNotes } from "@/lib/bootstrap";
 import { createRootRoute, Outlet, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { startSync } from "@/lib/sync/manager";
 import { MODULE_DELETED_REMOTELY_EVENT } from "@/lib/sync/apply-remote";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import AppSidebar from "@/components/app-sidebar";
+import { isSecondaryWindow, listen } from "@/lib/backend";
 import CreateModule from "@/components/create-module";
 import {
   SidebarInset,
@@ -39,6 +42,7 @@ import { OPEN_SETTINGS_EVENT, requestApp, usesNativeMenuShortcuts } from "@/lib/
 
 const RootLayout = () => {
   useSectionNavigationShortcuts();
+  useLocalBackup(notifyOfBackupEdits);
   const isFullscreen = useIsFullscreen();
   const path = useRouterState({ select: state => state.location.pathname });
   const isPdfReader = /^\/files\/[^/]+/.test(path);
@@ -64,8 +68,11 @@ const RootLayout = () => {
   useEffect(() => {
     const openSettings = () => void navigate({ to: "/settings" });
     window.addEventListener(OPEN_SETTINGS_EVENT, openSettings);
-    return () =>
+    const unlisten = listen("open-main-settings", openSettings);
+    return () => {
       window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);
+      void unlisten.then(stop => stop()).catch(console.error);
+    };
   }, [navigate]);
 
   // Due counts and review include notes not opened since cards existed.
@@ -74,7 +81,7 @@ const RootLayout = () => {
   }, []);
 
   useEffect(() => {
-    void startSync();
+    if (!isSecondaryWindow()) void startSync();
   }, []);
 
   // Another device deleted the note shown here.
@@ -150,6 +157,7 @@ const RootLayout = () => {
             </div>
           </div>
           <CommandPalette />
+          <BackupEditsDialog />
         </SidebarProvider>
       </MentionProvider></ActiveEditorProvider>
 

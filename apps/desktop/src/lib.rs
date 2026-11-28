@@ -5,36 +5,53 @@ mod import_folder;
 mod import_anki;
 mod pdf_picker;
 #[cfg(target_os = "macos")]
+mod local_backup;
+#[cfg(target_os = "macos")]
 mod menu;
 #[cfg(target_os = "macos")]
 mod selection_limit;
 mod spelling;
+mod windows;
 mod sync_credentials;
 #[cfg(target_os = "macos")]
 mod drawing;
 #[derive(Default)]
 struct ExitGate(AtomicBool);
 #[tauri::command]
-fn confirm_exit(app: tauri::AppHandle) {
+fn confirm_exit(window: tauri::WebviewWindow) -> Result<(), String> {
+    if !windows::exit_ready(&window, false) { return Err("Other windows are still saving.".into()); }
+    let app = window.app_handle();
     app.state::<ExitGate>().0.store(true, Ordering::SeqCst);
     app.exit(0);
+    Ok(())
 }
 
 // Restarts skip ExitRequested's prevent_exit, so the frontend must have
 // finished its save checks before calling this.
 #[tauri::command]
-fn confirm_restart(app: tauri::AppHandle) {
+fn confirm_restart(window: tauri::WebviewWindow) -> Result<(), String> {
+    if !windows::exit_ready(&window, true) { return Err("Other windows are still saving.".into()); }
+    let app = window.app_handle();
     app.state::<ExitGate>().0.store(true, Ordering::SeqCst);
     app.restart();
 }
 
 #[tauri::command]
 async fn core(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, std::sync::Arc<Core>>,
+    app: tauri::AppHandle,
     command: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, CoreError> {
     let core = state.inner().clone();
+    #[cfg(target_os = "macos")]
+    let backup_gate = app
+        .state::<std::sync::Arc<local_backup::BackupGate>>()
+        .inner()
+        .clone();
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     tauri::async_runtime::spawn_blocking(move || {
         match command.as_str() {
             "sync_credentials_save" => {
@@ -46,10 +63,42 @@ async fn core(
                 sync_credentials::delete(&core)?;
                 return Ok(serde_json::Value::Null);
             }
+            #[cfg(target_os = "macos")]
+            "local_backup_settings"
+            | "local_backup_image_types"
+            | "local_backup_markdown_hash"
+            | "set_local_backup_enabled"
+            | "set_local_backup_layout"
+            | "read_local_backup_edits"
+            | "resolve_local_backup_edits"
+            | "write_local_backup" => {
+                return local_backup::dispatch(&core, &backup_gate, &command, args)
+                    .map_err(CoreError::Storage);
+            }
             _ => {}
         }
+        let app = window.app_handle();
+        let windows = app.state::<windows::Windows>();
+        let _creation = if matches!(command.as_str(), "restore_backup" | "cleanup_files") {
+            Some(windows.creation.lock().unwrap())
+        } else {
+            None
+        };
+        let secondary_open = || app.webview_windows().keys().any(|label| label.starts_with("note-"));
+        if command == "restore_backup" && (window.label() != "main" || secondary_open() || windows.installing.load(Ordering::SeqCst)) {
+            return Err(CoreError::Storage("Close other windows before restoring a backup.".into()));
+        }
+        if command == "cleanup_files" && (window.label() != "main" || secondary_open()) {
+            return Ok(serde_json::json!([]));
+        }
         let result = memnoter_core::dispatch(&core, &command, &args.to_string())?;
-        serde_json::from_str(&result).map_err(|e| CoreError::Storage(e.to_string()))
+        if command == "restore_backup" {
+            // The main webview must reload its caches before it opens another window.
+            windows.restoring.store(true, Ordering::SeqCst);
+        }
+        let result = serde_json::from_str(&result).map_err(|e| CoreError::Storage(e.to_string()))?;
+        windows::announce(app, window.label(), &command, &args, &result);
+        Ok(result)
     })
     .await
     .map_err(|e| CoreError::Storage(e.to_string()))?
@@ -80,10 +129,8 @@ pub fn run() {
                     // process with no window and no handler to finish exiting.
                     api.prevent_close();
                     #[cfg(target_os = "macos")]
-                    drawing::close(window.app_handle());
-                    if let Err(error) = window.emit("request-safe-exit", ()) {
-                        eprintln!("Unable to request safe window close: {error}");
-                    }
+                    drawing::close(window.app_handle(), Some(window.label()));
+                    windows::close_requested(window);
                 }
             }
         })
@@ -119,8 +166,11 @@ pub fn run() {
                     eprintln!("Unable to announce sync outbox: {error}");
                 }
             }));
+            #[cfg(target_os = "macos")]
+            app.manage(std::sync::Arc::new(local_backup::BackupGate::default()));
             app.manage(core.clone());
             app.manage(ExitGate::default());
+            app.manage(windows::Windows::default());
             memnoter_core::backups::spawn_daily_backup(core);
             Ok(())
         })
@@ -131,9 +181,19 @@ pub fn run() {
             drawing::drawing_committed,
             #[cfg(target_os = "macos")]
             menu::set_editor_history,
+            windows::open_window,
+            windows::show_main_settings,
+            windows::request_desktop_file,
+            windows::confirm_window_close,
+            windows::cancel_window_exit,
+            windows::request_restart,
+            windows::primary_window_ready,
+            windows::set_update_installing,
             confirm_exit,
             confirm_restart,
             core,
+            #[cfg(target_os = "macos")]
+            local_backup::pick_local_backup_folder,
             import_folder::pick_import_folder,
             import_folder::pick_import_image_folder,
             import_anki::pick_anki_package,
@@ -149,12 +209,19 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { has_visible_windows: false, .. } = event {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.show();
+                    let _ = main.set_focus();
+                }
+            }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if !app.state::<ExitGate>().0.load(Ordering::SeqCst) {
                     api.prevent_exit();
                     #[cfg(target_os = "macos")]
-                    drawing::close(app);
-                    if let Err(error) = app.emit("request-safe-exit", ()) {
+                    drawing::close(app, None);
+                    if let Err(error) = windows::begin_exit(app, false) {
                         eprintln!("Unable to request safe exit: {error}");
                     }
                 }

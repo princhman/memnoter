@@ -55,7 +55,7 @@ const Tiptap = ({ moduleId, beside = false, sidebarSectionsEnabled = () => appSt
   const element = useRef<HTMLDivElement>(null);
   const { data: modules } = useModules();
   const numbered = modules?.find(module => module.id === moduleId)?.heading_numbering ?? false;
-  const { yDoc, editorRef, isSuccess, filesContext, withCardTransfers, insertImages, insertQuote, insertTextQuote } = useNoteDocument(moduleId);
+  const { yDoc, editorRef, isSuccess, loadError, filesContext, withCardTransfers, insertImages, insertQuote, insertTextQuote } = useNoteDocument(moduleId);
   const tocStore = useMemo(() => createTocStore(), [yDoc]);
 
   const { setActiveEditor } = useActiveEditor();
@@ -84,8 +84,8 @@ const Tiptap = ({ moduleId, beside = false, sidebarSectionsEnabled = () => appSt
           mermaidView: MermaidView,
           menus: [...(!host.isNative ? [MentionSuggest] : []), SlashCommand.configure({ insertImages, insertDrawing: current => { void launchDrawing(current); } }), LatexSuggest],
         },
-        insertImages: (currentEditor, files, position, pasted) => {
-          void insertImages(currentEditor, files, position, pasted);
+        insertImages: (currentEditor, files, position, transfer) => {
+          void insertImages(currentEditor, files, position, transfer);
         },
         onTocUpdate: (content) => tocStore.setState(() => content),
       }),
@@ -193,14 +193,14 @@ const Tiptap = ({ moduleId, beside = false, sidebarSectionsEnabled = () => appSt
   useEffect(() => {
     if (!editor) return;
 
-    setActiveEditor({ moduleId, editor, isReady: isSuccess, insertQuote, insertTextQuote });
+    setActiveEditor({ moduleId, editor, isReady: isSuccess, loadError, insertQuote, insertTextQuote });
 
     return () => {
       setActiveEditor((current) =>
         current?.editor === editor ? null : current,
       );
     };
-  }, [editor, moduleId, isSuccess, setActiveEditor, insertQuote, insertTextQuote]);
+  }, [editor, moduleId, isSuccess, loadError, setActiveEditor, insertQuote, insertTextQuote]);
 
   const drawingFilesContext = useMemo(() => ({ ...filesContext, ...(capabilities.drawing && editor ? {
     editDrawing: (imageId: string, sourceId: string | null) => { void launchDrawing(editor, { imageId, sourceId }); },

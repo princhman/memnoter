@@ -8,5 +8,5 @@ export function useDocuments(moduleId?: string) {
   const version = useSelector(syncedFilesStore, state => state.version);
   const client = useQueryClient();
   useEffect(() => { void client.invalidateQueries({ queryKey: documentsKey }); }, [client, version]);
-  return useQuery({ queryKey: [...documentsKey, moduleId ?? null], queryFn: () => listDocuments({ moduleId }) });
+  return useQuery({ queryKey: moduleId === undefined ? documentsKey : [...documentsKey, moduleId], queryFn: () => listDocuments({ moduleId }) });
 }

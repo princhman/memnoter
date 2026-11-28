@@ -1,3 +1,6 @@
+import { appStore } from "./store";
+import { correctImageFile } from "./image-correction";
+import type { ImageTransfer } from "./editor-schema";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { CommandManager, type Editor } from "@tiptap/core";
 import { addLineAfterPastedImage } from "./editor-schema/image-plugins";
@@ -38,7 +41,7 @@ export function useNoteDocument(moduleId: string) {
   const isSaving = useRef(false);
   const loadChanges = useRef<number[][]>([]);
 
-  const { isSuccess, data } = useQuery({
+  const { isSuccess, data, error: loadError } = useQuery({
     ...contentQueryOptions(moduleId),
     queryFn: async () => {
       // Taken before reading, so an edit saved meanwhile is in one or the other.
@@ -162,7 +165,7 @@ export function useNoteDocument(moduleId: string) {
     currentEditor: Editor,
     files: File[],
     position: number,
-    pasted = false,
+    transfer?: ImageTransfer,
   ) {
     if (currentEditor.isDestroyed || !currentEditor.isEditable) return;
     const { state } = currentEditor;
@@ -195,20 +198,26 @@ export function useNoteDocument(moduleId: string) {
         .run();
       if (!inserted || !tr.docChanged) throw new Error("Could not insert the uploaded image.");
       const nextPosition = tr.mapping.map(position);
-      if (pasted && insertedCount === files.length - 1) addLineAfterPastedImage(tr, range?.to);
+      if (transfer === "paste" && insertedCount === files.length - 1) addLineAfterPastedImage(tr, range?.to);
       if (range && changesOutsideSection(tr, range)) {
         throw new Error("The image destination is outside the focused section.");
       }
       return { tr, nextPosition };
     };
+    const correct = transfer !== undefined && appStore.state.autoCorrectPastedImages;
+    const checkTarget = (permit: WritePermit) => {
+      assertWritable(permit);
+      if (persistenceTarget.current !== yDoc || currentEditor.isDestroyed) {
+        throw new Error("The original note is closed. Reopen it and add the remaining images, then discard this failed operation.");
+      }
+    };
     return imageFilesOperation(files, {
-      checkTarget: permit => {
-        assertWritable(permit);
-        if (persistenceTarget.current !== yDoc || currentEditor.isDestroyed) {
-          throw new Error("The original note is closed. Reopen it and add the remaining images, then discard this failed operation.");
+      checkTarget,
+      upload: async (file, permit) => {
+        if (correct) {
+          file = await correctImageFile(file);
+          checkTarget(permit);
         }
-      },
-      upload: (file, permit) => {
         prepareInsertion(file);
         return uploadFileMutation.mutateAsync({ file, permit });
       },
@@ -396,5 +405,5 @@ export function useNoteDocument(moduleId: string) {
     [filesById, moduleId, uploadFileMutation.mutateAsync],
   );
 
-  return { yDoc, editorRef, isSuccess, filesContext, withCardTransfers, insertImages, insertQuote, insertTextQuote };
+  return { yDoc, editorRef, isSuccess, loadError, filesContext, withCardTransfers, insertImages, insertQuote, insertTextQuote };
 }

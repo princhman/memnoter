@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useBankGate, type CropDraft } from "@/lib/question-bank";
 import { QuestionCropDialog } from "./question-crop-dialog";
 import { IconTooltip } from "@/components/ui/icon-tooltip";
@@ -16,15 +17,14 @@ import { PdfQuoteRegions } from "./pdf-quote-regions";
 import { acceptsPdfShortcut, action, formatKeys, matchesShortcut } from "@/lib/shortcuts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { TextLayer, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist";
+import { loadPdf } from "@/lib/pdf-loading";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { ArrowUpRight, ZoomIn, ZoomOut, PanelRight, SquareDashedMousePointer, Highlighter, MessageSquare, Quote, ChevronDown, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { documentPath, setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
-import { readNativePdf } from "@/lib/native-pdf";
-import { fileUrl, isNativeHost, postNativeEvent } from "@/lib/backend";
+import { setDocumentPageCount, type DocumentRecord } from "@/lib/documents";
+import { isNativeHost, postNativeEvent } from "@/lib/backend";
 import { parsePage, readPdfView, writePdfView, visiblePages } from "@/lib/pdf-state";
 import { documentsKey } from "@/lib/use-documents";
 import { requestSyncedFile } from "@/lib/sync/file-requests";
@@ -38,7 +38,6 @@ import { pdfReaderControls, type PdfReaderActions } from "@/lib/pdf-reader-contr
 import { pendingPdfQuote } from "@/lib/pending-pdf-quote";
 import { useSelector } from "@tanstack/react-store";
 import { Button } from "./ui/button";
-GlobalWorkerOptions.workerSrc = workerUrl;
 
 const PAGE_GAP = 16;
 type ZoomAnchor = { page: number; x: number; y: number; clientX: number; clientY: number };
@@ -187,7 +186,7 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     finally { cropBusy.current = false; setCropping(false); }
   }, [doc.id, doc.moduleId, doc.name, annotationArea, annotationPosition, questionCropping, bankEnabled]);
   const navigate = useNavigate();
-  const [saved] = useState(() => ({ ...readPdfView(doc.id), ...(initialPage ? { page: initialPage } : {}) }));
+  const [saved] = useState(() => readPdfView(doc.id));
   const [zoom, setZoom] = useState(saved.zoom);
   const [pinching, setPinching] = useState(false);
   const zoomValue = useRef(zoom);
@@ -212,18 +211,17 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   const requested = useRef(new Set<number>());
   const frame = useRef(0);
   const shownPage = useRef(saved.page);
+  const pageJump = useRef<{ page: number; scrollTop: number } | null>(null);
 
   useEffect(() => {
-    restored.current = false; setPdf(null); setPages([]); setError(""); setSelecting(false);
+    restored.current = false; pageJump.current = null; setPdf(null); setPages([]); setError(""); setSelecting(false);
     if (!doc.available) { requestSyncedFile(doc.id); return; }
     let disposed = false;
     const abort = new AbortController();
-    let loading: ReturnType<typeof getDocument> | undefined;
+    let loading: Awaited<ReturnType<typeof loadPdf>> | undefined;
     void (async () => {
-      const source = isNativeHost() ? { data: await readNativePdf(doc.id, abort.signal) } : { url: fileUrl(await documentPath({ id: doc.id })) };
-      if (disposed) return;
-      const asset = (folder: string) => new URL(`${import.meta.env.BASE_URL}pdfjs/${folder}/`, document.baseURI).href;
-      loading = getDocument({ ...source, cMapUrl: asset("cmaps"), cMapPacked: true, standardFontDataUrl: asset("standard_fonts"), wasmUrl: asset("wasm"), iccUrl: asset("iccs") });
+      loading = await loadPdf(doc.id, abort.signal);
+      if (disposed) { void loading.destroy(); return; }
       const loaded = await loading.promise;
       const first = await loaded.getPage(1);
       if (disposed) return;
@@ -276,6 +274,9 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     setActive(previous => sameList(previous, next) ? previous : next);
     let offset = 0; let page = 1;
     for (let i = 0; i < rows.length; i++) { if (offset > element.scrollTop + 1) break; page = i + 1; offset += rows[i]; }
+    const requested = pageJump.current;
+    if (requested && Math.abs(requested.scrollTop - element.scrollTop) < 1) page = requested.page;
+    else pageJump.current = null;
     if (shownPage.current !== page) {
       shownPage.current = page;
       setCurrent(page);
@@ -291,12 +292,23 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
   function jump(page: number) {
     const element = container.current;
     if (!element) return;
-    element.scrollTop = latestHeights.current.slice(0, page - 1).reduce((sum, value) => sum + value, 0);
+    const top = latestHeights.current.slice(0, page - 1).reduce((sum, value) => sum + value, 0);
+    element.scrollTop = top;
+    // Keep the requested page active even when it can't align to the top.
+    pageJump.current = { page, scrollTop: element.scrollTop };
     measure();
   }
   const find = usePdfFind(pdf, root, fullscreen, jump);
   useLayoutEffect(() => {
-    if (pages.length && !restored.current) { restored.current = true; jump(Math.min(saved.page, pages.length)); }
+    if (pages.length && !restored.current) {
+      restored.current = true;
+      if (initialPage !== undefined && initialPage > pages.length) {
+        toast(`Page ${initialPage} is unavailable in this PDF.`, { duration: 6000 });
+        jump(1);
+      } else {
+        jump(initialPage ?? Math.min(saved.page, pages.length));
+      }
+    }
     const element = container.current;
     if (!element) return;
     measure();
@@ -304,6 +316,15 @@ export function PdfViewer({ doc, fullscreen = false, leading, trailing, initialP
     return () => observer.disconnect();
     // Re-measure when the layout changes size, not on every page arrival.
   }, [pages.length, zoom]);
+  useLayoutEffect(() => {
+    // Lazy page loads can replace estimated sizes above the destination.
+    // Realign the jump while the reader is still at its last scroll position.
+    const target = pageJump.current;
+    const element = container.current;
+    if (!target || !element) return;
+    const top = Math.min(target.scrollTop, element.scrollHeight - element.clientHeight);
+    if (Math.abs(top - element.scrollTop) < 1) jump(target.page);
+  }, [heights]);
   useEffect(() => {
     if (!pdf || !restored.current || current !== shownPage.current) return;
     writePdfView(doc.id, { page: current, zoom });

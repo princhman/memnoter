@@ -9,7 +9,7 @@ import { forgetModule } from "@/lib/store";
 import { saveQueue } from "@/lib/saves";
 import { syncedFileArrived } from "./file-requests";
 import { documentsKey } from "@/lib/use-documents";
-import { bankKey } from "@/lib/question-bank";
+import { bankKey, refreshBankIndex } from "@/lib/question-bank";
 // Dispatched on window with the module id when another device deleted it.
 export const MODULE_DELETED_REMOTELY_EVENT = "memnoter:module-deleted-remotely";
 
@@ -51,6 +51,10 @@ function scheduleReindex(moduleId: string) {
 }
 
 export function onRemote(result: ApplyResult) {
+  applyRemoteChanges(result, true);
+}
+
+export function applyRemoteChanges(result: ApplyResult, reindex: boolean) {
   refreshPdfAnnotations(result.annotationsChanged ?? []);
   for (const { moduleId, update } of result.updates) {
     // The same path as a local save: an open editor applies the update from
@@ -60,8 +64,9 @@ export function onRemote(result: ApplyResult) {
     void queryClient.invalidateQueries({ queryKey: ["mention-note", moduleId] });
     // Questions, worksheets and answers live in the module's content too.
     void queryClient.invalidateQueries({ queryKey: bankKey(moduleId) });
+    void refreshBankIndex(moduleId);
     window.dispatchEvent(new CustomEvent(MODULE_CONTENT_SYNCED_EVENT, { detail: moduleId }));
-    scheduleReindex(moduleId);
+    if (reindex) scheduleReindex(moduleId);
   }
   for (const moduleId of result.deleted) {
     saveQueue.drop(moduleId);
@@ -82,12 +87,12 @@ export function onRemote(result: ApplyResult) {
   void queryClient.invalidateQueries({ queryKey: documentsKey });
 }
 
-export function onFileStored(moduleId: string, file: FileType) {
+export function onFileStored(moduleId: string, file: FileType, reindex = true) {
   patchContent(moduleId, content => !content.files.some(known => known.id === file.id)
     ? { ...content, files: [...content.files, file] } : content);
   syncedFileArrived();
   // Image occlusion cards need their image to be indexed.
-  scheduleReindex(moduleId);
+  if (reindex) scheduleReindex(moduleId);
 }
 
 
