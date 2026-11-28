@@ -5,64 +5,414 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#fafafa">
-  <title>Memnoter: Notes worth remembering</title>
-  <meta name="description" content="Write notes, turn them into flashcards, and remember what you learn with spaced repetition. A free, open-source desktop app for macOS, Windows, and Linux.">
+  <title>Memnoter: notes, flashcards and PDF question banks</title>
+  <meta name="description" content="Free, open-source study app for students. Write flashcards in your notes, crop questions from PDFs, and review with FSRS. Mac, Windows, Linux, iPad and iPhone.">
   <link rel="canonical" href="https://memnoter.com/">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://memnoter.com/">
-  <meta property="og:title" content="Memnoter: Notes worth remembering">
-  <meta property="og:description" content="Your notes and flashcards. Finally, in the same place.">
-  <meta property="og:image" content="https://memnoter.com/assets/social-icon.png">
-  <meta name="twitter:card" content="summary">
+  <meta property="og:title" content="Memnoter: notes, flashcards and PDF question banks">
+  <meta property="og:description" content="A free, local-first study app. Flashcards live in your notes, questions come from PDFs you add, and FSRS schedules the review.">
+  <meta property="og:image" content="https://memnoter.com/screenshots/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Memnoter, a free local-first study app for notes and flashcards.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Memnoter: notes, flashcards and PDF question banks">
+  <meta name="twitter:description" content="Write flashcards in your notes, crop questions from PDFs, and review with FSRS.">
+  <meta name="twitter:image" content="https://memnoter.com/screenshots/og.png">
   <link rel="icon" href="assets/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="assets/social-icon.png">
   <link rel="preload" href="assets/inter.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="screenshots/hero.png" as="image">
   <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Memnoter",
+    "applicationCategory": "EducationalApplication",
+    "operatingSystem": "macOS, Windows, Linux, iOS, iPadOS",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "license": "https://opensource.org/licenses/MIT",
+    "url": "https://memnoter.com/",
+    "image": "https://memnoter.com/screenshots/og.png",
+    "description": "Free, local-first study app. Write flashcards in your notes, crop questions from PDFs you add, and review with FSRS."
+  }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="header">
-    <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
-    <nav aria-label="Main navigation">
-      <a class="nav-link" href="https://github.com/princhman/memnoter">GitHub</a>
-      <a class="nav-button" href="#download">Download</a>
-    </nav>
+    <div class="bar">
+      <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
+      <div class="nav-cluster">
+        <nav class="nav-inline" aria-label="Main">
+          <a href="#try">Demo</a>
+          <a href="#cards">Features</a>
+          <a href="#compare">Compare</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <details class="nav-more">
+          <summary>Menu</summary>
+          <nav aria-label="Sections">
+            <a href="#try">Demo</a>
+            <a href="#cards">Features</a>
+            <a href="#questions">Question banks</a>
+            <a href="#compare">Compare</a>
+            <a href="#faq">FAQ</a>
+            <a href="https://github.com/princhman/memnoter">GitHub</a>
+          </nav>
+        </details>
+        <a class="nav-link" href="https://github.com/princhman/memnoter">GitHub</a>
+        <a class="nav-button" href="#download">Download</a>
+      </div>
+    </div>
   </header>
 
-  <main id="main">
+  <main id="main" class="home">
     <section class="hero" aria-labelledby="headline">
-      <img class="hero-icon" src="assets/icon.png" width="112" height="112" fetchpriority="high" alt="">
-      <h1 id="headline">Good notes.<br>Lasting knowledge.</h1>
-      <p class="description">Write notes, turn them into flashcards, and actually remember what you learn.</p>
-
-      <div id="download" class="download">
-        <div class="download-buttons">
-          <a class="button primary" href="{{mac-arm}}" aria-label="Download for Mac, Apple silicon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 12.7c0-2 1.6-3 1.7-3.1-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.4.8-.7 0-1.8-.8-2.9-.7-1.5 0-2.9.9-3.7 2.2-1.6 2.8-.4 7 1.2 9.2.7 1.1 1.6 2.2 2.8 2.1 1.1 0 1.6-.7 3-.7 1.4 0 1.8.7 3 .7 1.2 0 2-1.1 2.7-2.1.8-1.2 1.2-2.3 1.2-2.4-.1 0-2.4-.9-2.4-3.6ZM14.3 6.4c.6-.8 1.1-1.9 1-3-.9 0-2 .6-2.7 1.4-.6.7-1.2 1.8-1 2.9 1 .1 2-.5 2.7-1.3Z"/></svg>Download for Mac</a>
-          <a class="button secondary" href="{{windows}}" aria-label="Download for Windows, 64-bit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.2 10.5 4v7.3H3zm8.5-1.4L21 2.5v8.8h-9.5zM3 12.7h7.5V20L3 18.8zm8.5 0H21v8.8l-9.5-1.3z"/></svg>Download for Windows</a>
+      <div>
+        <p class="eyebrow">For students</p>
+        <h1 id="headline">Good notes.<br>Lasting knowledge.</h1>
+        <p class="lead">Memnoter is a free study app. You write flashcards in the note, crop questions from PDFs you already have, and review with FSRS. Mac, Windows, Linux, iPad and iPhone.</p>
+        <ul class="trust">
+          <li>You write the cards</li>
+          <li>You add the PDFs</li>
+          <li>Notes stay on your device</li>
+          <li>Free, MIT license</li>
+        </ul>
+        <div class="download" id="download">
+          <div class="download-buttons">
+            <a class="button primary" href="{{mac-arm}}" aria-label="Download for Mac, Apple silicon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 12.7c0-2 1.6-3 1.7-3.1-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.4.8-.7 0-1.8-.8-2.9-.7-1.5 0-2.9.9-3.7 2.2-1.6 2.8-.4 7 1.2 9.2.7 1.1 1.6 2.2 2.8 2.1 1.1 0 1.6-.7 3-.7 1.4 0 1.8.7 3 .7 1.2 0 2-1.1 2.7-2.1.8-1.2 1.2-2.3 1.2-2.4-.1 0-2.4-.9-2.4-3.6ZM14.3 6.4c.6-.8 1.1-1.9 1-3-.9 0-2 .6-2.7 1.4-.6.7-1.2 1.8-1 2.9 1 .1 2-.5 2.7-1.3Z"/></svg>Download for Mac</a>
+            <a class="button secondary" href="{{windows}}" aria-label="Download for Windows, 64-bit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.2 10.5 4v7.3H3zm8.5-1.4L21 2.5v8.8h-9.5zM3 12.7h7.5V20L3 18.8zm8.5 0H21v8.8l-9.5-1.3z"/></svg>Download for Windows</a>
+            <a class="button secondary" href="{{linux}}" aria-label="Download for Linux, x64 AppImage"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5v-13Zm2.2 2.2 1.6 1.6-1.6 1.6 1.1 1.1 2.7-2.7-2.7-2.7-1.1 1.1Zm4.3 5.1h6v1.6h-6v-1.6Z"/></svg>Download for Linux</a>
+            <a class="button secondary" href="#ios" aria-describedby="testflight-todo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2.6h8A2.4 2.4 0 0 1 18.4 5v14a2.4 2.4 0 0 1-2.4 2.4H8A2.4 2.4 0 0 1 5.6 19V5A2.4 2.4 0 0 1 8 2.6Zm.2 1.6a.8.8 0 0 0-.8.8v14c0 .4.4.8.8.8h7.6c.4 0 .8-.4.8-.8V5c0-.4-.4-.8-.8-.8H8.2ZM11 17.2h2V18.6h-2v-1.4Z"/></svg>iPhone and iPad</a>
+          </div>
+          <p class="fine">Apple silicon build above. Also for <a href="{{mac-intel}}">Intel Mac</a>. The Linux button is the x64 AppImage. <a href="https://github.com/princhman/memnoter/releases/latest">Version <span data-version>{{version}}</span></a> has deb and rpm packages too.</p>
+          <p class="fine" id="testflight-todo">TODO for Vlad: add the public TestFlight link. No join URL is in the repo or README, so iPhone and iPad jumps to the note further down.</p>
+          <p class="fine">Memnoter is in beta, so bugs happen. Write to <a href="mailto:hello@memnoter.com">hello@memnoter.com</a>.</p>
         </div>
-        <p class="other-downloads">Also for <a href="{{mac-intel}}">Intel Mac</a> and <a href="{{linux}}">Linux</a>. <a href="https://github.com/princhman/memnoter/releases/latest">Version <span data-version>{{version}}</span></a></p>
+      </div>
+      <figure class="shot">
+        <img src="screenshots/hero.png" width="2400" height="1500" fetchpriority="high" decoding="async" alt="Placeholder for a screenshot of the Memnoter desktop editor, with a note and a flashcard in the text.">
+        <figcaption>Desktop editor, with a note and the card written in it. Placeholder file <code>screenshots/hero.png</code>, 2400 by 1500.</figcaption>
+      </figure>
+    </section>
+
+    <section class="section" id="try" aria-labelledby="try-title">
+      <div class="section-head">
+        <p class="eyebrow">Try the idea</p>
+        <h2 id="try-title">A card, a cloze, a review</h2>
+        <p>Three things the app does with a line of text. Intervals in the real review come from FSRS-7 on your device. This page does not schedule anything.</p>
+      </div>
+      <div class="demo" data-demo>
+        <div class="demo-toolbar">
+          <div class="demo-tabs" role="tablist" aria-label="Demo">
+            <button type="button" role="tab" id="tab-card" aria-controls="panel-card" aria-selected="true" data-demo-tab>Write a card</button>
+            <button type="button" role="tab" id="tab-cloze" aria-controls="panel-cloze" aria-selected="false" tabindex="-1" data-demo-tab>Reveal a cloze</button>
+            <button type="button" role="tab" id="tab-review" aria-controls="panel-review" aria-selected="false" tabindex="-1" data-demo-tab>Grade a review</button>
+          </div>
+          <button type="button" class="demo-pause" data-demo-pause aria-pressed="false">Pause</button>
+        </div>
+        <div class="demo-stage">
+          <div class="demo-step" id="panel-card" role="tabpanel" aria-labelledby="tab-card" data-step data-label="A line with a double colon becomes a flashcard.">
+            <div class="note-line">
+              <span class="dot" aria-hidden="true"></span>
+              <p>Modus ponens <span class="sep">::</span> from A and A → B, infer B</p>
+            </div>
+            <div class="spawned-card">
+              <p class="face"><span>Front</span> Modus ponens</p>
+              <p class="face"><span>Back</span> from A and A → B, infer B</p>
+            </div>
+          </div>
+          <div class="demo-step" id="panel-cloze" role="tabpanel" aria-labelledby="tab-cloze" data-step data-label="A cloze hides a word until you reveal it.">
+            <p class="cloze-sentence">The derivative of x² is <button type="button" class="blank" data-cloze aria-pressed="true" aria-label="Hide the word 2x"><span aria-hidden="true">2x</span></button>.</p>
+            <p class="demo-aside">In a note, wrap the hidden word in <code>{{ }}</code>. Each blank can be its own card, and you can join several blanks into one.</p>
+          </div>
+          <div class="demo-step" id="panel-review" role="tabpanel" aria-labelledby="tab-review" data-step data-label="Review shows the front, then the answer, then four grades.">
+            <p class="mini-path">Logic / Inference</p>
+            <p class="mini-front">Modus ponens</p>
+            <button type="button" class="button primary show-answer" data-show-answer hidden>Show answer <kbd>Space</kbd></button>
+            <p class="mini-back" data-review-back hidden>from A and A → B, infer B</p>
+            <div class="grades" data-grades hidden>
+              <button type="button" data-grade="Again" aria-pressed="false">Again <kbd>1</kbd></button>
+              <button type="button" data-grade="Hard" aria-pressed="false">Hard <kbd>2</kbd></button>
+              <button type="button" data-grade="Good" aria-pressed="false">Good <kbd>3</kbd></button>
+              <button type="button" data-grade="Easy" aria-pressed="false">Easy <kbd>4</kbd></button>
+            </div>
+            <p class="grade-result" data-grade-result hidden></p>
+            <noscript>
+              <p class="mini-back">from A and A → B, infer B</p>
+              <p class="demo-aside">In the app, Space shows the answer. Then you grade Again, Hard, Good or Easy.</p>
+            </noscript>
+          </div>
+        </div>
+        <p class="demo-live" data-demo-live aria-live="polite"></p>
       </div>
     </section>
 
-    <section class="features" aria-label="Why Memnoter">
-      <div>
-        <h2>Notes and flashcards together</h2>
-        <p>Make flashcards right inside your notes.</p>
+    <section class="section" id="cards" aria-labelledby="features-title">
+      <div class="section-head">
+        <p class="eyebrow">The study loop</p>
+        <h2 id="features-title">From a sentence to a review</h2>
       </div>
-      <div>
-        <h2>Spaced repetition built in</h2>
-        <p>Review at the right moment, so it sticks.</p>
+
+      <article class="feature">
+        <div class="feature-copy">
+          <h3>Cards in the note</h3>
+          <p class="prose">The line you are revising from is the flashcard. Edit the note, and the card changes with it.</p>
+          <ul>
+            <li><code>Question :: answer</code> is a basic card. <code>Front ::: Back</code> asks both ways.</li>
+            <li><code>{{hidden}}</code> is a cloze. Each blank can be its own card, or you can join blanks.</li>
+            <li>Mask a diagram with a rectangle, an ellipse, or a freehand shape.</li>
+            <li>A list card reveals one line at a time. A block card reveals its lines together.</li>
+            <li>A dot in the margin shows the card while you read.</li>
+          </ul>
+        </div>
+        <figure class="shot">
+          <img src="screenshots/cards.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for a note with a basic card, a cloze, and an image occlusion.">
+          <figcaption>A note with a basic card, a cloze, and an image occlusion. Placeholder file <code>screenshots/cards.png</code>, 2000 by 1250.</figcaption>
+        </figure>
+      </article>
+
+      <article class="feature reverse" id="review">
+        <div class="feature-copy">
+          <h3>Review with FSRS</h3>
+          <p class="prose">Scheduling is FSRS-7, from the same open family of algorithms as modern Anki. It runs on your device. There is no separate setting to turn it on.</p>
+          <ul>
+            <li>Space shows the answer. 1, 2, 3 and 4 grade Again, Hard, Good and Easy.</li>
+            <li>Review everything that is due, or one module at a time.</li>
+            <li>A card graded Again comes back when it is due, not straight away.</li>
+            <li>The card links back to the heading it was written under.</li>
+          </ul>
+        </div>
+        <figure class="shot">
+          <img src="screenshots/review.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for the Memnoter review screen, with the answer and the four grades.">
+          <figcaption>Review, with Show answer and the four grades. Placeholder file <code>screenshots/review.png</code>, 2000 by 1250.</figcaption>
+        </figure>
+      </article>
+
+      <article class="feature" id="questions">
+        <div class="feature-copy">
+          <h3>Question banks and worksheets</h3>
+          <p class="prose">Add a PDF to a module, then crop the questions you want into that module's bank. Parts nest the way a paper does, with (a), then (i), then (A). Pick questions and open a worksheet. Answer in the page, or draw the answer.</p>
+          <p class="prose">Memnoter does not search for past papers or attach them for you. The PDF has to be one you add.</p>
+        </div>
+        <figure class="shot">
+          <img src="screenshots/questions.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for a question bank cropped from a PDF, next to a worksheet.">
+          <figcaption>A question cropped from a PDF, in a worksheet. Placeholder file <code>screenshots/questions.png</code>, 2000 by 1250.</figcaption>
+        </figure>
+      </article>
+
+      <article class="feature reverse" id="maths">
+        <div class="feature-copy">
+          <h3>Maths, code and diagrams</h3>
+          <p class="prose">Inline maths and math blocks are rendered with KaTeX. A code block highlights the language you pick, and copies from its corner. Start one by typing three backticks. A Mermaid block renders as a diagram.</p>
+        </div>
+        <figure class="shot">
+          <img src="screenshots/maths.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for a note with LaTeX maths and a highlighted code block.">
+          <figcaption>LaTeX in a note, and a highlighted code block. Placeholder file <code>screenshots/maths.png</code>, 2000 by 1250.</figcaption>
+        </figure>
+      </article>
+
+      <article class="feature" id="ios">
+        <div class="feature-copy">
+          <h3>iPhone and iPad</h3>
+          <p class="prose">The same notes, cards, question banks and review. Draw with Apple Pencil on iPad. Drawings stay editable on iPhone, Mac, Windows and Linux. Optional sync carries the library with you, encrypted before it leaves the device.</p>
+          <div class="todo">
+            <p><strong>TODO for Vlad.</strong> Paste the public TestFlight URL onto the button below. Nothing in the repository, the README, or the app is a join link, so this control does not go anywhere yet.</p>
+            <button type="button" class="button secondary" disabled>Join the iOS TestFlight</button>
+          </div>
+        </div>
+        <figure class="shot">
+          <img src="screenshots/ios.png" width="2000" height="1250" loading="lazy" decoding="async" alt="Placeholder for Memnoter on iPhone or iPad.">
+          <figcaption>The iPhone or iPad app. Placeholder file <code>screenshots/ios.png</code>, 2000 by 1250.</figcaption>
+        </figure>
+      </article>
+    </section>
+
+    <section class="section" aria-labelledby="also-title">
+      <div class="section-head left">
+        <h2 id="also-title">Also in the app</h2>
       </div>
-      <div>
-        <h2>Yours, on your device</h2>
-        <p>Free, open source, and stored locally.</p>
+      <div class="also">
+        <div>
+          <h3>PDFs beside the note</h3>
+          <p>Quote a passage or a region of a page. The quote links back to the PDF it came from. This is separate from the question bank: a quote is a citation, a crop is a question you can practice.</p>
+        </div>
+        <div>
+          <h3>Find your place</h3>
+          <p>A contents panel, sections listed in the sidebar, tables, highlights and foldable blocks. A module reopens where you left it.</p>
+        </div>
+        <div>
+          <h3>Cards keep their schedule</h3>
+          <p>Cut a card and paste it in another note. The FSRS schedule and review history come with it, including on your other devices after they sync.</p>
+        </div>
+        <div>
+          <h3>Seven days of backups</h3>
+          <p>The app keeps a daily backup of notes and images for the last 7 days. Restore one from Settings, or make a backup yourself.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="compare" aria-labelledby="compare-title">
+      <div class="section-head">
+        <p class="eyebrow">An honest comparison</p>
+        <h2 id="compare-title">Coming from Anki or Obsidian</h2>
+        <p>Anki is a strong flashcard app, with shared decks and add-ons Memnoter does not have. Memnoter is for the notes you are already studying from. If Anki fits, stay. If you are tired of copying lines out of your notes, start here.</p>
+      </div>
+      <div class="compare-item">
+        <h3>Where the card lives</h3>
+        <div class="pair">
+          <div><p class="pair-name">Memnoter</p><p>The line in the note is the card. Edit one and you edit the other.</p></div>
+          <div><p class="pair-name">Anki</p><p>Cards live in decks, apart from the long notes you write somewhere else.</p></div>
+        </div>
+      </div>
+      <div class="compare-item">
+        <h3>Scheduling</h3>
+        <div class="pair">
+          <div><p class="pair-name">Memnoter</p><p>FSRS-7, always, on the device. You cannot switch scheduler or tune its parameters.</p></div>
+          <div><p class="pair-name">Anki</p><p>FSRS is available there too, along with years of scheduling options and add-ons.</p></div>
+        </div>
+      </div>
+      <div class="compare-item">
+        <h3>Shared decks and add-ons</h3>
+        <div class="pair">
+          <div><p class="pair-name">Memnoter</p><p>None. There is no public deck library and no add-on store.</p></div>
+          <div><p class="pair-name">Anki</p><p>This is the reason many students stay. Shared decks and add-ons are the product.</p></div>
+        </div>
+      </div>
+      <div class="compare-item">
+        <h3>PDFs and worksheets</h3>
+        <div class="pair">
+          <div><p class="pair-name">Memnoter</p><p>Crop questions from a PDF you add, then practice them as a worksheet.</p></div>
+          <div><p class="pair-name">Anki</p><p>Not the same workflow. Image occlusion covers diagrams, not a paper of questions.</p></div>
+        </div>
+      </div>
+      <div class="compare-item">
+        <h3>Where it is today</h3>
+        <div class="pair">
+          <div><p class="pair-name">Memnoter</p><p>Beta. Desktop builds install from GitHub. iPhone and iPad are on TestFlight.</p></div>
+          <div><p class="pair-name">Anki</p><p>A mature app, with its own phone and tablet versions.</p></div>
+        </div>
+      </div>
+
+      <div class="block">
+        <h2>Bring the work with you</h2>
+        <ol class="steps">
+          <li>
+            <h3>From Anki</h3>
+            <p>Open an <code>.apkg</code> file. Basic cards, clozes and image occlusion come in as notes, and their review history comes with them. Note types Memnoter cannot read are skipped. You choose which decks to bring.</p>
+          </li>
+          <li>
+            <h3>From Obsidian</h3>
+            <p>Import a folder of markdown, such as a vault. You can remove links to other notes, drop embeds the editor cannot show, and keep properties as a code block. Images that are not in the folder stay as placeholders until you point at them. Obsidian plugins do not come across. Memnoter is not an Obsidian plugin.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section" id="open" aria-labelledby="open-title">
+      <div class="section-head">
+        <p class="eyebrow">Open source and private</p>
+        <h2 id="open-title">On your machine, unless you say otherwise</h2>
+        <p>No account is required to study. There are no ads, no tracking and no product analytics.</p>
+      </div>
+      <div class="points">
+        <div>
+          <h3>Local first</h3>
+          <p>Notes sit in a SQLite database on the device. Quit whenever you like. Saves finish in order, and a daily backup keeps the last 7 days.</p>
+        </div>
+        <div>
+          <h3>Sync is optional</h3>
+          <p>Turn it on and the device encrypts notes, images and review history before upload. The passphrase stays on your devices. The server cannot read your notes, and we cannot reset a passphrase you forget. The same library then stays current on desktop, iPhone and iPad.</p>
+        </div>
+        <div>
+          <h3>MIT, and a public server</h3>
+          <p>The app is <a href="https://github.com/princhman/memnoter/blob/main/LICENSE">MIT licensed</a>. The sync server is AGPL-3.0, so a modified server offered as a service has to publish its changes. Source is on <a href="https://github.com/princhman/memnoter">GitHub</a>. Read the <a href="/privacy">privacy policy</a>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="faq" aria-labelledby="faq-title">
+      <div class="section-head">
+        <p class="eyebrow">Questions</p>
+        <h2 id="faq-title">Before you install</h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>Is Memnoter free?</summary>
+          <p>Yes. The app is free and MIT licensed. Sync is optional and does not have a paid tier.</p>
+        </details>
+        <details>
+          <summary>Does it write flashcards with AI?</summary>
+          <p>No. You write the card in the note, or you import cards you already made. Memnoter does not generate cards for you.</p>
+        </details>
+        <details>
+          <summary>Will it find past papers for my course?</summary>
+          <p>No. Add a PDF you already have, then crop the questions you want. Nothing is searched for or linked on its own.</p>
+        </details>
+        <details>
+          <summary>How do I make a flashcard?</summary>
+          <p>Write <code>Question :: answer</code> on its own line. <code>:::</code> asks both directions. Wrap a word in <code>{{ }}</code> to hide it. A dot appears beside the card.</p>
+        </details>
+        <details>
+          <summary>Can I move an Anki deck across?</summary>
+          <p>Yes, from an <code>.apkg</code> file. Basic cards, clozes and image occlusion import, with their review history. Other note types are skipped. There is no ongoing link back to Anki.</p>
+        </details>
+        <details>
+          <summary>Can I move an Obsidian vault across?</summary>
+          <p>You can import a folder of markdown notes. Links, embeds and properties are choices in the import. Plugins stay behind. Memnoter does not live inside Obsidian.</p>
+        </details>
+        <details>
+          <summary>Where are my notes stored?</summary>
+          <p>On your device. Sync is off until you turn it on. When it is on, content is encrypted on the device first. See the <a href="/privacy">privacy policy</a>.</p>
+        </details>
+        <details>
+          <summary>What do I need for iPhone or iPad?</summary>
+          <p>The iOS app is distributed through TestFlight. The public join link is not in the repo yet, so the button on this page is marked TODO until Vlad adds it. You can also build the app yourself from the <a href="https://github.com/princhman/memnoter/blob/main/apps/ios/README.md">iOS readme</a>.</p>
+        </details>
+        <details>
+          <summary>Which computers does the download cover?</summary>
+          <p>Mac, both Apple silicon and Intel, Windows x64, and Linux x64 as an AppImage, deb or rpm. After the first install, new versions download on their own.</p>
+        </details>
+        <details>
+          <summary>Is it finished?</summary>
+          <p>No. Memnoter is in beta. Please send bugs to <a href="mailto:hello@memnoter.com">hello@memnoter.com</a> or <a href="https://github.com/princhman/memnoter/issues">open a GitHub issue</a>. Say your device, the version from Settings, and what you did just before.</p>
+        </details>
       </div>
     </section>
   </main>
 
-  <footer>
-    <span>© 2026 Memnoter</span>
-    <span class="footer-links"><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="https://github.com/princhman/memnoter">GitHub</a></span>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a class="brand" href="/" aria-label="Memnoter home"><img src="assets/icon.png" width="28" height="28" alt=""><span>memnoter</span></a>
+        <p>Free, local-first study notes for students.</p>
+      </div>
+      <nav class="footer-col" aria-label="Product">
+        <p class="footer-heading">Product</p>
+        <a href="#download">Download</a>
+        <a href="#cards">Features</a>
+        <a href="#compare">From Anki or Obsidian</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <nav class="footer-col" aria-label="Help">
+        <p class="footer-heading">Help</p>
+        <a href="/support">Support</a>
+        <a href="mailto:hello@memnoter.com">hello@memnoter.com</a>
+        <a href="https://github.com/princhman/memnoter">GitHub</a>
+        <a href="https://github.com/princhman/memnoter/issues">Report a bug</a>
+      </nav>
+      <nav class="footer-col" aria-label="Legal">
+        <p class="footer-heading">Legal</p>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="https://github.com/princhman/memnoter/blob/main/LICENSE">MIT license</a>
+      </nav>
+      <p class="footer-copy">© 2026 Memnoter</p>
+    </div>
   </footer>
+  <script src="demo.js"></script>
 </body>
 </html>
