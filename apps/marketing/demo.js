@@ -135,6 +135,21 @@
   show(0);
 })();
 
+// One download button. Without JavaScript it stays a generic Download.
+(() => {
+  const ua = `${navigator.platform || ""} ${navigator.userAgent}`;
+  if (/iPhone|iPad|iPod/.test(ua)) return;
+  const platform = /Win/.test(ua) ? "windows" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : /Mac/.test(ua) ? "mac" : "";
+  const source = platform && document.querySelector(`[data-platform="${platform}"]`);
+  if (!source) return;
+  const label = { mac: "Download for Mac", windows: "Download for Windows", linux: "Download for Linux" }[platform];
+  for (const button of document.querySelectorAll("[data-smart-download]")) {
+    button.href = source.href;
+    const text = button.querySelector("[data-download-label]");
+    if (text) text.textContent = label;
+  }
+})();
+
 // Feature frames step through real screenshots. Reduced motion keeps the first frame.
 (() => {
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
